@@ -15,22 +15,22 @@ This guide will get you up and running with the Xian blockchain stack as quickly
 ### 1.2 Clone the Repositories
 
 ```bash
-make setup CORE_BRANCH=mainnet CONTRACTING_BRANCH=mainnet
+make setup ABCI_BRANCH=mainnet CONTRACTING_BRANCH=mainnet
 ```
-This will pull all required Xian repositories.
+This will initialize and update the required Xian submodules.
 
 ---
 
-## 2. Running a Xian Node (Core Only)
+## 2. Running a Xian Node (ABCI Only)
 
 ### 2.1 Build the Environment
 ```bash
-make core-build
+make abci-build
 ```
 
 ### 2.2 Start the Node Docker Container
 ```bash
-make core-up
+make abci-up
 ```
 
 ### 2.3 Initialize cometbft
@@ -43,9 +43,9 @@ make init
 make configure CONFIGURE_ARGS='--moniker "<your node name>" --genesis-file-name "genesis-mainnet.json" --validator-privkey "<your validator privatekey>" --seed-node-address "c3861ffd16cf6708aef6683d3d0471b6dedb3116@152.53.18.220" --copy-genesis'
 ```
 
-### 2.5 Enter the Core Shell
+### 2.5 Enter the ABCI Shell
 ```bash
-make core-shell
+make abci-shell
 ```
 
 ### 2.6 Start the node
@@ -58,14 +58,14 @@ make up
 pm2 logs --lines 1000
 ```
 
-### 2.8 Exit the Core Shell (the node will continue to run in the background)
+### 2.8 Exit the ABCI Shell (the node will continue to run in the background)
 ```bash
 exit
 ```
 
 ### 2.9 Stop the Node
 ```bash
-make core-down
+make abci-down
 ```
 
 ---
@@ -74,12 +74,12 @@ make core-down
 
 ### 3.1 Build the Environment
 ```bash
-make core-bds-build
+make abci-bds-build
 ```
 
 ### 3.2 Start the Node Docker Container with BDS
 ```bash
-make core-bds-up
+make abci-bds-up
 ```
 
 ### 3.3 Initialize cometbft
@@ -94,7 +94,7 @@ make configure CONFIGURE_ARGS='--moniker "<your node name>" --genesis-file-name 
 
 ### 3.5 Enter the BDS Shell
 ```bash
-make core-bds-shell
+make abci-bds-shell
 ```
 
 ### 3.6 Start the node
@@ -114,21 +114,21 @@ exit
 
 ### 3.9 Stop the Node
 ```bash
-make core-bds-down
+make abci-bds-down
 ```
 
 ---
 
-## 4. Running a Node in Development Mode (Core Dev)
+## 4. Running a Node in Development Mode (ABCI Dev)
 
 ### 4.1 Build the Dev Environment
 ```bash
-make core-dev-build
+make abci-dev-build
 ```
 
 ### 4.2 Start the Dev Node Docker Container
 ```bash
-make core-dev-up
+make abci-dev-up
 ```
 
 ### 4.3 Initialize cometbft
@@ -143,7 +143,7 @@ make configure CONFIGURE_ARGS='--moniker "<your node name>" --genesis-file-name 
 
 ### 4.5 Enter the Dev Shell
 ```bash
-make core-dev-shell
+make abci-dev-shell
 ```
 
 ### 4.6 Start the node
@@ -163,19 +163,16 @@ exit
 
 ### 4.9 Stop the Node
 ```bash
-make core-dev-down
+make abci-dev-down
 ```
 
 ---
 
 ## 5. Contracting Development Quickstart
 
-### 5.1 Clone Contracting (if not already done)
+### 5.1 Ensure Submodules Are Initialized
 ```bash
-git clone https://github.com/xian-network/contracting
-cd contracting
-# (Optional) Create a new feature branch
-# git checkout -b <new-branch-name>
+make setup ABCI_BRANCH=mainnet CONTRACTING_BRANCH=mainnet
 ```
 
 ### 5.2 Build the Contracting Dev Environment
@@ -190,7 +187,7 @@ make contracting-dev-up
 
 ### 5.4 Run Contracting Unit Tests
 ```bash
-pytest contracting/
+pytest xian-contracting/tests/
 ```
 
 ### 5.5 Exit the Shell
@@ -200,16 +197,16 @@ exit
 
 ---
 
-## 6. Running Tests for Core
+## 6. Running Tests for ABCI
 
-### 6.1 Enter the Core Dev Shell
+### 6.1 Enter the ABCI Dev Shell
 ```bash
-make core-dev-shell
+make abci-dev-shell
 ```
 
-### 6.2 Run Core Tests
+### 6.2 Run ABCI Tests
 ```bash
-pytest xian-core/tests/
+pytest xian-abci/tests/
 ```
 
 ### 6.3 Exit the Shell
@@ -223,11 +220,11 @@ exit
 
 | Action | Command |
 |--------|---------|
-| Start node (core only) | `make core-up` |
-| Start node with BDS | `make core-bds-up` |
-| Start dev environment with BDS | `make core-dev-up` |
+| Start node (ABCI only) | `make abci-up` |
+| Start node with BDS | `make abci-bds-up` |
+| Start dev environment with BDS | `make abci-dev-up` |
 | Stop node | `make down` |
-| Stop container | `make core-dev-down` |
+| Stop container | `make abci-dev-down` |
 
 ---
 
@@ -268,32 +265,31 @@ sudo ufw status numbered
 - `xian-db`: Isolated network for database access (PostgreSQL only accessible within this network).
 
 ## Docker Compose File Combinations
-- `docker-compose-core.yml`: Base config for Xian node
-- `docker-compose-core-dev.yml`: Adds dev settings
-- `docker-compose-core-bds.yml`: Adds BDS with PostgreSQL
+- `docker-compose-abci.yml`: Base config for Xian node
+- `docker-compose-abci-dev.yml`: Adds dev settings
+- `docker-compose-abci-bds.yml`: Adds BDS with PostgreSQL
 
 Combine with `-f` flag, e.g.:
 ```bash
-docker-compose -f docker-compose-core.yml -f docker-compose-core-bds.yml up
+docker-compose -f docker-compose-abci.yml -f docker-compose-abci-bds.yml up
 ```
 
 ## Makefile Shortcuts (Reference)
 - `make up` — Start node without BDS
 - `make up-bds` — Start node with BDS
-- `make core-up` — Start node (core only)
-- `make core-bds-up` — Start node with BDS
-- `make core-dev-up` — Start dev environment with BDS
+- `make abci-up` — Start node (ABCI only)
+- `make abci-bds-up` — Start node with BDS
+- `make abci-dev-up` — Start dev environment with BDS
 - `make down` — Stop node
-- `make core-dev-down` — Stop container
+- `make abci-dev-down` — Stop container
 
 ## Advanced: Initializing CometBFT
 If you need to initialize CometBFT manually:
 ```bash
-make core-dev-shell
+make abci-dev-shell
 make init
 ```
 
 ---
 
 For more details, see the comments in each Docker Compose file or the Makefile.
-

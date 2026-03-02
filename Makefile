@@ -1,29 +1,22 @@
 CONTRACTING_BRANCH ?= mainnet
-CORE_BRANCH ?= mainnet
-# CONTRACTING_BRANCH and CORE_BRANCH are environment variables used to specify the branch of the xian-core and xian-contracting repositories respectively that should be used when performing git operations in the 'pull' target of this Makefile. By default, they are set to 'master'.
-
-# ::: Usage
-
-# You can override these variables directly from the command line when invoking make. For example:
-# make pull CONTRACTING_BRANCH=development CORE_BRANCH=feature-branch
-# This will check out and pull the 'development' branch for xian-contracting and the 'feature-branch' for xian-core
+ABCI_BRANCH ?= mainnet
 
 # ::: Xian Stack Setup & Git Commands
-# ::: For setting up the xian-core and xian-contracting repositories and pulling the latest changes
+# ::: For setting up the xian-abci and xian-contracting repositories and pulling the latest changes
 
 setup:
-	git clone https://github.com/xian-network/xian-core.git
-	cd xian-core && git checkout $(CORE_BRANCH)
-	git clone https://github.com/xian-network/xian-contracting.git
-	cd xian-contracting && git checkout $(CONTRACTING_BRANCH)
+	git submodule sync xian-abci xian-contracting
+	git submodule update --init xian-abci xian-contracting
+	cd xian-abci && git fetch && git checkout $(ABCI_BRANCH) && git pull
+	cd xian-contracting && git fetch && git checkout $(CONTRACTING_BRANCH) && git pull
 	mkdir -p ./.bds.db
 
 pull:
-	cd xian-core && git pull
+	cd xian-abci && git pull
 	cd xian-contracting && git pull
 
 checkout:
-	cd xian-core && git fetch && git checkout $(CORE_BRANCH) && git pull
+	cd xian-abci && git fetch && git checkout $(ABCI_BRANCH) && git pull
 	cd xian-contracting && git fetch && git checkout $(CONTRACTING_BRANCH) && git pull
 
 
@@ -44,88 +37,88 @@ contracting-dev-down:
 	docker compose -f docker-compose-contracting.yml down
 
 
-# ::: Core Dev Commands
-# ::: For developing on / running tests on the xian-core package
+# ::: ABCI Dev Commands
+# ::: For developing on / running tests on the xian-abci package
 
-core-dev-build:
-	docker compose -f docker-compose-core.yml -f docker-compose-core-dev.yml -f docker-compose-core-bds.yml build --no-cache
+abci-dev-build:
+	docker compose -f docker-compose-abci.yml -f docker-compose-abci-dev.yml -f docker-compose-abci-bds.yml build --no-cache
 
-core-dev-up:
-	docker compose -f docker-compose-core.yml -f docker-compose-core-dev.yml -f docker-compose-core-bds.yml up -d
+abci-dev-up:
+	docker compose -f docker-compose-abci.yml -f docker-compose-abci-dev.yml -f docker-compose-abci-bds.yml up -d
 
-core-dev-down:
-	docker compose -f docker-compose-core.yml -f docker-compose-core-dev.yml -f docker-compose-core-bds.yml down
+abci-dev-down:
+	docker compose -f docker-compose-abci.yml -f docker-compose-abci-dev.yml -f docker-compose-abci-bds.yml down
 
-core-dev-shell:
-	make core-dev-up
-	docker compose -f docker-compose-core.yml -f docker-compose-core-dev.yml exec -w /usr/src/app/xian-core core /bin/bash
+abci-dev-shell:
+	make abci-dev-up
+	docker compose -f docker-compose-abci.yml -f docker-compose-abci-dev.yml exec -w /usr/src/app/xian-abci abci /bin/bash
 
-# ::: Core Commands
+# ::: ABCI Commands
 # ::: For running a xian-node
 
-core-build:
-	docker compose -f docker-compose-core.yml build --no-cache
+abci-build:
+	docker compose -f docker-compose-abci.yml build --no-cache
 
-core-up:
-	docker compose -f docker-compose-core.yml up -d
+abci-up:
+	docker compose -f docker-compose-abci.yml up -d
 
-core-down:
-	docker compose -f docker-compose-core.yml down
+abci-down:
+	docker compose -f docker-compose-abci.yml down
 
-core-shell:
-	make core-up
-	docker compose -f docker-compose-core.yml exec  -w /usr/src/app/xian-core core /bin/bash
+abci-shell:
+	make abci-up
+	docker compose -f docker-compose-abci.yml exec -w /usr/src/app/xian-abci abci /bin/bash
 
-# ::: Core BDS Commands 
+# ::: ABCI BDS Commands
 # ::: For running a xian-node with Blockchain Data Service enabled
 
-core-bds-build:
-	docker compose -f docker-compose-core.yml -f docker-compose-core-bds.yml build --no-cache
+abci-bds-build:
+	docker compose -f docker-compose-abci.yml -f docker-compose-abci-bds.yml build --no-cache
 
-core-bds-up:
-	docker compose -f docker-compose-core.yml -f docker-compose-core-bds.yml up -d
+abci-bds-up:
+	docker compose -f docker-compose-abci.yml -f docker-compose-abci-bds.yml up -d
 
-core-bds-down:
-	docker compose -f docker-compose-core.yml -f docker-compose-core-bds.yml down
+abci-bds-down:
+	docker compose -f docker-compose-abci.yml -f docker-compose-abci-bds.yml down
 
-core-bds-shell:
-	make core-bds-up
-	docker compose -f docker-compose-core.yml -f docker-compose-core-bds.yml exec -w /usr/src/app/xian-core core /bin/bash
+abci-bds-shell:
+	make abci-bds-up
+	docker compose -f docker-compose-abci.yml -f docker-compose-abci-bds.yml exec -w /usr/src/app/xian-abci abci /bin/bash
 
 wipe-bds:
 	rm -rf ./.bds.db/*
 
-# ::: Core Node Commands
-# ::: For interacting with cometbft / xian core running inside a container
-# ::: container must be UP, see make commands core-dev-up / core-up / core-bds-up
+# ::: ABCI Node Commands
+# ::: For interacting with cometbft / xian abci running inside a container
+# ::: container must be UP, see make commands abci-dev-up / abci-up / abci-bds-up
 
 wipe:
-	docker compose -f docker-compose-core.yml exec -T core /bin/bash -c "cd xian-core && make wipe"
+	docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -c "cd xian-abci && make wipe"
 
 wipe-all:
 	make wipe-bds
 	make wipe
 
 dwu:
-	docker compose -f docker-compose-core.yml exec -T core /bin/bash -c "cd xian-core && make dwu"
+	docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -c "cd xian-abci && make dwu"
 
 down:
-	docker compose -f docker-compose-core.yml exec -T core /bin/bash -c "cd xian-core && make down"
+	docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -c "cd xian-abci && make down"
 
 up:
-	docker compose -f docker-compose-core.yml exec -T core /bin/bash -c "cd xian-core && make up"
+	docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -c "cd xian-abci && make up"
 
 up-bds:
-	docker compose -f docker-compose-core.yml exec -T core /bin/bash -c "cd xian-core && make up-bds"
+	docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -c "cd xian-abci && make up-bds"
 
 init:
-	docker compose -f docker-compose-core.yml exec -T core /bin/bash -c "cd xian-core && make init"
+	docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -c "cd xian-abci && make init"
 
 
 # '--moniker some-node-moniker --genesis-file-name genesis-devnet.json --validator-privkey priv_key --seed-node <seed_ip> --copy-genesis --service-node'
 
 configure:
-	docker compose -f docker-compose-core.yml exec -T core /bin/bash -c "cd xian-core/src/xian/tools/ && python configure.py ${CONFIGURE_ARGS}"
+	docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -c "cd xian-abci/src/xian/tools/ && python configure.py ${CONFIGURE_ARGS}"
 
 node-id:
-	docker compose -f docker-compose-core.yml exec -T core /bin/bash -c "cd xian-core && make node-id"
+	docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -c "cd xian-abci && make node-id"
