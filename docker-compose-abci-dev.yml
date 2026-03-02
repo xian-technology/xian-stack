@@ -5,12 +5,12 @@ networks:
     internal: true   # Keep database isolated
 
 services:
-  core:
+  abci:
     hostname: xian-stack-dev
-    build: 
-      dockerfile: ./docker/core-dev.Dockerfile  
+    build:
+      dockerfile: ./docker/abci-dev.Dockerfile
     networks:
       - xian-net
       - xian-db
     command: >
-      bash -c "pip install -e ./xian-core && pip install -e ./xian-core/xian-contracting && tail -f /dev/null"
+      bash -c "pip install -e ./xian-abci && pip install -e ./xian-abci/xian-contracting && tail -f /dev/null"

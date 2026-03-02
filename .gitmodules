@@ -1,0 +1,8 @@
+[submodule "xian-abci"]
+	path = xian-abci
+	url = https://github.com/xian-technology/xian-abci.git
+	branch = mainnet
+[submodule "xian-contracting"]
+	path = xian-contracting
+	url = https://github.com/xian-technology/xian-contracting.git
+	branch = mainnet

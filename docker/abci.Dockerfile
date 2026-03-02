@@ -8,11 +8,11 @@ WORKDIR /usr/src/app
 
 
 # Here we install the dependencies for contracting and later overwrite this folder with the mounted folder
-COPY ./xian-core ./xian-core
-COPY ./xian-contracting ./xian-core/xian-contracting
+COPY ./xian-abci ./xian-abci
+COPY ./xian-contracting ./xian-abci/xian-contracting
 
-RUN pip install -e ./xian-core
-RUN pip install -e ./xian-core/xian-contracting
+RUN pip install -e ./xian-abci
+RUN pip install -e ./xian-abci/xian-contracting
 
 # Install cometbft
 

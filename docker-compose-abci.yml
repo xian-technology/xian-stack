@@ -5,15 +5,15 @@ networks:
     internal: true   # Keep database isolated
 
 services:
-  core:
+  abci:
     restart: always
     hostname: xian-stack
-    build: 
+    build:
       context: .
-      dockerfile: ./docker/core.Dockerfile
+      dockerfile: ./docker/abci.Dockerfile
     volumes:
-      - ./xian-core:/usr/src/app/xian-core
-      - ./xian-contracting:/usr/src/app/xian-core/xian-contracting
+      - ./xian-abci:/usr/src/app/xian-abci
+      - ./xian-contracting:/usr/src/app/xian-abci/xian-contracting
       - ./.cometbft:/root/.cometbft
     stdin_open: true
     tty: true
@@ -26,4 +26,4 @@ services:
       - "26660:26660"
     # network_mode: "host"
     command: >
-      bash -c "pip install -e ./xian-core && pip install -e ./xian-core/xian-contracting && tail -f /dev/null"
+      bash -c "pip install -e ./xian-abci && pip install -e ./xian-abci/xian-contracting && tail -f /dev/null"
