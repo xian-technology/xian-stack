@@ -13,7 +13,7 @@ services:
       POSTGRES_PASSWORD: "1234"
       POSTGRES_DB: "xian"
     volumes:
-      - ./.bds.db:/var/lib/postgresql/data
+      - ${XIAN_BDS_DATA_DIR}:/var/lib/postgresql/data
     networks:
       - xian-db
     # Explicitly disable external port mapping

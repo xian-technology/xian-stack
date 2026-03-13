@@ -12,9 +12,10 @@ services:
       context: .
       dockerfile: ./docker/abci.Dockerfile
     volumes:
-      - ./xian-abci:/usr/src/app/xian-abci
-      - ./xian-contracting:/usr/src/app/xian-abci/xian-contracting
-      - ./.cometbft:/root/.cometbft
+      - ${XIAN_ABCI_DIR}:/usr/src/app/xian-abci
+      - ${XIAN_CONTRACTING_DIR}:/usr/src/app/xian-contracting
+      - ${XIAN_PY_DIR}:/usr/src/app/xian-py
+      - ${XIAN_COMETBFT_HOME}:/root/.cometbft
     stdin_open: true
     tty: true
     networks:
@@ -24,6 +25,5 @@ services:
       - "26657:26657"
       - "26656:26656"
       - "26660:26660"
-    # network_mode: "host"
     command: >
-      bash -c "pip install -e ./xian-abci && pip install -e ./xian-abci/xian-contracting && tail -f /dev/null"
+      bash -lc "pip install -e ./xian-py && pip install -e ./xian-contracting && pip install -e ./xian-abci && tail -f /dev/null"
