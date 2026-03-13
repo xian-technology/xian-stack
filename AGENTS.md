@@ -19,6 +19,8 @@
 - Keep backend operations stable: prepare, `node-init`, `node-configure`,
   `node-start`, `node-stop`, and container bring-up/down. Do not keep expanding
   the Makefile into the primary operator interface.
+- Prefer package entrypoints such as `python -m xian.cli.configure_node` over
+  `cd`-ing into legacy script locations inside `xian-abci`.
 - When documenting operator workflows, prefer `xian-cli` commands. Reserve
   direct `make node-*` examples for backend validation, smoke coverage, and
   local debugging.

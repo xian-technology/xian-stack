@@ -98,6 +98,10 @@ example `make dev-abci-shell` and `make dev-contracting-shell`.
 When documenting operator workflows, prefer `xian-cli` examples over `make
 node-*` examples.
 
+The backend `node-configure` target now runs the explicit package entrypoint
+`python -m xian.cli.configure_node` inside `xian-abci` rather than reaching
+into a legacy `src/xian/tools` script path.
+
 ## Runtime Notes
 
 - Runtime images consume mounted sibling repos from the shared workspace.
