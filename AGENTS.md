@@ -17,8 +17,8 @@
 - The stack expects sibling checkouts of `xian-abci`, `xian-configs`,
   `xian-contracting`, and `xian-py`.
 - Keep backend operations stable: prepare, `node-init`, `node-configure`,
-  `node-start`, `node-stop`, and container bring-up/down. Do not keep expanding
-  the Makefile into the primary operator interface.
+  `node-start`, `node-stop`, `node-status`, and container bring-up/down. Do not
+  keep expanding the Makefile into the primary operator interface.
 - Prefer package entrypoints such as `python -m xian.cli.configure_node` over
   `cd`-ing into legacy script locations inside `xian-abci`.
 - When documenting operator workflows, prefer `xian-cli` commands. Reserve
@@ -41,10 +41,13 @@
   - `make abci-up`
   - `make node-init`
   - `make node-configure CONFIGURE_ARGS='...'`
+  - `make node-status`
   - `make node-start` or `make node-start-bds`
   - `make node-stop`
 
 ## Notes
 - This repo now has a real smoke harness for the base ABCI path. Keep it green when changing Dockerfiles, compose files, or backend lifecycle targets.
+- `make node-status` is part of the backend contract consumed by `xian-cli`.
+  Keep it emitting machine-readable JSON.
 - The stack mounts `xian-configs` into the ABCI container so legacy chain
   fixtures can live outside `xian-abci`.

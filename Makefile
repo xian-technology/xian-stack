@@ -29,7 +29,8 @@ CONTRACTING_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-contracting.yml
 	abci-build abci-up abci-down dev-base-abci-shell \
 	abci-bds-build abci-bds-up abci-bds-down dev-bds-abci-shell \
 	wipe-bds node-wipe node-wipe-all node-reset \
-	node-stop node-start node-start-bds node-init node-configure node-id
+	node-stop node-start node-start-bds node-init node-configure node-id \
+	node-status
 
 help:
 	@printf "Available targets:\n"
@@ -46,6 +47,7 @@ help:
 	@printf "  %-24s %s\n" "node-configure" "Render node config via xian-abci's configure helper"
 	@printf "  %-24s %s\n" "node-start/node-stop" "Start or stop the node runtime inside the container"
 	@printf "  %-24s %s\n" "node-start-bds" "Start the node runtime with block-service mode"
+	@printf "  %-24s %s\n" "node-status" "Report backend container and PM2 process state as JSON"
 	@printf "  %-24s %s\n" "dev-abci-build/dev-abci-up" "Developer-only ABCI dev stack targets"
 	@printf "  %-24s %s\n" "dev-contracting-build" "Developer-only contracting image build"
 
@@ -153,3 +155,6 @@ node-configure:
 
 node-id:
 	$(ABCI_COMPOSE) exec -T abci /bin/bash -lc "cd /usr/src/app/xian-abci && make node-id"
+
+node-status:
+	@./scripts/node-status.sh

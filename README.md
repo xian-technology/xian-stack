@@ -63,6 +63,7 @@ uv run xian network join validator-1 --network mainnet \
   --validator-key-ref ./keys/validator-1/validator_key_info.json \
   --stack-dir ../xian-stack
 uv run xian node init validator-1
+uv run xian node status validator-1
 uv run xian node start validator-1
 uv run xian node stop validator-1
 ```
@@ -80,6 +81,7 @@ make abci-build
 make abci-up
 make node-init
 make node-configure CONFIGURE_ARGS='--moniker "<node-name>" --copy-genesis --genesis-file-name "<genesis.json>" --validator-privkey "<validator-key>"'
+make node-status
 make node-start
 make node-stop
 ```
@@ -101,6 +103,10 @@ node-*` examples.
 The backend `node-configure` target now runs the explicit package entrypoint
 `python -m xian.cli.configure_node` inside `xian-abci` rather than reaching
 into a legacy `src/xian/tools` script path.
+
+The backend `node-status` target returns JSON and is part of the stable backend
+contract consumed by `xian-cli`. Keep that output machine-readable; the smoke
+test and CLI both depend on it.
 
 ## Runtime Notes
 

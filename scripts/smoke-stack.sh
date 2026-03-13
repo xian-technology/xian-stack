@@ -81,11 +81,24 @@ docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -lc \
   && grep -q 'moniker = \"${smoke_moniker}\"' /root/.cometbft/config/config.toml"
 
 make node-start
+make --no-print-directory node-status >/tmp/xian-stack-node-status.json
 wait_for_endpoint "${smoke_status_url}" "CometBFT RPC status"
 wait_for_endpoint "${smoke_abci_info_url}" "ABCI info"
 
 docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -lc \
   "pm2 jlist | grep -q '\"name\":\"xian\"' && pm2 jlist | grep -q '\"name\":\"cometbft\"'"
+
+python3 - <<'PY'
+import json
+
+with open("/tmp/xian-stack-node-status.json", "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+assert payload["abci_container_running"] is True
+assert payload["required_processes_online"] is True
+assert payload["backend_running"] is True
+assert payload["node_id"]
+PY
 
 make node-stop
 make abci-down
