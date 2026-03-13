@@ -27,6 +27,14 @@ This checks Docker availability, required local repo paths, and Compose renderin
 - `docker-compose-abci.yml` + `docker-compose-abci-dev.yml` + `docker-compose-abci-bds.yml`
 - `docker-compose-contracting.yml`
 
+Run the smallest real bring-up and shutdown path with:
+
+```bash
+make smoke
+```
+
+This builds the base ABCI image, starts the container, initializes and configures CometBFT with a deterministic smoke validator key, starts the node, waits for local RPC and ABCI endpoints, and then shuts the stack back down.
+
 ## Common Flows
 
 Base ABCI node:
@@ -61,6 +69,7 @@ make contracting-dev-up
 - The container images are now generic runtime bases. Python repos are installed from mounted workspace paths at container start.
 - `xian-abci` now depends on `xian-py`, so this repo expects all three Python repos to be available locally.
 - `make setup-submodules` still exists for nested checkouts, but the shared workspace layout is the preferred development mode.
+- `make smoke` is the runtime contract for this repo. Use it after changing Dockerfiles, compose topology, or backend lifecycle targets.
 
 # Reference
 

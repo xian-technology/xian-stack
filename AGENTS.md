@@ -20,6 +20,7 @@
 
 ## Validation
 - Preflight: `make validate`
+- Runtime smoke: `make smoke`
 - Inspect resolved paths: `make print-env`
 - Validate the smallest affected runtime flow after preflight.
 - Common paths:
@@ -31,5 +32,5 @@
   - `make down`
 
 ## Notes
-- This repo now has a Compose preflight harness, but it still lacks a full runtime smoke test with container bring-up and shutdown.
+- This repo now has a real smoke harness for the base ABCI path. Keep it green when changing Dockerfiles, compose files, or backend lifecycle targets.
 - The nested `xian-abci` and `xian-contracting` directories are runtime inputs. Keep the shared workspace repos as the primary development sources.

@@ -41,3 +41,38 @@ jobs:
       - name: Validate stack
         working-directory: xian-stack
         run: ./scripts/validate-stack.sh
+
+  smoke:
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out xian-stack
+        uses: actions/checkout@v4
+        with:
+          path: xian-stack
+
+      - name: Check out xian-abci
+        uses: actions/checkout@v4
+        with:
+          repository: xian-technology/xian-abci
+          ref: master
+          path: xian-stack/xian-abci
+
+      - name: Check out xian-contracting
+        uses: actions/checkout@v4
+        with:
+          repository: xian-technology/xian-contracting
+          ref: master
+          path: xian-stack/xian-contracting
+
+      - name: Check out xian-py
+        uses: actions/checkout@v4
+        with:
+          repository: xian-technology/xian-py
+          path: xian-stack/xian-py
+
+      - name: Run stack smoke test
+        working-directory: xian-stack
+        run: ./scripts/smoke-stack.sh

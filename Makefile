@@ -23,7 +23,7 @@ CONTRACTING_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-contracting.yml
 
 .DEFAULT_GOAL := help
 
-.PHONY: help print-env validate prepare-dirs setup setup-submodules pull checkout \
+.PHONY: help print-env validate smoke prepare-dirs setup setup-submodules pull checkout \
 	contracting-dev-shell contracting-dev-up contracting-dev-build contracting-dev-down \
 	abci-dev-build abci-dev-up abci-dev-down abci-dev-shell \
 	abci-build abci-up abci-down abci-shell \
@@ -34,6 +34,7 @@ help:
 	@printf "Available targets:\n"
 	@printf "  %-24s %s\n" "print-env" "Show resolved workspace and data paths"
 	@printf "  %-24s %s\n" "validate" "Validate compose topology and required local paths"
+	@printf "  %-24s %s\n" "smoke" "Run the smallest real ABCI bring-up and shutdown path"
 	@printf "  %-24s %s\n" "setup-submodules" "Sync nested xian-abci and xian-contracting submodules"
 	@printf "  %-24s %s\n" "abci-build" "Build the base ABCI image"
 	@printf "  %-24s %s\n" "abci-up" "Start the base ABCI container"
@@ -55,6 +56,9 @@ print-env:
 
 validate:
 	./scripts/validate-stack.sh
+
+smoke:
+	./scripts/smoke-stack.sh
 
 prepare-dirs:
 	mkdir -p "$(XIAN_COMETBFT_HOME)" "$(XIAN_BDS_DATA_DIR)" "$(XIAN_CONTRACTS_DIR)"
