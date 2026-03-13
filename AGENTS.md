@@ -17,6 +17,7 @@
 - Only change submodule pins or nested checkout state intentionally.
 - Keep backend operations stable: prepare, init, start, stop, status. Do not keep expanding the Makefile into the primary operator interface.
 - Prefer path-driven integration over copying code into images. The containers should consume mounted repos from the shared workspace.
+- Keep runtime images on supported LTS toolchains. Do not reintroduce the deprecated NodeSource 16 install path.
 
 ## Validation
 - Preflight: `make validate`

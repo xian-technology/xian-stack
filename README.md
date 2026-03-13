@@ -67,6 +67,7 @@ make contracting-dev-up
 ## Notes
 
 - The container images are now generic runtime bases. Python repos are installed from mounted workspace paths at container start.
+- The stack images now use official Node.js 24 LTS sources. Do not reintroduce the deprecated NodeSource 16 bootstrap path.
 - `xian-abci` now depends on `xian-py`, so this repo expects all three Python repos to be available locally.
 - `make setup-submodules` still exists for nested checkouts, but the shared workspace layout is the preferred development mode.
 - `make smoke` is the runtime contract for this repo. Use it after changing Dockerfiles, compose topology, or backend lifecycle targets.

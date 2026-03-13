@@ -1,3 +1,5 @@
+FROM node:24-bullseye AS node-runtime
+
 FROM python:3.11.9-bullseye
 
 RUN apt-get update && apt-get install -y \
@@ -5,6 +7,13 @@ RUN apt-get update && apt-get install -y \
     git \
     libhdf5-dev \
     wget
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/include/node /usr/local/include/node
+COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 WORKDIR /usr/src/app
 
@@ -21,9 +30,6 @@ RUN ARCH=$(uname -m); \
     && tar -xf cometbft_0.38.12_linux_${COMETBFT_ARCH}.tar.gz \
     && rm cometbft_0.38.12_linux_${COMETBFT_ARCH}.tar.gz \
     && ./cometbft init
-
-RUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash - \
-    && apt-get install -y nodejs
 
 RUN npm install pm2 -g
 

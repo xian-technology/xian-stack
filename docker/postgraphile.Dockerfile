@@ -1,12 +1,7 @@
-   # Use the official Node.js image.
-   FROM node:14
+FROM node:24-bullseye
 
-   # Create and change to the app directory.
-   WORKDIR /usr/src/app
+WORKDIR /usr/src/app
 
-   # Install PostGraphile globally.
-   RUN npm install -g postgraphile postgraphile-plugin-connection-filter
-   RUN npm install -g @graphile/pg-aggregates
+RUN npm install -g postgraphile postgraphile-plugin-connection-filter @graphile/pg-aggregates
 
-   # Expose the port PostGraphile will run on.
-   EXPOSE 5000
+EXPOSE 5000
