@@ -149,7 +149,7 @@ node-init:
 	$(ABCI_COMPOSE) exec -T abci /bin/bash -lc "cd /usr/src/app/xian-abci && make init"
 
 node-configure:
-	$(ABCI_COMPOSE) exec -T abci /bin/bash -lc "cd /usr/src/app/xian-abci/src/xian/tools && python configure.py ${CONFIGURE_ARGS}"
+	$(ABCI_COMPOSE) exec -T abci /bin/bash -lc "cd /usr/src/app/xian-abci && python -m xian.tools.configure ${CONFIGURE_ARGS}"
 
 node-id:
 	$(ABCI_COMPOSE) exec -T abci /bin/bash -lc "cd /usr/src/app/xian-abci && make node-id"
