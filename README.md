@@ -1,112 +1,83 @@
-# Xian Stack
+# xian-stack
 
-`xian-stack` is the Docker and Compose backend for running Xian services locally. It is not the long-term operator UX surface; that belongs in `xian-cli`.
+`xian-stack` is the runtime backend for local Xian environments. It owns Docker
+images, Compose topology, shell entrypoints, and smoke-tested backend flows. It
+does not own the long-term operator UX; that belongs in `xian-cli`.
+
+## Ownership
+
+This repo owns:
+
+- container images under `docker/`
+- Compose files for ABCI, BDS, and development paths
+- backend lifecycle targets in the `Makefile`
+- runtime validation and smoke scripts under `scripts/`
+
+This repo does not own:
+
+- canonical protocol or contract authoring
+- end-user network bootstrap UX
+- network-specific chain definitions as product-facing configuration
 
 ## Workspace Model
 
-This repo now prefers sibling checkouts in the shared `~/xian` workspace:
+The preferred development layout is the shared `~/xian` workspace with sibling
+checkouts of:
 
 - `../xian-abci`
 - `../xian-contracting`
 - `../xian-py`
 
-If those paths do not exist, the Makefile falls back to nested `xian-abci/` and `xian-contracting/` directories when present. Use `make print-env` to inspect the resolved paths.
+If those paths do not exist, the Makefile can still fall back to nested
+checkouts when present. Use `make print-env` to inspect the resolved paths.
 
-## Preflight
+## Validation
 
-Run the backend validation before building anything:
+Run backend preflight first:
 
 ```bash
 make validate
 ```
 
-This checks Docker availability, required local repo paths, and Compose rendering for:
-
-- `docker-compose-abci.yml`
-- `docker-compose-abci.yml` + `docker-compose-abci-bds.yml`
-- `docker-compose-abci.yml` + `docker-compose-abci-dev.yml` + `docker-compose-abci-bds.yml`
-- `docker-compose-contracting.yml`
-
-Run the smallest real bring-up and shutdown path with:
+Run the runtime smoke contract after Dockerfile, Compose, or lifecycle changes:
 
 ```bash
 make smoke
 ```
 
-This builds the base ABCI image, starts the container, initializes and configures CometBFT with a deterministic smoke validator key, starts the node, waits for local RPC and ABCI endpoints, and then shuts the stack back down.
+`make smoke` is the main safety net for this repo. It builds the base ABCI
+image, brings up the minimum stack, initializes CometBFT, configures a
+deterministic validator, verifies health, and shuts the stack down again.
 
-## Common Flows
+## Backend Flows
 
-Base ABCI node:
+Representative backend operations:
 
 ```bash
 make abci-build
 make abci-up
 make init
-make configure CONFIGURE_ARGS='--moniker "<node-name>" --genesis-file-name "genesis-mainnet.json" --validator-privkey "<validator-key>" --seed-node-address "<seed-id@host>" --copy-genesis'
+make configure CONFIGURE_ARGS='--moniker "<node-name>" --copy-genesis --genesis-file-name "<genesis.json>" --validator-privkey "<validator-key>"'
 make up
+make down
 ```
 
-ABCI + BDS:
+For BDS-enabled paths:
 
 ```bash
 make abci-bds-build
 make abci-bds-up
-make init
-make configure CONFIGURE_ARGS='--moniker "<node-name>" --genesis-file-name "genesis-mainnet.json" --validator-privkey "<validator-key>" --seed-node-address "<seed-id@host>" --copy-genesis --service-node'
 make up-bds
 ```
 
-Contracting dev shell:
+`xian-cli` should increasingly drive these operations instead of users calling
+them manually.
 
-```bash
-make contracting-dev-build
-make contracting-dev-up
-```
+## Runtime Notes
 
-## Notes
-
-- The container images are now generic runtime bases. Python repos are installed from mounted workspace paths at container start.
-- The stack images now use official Node.js 24 LTS sources. Do not reintroduce the deprecated NodeSource 16 bootstrap path.
-- The PostGraphile image now uses a local PostGraphile v5 RC install with an explicit `graphile.config.mjs` and `@rc` tags for related modules.
-- The BDS PostGraphile service now waits through startup races via an explicit wrapper script and a Postgres health check instead of the removed legacy retry flag.
-- In watch mode, PostGraphile v5 also needs a superuser connection so it can install watch fixtures. The compose file now passes that explicitly.
-- `xian-abci` now depends on `xian-py`, so this repo expects all three Python repos to be available locally.
-- `make setup-submodules` still exists for nested checkouts, but the shared workspace layout is the preferred development mode.
-- `make smoke` is the runtime contract for this repo. Use it after changing Dockerfiles, compose topology, or backend lifecycle targets.
-
-# Reference
-
-## Docker Networking
-- `xian-net`: Main network for service communication and internet access. Exposes ports 26657, 26656, 26660, 5000.
-- `xian-db`: Isolated network for database access (PostgreSQL only accessible within this network).
-
-## Docker Compose File Combinations
-- `docker-compose-abci.yml`: Base config for Xian node
-- `docker-compose-abci-dev.yml`: Adds dev settings
-- `docker-compose-abci-bds.yml`: Adds BDS with PostgreSQL
-
-Combine with `-f` flag, e.g.:
-```bash
-docker-compose -f docker-compose-abci.yml -f docker-compose-abci-bds.yml up
-```
-
-## Makefile Shortcuts (Reference)
-- `make up` — Start node without BDS
-- `make up-bds` — Start node with BDS
-- `make abci-up` — Start node (ABCI only)
-- `make abci-bds-up` — Start node with BDS
-- `make abci-dev-up` — Start dev environment with BDS
-- `make down` — Stop node
-- `make abci-dev-down` — Stop container
-
-## Advanced: Initializing CometBFT
-If you need to initialize CometBFT manually:
-```bash
-make abci-dev-shell
-make init
-```
-
----
-
-For more details, see the comments in each Docker Compose file or the Makefile.
+- Runtime images consume mounted sibling repos from the shared workspace.
+- The stack images use official Node.js 24 LTS sources.
+- The PostGraphile service runs on the v5 RC line with local `@rc` packages and
+  explicit startup scripts instead of removed legacy retry flags.
+- In watch mode, PostGraphile also needs a superuser connection so it can
+  install watch fixtures.
