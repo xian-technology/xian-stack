@@ -6,7 +6,6 @@ resolve_repo_dir() {
   local name="$1"
   local explicit_value="${2:-}"
   local sibling_path="${stack_root}/../${name}"
-  local nested_path="${stack_root}/${name}"
 
   if [[ -n "${explicit_value}" ]]; then
     printf '%s\n' "${explicit_value}"
@@ -18,7 +17,7 @@ resolve_repo_dir() {
     return
   fi
 
-  printf '%s\n' "${nested_path}"
+  printf '%s\n' "${sibling_path}"
 }
 
 export_stack_env() {

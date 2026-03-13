@@ -28,8 +28,8 @@ checkouts of:
 - `../xian-contracting`
 - `../xian-py`
 
-If those paths do not exist, the Makefile can still fall back to nested
-checkouts when present. Use `make print-env` to inspect the resolved paths.
+This sibling-workspace model is the only supported authoring mode. Use
+`make print-env` to inspect the resolved paths.
 
 ## Validation
 
@@ -76,6 +76,8 @@ them manually.
 ## Runtime Notes
 
 - Runtime images consume mounted sibling repos from the shared workspace.
+- `xian-stack` no longer manages nested repo checkouts or submodules for
+  `xian-abci` and `xian-contracting`.
 - The stack images use official Node.js 24 LTS sources.
 - The PostGraphile service runs on the v5 RC line with local `@rc` packages and
   explicit startup scripts instead of removed legacy retry flags.

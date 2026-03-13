@@ -1,10 +1,8 @@
-ABCI_BRANCH ?= master
-CONTRACTING_BRANCH ?= master
 DOCKER_COMPOSE ?= docker compose
 
-XIAN_ABCI_DIR ?= $(if $(wildcard ../xian-abci/pyproject.toml),../xian-abci,xian-abci)
-XIAN_CONTRACTING_DIR ?= $(if $(wildcard ../xian-contracting/pyproject.toml),../xian-contracting,xian-contracting)
-XIAN_PY_DIR ?= $(if $(wildcard ../xian-py/pyproject.toml),../xian-py,xian-py)
+XIAN_ABCI_DIR ?= ../xian-abci
+XIAN_CONTRACTING_DIR ?= ../xian-contracting
+XIAN_PY_DIR ?= ../xian-py
 XIAN_COMETBFT_HOME ?= ./.cometbft
 XIAN_BDS_DATA_DIR ?= ./.bds.db
 XIAN_CONTRACTS_DIR ?= ./contracts
@@ -23,7 +21,7 @@ CONTRACTING_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-contracting.yml
 
 .DEFAULT_GOAL := help
 
-.PHONY: help print-env validate smoke prepare-dirs setup setup-submodules pull checkout \
+.PHONY: help print-env validate smoke prepare-dirs \
 	contracting-dev-shell contracting-dev-up contracting-dev-build contracting-dev-down \
 	abci-dev-build abci-dev-up abci-dev-down abci-dev-shell \
 	abci-build abci-up abci-down abci-shell \
@@ -35,7 +33,6 @@ help:
 	@printf "  %-24s %s\n" "print-env" "Show resolved workspace and data paths"
 	@printf "  %-24s %s\n" "validate" "Validate compose topology and required local paths"
 	@printf "  %-24s %s\n" "smoke" "Run the smallest real ABCI bring-up and shutdown path"
-	@printf "  %-24s %s\n" "setup-submodules" "Sync nested xian-abci and xian-contracting submodules"
 	@printf "  %-24s %s\n" "abci-build" "Build the base ABCI image"
 	@printf "  %-24s %s\n" "abci-up" "Start the base ABCI container"
 	@printf "  %-24s %s\n" "abci-bds-build" "Build the ABCI + BDS image stack"
@@ -62,22 +59,6 @@ smoke:
 
 prepare-dirs:
 	mkdir -p "$(XIAN_COMETBFT_HOME)" "$(XIAN_BDS_DATA_DIR)" "$(XIAN_CONTRACTS_DIR)"
-
-setup: setup-submodules
-
-setup-submodules: prepare-dirs
-	git submodule sync xian-abci xian-contracting
-	git submodule update --init xian-abci xian-contracting
-	cd xian-abci && git fetch && git checkout $(ABCI_BRANCH) && git pull
-	cd xian-contracting && git fetch && git checkout $(CONTRACTING_BRANCH) && git pull
-
-pull:
-	cd xian-abci && git pull
-	cd xian-contracting && git pull
-
-checkout:
-	cd xian-abci && git fetch && git checkout $(ABCI_BRANCH) && git pull
-	cd xian-contracting && git fetch && git checkout $(CONTRACTING_BRANCH) && git pull
 
 
 # Contracting Dev Commands
