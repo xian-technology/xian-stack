@@ -49,9 +49,30 @@ make smoke
 image, brings up the minimum stack, initializes CometBFT, configures a
 deterministic validator, verifies health, and shuts the stack down again.
 
+## Preferred Operator Flow
+
+Use `xian-cli` for operator-facing node lifecycle work. From the sibling
+workspace, the intended flow is:
+
+```bash
+cd ../xian-cli
+uv sync --group dev
+uv run xian keys validator generate --out-dir ./keys/validator-1
+uv run xian network join validator-1 --network mainnet \
+  --validator-key-ref ./keys/validator-1/validator_key_info.json \
+  --stack-dir ../xian-stack
+uv run xian node init validator-1
+uv run xian node start validator-1
+uv run xian node stop validator-1
+```
+
+`xian-stack` is the backend that those commands drive. It should not be the
+main user-facing interface for bootstrap or runtime control.
+
 ## Backend Flows
 
-Representative backend operations:
+Use the Makefile directly only for backend validation, smoke coverage, or local
+debugging:
 
 ```bash
 make abci-build
@@ -73,8 +94,8 @@ make node-start-bds
 Developer-only shell targets are intentionally prefixed with `dev-`, for
 example `make dev-abci-shell` and `make dev-contracting-shell`.
 
-`xian-cli` should increasingly drive the `node-*` operations instead of users
-calling them manually.
+When documenting operator workflows, prefer `xian-cli` examples over `make
+node-*` examples.
 
 ## Runtime Notes
 

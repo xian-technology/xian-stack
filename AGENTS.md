@@ -17,6 +17,9 @@
 - Keep backend operations stable: prepare, `node-init`, `node-configure`,
   `node-start`, `node-stop`, and container bring-up/down. Do not keep expanding
   the Makefile into the primary operator interface.
+- When documenting operator workflows, prefer `xian-cli` commands. Reserve
+  direct `make node-*` examples for backend validation, smoke coverage, and
+  local debugging.
 - Prefer path-driven integration over copying code into images. The containers should consume mounted repos from the shared workspace.
 - Keep runtime images on supported LTS toolchains. Do not reintroduce the deprecated NodeSource 16 install path.
 - Keep the PostGraphile service on the current v5 RC line with `@rc` package tags until the v5 stable line is available and validated here.
@@ -27,6 +30,8 @@
 - Runtime smoke: `make smoke`
 - Inspect resolved paths: `make print-env`
 - Validate the smallest affected runtime flow after preflight.
+- Preferred operator smoke path lives in `xian-cli`; this repo validates the
+  backend those commands call.
 - Common paths:
   - `make abci-build`
   - `make abci-up`
