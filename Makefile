@@ -1,6 +1,7 @@
 DOCKER_COMPOSE ?= docker compose
 
 XIAN_ABCI_DIR ?= ../xian-abci
+XIAN_CONFIGS_DIR ?= ../xian-configs
 XIAN_CONTRACTING_DIR ?= ../xian-contracting
 XIAN_PY_DIR ?= ../xian-py
 XIAN_COMETBFT_HOME ?= ./.cometbft
@@ -8,6 +9,7 @@ XIAN_BDS_DATA_DIR ?= ./.bds.db
 XIAN_CONTRACTS_DIR ?= ./contracts
 
 export XIAN_ABCI_DIR := $(abspath $(XIAN_ABCI_DIR))
+export XIAN_CONFIGS_DIR := $(abspath $(XIAN_CONFIGS_DIR))
 export XIAN_CONTRACTING_DIR := $(abspath $(XIAN_CONTRACTING_DIR))
 export XIAN_PY_DIR := $(abspath $(XIAN_PY_DIR))
 export XIAN_COMETBFT_HOME := $(abspath $(XIAN_COMETBFT_HOME))
@@ -49,6 +51,7 @@ help:
 
 print-env:
 	@printf "XIAN_ABCI_DIR=%s\n" "$(XIAN_ABCI_DIR)"
+	@printf "XIAN_CONFIGS_DIR=%s\n" "$(XIAN_CONFIGS_DIR)"
 	@printf "XIAN_CONTRACTING_DIR=%s\n" "$(XIAN_CONTRACTING_DIR)"
 	@printf "XIAN_PY_DIR=%s\n" "$(XIAN_PY_DIR)"
 	@printf "XIAN_COMETBFT_HOME=%s\n" "$(XIAN_COMETBFT_HOME)"

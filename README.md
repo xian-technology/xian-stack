@@ -25,6 +25,7 @@ The preferred development layout is the shared `~/xian` workspace with sibling
 checkouts of:
 
 - `../xian-abci`
+- `../xian-configs`
 - `../xian-contracting`
 - `../xian-py`
 
@@ -100,6 +101,8 @@ node-*` examples.
 ## Runtime Notes
 
 - Runtime images consume mounted sibling repos from the shared workspace.
+- The stack mounts `xian-configs` into the ABCI container so legacy exported
+  genesis fixtures and contract manifests stay outside `xian-abci`.
 - `xian-stack` no longer manages nested repo checkouts or submodules for
   `xian-abci` and `xian-contracting`.
 - The stack images use official Node.js 24 LTS sources.

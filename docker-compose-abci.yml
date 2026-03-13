@@ -13,9 +13,12 @@ services:
       dockerfile: ./docker/abci.Dockerfile
     volumes:
       - ${XIAN_ABCI_DIR}:/usr/src/app/xian-abci
+      - ${XIAN_CONFIGS_DIR}:/usr/src/app/xian-configs
       - ${XIAN_CONTRACTING_DIR}:/usr/src/app/xian-contracting
       - ${XIAN_PY_DIR}:/usr/src/app/xian-py
       - ${XIAN_COMETBFT_HOME}:/root/.cometbft
+    environment:
+      XIAN_CONFIGS_DIR: /usr/src/app/xian-configs
     stdin_open: true
     tty: true
     networks:

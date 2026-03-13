@@ -14,6 +14,8 @@
 
 ## Workflow
 - The shared `~/xian` sibling workspace is the only supported authoring model.
+- The stack expects sibling checkouts of `xian-abci`, `xian-configs`,
+  `xian-contracting`, and `xian-py`.
 - Keep backend operations stable: prepare, `node-init`, `node-configure`,
   `node-start`, `node-stop`, and container bring-up/down. Do not keep expanding
   the Makefile into the primary operator interface.
@@ -42,4 +44,5 @@
 
 ## Notes
 - This repo now has a real smoke harness for the base ABCI path. Keep it green when changing Dockerfiles, compose files, or backend lifecycle targets.
-- The stack expects sibling checkouts of `xian-abci`, `xian-contracting`, and `xian-py`.
+- The stack mounts `xian-configs` into the ABCI container so legacy chain
+  fixtures can live outside `xian-abci`.

@@ -22,6 +22,7 @@ resolve_repo_dir() {
 
 export_stack_env() {
   export XIAN_ABCI_DIR="${XIAN_ABCI_DIR:-$(resolve_repo_dir xian-abci "${XIAN_ABCI_DIR:-}")}"
+  export XIAN_CONFIGS_DIR="${XIAN_CONFIGS_DIR:-$(resolve_repo_dir xian-configs "${XIAN_CONFIGS_DIR:-}")}"
   export XIAN_CONTRACTING_DIR="${XIAN_CONTRACTING_DIR:-$(resolve_repo_dir xian-contracting "${XIAN_CONTRACTING_DIR:-}")}"
   export XIAN_PY_DIR="${XIAN_PY_DIR:-$(resolve_repo_dir xian-py "${XIAN_PY_DIR:-}")}"
   export XIAN_COMETBFT_HOME="${XIAN_COMETBFT_HOME:-${stack_root}/.cometbft}"
@@ -32,6 +33,7 @@ export_stack_env() {
 require_stack_paths() {
   local required_paths=(
     "${XIAN_ABCI_DIR}"
+    "${XIAN_CONFIGS_DIR}"
     "${XIAN_CONTRACTING_DIR}"
     "${XIAN_PY_DIR}"
     "${XIAN_CONTRACTS_DIR}"
