@@ -6,14 +6,17 @@
 - Keep protocol logic out of this repo unless the runtime backend truly requires it.
 
 ## Project Layout
-- `Makefile`: backend entrypoints for build, init, configure, start, and stop.
+- `Makefile`: backend entrypoints for build, `node-*` runtime operations, and
+  `dev-*` shell utilities.
 - `docker/`: container image definitions.
 - `docker-compose-*.yml`: runtime compositions for ABCI, BDS, and development flows.
 - `contracts/`: runtime-local contract mount/data directory.
 
 ## Workflow
 - The shared `~/xian` sibling workspace is the only supported authoring model.
-- Keep backend operations stable: prepare, init, start, stop, status. Do not keep expanding the Makefile into the primary operator interface.
+- Keep backend operations stable: prepare, `node-init`, `node-configure`,
+  `node-start`, `node-stop`, and container bring-up/down. Do not keep expanding
+  the Makefile into the primary operator interface.
 - Prefer path-driven integration over copying code into images. The containers should consume mounted repos from the shared workspace.
 - Keep runtime images on supported LTS toolchains. Do not reintroduce the deprecated NodeSource 16 install path.
 - Keep the PostGraphile service on the current v5 RC line with `@rc` package tags until the v5 stable line is available and validated here.
@@ -27,10 +30,10 @@
 - Common paths:
   - `make abci-build`
   - `make abci-up`
-  - `make init`
-  - `make configure CONFIGURE_ARGS='...'`
-  - `make up` or `make up-bds`
-  - `make down`
+  - `make node-init`
+  - `make node-configure CONFIGURE_ARGS='...'`
+  - `make node-start` or `make node-start-bds`
+  - `make node-stop`
 
 ## Notes
 - This repo now has a real smoke harness for the base ABCI path. Keep it green when changing Dockerfiles, compose files, or backend lifecycle targets.

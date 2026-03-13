@@ -55,7 +55,7 @@ wait_for_abci_runtime() {
 cleanup() {
   set +e
   cd "${stack_root}" || return
-  make down >/dev/null 2>&1 || true
+  make node-stop >/dev/null 2>&1 || true
   make abci-down >/dev/null 2>&1 || true
 }
 
@@ -70,9 +70,9 @@ if [[ "${smoke_skip_build}" != "1" ]]; then
 fi
 make abci-up
 wait_for_abci_runtime
-make init
+make node-init
 make node-id >/dev/null
-make configure CONFIGURE_ARGS="--moniker ${smoke_moniker} --genesis-file-name ${smoke_genesis_file} --validator-privkey ${smoke_validator_privkey} --copy-genesis"
+make node-configure CONFIGURE_ARGS="--moniker ${smoke_moniker} --genesis-file-name ${smoke_genesis_file} --validator-privkey ${smoke_validator_privkey} --copy-genesis"
 
 docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -lc \
   "test -f /root/.cometbft/config/config.toml \
@@ -80,14 +80,14 @@ docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -lc \
   && test -f /root/.cometbft/config/priv_validator_key.json \
   && grep -q 'moniker = \"${smoke_moniker}\"' /root/.cometbft/config/config.toml"
 
-make up
+make node-start
 wait_for_endpoint "${smoke_status_url}" "CometBFT RPC status"
 wait_for_endpoint "${smoke_abci_info_url}" "ABCI info"
 
 docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -lc \
   "pm2 jlist | grep -q '\"name\":\"xian\"' && pm2 jlist | grep -q '\"name\":\"cometbft\"'"
 
-make down
+make node-stop
 make abci-down
 
 if [[ -n "$(docker compose -f docker-compose-abci.yml ps -q)" ]]; then

@@ -56,10 +56,10 @@ Representative backend operations:
 ```bash
 make abci-build
 make abci-up
-make init
-make configure CONFIGURE_ARGS='--moniker "<node-name>" --copy-genesis --genesis-file-name "<genesis.json>" --validator-privkey "<validator-key>"'
-make up
-make down
+make node-init
+make node-configure CONFIGURE_ARGS='--moniker "<node-name>" --copy-genesis --genesis-file-name "<genesis.json>" --validator-privkey "<validator-key>"'
+make node-start
+make node-stop
 ```
 
 For BDS-enabled paths:
@@ -67,11 +67,14 @@ For BDS-enabled paths:
 ```bash
 make abci-bds-build
 make abci-bds-up
-make up-bds
+make node-start-bds
 ```
 
-`xian-cli` should increasingly drive these operations instead of users calling
-them manually.
+Developer-only shell targets are intentionally prefixed with `dev-`, for
+example `make dev-abci-shell` and `make dev-contracting-shell`.
+
+`xian-cli` should increasingly drive the `node-*` operations instead of users
+calling them manually.
 
 ## Runtime Notes
 

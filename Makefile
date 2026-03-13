@@ -22,11 +22,12 @@ CONTRACTING_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-contracting.yml
 .DEFAULT_GOAL := help
 
 .PHONY: help print-env validate smoke prepare-dirs \
-	contracting-dev-shell contracting-dev-up contracting-dev-build contracting-dev-down \
-	abci-dev-build abci-dev-up abci-dev-down abci-dev-shell \
-	abci-build abci-up abci-down abci-shell \
-	abci-bds-build abci-bds-up abci-bds-down abci-bds-shell \
-	wipe-bds wipe wipe-all dwu down up up-bds init configure node-id
+	dev-contracting-shell dev-contracting-up dev-contracting-build dev-contracting-down \
+	dev-abci-build dev-abci-up dev-abci-down dev-abci-shell \
+	abci-build abci-up abci-down dev-base-abci-shell \
+	abci-bds-build abci-bds-up abci-bds-down dev-bds-abci-shell \
+	wipe-bds node-wipe node-wipe-all node-reset \
+	node-stop node-start node-start-bds node-init node-configure node-id
 
 help:
 	@printf "Available targets:\n"
@@ -35,13 +36,16 @@ help:
 	@printf "  %-24s %s\n" "smoke" "Run the smallest real ABCI bring-up and shutdown path"
 	@printf "  %-24s %s\n" "abci-build" "Build the base ABCI image"
 	@printf "  %-24s %s\n" "abci-up" "Start the base ABCI container"
+	@printf "  %-24s %s\n" "abci-down" "Stop the base ABCI container"
 	@printf "  %-24s %s\n" "abci-bds-build" "Build the ABCI + BDS image stack"
 	@printf "  %-24s %s\n" "abci-bds-up" "Start the ABCI + BDS stack"
-	@printf "  %-24s %s\n" "abci-dev-build" "Build the development stack"
-	@printf "  %-24s %s\n" "abci-dev-up" "Start the development stack"
-	@printf "  %-24s %s\n" "contracting-dev-build" "Build the contracting dev image"
-	@printf "  %-24s %s\n" "contracting-dev-up" "Start the contracting dev shell"
-	@printf "  %-24s %s\n" "init/configure/up/down" "Proxy CometBFT and node lifecycle commands into xian-abci"
+	@printf "  %-24s %s\n" "abci-bds-down" "Stop the ABCI + BDS stack"
+	@printf "  %-24s %s\n" "node-init" "Initialize the CometBFT home inside the ABCI container"
+	@printf "  %-24s %s\n" "node-configure" "Render node config via xian-abci's configure helper"
+	@printf "  %-24s %s\n" "node-start/node-stop" "Start or stop the node runtime inside the container"
+	@printf "  %-24s %s\n" "node-start-bds" "Start the node runtime with block-service mode"
+	@printf "  %-24s %s\n" "dev-abci-build/dev-abci-up" "Developer-only ABCI dev stack targets"
+	@printf "  %-24s %s\n" "dev-contracting-build" "Developer-only contracting image build"
 
 print-env:
 	@printf "XIAN_ABCI_DIR=%s\n" "$(XIAN_ABCI_DIR)"
@@ -61,35 +65,35 @@ prepare-dirs:
 	mkdir -p "$(XIAN_COMETBFT_HOME)" "$(XIAN_BDS_DATA_DIR)" "$(XIAN_CONTRACTS_DIR)"
 
 
-# Contracting Dev Commands
-contracting-dev-shell: contracting-dev-up
+# Dev-only contracting commands
+dev-contracting-shell: dev-contracting-up
 
-contracting-dev-up: prepare-dirs
+dev-contracting-up: prepare-dirs
 	$(CONTRACTING_COMPOSE) up -d
 	$(CONTRACTING_COMPOSE) exec contracting /bin/bash
 
-contracting-dev-build: prepare-dirs
+dev-contracting-build: prepare-dirs
 	$(CONTRACTING_COMPOSE) build
 
-contracting-dev-down:
+dev-contracting-down:
 	$(CONTRACTING_COMPOSE) down
 
 
-# ABCI Dev Commands
-abci-dev-build: prepare-dirs
+# Dev-only ABCI commands
+dev-abci-build: prepare-dirs
 	$(ABCI_DEV_COMPOSE) build --no-cache
 
-abci-dev-up: prepare-dirs
+dev-abci-up: prepare-dirs
 	$(ABCI_DEV_COMPOSE) up -d
 
-abci-dev-down:
+dev-abci-down:
 	$(ABCI_DEV_COMPOSE) down
 
-abci-dev-shell: abci-dev-up
+dev-abci-shell: dev-abci-up
 	$(ABCI_DEV_COMPOSE) exec -w /usr/src/app/xian-abci abci /bin/bash
 
 
-# ABCI Commands
+# Runtime container commands
 abci-build: prepare-dirs
 	$(ABCI_COMPOSE) build --no-cache
 
@@ -99,7 +103,7 @@ abci-up: prepare-dirs
 abci-down:
 	$(ABCI_COMPOSE) down
 
-abci-shell: abci-up
+dev-base-abci-shell: abci-up
 	$(ABCI_COMPOSE) exec -w /usr/src/app/xian-abci abci /bin/bash
 
 
@@ -113,35 +117,35 @@ abci-bds-up: prepare-dirs
 abci-bds-down:
 	$(ABCI_BDS_COMPOSE) down
 
-abci-bds-shell: abci-bds-up
+dev-bds-abci-shell: abci-bds-up
 	$(ABCI_BDS_COMPOSE) exec -w /usr/src/app/xian-abci abci /bin/bash
 
 wipe-bds:
 	rm -rf "$(XIAN_BDS_DATA_DIR)"/*
 
 
-# ABCI Node Commands
-wipe:
+# Node runtime commands
+node-wipe:
 	$(ABCI_COMPOSE) exec -T abci /bin/bash -lc "cd /usr/src/app/xian-abci && make wipe"
 
-wipe-all: wipe-bds wipe
+node-wipe-all: wipe-bds node-wipe
 
-dwu:
+node-reset:
 	$(ABCI_COMPOSE) exec -T abci /bin/bash -lc "cd /usr/src/app/xian-abci && make dwu"
 
-down:
+node-stop:
 	$(ABCI_COMPOSE) exec -T abci /bin/bash -lc "cd /usr/src/app/xian-abci && make down"
 
-up:
+node-start:
 	$(ABCI_COMPOSE) exec -T abci /bin/bash -lc "cd /usr/src/app/xian-abci && make up"
 
-up-bds:
+node-start-bds:
 	$(ABCI_COMPOSE) exec -T abci /bin/bash -lc "cd /usr/src/app/xian-abci && make up-bds"
 
-init:
+node-init:
 	$(ABCI_COMPOSE) exec -T abci /bin/bash -lc "cd /usr/src/app/xian-abci && make init"
 
-configure:
+node-configure:
 	$(ABCI_COMPOSE) exec -T abci /bin/bash -lc "cd /usr/src/app/xian-abci/src/xian/tools && python configure.py ${CONFIGURE_ARGS}"
 
 node-id:
