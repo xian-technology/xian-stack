@@ -12,6 +12,11 @@ services:
       POSTGRES_USER: "postgres"
       POSTGRES_PASSWORD: "1234"
       POSTGRES_DB: "xian"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d xian"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     volumes:
       - ${XIAN_BDS_DATA_DIR}:/var/lib/postgresql/data
     networks:
@@ -26,25 +31,19 @@ services:
       context: .
       dockerfile: ./docker/postgraphile.Dockerfile  
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    environment:
+      GRAPHILE_ENV: "development"
+      POSTGRAPHILE_CONNECTION: "postgres://readonly_user:readonly@postgres:5432/xian"
+      POSTGRAPHILE_SUPERUSER_CONNECTION: "postgres://postgres:1234@postgres:5432/xian"
+      POSTGRAPHILE_HOST: "0.0.0.0"
+      POSTGRAPHILE_PORT: "5000"
+      POSTGRAPHILE_SCHEMA: "public"
+      POSTGRAPHILE_RETRY_DELAY_SECONDS: "2"
     networks:
       - xian-db
       - xian-net
     ports:
       - "5000:5000"
-    command: [
-      "postgraphile", 
-      "-c", 
-      "postgres://readonly_user:readonly@postgres:5432/xian", 
-      "--retry-on-init-fail", 
-      "--host", 
-      "0.0.0.0", 
-      "--enhance-graphiql",
-      "-j",
-      "--watch",  # Watch for schema changes
-      "--show-error-stack",  # Show error stack in GraphiQL
-      "--extended-errors", "hint,detail,errcode",  # Show extended error details
-      "--append-plugins",
-      "postgraphile-plugin-connection-filter,@graphile/pg-aggregates",
-      "--cors"
-    ]
+    command: ["/usr/src/app/start-postgraphile.sh"]

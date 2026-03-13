@@ -1,0 +1,9 @@
+{
+  "name": "xian-stack-postgraphile",
+  "private": true,
+  "dependencies": {
+    "@graphile/pg-aggregates": "rc",
+    "postgraphile": "rc",
+    "postgraphile-plugin-connection-filter": "rc"
+  }
+}

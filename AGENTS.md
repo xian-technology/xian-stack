@@ -18,6 +18,8 @@
 - Keep backend operations stable: prepare, init, start, stop, status. Do not keep expanding the Makefile into the primary operator interface.
 - Prefer path-driven integration over copying code into images. The containers should consume mounted repos from the shared workspace.
 - Keep runtime images on supported LTS toolchains. Do not reintroduce the deprecated NodeSource 16 install path.
+- Keep the PostGraphile service on the current v5 RC line with `@rc` package tags until the v5 stable line is available and validated here.
+- Keep PostGraphile startup behavior explicit. Prefer health checks and wrapper scripts over legacy retry flags that no longer exist in v5.
 
 ## Validation
 - Preflight: `make validate`
