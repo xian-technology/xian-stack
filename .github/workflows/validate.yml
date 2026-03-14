@@ -23,20 +23,27 @@ jobs:
         with:
           repository: xian-technology/xian-abci
           ref: master
-          path: xian-stack/xian-abci
+          path: xian-abci
 
       - name: Check out xian-contracting
         uses: actions/checkout@v4
         with:
           repository: xian-technology/xian-contracting
           ref: master
-          path: xian-stack/xian-contracting
+          path: xian-contracting
 
       - name: Check out xian-py
         uses: actions/checkout@v4
         with:
           repository: xian-technology/xian-py
-          path: xian-stack/xian-py
+          path: xian-py
+
+      - name: Check out xian-configs
+        uses: actions/checkout@v4
+        with:
+          repository: xian-technology/xian-configs
+          ref: master
+          path: xian-configs
 
       - name: Validate stack
         working-directory: xian-stack
@@ -58,20 +65,27 @@ jobs:
         with:
           repository: xian-technology/xian-abci
           ref: master
-          path: xian-stack/xian-abci
+          path: xian-abci
 
       - name: Check out xian-contracting
         uses: actions/checkout@v4
         with:
           repository: xian-technology/xian-contracting
           ref: master
-          path: xian-stack/xian-contracting
+          path: xian-contracting
 
       - name: Check out xian-py
         uses: actions/checkout@v4
         with:
           repository: xian-technology/xian-py
-          path: xian-stack/xian-py
+          path: xian-py
+
+      - name: Check out xian-configs
+        uses: actions/checkout@v4
+        with:
+          repository: xian-technology/xian-configs
+          ref: master
+          path: xian-configs
 
       - name: Run stack smoke test
         working-directory: xian-stack
