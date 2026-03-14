@@ -8,9 +8,9 @@ smoke_root="${XIAN_SMOKE_ROOT:-${stack_root}/.smoke}"
 export XIAN_COMETBFT_HOME="${XIAN_COMETBFT_HOME:-${smoke_root}/cometbft}"
 export XIAN_BDS_DATA_DIR="${XIAN_BDS_DATA_DIR:-${smoke_root}/bds}"
 export_stack_env
+prepare_stack_dirs
 require_stack_paths
 require_docker
-prepare_stack_dirs
 
 smoke_moniker="${XIAN_SMOKE_MONIKER:-smoke-validator}"
 smoke_genesis_file="${XIAN_SMOKE_GENESIS_FILE:-genesis-devnet.json}"

@@ -4,9 +4,9 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/stack-env.sh"
 
 export_stack_env
+prepare_stack_dirs
 require_stack_paths
 require_docker
-prepare_stack_dirs
 
 cd "${stack_root}"
 
