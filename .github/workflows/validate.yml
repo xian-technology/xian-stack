@@ -22,14 +22,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: xian-technology/xian-abci
-          ref: master
           path: xian-abci
 
       - name: Check out xian-contracting
         uses: actions/checkout@v4
         with:
           repository: xian-technology/xian-contracting
-          ref: master
           path: xian-contracting
 
       - name: Check out xian-py
@@ -42,7 +40,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: xian-technology/xian-configs
-          ref: master
           path: xian-configs
 
       - name: Validate stack
@@ -64,14 +61,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: xian-technology/xian-abci
-          ref: master
           path: xian-abci
 
       - name: Check out xian-contracting
         uses: actions/checkout@v4
         with:
           repository: xian-technology/xian-contracting
-          ref: master
           path: xian-contracting
 
       - name: Check out xian-py
@@ -84,7 +79,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: xian-technology/xian-configs
-          ref: master
           path: xian-configs
 
       - name: Run stack smoke test
