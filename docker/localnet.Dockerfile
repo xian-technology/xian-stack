@@ -1,6 +1,6 @@
 FROM node:24-bullseye AS node-runtime
 
-FROM python:3.14-bookworm
+FROM python:3.13-bookworm
 
 RUN apt-get update && apt-get install -y \
     curl \

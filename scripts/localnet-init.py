@@ -11,6 +11,7 @@ mounted into Docker containers.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import secrets
 import shutil
@@ -46,6 +47,7 @@ CONFIGS_DIR = PROJECT_ROOT / "xian-configs"
 BASE_P2P_PORT = 26656
 BASE_RPC_PORT = 26657
 BASE_METRICS_PORT = 26660
+BASE_DASHBOARD_PORT = 8080
 PORT_STRIDE = 100  # node-0: 266xx, node-1: 267xx, node-2: 268xx, ...
 
 
@@ -62,7 +64,7 @@ def generate_node_material(index: int) -> dict:
         "moniker": f"node-{index}",
         "validator_key": val_key,
         "node_key": node_key,
-        "account_public_key": val_key["pub_key"]["value"],
+        "account_public_key": base64.b64decode(val_key["pub_key"]["value"]).hex(),
     }
 
 
@@ -121,6 +123,9 @@ def write_node_config(
         seed_nodes=[],
         allow_cors=True,
         prometheus=True,
+        dashboard_enabled=True,
+        dashboard_host="0.0.0.0",
+        dashboard_port=8080,
     )
     # Override peers and listen addresses (inside container, always same ports)
     config["p2p"]["persistent_peers"] = peers
@@ -197,7 +202,8 @@ def main():
         idx = node["index"]
         host_p2p = BASE_P2P_PORT + idx * PORT_STRIDE
         host_rpc = BASE_RPC_PORT + idx * PORT_STRIDE
-        print(f"  {node['moniker']}: RPC=:{host_rpc} P2P=:{host_p2p} id={node['node_key']['node_id'][:12]}...")
+        host_dash = BASE_DASHBOARD_PORT + idx * PORT_STRIDE
+        print(f"  {node['moniker']}: RPC=:{host_rpc} P2P=:{host_p2p} Dashboard=:{host_dash} id={node['node_key']['node_id'][:12]}...")
 
     # 4. Write docker-compose-localnet.yml
     write_compose_file(nodes)
@@ -212,6 +218,7 @@ def main():
                 "host_rpc_port": BASE_RPC_PORT + n["index"] * PORT_STRIDE,
                 "host_p2p_port": BASE_P2P_PORT + n["index"] * PORT_STRIDE,
                 "host_metrics_port": BASE_METRICS_PORT + n["index"] * PORT_STRIDE,
+                "host_dashboard_port": BASE_DASHBOARD_PORT + n["index"] * PORT_STRIDE,
             }
             for n in nodes
         ],
@@ -233,6 +240,7 @@ def write_compose_file(nodes: list[dict]):
         host_p2p = BASE_P2P_PORT + idx * PORT_STRIDE
         host_rpc = BASE_RPC_PORT + idx * PORT_STRIDE
         host_metrics = BASE_METRICS_PORT + idx * PORT_STRIDE
+        host_dashboard = BASE_DASHBOARD_PORT + idx * PORT_STRIDE
 
         services[moniker] = {
             "build": {
@@ -256,13 +264,17 @@ def write_compose_file(nodes: list[dict]):
                 f"{host_p2p}:26656",
                 f"{host_rpc}:26657",
                 f"{host_metrics}:26660",
+                f"{host_dashboard}:8080",
             ],
             "networks": ["localnet"],
             "command": (
                 'bash -lc "'
-                "pip install --quiet ./xian-py ./xian-contracting ./xian-abci && "
-                "cd /usr/src/app/xian-abci && "
-                "cd ./src/xian && pm2 start xian_abci.py --name xian -f && "
+                "cp -r ./xian-py /tmp/xian-py && pip install --quiet /tmp/xian-py && "
+                "cp -r ./xian-contracting /tmp/xian-contracting && pip install --quiet /tmp/xian-contracting && "
+                "cp -r ./xian-abci /tmp/xian-abci && pip install --quiet /tmp/xian-abci && "
+                "cd /usr/src/app/xian-abci/src/xian && "
+                "pm2 start xian_abci.py --name xian -f && "
+                "sleep 3 && "
                 "pm2 start \\\"cometbft node --rpc.laddr tcp://0.0.0.0:26657\\\" --name cometbft -f && "
                 'pm2 logs --raw"'
             ),
