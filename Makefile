@@ -20,6 +20,9 @@ ABCI_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-abci.yml
 ABCI_BDS_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-abci.yml -f docker-compose-abci-bds.yml
 ABCI_DEV_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-abci.yml -f docker-compose-abci-dev.yml -f docker-compose-abci-bds.yml
 CONTRACTING_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-contracting.yml
+LOCALNET_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-localnet.yml
+
+LOCALNET_NODES ?= 4
 
 .DEFAULT_GOAL := help
 
@@ -30,7 +33,9 @@ CONTRACTING_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-contracting.yml
 	abci-bds-build abci-bds-up abci-bds-down dev-bds-abci-shell \
 	wipe-bds node-wipe node-wipe-all node-reset \
 	node-stop node-start node-start-bds node-init node-configure node-id \
-	node-status
+	node-status \
+	localnet-init localnet-build localnet-up localnet-down localnet-status \
+	localnet-clean localnet-logs localnet-shell
 
 help:
 	@printf "Available targets:\n"
@@ -50,6 +55,15 @@ help:
 	@printf "  %-24s %s\n" "node-status" "Report backend container and PM2 process state as JSON"
 	@printf "  %-24s %s\n" "dev-abci-build/dev-abci-up" "Developer-only ABCI dev stack targets"
 	@printf "  %-24s %s\n" "dev-contracting-build" "Developer-only contracting image build"
+	@printf "\n  Localnet (multi-node):\n"
+	@printf "  %-24s %s\n" "localnet-init" "Generate keys, genesis, configs for N nodes (LOCALNET_NODES=4)"
+	@printf "  %-24s %s\n" "localnet-build" "Build the localnet Docker image"
+	@printf "  %-24s %s\n" "localnet-up" "Start all localnet nodes"
+	@printf "  %-24s %s\n" "localnet-down" "Stop all localnet nodes"
+	@printf "  %-24s %s\n" "localnet-status" "Show block height and peer count for each node"
+	@printf "  %-24s %s\n" "localnet-logs" "Tail logs from all nodes"
+	@printf "  %-24s %s\n" "localnet-shell" "Open a shell in node-0"
+	@printf "  %-24s %s\n" "localnet-clean" "Stop nodes and delete all localnet data"
 
 print-env:
 	@printf "XIAN_ABCI_DIR=%s\n" "$(XIAN_ABCI_DIR)"
@@ -158,3 +172,36 @@ node-id:
 
 node-status:
 	@./scripts/node-status.sh
+
+
+# ── Localnet (multi-node) ────────────────────────────────────────────
+
+localnet-init:
+	python3 ./scripts/localnet-init.py --nodes $(LOCALNET_NODES) --clean
+
+localnet-build:
+	$(LOCALNET_COMPOSE) build
+
+localnet-up:
+	@if [ ! -f docker-compose-localnet.yml ]; then \
+		echo "ERROR: Run 'make localnet-init' first." >&2; exit 1; \
+	fi
+	$(LOCALNET_COMPOSE) up -d
+
+localnet-down:
+	@if [ -f docker-compose-localnet.yml ]; then \
+		$(LOCALNET_COMPOSE) down; \
+	fi
+
+localnet-status:
+	@./scripts/localnet-status.sh
+
+localnet-logs:
+	$(LOCALNET_COMPOSE) logs -f --tail=50
+
+localnet-shell:
+	$(LOCALNET_COMPOSE) exec node-0 /bin/bash
+
+localnet-clean: localnet-down
+	rm -rf .localnet
+	rm -f docker-compose-localnet.yml

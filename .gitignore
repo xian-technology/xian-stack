@@ -4,4 +4,7 @@ __pycache__
 .cometbft*
 .smoke/
 .bds.db
+.localnet/
+.venv-localnet/
+docker-compose-localnet.yml
 /contracts/*
