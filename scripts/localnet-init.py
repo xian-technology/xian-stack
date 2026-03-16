@@ -269,9 +269,9 @@ def write_compose_file(nodes: list[dict]):
             "networks": ["localnet"],
             "command": (
                 'bash -lc "'
-                "cp -r ./xian-py /tmp/xian-py && pip install --quiet /tmp/xian-py && "
-                "cp -r ./xian-contracting /tmp/xian-contracting && pip install --quiet /tmp/xian-contracting && "
-                "cp -r ./xian-abci /tmp/xian-abci && pip install --quiet /tmp/xian-abci && "
+                "pip install --quiet --no-cache-dir -e ./xian-py && "
+                "pip install --quiet --no-cache-dir -e ./xian-contracting && "
+                "pip install --quiet --no-cache-dir -e ./xian-abci && "
                 "cd /usr/src/app/xian-abci/src/xian && "
                 "pm2 start xian_abci.py --name xian -f && "
                 "sleep 3 && "
