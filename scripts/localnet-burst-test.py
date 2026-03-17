@@ -10,23 +10,19 @@ from __future__ import annotations
 import json
 import secrets
 import subprocess
-import sys
 import time
 from pathlib import Path
 from urllib.request import urlopen
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent
-PROJECT_ROOT = STACK_DIR.parent
-
-sys.path.insert(0, str(PROJECT_ROOT / "xian-py" / "src"))
 
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian import Xian  # noqa: E402
 
 
 def load_network():
-    with open(STACK_DIR / ".localnet" / "network.json") as f:
+    with open(STACK_DIR / ".localnet" / "network.json", encoding="utf-8") as f:
         return json.load(f)
 
 

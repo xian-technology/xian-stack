@@ -18,53 +18,42 @@ import shutil
 import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Ensure xian-abci and xian-contracting are importable
-# ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent
-PROJECT_ROOT = STACK_DIR.parent
-
-sys.path.insert(0, str(PROJECT_ROOT / "xian-abci" / "src"))
-sys.path.insert(0, str(PROJECT_ROOT / "xian-contracting" / "src"))
-sys.path.insert(0, str(PROJECT_ROOT / "xian-py" / "src"))
 
 from xian.genesis_builder import (  # noqa: E402
     build_local_network_genesis,
-    write_genesis_block,
 )
 from xian.node_setup import (  # noqa: E402
     build_node_key,
-    build_priv_validator_key,
+    generate_validator_material,
+    materialize_cometbft_home,
     render_cometbft_config,
 )
-from xian import toml_utils  # noqa: E402
 
 LOCALNET_DIR = STACK_DIR / ".localnet"
-CONFIGS_DIR = PROJECT_ROOT / "xian-configs"
+CONFIGS_DIR = STACK_DIR.parent / "xian-configs"
 
 # Port offsets from base for each node
 BASE_P2P_PORT = 26656
 BASE_RPC_PORT = 26657
 BASE_METRICS_PORT = 26660
-BASE_DASHBOARD_PORT = 8080
 PORT_STRIDE = 100  # node-0: 266xx, node-1: 267xx, node-2: 268xx, ...
 
 
 def generate_node_material(index: int) -> dict:
     """Generate validator key, node key, and metadata for one node."""
-    val_seed = secrets.token_bytes(32)
     node_seed = secrets.token_bytes(32)
 
-    val_key = build_priv_validator_key(val_seed.hex())
+    validator_material = generate_validator_material(secrets.token_bytes(32).hex())
     node_key = build_node_key(node_seed.hex())
 
     return {
         "index": index,
         "moniker": f"node-{index}",
-        "validator_key": val_key,
+        "validator_material": validator_material,
         "node_key": node_key,
-        "account_public_key": base64.b64decode(val_key["pub_key"]["value"]).hex(),
+        "account_public_key": validator_material["validator_public_key_hex"],
     }
 
 
@@ -90,30 +79,7 @@ def write_node_config(
 ):
     """Write all CometBFT config files for a single node."""
     home = LOCALNET_DIR / node["moniker"] / ".cometbft"
-    config_dir = home / "config"
-    data_dir = home / "data"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    data_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- priv_validator_key.json ---
-    pvk = dict(node["validator_key"])
-    pvk.pop("_private_key_hex", None)
-    with open(config_dir / "priv_validator_key.json", "w") as f:
-        json.dump(pvk, f, indent=2)
-
-    # --- priv_validator_state.json (empty initial state) ---
-    with open(data_dir / "priv_validator_state.json", "w") as f:
-        json.dump({"height": "0", "round": 0, "step": 0}, f, indent=2)
-
-    # --- node_key.json ---
-    nk = {"priv_key": node["node_key"]["priv_key"]}
-    with open(config_dir / "node_key.json", "w") as f:
-        json.dump(nk, f, indent=2)
-
-    # --- genesis.json ---
-    write_genesis_block(config_dir / "genesis.json", genesis)
-
-    # --- config.toml ---
     # Exclude self from persistent_peers
     other_nodes = [n for n in all_nodes if n["index"] != node["index"]]
     peers = build_persistent_peers(other_nodes)
@@ -123,9 +89,6 @@ def write_node_config(
         seed_nodes=[],
         allow_cors=True,
         prometheus=True,
-        dashboard_enabled=True,
-        dashboard_host="0.0.0.0",
-        dashboard_port=8080,
     )
     # Override peers and listen addresses (inside container, always same ports)
     config["p2p"]["persistent_peers"] = peers
@@ -136,9 +99,13 @@ def write_node_config(
     config["consensus"]["create_empty_blocks"] = True
     config["consensus"]["create_empty_blocks_interval"] = "5s"
 
-    config_path = config_dir / "config.toml"
-    with open(config_path, "w") as f:
-        f.write(toml_utils.dumps(config))
+    materialize_cometbft_home(
+        home=home,
+        config=config,
+        genesis=genesis,
+        priv_validator_key=node["validator_material"]["priv_validator_key"],
+        node_key=node["node_key"],
+    )
 
 
 def main():
@@ -175,13 +142,15 @@ def main():
     nodes = [generate_node_material(i) for i in range(args.nodes)]
 
     # 2. Build genesis using the first node's key as founder
-    founder_key = nodes[0]["validator_key"]["_private_key_hex"]
+    founder_key = nodes[0]["validator_material"]["validator_private_key_hex"]
     validators = [
         {
             "account_public_key": n["account_public_key"],
             "name": n["moniker"],
             "power": 10,
-            "priv_validator_key": n["validator_key"],
+            "priv_validator_key": n["validator_material"][
+                "priv_validator_key"
+            ],
         }
         for n in nodes
     ]
@@ -192,7 +161,7 @@ def main():
         founder_private_key=founder_key,
         validators=validators,
         network="local",
-        contracts_dir=CONFIGS_DIR / "legacy" / "genesis" / "contracts",
+        contracts_dir=CONFIGS_DIR / "contracts",
     )
     print(f"  Genesis has {len(genesis.get('validators', []))} validators")
 
@@ -202,8 +171,7 @@ def main():
         idx = node["index"]
         host_p2p = BASE_P2P_PORT + idx * PORT_STRIDE
         host_rpc = BASE_RPC_PORT + idx * PORT_STRIDE
-        host_dash = BASE_DASHBOARD_PORT + idx * PORT_STRIDE
-        print(f"  {node['moniker']}: RPC=:{host_rpc} P2P=:{host_p2p} Dashboard=:{host_dash} id={node['node_key']['node_id'][:12]}...")
+        print(f"  {node['moniker']}: RPC=:{host_rpc} P2P=:{host_p2p} id={node['node_key']['node_id'][:12]}...")
 
     # 4. Write docker-compose-localnet.yml
     write_compose_file(nodes)
@@ -218,14 +186,15 @@ def main():
                 "host_rpc_port": BASE_RPC_PORT + n["index"] * PORT_STRIDE,
                 "host_p2p_port": BASE_P2P_PORT + n["index"] * PORT_STRIDE,
                 "host_metrics_port": BASE_METRICS_PORT + n["index"] * PORT_STRIDE,
-                "host_dashboard_port": BASE_DASHBOARD_PORT + n["index"] * PORT_STRIDE,
             }
             for n in nodes
         ],
         "founder_key": founder_key,
     }
-    with open(LOCALNET_DIR / "network.json", "w") as f:
-        json.dump(summary, f, indent=2)
+    (LOCALNET_DIR / "network.json").write_text(
+        json.dumps(summary, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     print(f"\nLocalnet initialized in {LOCALNET_DIR}")
     print(f"Start with: make localnet-up")
@@ -240,15 +209,26 @@ def write_compose_file(nodes: list[dict]):
         host_p2p = BASE_P2P_PORT + idx * PORT_STRIDE
         host_rpc = BASE_RPC_PORT + idx * PORT_STRIDE
         host_metrics = BASE_METRICS_PORT + idx * PORT_STRIDE
-        host_dashboard = BASE_DASHBOARD_PORT + idx * PORT_STRIDE
 
         services[moniker] = {
+            "init": True,
+            "stop_grace_period": "45s",
             "build": {
                 "context": ".",
                 "dockerfile": "./docker/localnet.Dockerfile",
             },
             "hostname": moniker,
             "container_name": f"xian-{moniker}",
+            "mem_limit": "${XIAN_LOCALNET_NODE_MEMORY_LIMIT}",
+            "mem_reservation": "${XIAN_LOCALNET_NODE_MEMORY_RESERVATION}",
+            "memswap_limit": "${XIAN_LOCALNET_NODE_MEMORY_SWAP}",
+            "pids_limit": "${XIAN_LOCALNET_NODE_PIDS_LIMIT}",
+            "ulimits": {
+                "nofile": {
+                    "soft": "${XIAN_LOCALNET_NODE_NOFILE_SOFT}",
+                    "hard": "${XIAN_LOCALNET_NODE_NOFILE_HARD}",
+                }
+            },
             "volumes": [
                 "${XIAN_ABCI_DIR}:/usr/src/app/xian-abci",
                 "${XIAN_CONFIGS_DIR}:/usr/src/app/xian-configs",
@@ -264,7 +244,6 @@ def write_compose_file(nodes: list[dict]):
                 f"{host_p2p}:26656",
                 f"{host_rpc}:26657",
                 f"{host_metrics}:26660",
-                f"{host_dashboard}:8080",
             ],
             "networks": ["localnet"],
             "command": (
@@ -325,6 +304,14 @@ def _compose_to_yaml(compose: dict) -> str:
                 lines.append(f"    environment:")
                 for ek, ev in val.items():
                     lines.append(f"      {ek}: {_yaml_val(ev)}")
+            elif key == "ulimits":
+                lines.append("    ulimits:")
+                for limit_name, limit_cfg in val.items():
+                    lines.append(f"      {limit_name}:")
+                    for limit_key, limit_value in limit_cfg.items():
+                        lines.append(
+                            f"        {limit_key}: {_yaml_val(limit_value)}"
+                        )
             elif key == "command":
                 lines.append(f"    command: >")
                 lines.append(f"      {val}")

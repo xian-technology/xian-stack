@@ -7,7 +7,17 @@ networks:
 services:
   postgres:
     restart: always
+    init: true
+    stop_grace_period: 30s
     image: postgres:17
+    mem_limit: ${XIAN_DOCKER_POSTGRES_MEMORY_LIMIT}
+    mem_reservation: ${XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION}
+    memswap_limit: ${XIAN_DOCKER_POSTGRES_MEMORY_SWAP}
+    pids_limit: ${XIAN_DOCKER_POSTGRES_PIDS_LIMIT}
+    ulimits:
+      nofile:
+        soft: ${XIAN_DOCKER_POSTGRES_NOFILE_SOFT}
+        hard: ${XIAN_DOCKER_POSTGRES_NOFILE_HARD}
     environment:
       POSTGRES_USER: "postgres"
       POSTGRES_PASSWORD: "1234"
@@ -27,9 +37,19 @@ services:
 
   postgraphile:
     restart: always
+    init: true
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: ./docker/postgraphile.Dockerfile  
+    mem_limit: ${XIAN_DOCKER_POSTGRAPHILE_MEMORY_LIMIT}
+    mem_reservation: ${XIAN_DOCKER_POSTGRAPHILE_MEMORY_RESERVATION}
+    memswap_limit: ${XIAN_DOCKER_POSTGRAPHILE_MEMORY_SWAP}
+    pids_limit: ${XIAN_DOCKER_POSTGRAPHILE_PIDS_LIMIT}
+    ulimits:
+      nofile:
+        soft: ${XIAN_DOCKER_POSTGRAPHILE_NOFILE_SOFT}
+        hard: ${XIAN_DOCKER_POSTGRAPHILE_NOFILE_HARD}
     depends_on:
       postgres:
         condition: service_healthy

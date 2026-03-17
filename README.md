@@ -24,6 +24,7 @@ This repo does not own:
 The preferred development layout is the shared `~/xian` workspace with sibling
 checkouts of:
 
+- `../xian-cli`
 - `../xian-abci`
 - `../xian-configs`
 - `../xian-contracting`
@@ -44,11 +45,20 @@ Run the runtime smoke contract after Dockerfile, Compose, or lifecycle changes:
 
 ```bash
 make smoke
+make smoke-cli
 ```
 
 `make smoke` is the main safety net for this repo. It builds the base ABCI
 image, brings up the minimum stack, initializes CometBFT, configures a
 deterministic validator, verifies health, and shuts the stack down again.
+
+`make smoke-cli` is the cross-repo integration gate. It drives the real
+operator flow through `xian-cli`: `network join -> node init -> node start ->
+node status -> node stop`.
+
+`make validate` now also validates the canonical manifests in `xian-configs`
+through `xian-cli`, so the stack checks both Compose topology and the current
+cross-repo config contract.
 
 ## Preferred Operator Flow
 
@@ -80,7 +90,7 @@ debugging:
 make abci-build
 make abci-up
 make node-init
-make node-configure CONFIGURE_ARGS='--moniker "<node-name>" --copy-genesis --genesis-file-name "<genesis.json>" --validator-privkey "<validator-key>"'
+make node-configure CONFIGURE_ARGS='--moniker "<node-name>" --copy-genesis --genesis-source "<network-name-or-path>" --validator-privkey "<validator-key>"'
 make node-status
 make node-start
 make node-stop
@@ -108,11 +118,62 @@ The backend `node-status` target returns JSON and is part of the stable backend
 contract consumed by `xian-cli`. Keep that output machine-readable; the smoke
 test and CLI both depend on it.
 
+`xian-stack` now also exposes a machine-readable backend entrypoint at
+`scripts/backend.py`. This is the preferred contract for other tools such as
+`xian-cli`:
+
+```bash
+python3 ./scripts/backend.py validate
+python3 ./scripts/backend.py start --no-service-node
+python3 ./scripts/backend.py status --no-service-node
+python3 ./scripts/backend.py stop --no-service-node
+python3 ./scripts/backend.py smoke
+python3 ./scripts/backend.py smoke-cli
+python3 ./scripts/backend.py localnet-init --nodes 4 --clean
+python3 ./scripts/backend.py localnet-status
+python3 ./scripts/backend.py localnet-memwatch --duration-minutes 10
+python3 ./scripts/backend.py localnet-leak-hunt --duration-minutes 10
+```
+
+The Makefile remains the local backend implementation and debugging surface,
+but the script is the stable control plane boundary.
+
+## Runtime Limits
+
+Container runtime limits now live in the stack contract instead of inside
+`xian-contracting`. The default policy is:
+
+- enforce hard memory, swap, PID, and file-descriptor limits at the container
+  boundary
+- keep those defaults explicit and operator-overridable through environment
+  variables
+- keep consensus code free of host-specific RSS checks
+
+The main knobs are exported by `make print-env`, including:
+
+- `XIAN_DOCKER_ABCI_MEMORY_LIMIT`, `XIAN_DOCKER_ABCI_MEMORY_RESERVATION`,
+  `XIAN_DOCKER_ABCI_MEMORY_SWAP`
+- `XIAN_DOCKER_POSTGRES_*` and `XIAN_DOCKER_POSTGRAPHILE_*`
+- `XIAN_LOCALNET_NODE_*` for the multi-node localnet
+
+Example override:
+
+```bash
+XIAN_DOCKER_ABCI_MEMORY_LIMIT=3g \
+XIAN_DOCKER_ABCI_MEMORY_RESERVATION=2g \
+XIAN_DOCKER_ABCI_MEMORY_SWAP=3g \
+make smoke
+```
+
+For native non-Docker deployments, use host supervision rather than adding
+memory heuristics back into `xian-contracting`. See
+[`docs/RUNTIME_LIMITS.md`](./docs/RUNTIME_LIMITS.md).
+
 ## Runtime Notes
 
 - Runtime images consume mounted sibling repos from the shared workspace.
-- The stack mounts `xian-configs` into the ABCI container so legacy exported
-  genesis fixtures and contract manifests stay outside `xian-abci`.
+- The stack mounts `xian-configs` into the ABCI container so canonical network
+  bundles and canonical contract presets stay outside `xian-abci`.
 - `xian-stack` no longer manages nested repo checkouts or submodules for
   `xian-abci` and `xian-contracting`.
 - The stack images use official Node.js 24 LTS sources.
@@ -120,3 +181,6 @@ test and CLI both depend on it.
   explicit startup scripts instead of removed legacy retry flags.
 - In watch mode, PostGraphile also needs a superuser connection so it can
   install watch fixtures.
+- Localnet tooling is expected to run through `uv run --project ...` wrappers so
+  imports come from installed sibling packages rather than ad hoc `sys.path`
+  mutation.

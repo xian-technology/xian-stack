@@ -1,12 +1,12 @@
 FROM node:24-bullseye AS node-runtime
 
-FROM python:3.11.9-bullseye
+FROM python:3.14-bookworm
 
 RUN apt-get update && apt-get install -y \
     curl \
     git \
-    libhdf5-dev \
-    wget
+    wget \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-runtime /usr/local/include/node /usr/local/include/node

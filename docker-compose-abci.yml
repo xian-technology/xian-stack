@@ -7,10 +7,20 @@ networks:
 services:
   abci:
     restart: always
+    init: true
+    stop_grace_period: 45s
     hostname: xian-stack
     build:
       context: .
       dockerfile: ./docker/abci.Dockerfile
+    mem_limit: ${XIAN_DOCKER_ABCI_MEMORY_LIMIT}
+    mem_reservation: ${XIAN_DOCKER_ABCI_MEMORY_RESERVATION}
+    memswap_limit: ${XIAN_DOCKER_ABCI_MEMORY_SWAP}
+    pids_limit: ${XIAN_DOCKER_ABCI_PIDS_LIMIT}
+    ulimits:
+      nofile:
+        soft: ${XIAN_DOCKER_ABCI_NOFILE_SOFT}
+        hard: ${XIAN_DOCKER_ABCI_NOFILE_HARD}
     volumes:
       - ${XIAN_ABCI_DIR}:/usr/src/app/xian-abci
       - ${XIAN_CONFIGS_DIR}:/usr/src/app/xian-configs

@@ -13,7 +13,7 @@ require_stack_paths
 require_docker
 
 smoke_moniker="${XIAN_SMOKE_MONIKER:-smoke-validator}"
-smoke_genesis_file="${XIAN_SMOKE_GENESIS_FILE:-genesis-devnet.json}"
+smoke_genesis_source="${XIAN_SMOKE_GENESIS_SOURCE:-devnet}"
 smoke_validator_privkey="${XIAN_SMOKE_VALIDATOR_PRIVKEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
 smoke_skip_build="${XIAN_SMOKE_SKIP_BUILD:-0}"
 smoke_timeout_seconds="${XIAN_SMOKE_TIMEOUT_SECONDS:-90}"
@@ -41,7 +41,7 @@ wait_for_abci_runtime() {
 
   while (( SECONDS < deadline )); do
     if docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -lc \
-      "python -c 'import requests, xian'" >/dev/null 2>&1; then
+      "python -c 'import contracting, xian'" >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
@@ -72,7 +72,7 @@ make abci-up
 wait_for_abci_runtime
 make node-init
 make node-id >/dev/null
-make node-configure CONFIGURE_ARGS="--moniker ${smoke_moniker} --genesis-file-name ${smoke_genesis_file} --validator-privkey ${smoke_validator_privkey} --copy-genesis"
+make node-configure CONFIGURE_ARGS="--moniker ${smoke_moniker} --genesis-source ${smoke_genesis_source} --validator-privkey ${smoke_validator_privkey} --copy-genesis"
 
 docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -lc \
   "test -f /root/.cometbft/config/config.toml \
