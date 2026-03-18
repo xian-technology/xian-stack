@@ -66,20 +66,29 @@ def wait_for_abci_runtime(
     *,
     timeout_seconds: float,
     poll_interval: float = 2.0,
+    service_node: bool = False,
 ) -> None:
     deadline = time.monotonic() + timeout_seconds
     cmd = [
         "docker",
         "compose",
+        "--profile",
+        "integrated",
         "-f",
         "docker-compose-abci.yml",
-        "exec",
-        "-T",
-        "abci",
-        "/bin/bash",
-        "-lc",
-        "python -c 'import contracting, xian'",
     ]
+    if service_node:
+        cmd.extend(["-f", "docker-compose-abci-bds.yml"])
+    cmd.extend(
+        [
+            "exec",
+            "-T",
+            "abci",
+            "/bin/bash",
+            "-lc",
+            "python -c 'import contracting, xian'",
+        ]
+    )
     last_error: subprocess.CalledProcessError | None = None
 
     while time.monotonic() < deadline:
@@ -199,7 +208,11 @@ def wait_for_localnet_ready(*, timeout_seconds: float) -> list[dict]:
             localnet_node_status(node, timeout=1.0)
             for node in metadata["nodes"]
         ]
-        if statuses and all(node["up"] for node in statuses):
+        if statuses and all(
+            node["up"]
+            and node["height"] not in {None, "0", 0}
+            for node in statuses
+        ):
             return statuses
         time.sleep(1.0)
 
@@ -216,9 +229,11 @@ def backend_start(
     container_target = "abci-bds-up" if service_node else "abci-up"
     node_target = "node-start-bds" if service_node else "node-start"
 
-    run_make_target(container_target)
-    wait_for_abci_runtime(timeout_seconds=rpc_timeout_seconds)
     run_make_target(node_target)
+    wait_for_abci_runtime(
+        timeout_seconds=rpc_timeout_seconds,
+        service_node=service_node,
+    )
 
     result = {
         "stack_dir": str(STACK_DIR),
@@ -238,7 +253,6 @@ def backend_start(
 def backend_stop(*, service_node: bool) -> dict:
     container_target = "abci-bds-down" if service_node else "abci-down"
     run_make_target("node-stop")
-    run_make_target(container_target)
     return {
         "stack_dir": str(STACK_DIR),
         "service_node": service_node,
@@ -267,8 +281,8 @@ def backend_make_result(target: str) -> dict:
     return payload
 
 
-def backend_localnet_init(*, nodes: int, clean: bool) -> dict:
-    args = ["--nodes", str(nodes)]
+def backend_localnet_init(*, nodes: int, clean: bool, topology: str) -> dict:
+    args = ["--nodes", str(nodes), "--topology", topology]
     if clean:
         args.append("--clean")
     result = run_python_script(
@@ -282,6 +296,7 @@ def backend_localnet_init(*, nodes: int, clean: bool) -> dict:
         "stack_dir": str(STACK_DIR),
         "node_count": nodes,
         "clean": clean,
+        "topology": topology,
         "network": metadata,
         "stdout": result.stdout,
     }
@@ -397,6 +412,11 @@ def build_parser() -> argparse.ArgumentParser:
     localnet_init = subparsers.add_parser("localnet-init")
     localnet_init.add_argument("--nodes", type=int, default=4)
     localnet_init.add_argument(
+        "--topology",
+        choices=("integrated", "fidelity"),
+        default="integrated",
+    )
+    localnet_init.add_argument(
         "--clean",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -465,7 +485,11 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "smoke-cli":
         payload = backend_make_result("smoke-cli")
     elif args.command == "localnet-init":
-        payload = backend_localnet_init(nodes=args.nodes, clean=args.clean)
+        payload = backend_localnet_init(
+            nodes=args.nodes,
+            clean=args.clean,
+            topology=args.topology,
+        )
     elif args.command == "localnet-build":
         payload = backend_make_result("localnet-build")
     elif args.command == "localnet-up":

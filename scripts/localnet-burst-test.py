@@ -173,7 +173,7 @@ def main():
             else:
                 print(f"  height {h}: SKIP (no data)")
 
-        print(f"\n{'ALL HEIGHTS MATCH' if all_passed else 'CONSENSUS FAILURE DETECTED'}!")
+    print(f"\n{'ALL HEIGHTS MATCH' if all_passed else 'CONSENSUS FAILURE DETECTED'}!")
 
     # Post-burst memory
     print("\nPost-burst memory:")
@@ -181,9 +181,27 @@ def main():
         ["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.MemUsage}}"],
         capture_output=True, text=True,
     )
-    for line in sorted(result.stdout.strip().split("\n")):
-        if "xian-node" in line:
-            print(f"  {line}")
+    container_mem = {}
+    for line in result.stdout.strip().split("\n"):
+        if not line or "xian-node" not in line:
+            continue
+        name, usage = line.split("\t", 1)
+        container_mem[name] = usage.split("/")[0].strip()
+
+    for node in nodes:
+        labels = []
+        abci_container = node.get("abci_container")
+        cometbft_container = node.get("cometbft_container")
+        if abci_container == cometbft_container:
+            if cometbft_container in container_mem:
+                labels.append(container_mem[cometbft_container])
+        else:
+            if abci_container in container_mem:
+                labels.append(f"abci={container_mem[abci_container]}")
+            if cometbft_container in container_mem:
+                labels.append(f"cometbft={container_mem[cometbft_container]}")
+        if labels:
+            print(f"  {node['moniker']}: {'  '.join(labels)}")
 
 
 if __name__ == "__main__":

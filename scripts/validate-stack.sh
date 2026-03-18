@@ -11,9 +11,10 @@ require_uv
 
 cd "${stack_root}"
 
-docker compose -f docker-compose-abci.yml config -q
-docker compose -f docker-compose-abci.yml -f docker-compose-abci-bds.yml config -q
-docker compose -f docker-compose-abci.yml -f docker-compose-abci-dev.yml -f docker-compose-abci-bds.yml config -q
+docker compose --profile integrated -f docker-compose-abci.yml config -q
+docker compose --profile fidelity -f docker-compose-abci.yml config -q
+docker compose --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml config -q
+docker compose -f docker-compose-abci-dev.yml -f docker-compose-abci-bds.yml config -q
 docker compose -f docker-compose-contracting.yml config -q
 uv run --project "${XIAN_CLI_DIR}" python3 "${XIAN_CONFIGS_DIR}/scripts/validate-manifests.py"
 

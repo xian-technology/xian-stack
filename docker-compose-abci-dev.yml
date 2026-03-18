@@ -1,16 +1,31 @@
-networks:
-  xian-net:
-    internal: false  # Allow internet access for package installation
-  xian-db:
-    internal: true   # Keep database isolated
-
 services:
   abci:
     hostname: xian-stack-dev
     build:
-      dockerfile: ./docker/abci-dev.Dockerfile
+      context: .
+      dockerfile: ./docker/xian-node.Dockerfile
+      target: dev
+      additional_contexts:
+        xian-abci: ${XIAN_ABCI_DIR}
+        xian-configs: ${XIAN_CONFIGS_DIR}
+        xian-contracting: ${XIAN_CONTRACTING_DIR}
+        xian-py: ${XIAN_PY_DIR}
+      args:
+        COMETBFT_VERSION: ${XIAN_COMETBFT_VERSION}
+        S6_OVERLAY_VERSION: ${XIAN_S6_OVERLAY_VERSION}
+    init: true
+    stdin_open: true
+    tty: true
+    working_dir: /workspace/xian-abci
+    volumes:
+      - ${XIAN_ABCI_DIR}:/workspace/xian-abci
+      - ${XIAN_CONFIGS_DIR}:/workspace/xian-configs
+      - ${XIAN_CONTRACTING_DIR}:/workspace/xian-contracting
+      - ${XIAN_PY_DIR}:/workspace/xian-py
+      - ${XIAN_COMETBFT_HOME}:/root/.cometbft
+    environment:
+      XIAN_CONFIGS_DIR: /workspace/xian-configs
     networks:
       - xian-net
       - xian-db
-    command: >
-      bash -lc "pip install -e ./xian-py && pip install -e ./xian-contracting && pip install -e ./xian-abci && tail -f /dev/null"
+    command: ["/bin/bash"]

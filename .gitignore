@@ -3,6 +3,7 @@ __pycache__
 .DS_Store
 .cometbft*
 .smoke/
+.smoke-cli/
 .bds.db
 .localnet/
 .venv-localnet/

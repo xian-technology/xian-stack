@@ -24,51 +24,65 @@ def load_network():
         return json.load(f)
 
 
-def get_process_memory(container: str) -> dict[str, float]:
-    """Get RSS in MiB for xian (Python) and cometbft (Go) inside a container."""
+def _process_rss(container: str, lookup: str) -> float:
     cmd = f"""
-XIAN_PID=$(pm2 pid xian 2>/dev/null)
-COMET_PID=$(pm2 pid cometbft 2>/dev/null)
-if [ -n "$XIAN_PID" ] && [ -f /proc/$XIAN_PID/status ]; then
-    XIAN_RSS=$(awk '/VmRSS/{{print $2}}' /proc/$XIAN_PID/status)
-else
-    XIAN_RSS=0
-fi
-if [ -n "$COMET_PID" ] && [ -f /proc/$COMET_PID/status ]; then
-    COMET_RSS=$(awk '/VmRSS/{{print $2}}' /proc/$COMET_PID/status)
-else
-    COMET_RSS=0
-fi
-echo "$XIAN_RSS $COMET_RSS"
+python3 - <<'PY'
+import subprocess
+
+lookup = {lookup!r}
+ps_output = subprocess.check_output(["ps", "-eo", "pid=,comm=,args="], text=True)
+fallback = None
+preferred = None
+
+for raw_line in ps_output.splitlines():
+    line = raw_line.strip()
+    if not line:
+        continue
+    pid_text, command, args = line.split(None, 2)
+    if lookup not in args:
+        continue
+    pid = int(pid_text)
+    if fallback is None:
+        fallback = pid
+    if command != "docker-init":
+        preferred = pid
+        break
+
+pid = preferred or fallback
+if pid is None:
+    print(0)
+    raise SystemExit(0)
+
+try:
+    with open(f"/proc/{{pid}}/status", "r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            if raw_line.startswith("VmRSS:"):
+                print(raw_line.split()[1])
+                break
+        else:
+            print(0)
+except OSError:
+    print(0)
+PY
 """
     result = subprocess.run(
         ["docker", "exec", container, "bash", "-c", cmd],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
-    parts = result.stdout.strip().split()
-    if len(parts) == 2:
-        return {
-            "python": int(parts[0]) / 1024,  # KB -> MiB
-            "cometbft": int(parts[1]) / 1024,
-        }
-    return {"python": 0, "cometbft": 0}
+    try:
+        return int(result.stdout.strip() or "0") / 1024
+    except ValueError:
+        return 0.0
 
 
-def get_python_internals(container: str) -> dict:
-    """Get Python-level memory diagnostics via a one-liner inside the container."""
-    # Use pm2 to send a signal or just read /proc maps for heap size
-    cmd = """
-XIAN_PID=$(pm2 pid xian 2>/dev/null)
-if [ -n "$XIAN_PID" ] && [ -f /proc/$XIAN_PID/smaps_rollup ]; then
-    awk '/Rss/ {print $1, $2}' /proc/$XIAN_PID/smaps_rollup 2>/dev/null | head -1
-fi
-"""
-    result = subprocess.run(
-        ["docker", "exec", container, "bash", "-c", cmd],
-        capture_output=True, text=True,
-    )
-    return result.stdout.strip()
-
+def get_process_memory(node: dict) -> dict[str, float]:
+    """Get RSS in MiB for xian (Python) and cometbft (Go)."""
+    abci_container = node["abci_container"]
+    cometbft_container = node["cometbft_container"]
+    python_rss = _process_rss(abci_container, "xian-abci")
+    cometbft_rss = _process_rss(cometbft_container, "cometbft node")
+    return {"python": python_rss, "cometbft": cometbft_rss}
 
 def main():
     duration_minutes = int(sys.argv[1]) if len(sys.argv) > 1 else 10
@@ -83,17 +97,14 @@ def main():
     wallet = Wallet(private_key=founder_key)
     xian = Xian(node_url=rpc_url, chain_id=chain_id, wallet=wallet)
 
-    # Track all 4 nodes
-    containers = [f"xian-node-{i}" for i in range(len(nodes))]
-
     duration = duration_minutes * 60
     print(f"Leak hunt: {duration_minutes} min, sampling every {sample_interval}s")
     print(f"Tracking per-process RSS (Python ABCI vs CometBFT Go)\n")
 
     # Header
     hdr = f"{'Time':>5} {'TXs':>6}"
-    for c in containers:
-        short = c.replace("xian-", "")
+    for node in nodes:
+        short = node["moniker"]
         hdr += f"  {short+'-py':>10} {short+'-cb':>10}"
     print(hdr)
     print("-" * len(hdr))
@@ -110,14 +121,15 @@ def main():
 
         if elapsed - last_sample >= sample_interval:
             sample = {}
-            for c in containers:
-                sample[c] = get_process_memory(c)
+            for node in nodes:
+                sample[node["moniker"]] = get_process_memory(node)
             all_samples.append({"time": elapsed, "tx": tx_count, "mem": sample})
             last_sample = elapsed
 
             line = f"{elapsed:4.0f}s {tx_count:6d}"
-            for c in containers:
-                line += f"  {sample[c]['python']:8.1f}MB {sample[c]['cometbft']:8.1f}MB"
+            for node in nodes:
+                moniker = node["moniker"]
+                line += f"  {sample[moniker]['python']:8.1f}MB {sample[moniker]['cometbft']:8.1f}MB"
             print(line, flush=True)
 
         # Send transactions
@@ -136,23 +148,24 @@ def main():
 
     # Final sample
     sample = {}
-    for c in containers:
-        sample[c] = get_process_memory(c)
+    for node in nodes:
+        sample[node["moniker"]] = get_process_memory(node)
     elapsed = time.time() - start
     all_samples.append({"time": elapsed, "tx": tx_count, "mem": sample})
     line = f"{elapsed:4.0f}s {tx_count:6d}"
-    for c in containers:
-        line += f"  {sample[c]['python']:8.1f}MB {sample[c]['cometbft']:8.1f}MB"
+    for node in nodes:
+        moniker = node["moniker"]
+        line += f"  {sample[moniker]['python']:8.1f}MB {sample[moniker]['cometbft']:8.1f}MB"
     print(line, flush=True)
 
     print(f"\nTotal: {tx_count} txs in {elapsed:.0f}s, {errors} errors\n")
 
     # Analyze per-process trends
     print("=== PER-PROCESS MEMORY TREND ===\n")
-    for c in containers:
-        short = c.replace("xian-", "")
+    for node in nodes:
+        short = node["moniker"]
         for proc in ["python", "cometbft"]:
-            values = [s["mem"][c][proc] for s in all_samples]
+            values = [s["mem"][short][proc] for s in all_samples]
             if len(values) < 3:
                 continue
             first, last, peak = values[0], values[-1], max(values)

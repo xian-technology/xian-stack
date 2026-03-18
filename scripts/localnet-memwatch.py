@@ -27,15 +27,15 @@ def load_network():
         return json.load(f)
 
 
-def sample_memory() -> dict[str, float]:
-    """Return memory in MiB per container."""
+def sample_memory(network: dict) -> dict[str, float]:
+    """Return memory in MiB per logical node."""
     result = subprocess.run(
         ["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.MemUsage}}"],
         capture_output=True, text=True,
     )
-    mem = {}
+    container_mem = {}
     for line in result.stdout.strip().split("\n"):
-        if "xian-node" not in line:
+        if not line or "xian-node" not in line:
             continue
         parts = line.split("\t")
         name = parts[0]
@@ -49,8 +49,15 @@ def sample_memory() -> dict[str, float]:
                 val *= 1024
             elif unit == "KiB":
                 val /= 1024
-            mem[name] = val
-    return mem
+            container_mem[name] = val
+
+    node_mem = {}
+    for node in network["nodes"]:
+        containers = {node["cometbft_container"], node["abci_container"]}
+        node_mem[node["moniker"]] = sum(
+            container_mem.get(container, 0.0) for container in containers
+        )
+    return node_mem
 
 
 def main():
@@ -72,8 +79,8 @@ def main():
 
     # Column headers
     header = f"{'Time':>6}  {'TXs':>6}  {'tx/s':>6}"
-    for n in sorted(sample_memory().keys()):
-        header += f"  {n.replace('xian-', ''):>10}"
+    for n in sorted(sample_memory(network).keys()):
+        header += f"  {n:>10}"
     print(header)
     print("-" * len(header))
 
@@ -88,7 +95,7 @@ def main():
 
         # Sample memory every interval
         if elapsed - last_sample >= sample_interval or last_sample == 0:
-            mem = sample_memory()
+            mem = sample_memory(network)
             samples.append(mem)
             last_sample = elapsed
             rate = tx_count / elapsed if elapsed > 0 else 0
@@ -112,7 +119,7 @@ def main():
             time.sleep(0.1)
 
     # Final sample
-    mem = sample_memory()
+    mem = sample_memory(network)
     samples.append(mem)
     elapsed = time.time() - start
     rate = tx_count / elapsed if elapsed > 0 else 0

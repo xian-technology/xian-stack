@@ -40,7 +40,7 @@ wait_for_abci_runtime() {
   local deadline=$((SECONDS + smoke_timeout_seconds))
 
   while (( SECONDS < deadline )); do
-    if docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -lc \
+    if docker compose --profile integrated -f docker-compose-abci.yml exec -T abci /bin/bash -lc \
       "python -c 'import contracting, xian'" >/dev/null 2>&1; then
       return 0
     fi
@@ -48,7 +48,7 @@ wait_for_abci_runtime() {
   done
 
   printf 'timed out waiting for abci container bootstrap\n' >&2
-  docker compose -f docker-compose-abci.yml logs --tail=100 abci >&2 || true
+  docker compose --profile integrated -f docker-compose-abci.yml logs --tail=100 abci >&2 || true
   return 1
 }
 
@@ -68,25 +68,16 @@ cd "${stack_root}"
 if [[ "${smoke_skip_build}" != "1" ]]; then
   make abci-build
 fi
-make abci-up
-wait_for_abci_runtime
 make node-init
 make node-id >/dev/null
 make node-configure CONFIGURE_ARGS="--moniker ${smoke_moniker} --genesis-source ${smoke_genesis_source} --validator-privkey ${smoke_validator_privkey} --copy-genesis"
 
-docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -lc \
-  "test -f /root/.cometbft/config/config.toml \
-  && test -f /root/.cometbft/config/genesis.json \
-  && test -f /root/.cometbft/config/priv_validator_key.json \
-  && grep -q 'moniker = \"${smoke_moniker}\"' /root/.cometbft/config/config.toml"
-
 make node-start
+wait_for_abci_runtime
+
 make --no-print-directory node-status >/tmp/xian-stack-node-status.json
 wait_for_endpoint "${smoke_status_url}" "CometBFT RPC status"
 wait_for_endpoint "${smoke_abci_info_url}" "ABCI info"
-
-docker compose -f docker-compose-abci.yml exec -T abci /bin/bash -lc \
-  "pm2 jlist | grep -q '\"name\":\"xian\"' && pm2 jlist | grep -q '\"name\":\"cometbft\"'"
 
 python3 - <<'PY'
 import json
@@ -94,7 +85,7 @@ import json
 with open("/tmp/xian-stack-node-status.json", "r", encoding="utf-8") as handle:
     payload = json.load(handle)
 
-assert payload["abci_container_running"] is True
+assert payload["runtime_services_running"] is True
 assert payload["required_processes_online"] is True
 assert payload["backend_running"] is True
 assert payload["node_id"]
@@ -103,7 +94,7 @@ PY
 make node-stop
 make abci-down
 
-if [[ -n "$(docker compose -f docker-compose-abci.yml ps -q)" ]]; then
+if [[ -n "$(docker compose --profile integrated -f docker-compose-abci.yml ps -q)" ]]; then
   printf 'abci stack is still running after shutdown\n' >&2
   exit 1
 fi

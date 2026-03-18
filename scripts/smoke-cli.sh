@@ -92,7 +92,7 @@ uv run --project "${xian_cli_dir}" xian node stop "${node_name}" \
   --base-dir "${cli_workspace}" \
   --stack-dir "${stack_root}" >/tmp/xian-stack-smoke-cli-stop.json
 
-if [[ -n "$(docker compose -f docker-compose-abci.yml ps -q)" ]]; then
+if [[ -n "$(docker compose --profile integrated -f docker-compose-abci.yml ps -q)" ]]; then
   printf 'abci stack is still running after CLI shutdown\n' >&2
   exit 1
 fi

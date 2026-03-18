@@ -1,18 +1,34 @@
+x-node-build: &x-node-build
+  context: .
+  dockerfile: ./docker/xian-node.Dockerfile
+  additional_contexts:
+    xian-abci: ${XIAN_ABCI_DIR}
+    xian-configs: ${XIAN_CONFIGS_DIR}
+    xian-contracting: ${XIAN_CONTRACTING_DIR}
+    xian-py: ${XIAN_PY_DIR}
+  args:
+    COMETBFT_VERSION: ${XIAN_COMETBFT_VERSION}
+    S6_OVERLAY_VERSION: ${XIAN_S6_OVERLAY_VERSION}
+
 networks:
   xian-net:
-    internal: false  # Allow internet access for package installation
+    internal: false
   xian-db:
-    internal: true   # Keep database isolated
+    internal: true
+
+volumes:
+  xian-abci-runtime-tmp:
 
 services:
   abci:
+    profiles: ["integrated"]
+    image: xian-node-integrated:local
     restart: always
-    init: true
     stop_grace_period: 45s
     hostname: xian-stack
     build:
-      context: .
-      dockerfile: ./docker/abci.Dockerfile
+      <<: *x-node-build
+      target: integrated
     mem_limit: ${XIAN_DOCKER_ABCI_MEMORY_LIMIT}
     mem_reservation: ${XIAN_DOCKER_ABCI_MEMORY_RESERVATION}
     memswap_limit: ${XIAN_DOCKER_ABCI_MEMORY_SWAP}
@@ -22,13 +38,11 @@ services:
         soft: ${XIAN_DOCKER_ABCI_NOFILE_SOFT}
         hard: ${XIAN_DOCKER_ABCI_NOFILE_HARD}
     volumes:
-      - ${XIAN_ABCI_DIR}:/usr/src/app/xian-abci
-      - ${XIAN_CONFIGS_DIR}:/usr/src/app/xian-configs
-      - ${XIAN_CONTRACTING_DIR}:/usr/src/app/xian-contracting
-      - ${XIAN_PY_DIR}:/usr/src/app/xian-py
       - ${XIAN_COMETBFT_HOME}:/root/.cometbft
     environment:
-      XIAN_CONFIGS_DIR: /usr/src/app/xian-configs
+      XIAN_CONFIGS_DIR: /opt/xian-configs
+      XIAN_SERVICE_NODE: ${XIAN_SERVICE_NODE:-0}
+      S6_VERBOSITY: ${XIAN_S6_VERBOSITY}
     stdin_open: true
     tty: true
     networks:
@@ -38,5 +52,65 @@ services:
       - "26657:26657"
       - "26656:26656"
       - "26660:26660"
-    command: >
-      bash -lc "pip install -e ./xian-py && pip install -e ./xian-contracting && pip install -e ./xian-abci && tail -f /dev/null"
+
+  abci-app:
+    profiles: ["fidelity"]
+    image: xian-node-split:local
+    restart: always
+    init: true
+    stop_grace_period: 45s
+    hostname: xian-stack-abci
+    build:
+      <<: *x-node-build
+      target: split
+    mem_limit: ${XIAN_DOCKER_FIDELITY_ABCI_MEMORY_LIMIT}
+    mem_reservation: ${XIAN_DOCKER_FIDELITY_ABCI_MEMORY_RESERVATION}
+    memswap_limit: ${XIAN_DOCKER_FIDELITY_ABCI_MEMORY_SWAP}
+    pids_limit: ${XIAN_DOCKER_FIDELITY_ABCI_PIDS_LIMIT}
+    ulimits:
+      nofile:
+        soft: ${XIAN_DOCKER_FIDELITY_ABCI_NOFILE_SOFT}
+        hard: ${XIAN_DOCKER_FIDELITY_ABCI_NOFILE_HARD}
+    volumes:
+      - ${XIAN_COMETBFT_HOME}:/root/.cometbft
+      - xian-abci-runtime-tmp:/tmp
+    environment:
+      XIAN_CONFIGS_DIR: /opt/xian-configs
+      XIAN_SERVICE_NODE: ${XIAN_SERVICE_NODE:-0}
+    stdin_open: true
+    tty: true
+    command: ["xian-abci"]
+    networks:
+      - xian-net
+      - xian-db
+
+  cometbft:
+    profiles: ["fidelity"]
+    image: xian-node-split:local
+    restart: always
+    init: true
+    stop_grace_period: 45s
+    hostname: xian-stack-cometbft
+    build:
+      <<: *x-node-build
+      target: split
+    mem_limit: ${XIAN_DOCKER_FIDELITY_COMETBFT_MEMORY_LIMIT}
+    mem_reservation: ${XIAN_DOCKER_FIDELITY_COMETBFT_MEMORY_RESERVATION}
+    memswap_limit: ${XIAN_DOCKER_FIDELITY_COMETBFT_MEMORY_SWAP}
+    pids_limit: ${XIAN_DOCKER_FIDELITY_COMETBFT_PIDS_LIMIT}
+    ulimits:
+      nofile:
+        soft: ${XIAN_DOCKER_FIDELITY_COMETBFT_NOFILE_SOFT}
+        hard: ${XIAN_DOCKER_FIDELITY_COMETBFT_NOFILE_HARD}
+    volumes:
+      - ${XIAN_COMETBFT_HOME}:/root/.cometbft
+      - xian-abci-runtime-tmp:/tmp
+    stdin_open: true
+    tty: true
+    command: ["cometbft", "node", "--rpc.laddr", "tcp://0.0.0.0:26657"]
+    networks:
+      - xian-net
+    ports:
+      - "26657:26657"
+      - "26656:26656"
+      - "26660:26660"

@@ -30,8 +30,9 @@ checkouts of:
 - `../xian-contracting`
 - `../xian-py`
 
-This sibling-workspace model is the only supported authoring mode. Use
-`make print-env` to inspect the resolved paths.
+This sibling-workspace model is the supported authoring mode for image builds,
+dev shells, and cross-repo smoke coverage. Use `make print-env` to inspect the
+resolved paths.
 
 ## Validation
 
@@ -94,6 +95,9 @@ make node-configure CONFIGURE_ARGS='--moniker "<node-name>" --copy-genesis --gen
 make node-status
 make node-start
 make node-stop
+make abci-fidelity-build
+make abci-fidelity-up
+make node-status-fidelity
 ```
 
 For BDS-enabled paths:
@@ -129,7 +133,8 @@ python3 ./scripts/backend.py status --no-service-node
 python3 ./scripts/backend.py stop --no-service-node
 python3 ./scripts/backend.py smoke
 python3 ./scripts/backend.py smoke-cli
-python3 ./scripts/backend.py localnet-init --nodes 4 --clean
+python3 ./scripts/backend.py localnet-init --nodes 4 --topology integrated --clean
+python3 ./scripts/backend.py localnet-up --wait-for-health --rpc-timeout-seconds 120
 python3 ./scripts/backend.py localnet-status
 python3 ./scripts/backend.py localnet-memwatch --duration-minutes 10
 python3 ./scripts/backend.py localnet-leak-hunt --duration-minutes 10
@@ -137,6 +142,10 @@ python3 ./scripts/backend.py localnet-leak-hunt --duration-minutes 10
 
 The Makefile remains the local backend implementation and debugging surface,
 but the script is the stable control plane boundary.
+
+`make localnet-up` is intentionally fire-and-forget. Use the backend script
+with `--wait-for-health` when you need a readiness-aware bring-up in CI or
+diagnostic flows.
 
 ## Runtime Limits
 
@@ -153,8 +162,11 @@ The main knobs are exported by `make print-env`, including:
 
 - `XIAN_DOCKER_ABCI_MEMORY_LIMIT`, `XIAN_DOCKER_ABCI_MEMORY_RESERVATION`,
   `XIAN_DOCKER_ABCI_MEMORY_SWAP`
+- `XIAN_DOCKER_FIDELITY_ABCI_*` and `XIAN_DOCKER_FIDELITY_COMETBFT_*` for the
+  split runtime profile
 - `XIAN_DOCKER_POSTGRES_*` and `XIAN_DOCKER_POSTGRAPHILE_*`
-- `XIAN_LOCALNET_NODE_*` for the multi-node localnet
+- `XIAN_LOCALNET_NODE_*` for the integrated multi-node localnet
+- `XIAN_LOCALNET_ABCI_*` and `XIAN_LOCALNET_COMETBFT_*` for the split localnet
 
 Example override:
 
@@ -171,12 +183,20 @@ memory heuristics back into `xian-contracting`. See
 
 ## Runtime Notes
 
-- Runtime images consume mounted sibling repos from the shared workspace.
-- The stack mounts `xian-configs` into the ABCI container so canonical network
-  bundles and canonical contract presets stay outside `xian-abci`.
+- Runtime node images are immutable. Python packages are installed at build
+  time from sibling repos through Docker build contexts; the production/test
+  path no longer does startup editable installs or live source mounts.
+- `docker-compose-abci-dev.yml` is the only source-mounted development path.
+- The default runtime topology is `integrated`: one container, `s6-overlay`,
+  and both `xian-abci` and `CometBFT` supervised inside the same node image.
+- The optional `fidelity` topology splits `xian-abci` and `CometBFT` into
+  separate containers with one process each and `init: true`.
+- `xian-configs` is copied into the image at `/opt/xian-configs` so canonical
+  network bundles and contract presets stay outside `xian-abci`.
 - `xian-stack` no longer manages nested repo checkouts or submodules for
   `xian-abci` and `xian-contracting`.
-- The stack images use official Node.js 24 LTS sources.
+- The node runtime no longer depends on Node.js or PM2. The only Node-based
+  service left in this repo is PostGraphile.
 - The PostGraphile service runs on the v5 RC line with local `@rc` packages and
   explicit startup scripts instead of removed legacy retry flags.
 - In watch mode, PostGraphile also needs a superuser connection so it can
@@ -184,3 +204,5 @@ memory heuristics back into `xian-contracting`. See
 - Localnet tooling is expected to run through `uv run --project ...` wrappers so
   imports come from installed sibling packages rather than ad hoc `sys.path`
   mutation.
+- Localnet supports both `integrated` and `fidelity` topologies through
+  `XIAN_LOCALNET_TOPOLOGY`.

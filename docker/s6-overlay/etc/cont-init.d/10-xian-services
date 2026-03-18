@@ -1,0 +1,18 @@
+#!/command/with-contenv sh
+set -eu
+
+services_dir="/etc/services.d"
+available_dir="/etc/xian-services.d"
+
+mkdir -p "${services_dir}" /root/.cometbft /root/.cometbft/xian
+rm -rf "${services_dir:?}/"*
+ln -s "${available_dir}/xian" "${services_dir}/xian"
+ln -s "${available_dir}/cometbft" "${services_dir}/cometbft"
+
+case "${XIAN_SERVICE_NODE:-0}" in
+  1|true|TRUE|yes|YES)
+    ln -s "${available_dir}/simulator" "${services_dir}/simulator"
+    ;;
+esac
+
+rm -f /tmp/abci.sock /tmp/simulator_socket.sock
