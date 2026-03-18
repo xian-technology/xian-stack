@@ -29,7 +29,7 @@ export_stack_env() {
   export XIAN_COMETBFT_HOME="${XIAN_COMETBFT_HOME:-${stack_root}/.cometbft}"
   export XIAN_BDS_DATA_DIR="${XIAN_BDS_DATA_DIR:-${stack_root}/.bds.db}"
   export XIAN_CONTRACTS_DIR="${XIAN_CONTRACTS_DIR:-${stack_root}/contracts}"
-  export XIAN_COMETBFT_VERSION="${XIAN_COMETBFT_VERSION:-0.38.12}"
+  export XIAN_COMETBFT_VERSION="${XIAN_COMETBFT_VERSION:-0.38.21}"
   export XIAN_S6_OVERLAY_VERSION="${XIAN_S6_OVERLAY_VERSION:-3.2.1.0}"
   export XIAN_S6_VERBOSITY="${XIAN_S6_VERBOSITY:-1}"
   export XIAN_STACK_TOPOLOGY="${XIAN_STACK_TOPOLOGY:-integrated}"

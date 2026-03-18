@@ -1,9 +1,24 @@
 # syntax=docker/dockerfile:1.7
 
 ARG PYTHON_IMAGE=python:3.14-bookworm
+
+FROM golang:1.22-bookworm AS cometbft-builder
+
+ARG COMETBFT_VERSION=0.38.21
+ARG TARGETOS=linux
+ARG TARGETARCH
+
+ENV CGO_ENABLED=0
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" GOBIN=/out \
+    go install -trimpath -buildvcs=false \
+    "github.com/cometbft/cometbft/cmd/cometbft@v${COMETBFT_VERSION}"
+
 FROM ${PYTHON_IMAGE} AS node-base
 
-ARG COMETBFT_VERSION=0.38.12
+ARG COMETBFT_VERSION=0.38.21
 ARG TARGETARCH
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -27,22 +42,13 @@ COPY --from=xian-py . /tmp/build/xian-py
 COPY --from=xian-contracting . /tmp/build/xian-contracting
 COPY --from=xian-abci . /tmp/build/xian-abci
 COPY --from=xian-configs . /opt/xian-configs
+COPY --from=cometbft-builder /out/cometbft /usr/local/bin/cometbft
 
 RUN python -m pip install \
     /tmp/build/xian-py \
     /tmp/build/xian-contracting \
     /tmp/build/xian-abci \
     && rm -rf /tmp/build
-
-RUN case "${TARGETARCH}" in \
-        amd64) COMETBFT_ARCH="amd64" ;; \
-        arm64) COMETBFT_ARCH="arm64" ;; \
-        *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac \
-    && wget -O /tmp/cometbft.tar.gz \
-        "https://github.com/cometbft/cometbft/releases/download/v${COMETBFT_VERSION}/cometbft_${COMETBFT_VERSION}_linux_${COMETBFT_ARCH}.tar.gz" \
-    && tar -C /usr/local/bin -xzf /tmp/cometbft.tar.gz cometbft \
-    && rm -f /tmp/cometbft.tar.gz
 
 FROM node-base AS split
 
