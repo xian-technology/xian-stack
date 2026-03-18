@@ -36,6 +36,8 @@ XIAN_DOCKER_DASHBOARD_MEMORY_SWAP ?= 512m
 XIAN_DOCKER_DASHBOARD_PIDS_LIMIT ?= 256
 XIAN_DOCKER_DASHBOARD_NOFILE_SOFT ?= 65536
 XIAN_DOCKER_DASHBOARD_NOFILE_HARD ?= 65536
+XIAN_DASHBOARD_HOST ?= 127.0.0.1
+XIAN_DASHBOARD_PORT ?= 8080
 XIAN_DOCKER_POSTGRES_MEMORY_LIMIT ?= 1024m
 XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION ?= 512m
 XIAN_DOCKER_POSTGRES_MEMORY_SWAP ?= 1024m
@@ -104,6 +106,8 @@ export XIAN_DOCKER_DASHBOARD_MEMORY_SWAP := $(XIAN_DOCKER_DASHBOARD_MEMORY_SWAP)
 export XIAN_DOCKER_DASHBOARD_PIDS_LIMIT := $(XIAN_DOCKER_DASHBOARD_PIDS_LIMIT)
 export XIAN_DOCKER_DASHBOARD_NOFILE_SOFT := $(XIAN_DOCKER_DASHBOARD_NOFILE_SOFT)
 export XIAN_DOCKER_DASHBOARD_NOFILE_HARD := $(XIAN_DOCKER_DASHBOARD_NOFILE_HARD)
+export XIAN_DASHBOARD_HOST := $(XIAN_DASHBOARD_HOST)
+export XIAN_DASHBOARD_PORT := $(XIAN_DASHBOARD_PORT)
 export XIAN_DOCKER_POSTGRES_MEMORY_LIMIT := $(XIAN_DOCKER_POSTGRES_MEMORY_LIMIT)
 export XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION := $(XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION)
 export XIAN_DOCKER_POSTGRES_MEMORY_SWAP := $(XIAN_DOCKER_POSTGRES_MEMORY_SWAP)
@@ -153,7 +157,7 @@ LOCALNET_LEAK_HUNT_MINUTES ?= 10
 	dev-contracting-shell dev-contracting-up dev-contracting-build dev-contracting-down \
 	dev-abci-build dev-abci-up dev-abci-down dev-abci-shell \
 	abci-build abci-up abci-down abci-fidelity-build abci-fidelity-up abci-fidelity-down dev-base-abci-shell \
-	dashboard-build dashboard-up dashboard-down dashboard-fidelity-build dashboard-fidelity-up dashboard-fidelity-down \
+	dashboard-build dashboard-up dashboard-down dashboard-bds-up dashboard-bds-down dashboard-fidelity-build dashboard-fidelity-up dashboard-fidelity-down \
 	abci-bds-build abci-bds-up abci-bds-down dev-bds-abci-shell \
 	wipe-bds node-wipe node-wipe-all node-reset \
 	node-stop node-start node-start-bds node-init node-configure node-id \
@@ -177,6 +181,8 @@ help:
 	@printf "  %-24s %s\n" "dashboard-build" "Build the optional integrated dashboard image"
 	@printf "  %-24s %s\n" "dashboard-up" "Start the optional integrated dashboard service"
 	@printf "  %-24s %s\n" "dashboard-down" "Stop the optional integrated dashboard service"
+	@printf "  %-24s %s\n" "dashboard-bds-up" "Start the optional dashboard with integrated BDS mode"
+	@printf "  %-24s %s\n" "dashboard-bds-down" "Stop the optional dashboard in integrated BDS mode"
 	@printf "  %-24s %s\n" "dashboard-fidelity-build" "Build the optional fidelity dashboard image"
 	@printf "  %-24s %s\n" "dashboard-fidelity-up" "Start the optional fidelity dashboard service"
 	@printf "  %-24s %s\n" "dashboard-fidelity-down" "Stop the optional fidelity dashboard service"
@@ -218,6 +224,8 @@ print-env:
 	@printf "XIAN_S6_VERBOSITY=%s\n" "$(XIAN_S6_VERBOSITY)"
 	@printf "XIAN_STACK_TOPOLOGY=%s\n" "$(XIAN_STACK_TOPOLOGY)"
 	@printf "XIAN_DOCKER_ABCI_MEMORY_LIMIT=%s\n" "$(XIAN_DOCKER_ABCI_MEMORY_LIMIT)"
+	@printf "XIAN_DASHBOARD_HOST=%s\n" "$(XIAN_DASHBOARD_HOST)"
+	@printf "XIAN_DASHBOARD_PORT=%s\n" "$(XIAN_DASHBOARD_PORT)"
 	@printf "XIAN_DOCKER_ABCI_MEMORY_RESERVATION=%s\n" "$(XIAN_DOCKER_ABCI_MEMORY_RESERVATION)"
 	@printf "XIAN_DOCKER_ABCI_MEMORY_SWAP=%s\n" "$(XIAN_DOCKER_ABCI_MEMORY_SWAP)"
 	@printf "XIAN_DOCKER_ABCI_PIDS_LIMIT=%s\n" "$(XIAN_DOCKER_ABCI_PIDS_LIMIT)"
@@ -341,6 +349,12 @@ dashboard-up: prepare-dirs
 
 dashboard-down:
 	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml rm -sf dashboard
+
+dashboard-bds-up: prepare-dirs
+	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml up -d --build abci postgres postgraphile dashboard
+
+dashboard-bds-down:
+	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml rm -sf dashboard
 
 dashboard-fidelity-build: prepare-dirs
 	$(DOCKER_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml build --no-cache dashboard-fidelity

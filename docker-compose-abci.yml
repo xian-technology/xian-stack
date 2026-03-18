@@ -78,13 +78,15 @@ services:
         "xian-dashboard",
         "--host",
         "0.0.0.0",
+        "--port",
+        "8080",
         "--rpc-url",
         "http://abci:26657",
       ]
     networks:
       - xian-net
     ports:
-      - "8080:8080"
+      - "${XIAN_DASHBOARD_HOST}:${XIAN_DASHBOARD_PORT}:8080"
 
   abci-app:
     profiles: ["fidelity"]
@@ -173,10 +175,12 @@ services:
         "xian-dashboard",
         "--host",
         "0.0.0.0",
+        "--port",
+        "8080",
         "--rpc-url",
         "http://cometbft:26657",
       ]
     networks:
       - xian-net
     ports:
-      - "8080:8080"
+      - "${XIAN_DASHBOARD_HOST}:${XIAN_DASHBOARD_PORT}:8080"

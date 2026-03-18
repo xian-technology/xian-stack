@@ -131,6 +131,19 @@ def run_make_target(
     )
 
 
+def runtime_env(
+    *,
+    dashboard_enabled: bool,
+    dashboard_host: str,
+    dashboard_port: int,
+) -> dict[str, str]:
+    env = os.environ.copy()
+    env["XIAN_DASHBOARD_ENABLED"] = "1" if dashboard_enabled else "0"
+    env["XIAN_DASHBOARD_HOST"] = dashboard_host
+    env["XIAN_DASHBOARD_PORT"] = str(dashboard_port)
+    return env
+
+
 def run_python_script(
     script_path: Path,
     *args: str,
@@ -222,14 +235,25 @@ def wait_for_localnet_ready(*, timeout_seconds: float) -> list[dict]:
 def backend_start(
     *,
     service_node: bool,
+    dashboard_enabled: bool,
+    dashboard_host: str,
+    dashboard_port: int,
     wait_for_health: bool,
     rpc_timeout_seconds: float,
     rpc_url: str,
 ) -> dict:
     container_target = "abci-bds-up" if service_node else "abci-up"
     node_target = "node-start-bds" if service_node else "node-start"
+    dashboard_target = "dashboard-bds-up" if service_node else "dashboard-up"
+    env = runtime_env(
+        dashboard_enabled=dashboard_enabled,
+        dashboard_host=dashboard_host,
+        dashboard_port=dashboard_port,
+    )
 
-    run_make_target(node_target)
+    run_make_target(node_target, env=env)
+    if dashboard_enabled:
+        run_make_target(dashboard_target, env=env)
     wait_for_abci_runtime(
         timeout_seconds=rpc_timeout_seconds,
         service_node=service_node,
@@ -240,8 +264,14 @@ def backend_start(
         "service_node": service_node,
         "container_target": container_target,
         "node_target": node_target,
+        "dashboard_enabled": dashboard_enabled,
         "rpc_checked": wait_for_health,
     }
+    if dashboard_enabled:
+        result["dashboard_target"] = dashboard_target
+        result["dashboard_url"] = (
+            f"http://{dashboard_host}:{dashboard_port}"
+        )
     if wait_for_health:
         result["rpc_status"] = wait_for_rpc_ready(
             rpc_url=rpc_url,
@@ -250,21 +280,66 @@ def backend_start(
     return result
 
 
-def backend_stop(*, service_node: bool) -> dict:
+def backend_stop(
+    *,
+    service_node: bool,
+    dashboard_enabled: bool,
+    dashboard_host: str,
+    dashboard_port: int,
+) -> dict:
     container_target = "abci-bds-down" if service_node else "abci-down"
-    run_make_target("node-stop")
+    dashboard_target = (
+        "dashboard-bds-down" if service_node else "dashboard-down"
+    )
+    env = runtime_env(
+        dashboard_enabled=dashboard_enabled,
+        dashboard_host=dashboard_host,
+        dashboard_port=dashboard_port,
+    )
+    if dashboard_enabled:
+        run_make_target(dashboard_target, env=env)
+    run_make_target("node-stop", env=env)
     return {
         "stack_dir": str(STACK_DIR),
         "service_node": service_node,
         "container_target": container_target,
+        "dashboard_enabled": dashboard_enabled,
+        "dashboard_target": dashboard_target if dashboard_enabled else None,
     }
 
 
-def backend_status(*, service_node: bool) -> dict:
-    env = os.environ.copy()
+def backend_status(
+    *,
+    service_node: bool,
+    dashboard_enabled: bool,
+    dashboard_host: str,
+    dashboard_port: int,
+) -> dict:
+    env = runtime_env(
+        dashboard_enabled=dashboard_enabled,
+        dashboard_host=dashboard_host,
+        dashboard_port=dashboard_port,
+    )
     env["XIAN_SERVICE_NODE"] = "1" if service_node else "0"
     result = run_make_target("node-status", capture_output=True, env=env)
-    return json.loads(result.stdout)
+    payload = json.loads(result.stdout)
+    payload["dashboard_enabled"] = dashboard_enabled
+    if dashboard_enabled:
+        dashboard_url = f"http://{dashboard_host}:{dashboard_port}/api/status"
+        payload["dashboard_url"] = dashboard_url
+        try:
+            payload["dashboard_status"] = fetch_json(dashboard_url, timeout=2.0)
+            payload["dashboard_reachable"] = True
+        except (
+            OSError,
+            URLError,
+            TimeoutError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
+            payload["dashboard_reachable"] = False
+            payload["dashboard_error"] = str(exc)
+    return payload
 
 
 def backend_make_result(target: str) -> dict:
@@ -377,6 +452,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
     )
     start.add_argument(
+        "--dashboard",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    start.add_argument(
+        "--dashboard-host",
+        default="127.0.0.1",
+    )
+    start.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=8080,
+    )
+    start.add_argument(
         "--wait-for-health",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -397,12 +486,40 @@ def build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=False,
     )
+    stop.add_argument(
+        "--dashboard",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    stop.add_argument(
+        "--dashboard-host",
+        default="127.0.0.1",
+    )
+    stop.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=8080,
+    )
 
     status = subparsers.add_parser("status")
     status.add_argument(
         "--service-node",
         action=argparse.BooleanOptionalAction,
         default=False,
+    )
+    status.add_argument(
+        "--dashboard",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    status.add_argument(
+        "--dashboard-host",
+        default="127.0.0.1",
+    )
+    status.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=8080,
     )
 
     subparsers.add_parser("validate")
@@ -470,14 +587,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "start":
         payload = backend_start(
             service_node=args.service_node,
+            dashboard_enabled=args.dashboard,
+            dashboard_host=args.dashboard_host,
+            dashboard_port=args.dashboard_port,
             wait_for_health=args.wait_for_health,
             rpc_timeout_seconds=args.rpc_timeout_seconds,
             rpc_url=args.rpc_url,
         )
     elif args.command == "stop":
-        payload = backend_stop(service_node=args.service_node)
+        payload = backend_stop(
+            service_node=args.service_node,
+            dashboard_enabled=args.dashboard,
+            dashboard_host=args.dashboard_host,
+            dashboard_port=args.dashboard_port,
+        )
     elif args.command == "status":
-        payload = backend_status(service_node=args.service_node)
+        payload = backend_status(
+            service_node=args.service_node,
+            dashboard_enabled=args.dashboard,
+            dashboard_host=args.dashboard_host,
+            dashboard_port=args.dashboard_port,
+        )
     elif args.command == "validate":
         payload = backend_make_result("validate")
     elif args.command == "smoke":
