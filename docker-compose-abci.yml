@@ -41,7 +41,6 @@ services:
       - ${XIAN_COMETBFT_HOME}:/root/.cometbft
     environment:
       XIAN_CONFIGS_DIR: /opt/xian-configs
-      XIAN_SERVICE_NODE: ${XIAN_SERVICE_NODE:-0}
       S6_VERBOSITY: ${XIAN_S6_VERBOSITY}
     stdin_open: true
     tty: true
@@ -52,6 +51,40 @@ services:
       - "26657:26657"
       - "26656:26656"
       - "26660:26660"
+
+  dashboard:
+    profiles: ["dashboard-integrated"]
+    image: xian-node-split:local
+    restart: always
+    init: true
+    stop_grace_period: 30s
+    hostname: xian-stack-dashboard
+    build:
+      <<: *x-node-build
+      target: split
+    mem_limit: ${XIAN_DOCKER_DASHBOARD_MEMORY_LIMIT}
+    mem_reservation: ${XIAN_DOCKER_DASHBOARD_MEMORY_RESERVATION}
+    memswap_limit: ${XIAN_DOCKER_DASHBOARD_MEMORY_SWAP}
+    pids_limit: ${XIAN_DOCKER_DASHBOARD_PIDS_LIMIT}
+    ulimits:
+      nofile:
+        soft: ${XIAN_DOCKER_DASHBOARD_NOFILE_SOFT}
+        hard: ${XIAN_DOCKER_DASHBOARD_NOFILE_HARD}
+    depends_on:
+      abci:
+        condition: service_started
+    command:
+      [
+        "xian-dashboard",
+        "--host",
+        "0.0.0.0",
+        "--rpc-url",
+        "http://abci:26657",
+      ]
+    networks:
+      - xian-net
+    ports:
+      - "8080:8080"
 
   abci-app:
     profiles: ["fidelity"]
@@ -76,7 +109,6 @@ services:
       - xian-abci-runtime-tmp:/tmp
     environment:
       XIAN_CONFIGS_DIR: /opt/xian-configs
-      XIAN_SERVICE_NODE: ${XIAN_SERVICE_NODE:-0}
     stdin_open: true
     tty: true
     command: ["xian-abci"]
@@ -114,3 +146,37 @@ services:
       - "26657:26657"
       - "26656:26656"
       - "26660:26660"
+
+  dashboard-fidelity:
+    profiles: ["dashboard-fidelity"]
+    image: xian-node-split:local
+    restart: always
+    init: true
+    stop_grace_period: 30s
+    hostname: xian-stack-dashboard
+    build:
+      <<: *x-node-build
+      target: split
+    mem_limit: ${XIAN_DOCKER_DASHBOARD_MEMORY_LIMIT}
+    mem_reservation: ${XIAN_DOCKER_DASHBOARD_MEMORY_RESERVATION}
+    memswap_limit: ${XIAN_DOCKER_DASHBOARD_MEMORY_SWAP}
+    pids_limit: ${XIAN_DOCKER_DASHBOARD_PIDS_LIMIT}
+    ulimits:
+      nofile:
+        soft: ${XIAN_DOCKER_DASHBOARD_NOFILE_SOFT}
+        hard: ${XIAN_DOCKER_DASHBOARD_NOFILE_HARD}
+    depends_on:
+      cometbft:
+        condition: service_started
+    command:
+      [
+        "xian-dashboard",
+        "--host",
+        "0.0.0.0",
+        "--rpc-url",
+        "http://cometbft:26657",
+      ]
+    networks:
+      - xian-net
+    ports:
+      - "8080:8080"

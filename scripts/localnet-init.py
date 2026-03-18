@@ -268,7 +268,6 @@ def write_compose_file(nodes: list[dict], topology: str):
                 ],
                 "environment": {
                     "XIAN_CONFIGS_DIR": "/opt/xian-configs",
-                    "XIAN_SERVICE_NODE": "0",
                     "S6_VERBOSITY": "${XIAN_S6_VERBOSITY}",
                     "NODE_INDEX": str(idx),
                 },
@@ -303,7 +302,6 @@ def write_compose_file(nodes: list[dict], topology: str):
                 "volumes": [home_mount, shared_tmp],
                 "environment": {
                     "XIAN_CONFIGS_DIR": "/opt/xian-configs",
-                    "XIAN_SERVICE_NODE": "0",
                     "NODE_INDEX": str(idx),
                 },
                 "command": ["xian-abci"],

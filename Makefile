@@ -30,6 +30,12 @@ XIAN_DOCKER_FIDELITY_COMETBFT_MEMORY_SWAP ?= 768m
 XIAN_DOCKER_FIDELITY_COMETBFT_PIDS_LIMIT ?= 256
 XIAN_DOCKER_FIDELITY_COMETBFT_NOFILE_SOFT ?= 65536
 XIAN_DOCKER_FIDELITY_COMETBFT_NOFILE_HARD ?= 65536
+XIAN_DOCKER_DASHBOARD_MEMORY_LIMIT ?= 512m
+XIAN_DOCKER_DASHBOARD_MEMORY_RESERVATION ?= 256m
+XIAN_DOCKER_DASHBOARD_MEMORY_SWAP ?= 512m
+XIAN_DOCKER_DASHBOARD_PIDS_LIMIT ?= 256
+XIAN_DOCKER_DASHBOARD_NOFILE_SOFT ?= 65536
+XIAN_DOCKER_DASHBOARD_NOFILE_HARD ?= 65536
 XIAN_DOCKER_POSTGRES_MEMORY_LIMIT ?= 1024m
 XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION ?= 512m
 XIAN_DOCKER_POSTGRES_MEMORY_SWAP ?= 1024m
@@ -92,6 +98,12 @@ export XIAN_DOCKER_FIDELITY_COMETBFT_MEMORY_SWAP := $(XIAN_DOCKER_FIDELITY_COMET
 export XIAN_DOCKER_FIDELITY_COMETBFT_PIDS_LIMIT := $(XIAN_DOCKER_FIDELITY_COMETBFT_PIDS_LIMIT)
 export XIAN_DOCKER_FIDELITY_COMETBFT_NOFILE_SOFT := $(XIAN_DOCKER_FIDELITY_COMETBFT_NOFILE_SOFT)
 export XIAN_DOCKER_FIDELITY_COMETBFT_NOFILE_HARD := $(XIAN_DOCKER_FIDELITY_COMETBFT_NOFILE_HARD)
+export XIAN_DOCKER_DASHBOARD_MEMORY_LIMIT := $(XIAN_DOCKER_DASHBOARD_MEMORY_LIMIT)
+export XIAN_DOCKER_DASHBOARD_MEMORY_RESERVATION := $(XIAN_DOCKER_DASHBOARD_MEMORY_RESERVATION)
+export XIAN_DOCKER_DASHBOARD_MEMORY_SWAP := $(XIAN_DOCKER_DASHBOARD_MEMORY_SWAP)
+export XIAN_DOCKER_DASHBOARD_PIDS_LIMIT := $(XIAN_DOCKER_DASHBOARD_PIDS_LIMIT)
+export XIAN_DOCKER_DASHBOARD_NOFILE_SOFT := $(XIAN_DOCKER_DASHBOARD_NOFILE_SOFT)
+export XIAN_DOCKER_DASHBOARD_NOFILE_HARD := $(XIAN_DOCKER_DASHBOARD_NOFILE_HARD)
 export XIAN_DOCKER_POSTGRES_MEMORY_LIMIT := $(XIAN_DOCKER_POSTGRES_MEMORY_LIMIT)
 export XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION := $(XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION)
 export XIAN_DOCKER_POSTGRES_MEMORY_SWAP := $(XIAN_DOCKER_POSTGRES_MEMORY_SWAP)
@@ -141,6 +153,7 @@ LOCALNET_LEAK_HUNT_MINUTES ?= 10
 	dev-contracting-shell dev-contracting-up dev-contracting-build dev-contracting-down \
 	dev-abci-build dev-abci-up dev-abci-down dev-abci-shell \
 	abci-build abci-up abci-down abci-fidelity-build abci-fidelity-up abci-fidelity-down dev-base-abci-shell \
+	dashboard-build dashboard-up dashboard-down dashboard-fidelity-build dashboard-fidelity-up dashboard-fidelity-down \
 	abci-bds-build abci-bds-up abci-bds-down dev-bds-abci-shell \
 	wipe-bds node-wipe node-wipe-all node-reset \
 	node-stop node-start node-start-bds node-init node-configure node-id \
@@ -161,6 +174,12 @@ help:
 	@printf "  %-24s %s\n" "abci-fidelity-build" "Build the split ABCI/CometBFT fidelity images"
 	@printf "  %-24s %s\n" "abci-fidelity-up" "Start the split fidelity runtime"
 	@printf "  %-24s %s\n" "abci-fidelity-down" "Stop the split fidelity runtime"
+	@printf "  %-24s %s\n" "dashboard-build" "Build the optional integrated dashboard image"
+	@printf "  %-24s %s\n" "dashboard-up" "Start the optional integrated dashboard service"
+	@printf "  %-24s %s\n" "dashboard-down" "Stop the optional integrated dashboard service"
+	@printf "  %-24s %s\n" "dashboard-fidelity-build" "Build the optional fidelity dashboard image"
+	@printf "  %-24s %s\n" "dashboard-fidelity-up" "Start the optional fidelity dashboard service"
+	@printf "  %-24s %s\n" "dashboard-fidelity-down" "Stop the optional fidelity dashboard service"
 	@printf "  %-24s %s\n" "abci-bds-build" "Build the integrated ABCI + BDS stack"
 	@printf "  %-24s %s\n" "abci-bds-up" "Start the integrated ABCI + BDS stack"
 	@printf "  %-24s %s\n" "abci-bds-down" "Stop the integrated ABCI + BDS stack"
@@ -216,6 +235,12 @@ print-env:
 	@printf "XIAN_DOCKER_FIDELITY_COMETBFT_PIDS_LIMIT=%s\n" "$(XIAN_DOCKER_FIDELITY_COMETBFT_PIDS_LIMIT)"
 	@printf "XIAN_DOCKER_FIDELITY_COMETBFT_NOFILE_SOFT=%s\n" "$(XIAN_DOCKER_FIDELITY_COMETBFT_NOFILE_SOFT)"
 	@printf "XIAN_DOCKER_FIDELITY_COMETBFT_NOFILE_HARD=%s\n" "$(XIAN_DOCKER_FIDELITY_COMETBFT_NOFILE_HARD)"
+	@printf "XIAN_DOCKER_DASHBOARD_MEMORY_LIMIT=%s\n" "$(XIAN_DOCKER_DASHBOARD_MEMORY_LIMIT)"
+	@printf "XIAN_DOCKER_DASHBOARD_MEMORY_RESERVATION=%s\n" "$(XIAN_DOCKER_DASHBOARD_MEMORY_RESERVATION)"
+	@printf "XIAN_DOCKER_DASHBOARD_MEMORY_SWAP=%s\n" "$(XIAN_DOCKER_DASHBOARD_MEMORY_SWAP)"
+	@printf "XIAN_DOCKER_DASHBOARD_PIDS_LIMIT=%s\n" "$(XIAN_DOCKER_DASHBOARD_PIDS_LIMIT)"
+	@printf "XIAN_DOCKER_DASHBOARD_NOFILE_SOFT=%s\n" "$(XIAN_DOCKER_DASHBOARD_NOFILE_SOFT)"
+	@printf "XIAN_DOCKER_DASHBOARD_NOFILE_HARD=%s\n" "$(XIAN_DOCKER_DASHBOARD_NOFILE_HARD)"
 	@printf "XIAN_DOCKER_POSTGRES_MEMORY_LIMIT=%s\n" "$(XIAN_DOCKER_POSTGRES_MEMORY_LIMIT)"
 	@printf "XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION=%s\n" "$(XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION)"
 	@printf "XIAN_DOCKER_POSTGRES_MEMORY_SWAP=%s\n" "$(XIAN_DOCKER_POSTGRES_MEMORY_SWAP)"
@@ -307,6 +332,24 @@ abci-fidelity-up: prepare-dirs
 
 abci-fidelity-down:
 	$(ABCI_FIDELITY_COMPOSE) down --remove-orphans
+
+dashboard-build: prepare-dirs
+	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml build --no-cache dashboard
+
+dashboard-up: prepare-dirs
+	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml up -d --build abci dashboard
+
+dashboard-down:
+	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml rm -sf dashboard
+
+dashboard-fidelity-build: prepare-dirs
+	$(DOCKER_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml build --no-cache dashboard-fidelity
+
+dashboard-fidelity-up: prepare-dirs
+	$(DOCKER_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml up -d --build abci-app cometbft dashboard-fidelity
+
+dashboard-fidelity-down:
+	$(DOCKER_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml rm -sf dashboard-fidelity
 
 dev-base-abci-shell:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci

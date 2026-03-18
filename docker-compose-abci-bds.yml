@@ -1,8 +1,8 @@
 networks:
   xian-net:
-    internal: false  # Allow internet access for package installation
+    internal: false
   xian-db:
-    internal: true   # Keep database isolated
+    internal: true
 
 services:
   postgres:

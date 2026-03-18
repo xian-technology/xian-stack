@@ -9,10 +9,4 @@ rm -rf "${services_dir:?}/"*
 ln -s "${available_dir}/xian" "${services_dir}/xian"
 ln -s "${available_dir}/cometbft" "${services_dir}/cometbft"
 
-case "${XIAN_SERVICE_NODE:-0}" in
-  1|true|TRUE|yes|YES)
-    ln -s "${available_dir}/simulator" "${services_dir}/simulator"
-    ;;
-esac
-
-rm -f /tmp/abci.sock /tmp/simulator_socket.sock
+rm -f /tmp/abci.sock

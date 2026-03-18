@@ -17,7 +17,6 @@ if [[ "${stack_topology}" == "integrated" ]]; then
   if [[ "${service_node}" == "1" || "${service_node}" == "true" ]]; then
     compose_files+=(docker-compose-abci-bds.yml)
     compose_cmd=(docker compose --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml)
-    required_processes+=("simulator")
   fi
 elif [[ "${stack_topology}" == "fidelity" ]]; then
   compose_files=(docker-compose-abci.yml)
@@ -43,7 +42,6 @@ import subprocess
 patterns = {
     "xian": "xian-abci",
     "cometbft": "cometbft node",
-    "simulator": "xian-simulator",
 }
 
 try:
@@ -122,7 +120,7 @@ for raw in sys.argv[1:]:
         if current is None or item.get("running"):
             merged[item["name"]] = item
 
-for name in ("xian", "cometbft", "simulator"):
+for name in ("xian", "cometbft"):
     merged.setdefault(
         name,
         {"name": name, "pid": None, "args": None, "running": False},

@@ -98,6 +98,10 @@ make node-stop
 make abci-fidelity-build
 make abci-fidelity-up
 make node-status-fidelity
+make dashboard-build
+make dashboard-up
+make dashboard-fidelity-build
+make dashboard-fidelity-up
 ```
 
 For BDS-enabled paths:
@@ -106,6 +110,17 @@ For BDS-enabled paths:
 make abci-bds-build
 make abci-bds-up
 make node-start-bds
+```
+
+For the optional explorer/dashboard service:
+
+```bash
+make dashboard-build
+make dashboard-up
+make dashboard-down
+make dashboard-fidelity-build
+make dashboard-fidelity-up
+make dashboard-fidelity-down
 ```
 
 Developer-only shell targets are intentionally prefixed with `dev-`, for
@@ -191,6 +206,9 @@ memory heuristics back into `xian-contracting`. See
   and both `xian-abci` and `CometBFT` supervised inside the same node image.
 - The optional `fidelity` topology splits `xian-abci` and `CometBFT` into
   separate containers with one process each and `init: true`.
+- The optional dashboard is a separate service, not part of the ABCI process.
+  It talks to CometBFT RPC over the Compose network and can be started for
+  either the integrated or fidelity topology.
 - `xian-configs` is copied into the image at `/opt/xian-configs` so canonical
   network bundles and contract presets stay outside `xian-abci`.
 - `xian-stack` no longer manages nested repo checkouts or submodules for
