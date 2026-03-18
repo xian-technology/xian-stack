@@ -151,6 +151,7 @@ python3 ./scripts/backend.py smoke-cli
 python3 ./scripts/backend.py localnet-init --nodes 4 --topology integrated --clean
 python3 ./scripts/backend.py localnet-up --wait-for-health --rpc-timeout-seconds 120
 python3 ./scripts/backend.py localnet-status
+python3 ./scripts/backend.py localnet-workload --scenario dex_mixed --dex-rounds 6
 python3 ./scripts/backend.py localnet-memwatch --duration-minutes 10
 python3 ./scripts/backend.py localnet-leak-hunt --duration-minutes 10
 ```
@@ -224,3 +225,39 @@ memory heuristics back into `xian-contracting`. See
   mutation.
 - Localnet supports both `integrated` and `fidelity` topologies through
   `XIAN_LOCALNET_TOPOLOGY`.
+- Localnet workload validation is scenario-based. `counter_basic` replaces the
+  old burst script as the default alias, and `dex_mixed` is the first
+  contract-heavy pack with successful swaps, intentional failures, sampled
+  state checks, and `app_hash` verification across nodes.
+- Vendored workload contracts live under [`workloads/`](./workloads) so test
+  scenarios stay reviewable and do not fetch contract code from GitHub at run
+  time.
+
+## Localnet Workloads
+
+Run the default counter sanity scenario:
+
+```bash
+make localnet-workload
+```
+
+Run the DEX scenario:
+
+```bash
+LOCALNET_WORKLOAD_SCENARIO=dex_mixed \
+LOCALNET_DEX_ROUNDS=8 \
+make localnet-workload
+```
+
+Or drive the same flow through the backend contract:
+
+```bash
+python3 ./scripts/backend.py localnet-workload \
+  --scenario dex_mixed \
+  --dex-rounds 8 \
+  --state-sample-nodes 2 \
+  --app-hash-window 3
+```
+
+`make localnet-burst` remains as a thin alias to `counter_basic`, but new
+scenario work should go through `localnet-workload`.

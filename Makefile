@@ -150,6 +150,12 @@ LOCALNET_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-localnet.yml
 LOCALNET_NODES ?= 4
 LOCALNET_MEMWATCH_MINUTES ?= 10
 LOCALNET_LEAK_HUNT_MINUTES ?= 10
+LOCALNET_COUNTER_OPS ?= 180
+LOCALNET_DEX_ROUNDS ?= 6
+LOCALNET_STATE_SAMPLE_NODES ?= 2
+LOCALNET_APP_HASH_WINDOW ?= 3
+LOCALNET_WORKLOAD_SEED ?= xian-localnet-workload-v1
+LOCALNET_WORKLOAD_SCENARIO ?= counter_basic
 
 .DEFAULT_GOAL := help
 
@@ -163,7 +169,7 @@ LOCALNET_LEAK_HUNT_MINUTES ?= 10
 	node-stop node-start node-start-bds node-init node-configure node-id \
 	node-status node-status-fidelity \
 	localnet-init localnet-build localnet-up localnet-down localnet-status \
-	localnet-burst localnet-memwatch localnet-leak-hunt \
+	localnet-workload localnet-burst localnet-memwatch localnet-leak-hunt \
 	localnet-clean localnet-logs localnet-shell
 
 help:
@@ -203,7 +209,8 @@ help:
 	@printf "  %-24s %s\n" "localnet-up" "Start all localnet nodes"
 	@printf "  %-24s %s\n" "localnet-down" "Stop all localnet nodes"
 	@printf "  %-24s %s\n" "localnet-status" "Show block height and peer count for each node"
-	@printf "  %-24s %s\n" "localnet-burst" "Drive mixed tx load against the localnet"
+	@printf "  %-24s %s\n" "localnet-workload" "Run a deterministic workload scenario (counter_basic or dex_mixed)"
+	@printf "  %-24s %s\n" "localnet-burst" "Drive the legacy counter_basic workload alias"
 	@printf "  %-24s %s\n" "localnet-memwatch" "Sample container memory during localnet tx load"
 	@printf "  %-24s %s\n" "localnet-leak-hunt" "Split localnet memory growth by process"
 	@printf "  %-24s %s\n" "localnet-logs" "Tail logs from all nodes"
@@ -441,8 +448,22 @@ localnet-down:
 localnet-status:
 	@./scripts/localnet-status.sh
 
+localnet-workload:
+	uv run --project "$(XIAN_PY_DIR)" python3 ./scripts/localnet-workload.py \
+		--scenario "$(LOCALNET_WORKLOAD_SCENARIO)" \
+		--seed "$(LOCALNET_WORKLOAD_SEED)" \
+		--counter-ops $(LOCALNET_COUNTER_OPS) \
+		--dex-rounds $(LOCALNET_DEX_ROUNDS) \
+		--state-sample-nodes $(LOCALNET_STATE_SAMPLE_NODES) \
+		--app-hash-window $(LOCALNET_APP_HASH_WINDOW)
+
 localnet-burst:
-	uv run --project "$(XIAN_PY_DIR)" python3 ./scripts/localnet-burst-test.py
+	uv run --project "$(XIAN_PY_DIR)" python3 ./scripts/localnet-workload.py \
+		--scenario counter_basic \
+		--seed "$(LOCALNET_WORKLOAD_SEED)" \
+		--counter-ops $(LOCALNET_COUNTER_OPS) \
+		--state-sample-nodes $(LOCALNET_STATE_SAMPLE_NODES) \
+		--app-hash-window $(LOCALNET_APP_HASH_WINDOW)
 
 localnet-memwatch:
 	uv run --project "$(XIAN_PY_DIR)" python3 ./scripts/localnet-memwatch.py $(LOCALNET_MEMWATCH_MINUTES)

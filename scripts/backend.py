@@ -14,6 +14,7 @@ from urllib.request import urlopen
 STACK_DIR = Path(__file__).resolve().parent.parent
 LOCALNET_NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 LOCALNET_INIT_SCRIPT = STACK_DIR / "scripts" / "localnet-init.py"
+LOCALNET_WORKLOAD_SCRIPT = STACK_DIR / "scripts" / "localnet-workload.py"
 LOCALNET_BURST_SCRIPT = STACK_DIR / "scripts" / "localnet-burst-test.py"
 LOCALNET_MEMWATCH_SCRIPT = STACK_DIR / "scripts" / "localnet-memwatch.py"
 LOCALNET_LEAK_HUNT_SCRIPT = STACK_DIR / "scripts" / "localnet-leak-hunt.py"
@@ -152,7 +153,15 @@ def run_python_script(
 ) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, str(script_path), *args]
     if uv_project is not None:
-        cmd = ["uv", "run", "--project", str(uv_project), "python3", str(script_path), *args]
+        cmd = [
+            "uv",
+            "run",
+            "--project",
+            str(uv_project),
+            "python3",
+            str(script_path),
+            *args,
+        ]
     return subprocess.run(
         cmd,
         cwd=STACK_DIR,
@@ -193,9 +202,7 @@ def localnet_node_status(node: dict, *, timeout: float) -> dict:
             {
                 "up": True,
                 "height": result["sync_info"]["latest_block_height"],
-                "peers": result["node_info"].get("other", {}).get(
-                    "n_peers"
-                ),
+                "peers": result["node_info"].get("other", {}).get("n_peers"),
                 "voting_power": result["validator_info"]["voting_power"],
             }
         )
@@ -218,13 +225,10 @@ def wait_for_localnet_ready(*, timeout_seconds: float) -> list[dict]:
 
     while time.monotonic() < deadline:
         statuses = [
-            localnet_node_status(node, timeout=1.0)
-            for node in metadata["nodes"]
+            localnet_node_status(node, timeout=1.0) for node in metadata["nodes"]
         ]
         if statuses and all(
-            node["up"]
-            and node["height"] not in {None, "0", 0}
-            for node in statuses
+            node["up"] and node["height"] not in {None, "0", 0} for node in statuses
         ):
             return statuses
         time.sleep(1.0)
@@ -269,9 +273,7 @@ def backend_start(
     }
     if dashboard_enabled:
         result["dashboard_target"] = dashboard_target
-        result["dashboard_url"] = (
-            f"http://{dashboard_host}:{dashboard_port}"
-        )
+        result["dashboard_url"] = f"http://{dashboard_host}:{dashboard_port}"
     if wait_for_health:
         result["rpc_status"] = wait_for_rpc_ready(
             rpc_url=rpc_url,
@@ -288,9 +290,7 @@ def backend_stop(
     dashboard_port: int,
 ) -> dict:
     container_target = "abci-bds-down" if service_node else "abci-down"
-    dashboard_target = (
-        "dashboard-bds-down" if service_node else "dashboard-down"
-    )
+    dashboard_target = "dashboard-bds-down" if service_node else "dashboard-down"
     env = runtime_env(
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
@@ -388,9 +388,7 @@ def backend_localnet_up(
         "rpc_checked": wait_for_health,
     }
     if wait_for_health:
-        result["nodes"] = wait_for_localnet_ready(
-            timeout_seconds=rpc_timeout_seconds
-        )
+        result["nodes"] = wait_for_localnet_ready(timeout_seconds=rpc_timeout_seconds)
     else:
         result["network"] = load_localnet_metadata()
     return result
@@ -415,10 +413,13 @@ def backend_localnet_diagnostic(
     *,
     script_path: Path,
     duration_minutes: int | None = None,
+    script_args: list[str] | None = None,
 ) -> dict:
     args: list[str] = []
     if duration_minutes is not None:
         args.append(str(duration_minutes))
+    if script_args is not None:
+        args.extend(script_args)
     result = run_python_script(
         script_path,
         *args,
@@ -432,6 +433,8 @@ def backend_localnet_diagnostic(
     }
     if duration_minutes is not None:
         payload["duration_minutes"] = duration_minutes
+    if script_args:
+        payload["script_args"] = script_args
     if result.stdout:
         payload["stdout"] = result.stdout
     if result.stderr:
@@ -558,7 +561,53 @@ def build_parser() -> argparse.ArgumentParser:
         default=2.0,
     )
 
-    subparsers.add_parser("localnet-burst")
+    localnet_workload = subparsers.add_parser("localnet-workload")
+    localnet_workload.add_argument(
+        "--scenario",
+        choices=("counter_basic", "dex_mixed"),
+        default="counter_basic",
+    )
+    localnet_workload.add_argument(
+        "--seed",
+        default="xian-localnet-workload-v1",
+    )
+    localnet_workload.add_argument(
+        "--counter-ops",
+        type=int,
+        default=180,
+    )
+    localnet_workload.add_argument(
+        "--dex-rounds",
+        type=int,
+        default=6,
+    )
+    localnet_workload.add_argument(
+        "--state-sample-nodes",
+        type=int,
+        default=2,
+    )
+    localnet_workload.add_argument(
+        "--app-hash-window",
+        type=int,
+        default=3,
+    )
+
+    localnet_burst = subparsers.add_parser("localnet-burst")
+    localnet_burst.add_argument(
+        "--counter-ops",
+        type=int,
+        default=180,
+    )
+    localnet_burst.add_argument(
+        "--state-sample-nodes",
+        type=int,
+        default=2,
+    )
+    localnet_burst.add_argument(
+        "--app-hash-window",
+        type=int,
+        default=3,
+    )
 
     localnet_memwatch = subparsers.add_parser("localnet-memwatch")
     localnet_memwatch.add_argument(
@@ -632,12 +681,38 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "localnet-clean":
         payload = backend_make_result("localnet-clean")
     elif args.command == "localnet-status":
-        payload = backend_localnet_status(
-            timeout_seconds=args.timeout_seconds
+        payload = backend_localnet_status(timeout_seconds=args.timeout_seconds)
+    elif args.command == "localnet-workload":
+        payload = backend_localnet_diagnostic(
+            script_path=LOCALNET_WORKLOAD_SCRIPT,
+            script_args=[
+                "--scenario",
+                args.scenario,
+                "--seed",
+                args.seed,
+                "--counter-ops",
+                str(args.counter_ops),
+                "--dex-rounds",
+                str(args.dex_rounds),
+                "--state-sample-nodes",
+                str(args.state_sample_nodes),
+                "--app-hash-window",
+                str(args.app_hash_window),
+            ],
         )
     elif args.command == "localnet-burst":
         payload = backend_localnet_diagnostic(
-            script_path=LOCALNET_BURST_SCRIPT,
+            script_path=LOCALNET_WORKLOAD_SCRIPT,
+            script_args=[
+                "--scenario",
+                "counter_basic",
+                "--counter-ops",
+                str(args.counter_ops),
+                "--state-sample-nodes",
+                str(args.state_sample_nodes),
+                "--app-hash-window",
+                str(args.app_hash_window),
+            ],
         )
     elif args.command == "localnet-memwatch":
         payload = backend_localnet_diagnostic(
