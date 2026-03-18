@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import secrets
 import shutil
 import sys
@@ -41,6 +42,20 @@ BASE_METRICS_PORT = 26660
 PORT_STRIDE = 100  # node-0: 266xx, node-1: 267xx, node-2: 268xx, ...
 NODE_IMAGE_INTEGRATED = "xian-node-integrated:local"
 NODE_IMAGE_SPLIT = "xian-node-split:local"
+
+
+def env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return int(raw)
 
 
 def node_build_config(target: str) -> dict:
@@ -96,6 +111,10 @@ def write_node_config(
     all_nodes: list[dict],
     chain_id: str,
     genesis: dict,
+    *,
+    parallel_execution_enabled: bool,
+    parallel_execution_workers: int,
+    parallel_execution_min_transactions: int,
 ):
     """Write all CometBFT config files for a single node."""
     home = LOCALNET_DIR / node["moniker"] / ".cometbft"
@@ -109,6 +128,11 @@ def write_node_config(
         seed_nodes=[],
         allow_cors=True,
         prometheus=True,
+        parallel_execution_enabled=parallel_execution_enabled,
+        parallel_execution_workers=parallel_execution_workers,
+        parallel_execution_min_transactions=(
+            parallel_execution_min_transactions
+        ),
     )
     # Override peers and listen addresses (inside container, always same ports)
     config["p2p"]["persistent_peers"] = peers
@@ -163,6 +187,15 @@ def main():
         sys.exit(1)
 
     print(f"Generating {args.nodes}-node localnet (chain_id={args.chain_id})")
+    parallel_execution_enabled = env_bool(
+        "XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED", False
+    )
+    parallel_execution_workers = env_int(
+        "XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS", 0
+    )
+    parallel_execution_min_transactions = env_int(
+        "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS", 8
+    )
 
     # 1. Generate key material for all nodes
     nodes = [generate_node_material(i) for i in range(args.nodes)]
@@ -193,7 +226,17 @@ def main():
 
     # 3. Write per-node config
     for node in nodes:
-        write_node_config(node, nodes, args.chain_id, genesis)
+        write_node_config(
+            node,
+            nodes,
+            args.chain_id,
+            genesis,
+            parallel_execution_enabled=parallel_execution_enabled,
+            parallel_execution_workers=parallel_execution_workers,
+            parallel_execution_min_transactions=(
+                parallel_execution_min_transactions
+            ),
+        )
         (LOCALNET_DIR / node["moniker"] / "tmp").mkdir(parents=True, exist_ok=True)
         idx = node["index"]
         host_p2p = BASE_P2P_PORT + idx * PORT_STRIDE
@@ -224,6 +267,11 @@ def main():
             for n in nodes
         ],
         "founder_key": founder_key,
+        "parallel_execution": {
+            "enabled": parallel_execution_enabled,
+            "workers": parallel_execution_workers,
+            "min_transactions": parallel_execution_min_transactions,
+        },
     }
     (LOCALNET_DIR / "network.json").write_text(
         json.dumps(summary, indent=2) + "\n",
