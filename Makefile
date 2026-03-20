@@ -160,6 +160,9 @@ LOCALNET_STATE_SAMPLE_NODES ?= 2
 LOCALNET_APP_HASH_WINDOW ?= 3
 LOCALNET_WORKLOAD_SEED ?= xian-localnet-workload-v1
 LOCALNET_WORKLOAD_SCENARIO ?= counter_basic
+LOCALNET_RECEIPT_RESOLUTION ?= serial
+LOCALNET_RECEIPT_WORKERS ?= 16
+LOCALNET_WORKLOAD_MEASURE_MEMORY ?= 1
 
 .DEFAULT_GOAL := help
 
@@ -461,7 +464,10 @@ localnet-workload:
 		--counter-ops $(LOCALNET_COUNTER_OPS) \
 		--dex-rounds $(LOCALNET_DEX_ROUNDS) \
 		--state-sample-nodes $(LOCALNET_STATE_SAMPLE_NODES) \
-		--app-hash-window $(LOCALNET_APP_HASH_WINDOW)
+		--app-hash-window $(LOCALNET_APP_HASH_WINDOW) \
+		--receipt-resolution "$(LOCALNET_RECEIPT_RESOLUTION)" \
+		--receipt-workers $(LOCALNET_RECEIPT_WORKERS) \
+		$(if $(filter 0,$(LOCALNET_WORKLOAD_MEASURE_MEMORY)),--no-measure-memory,--measure-memory)
 
 localnet-burst:
 	uv run --project "$(XIAN_PY_DIR)" python3 ./scripts/localnet-workload.py \
@@ -469,7 +475,10 @@ localnet-burst:
 		--seed "$(LOCALNET_WORKLOAD_SEED)" \
 		--counter-ops $(LOCALNET_COUNTER_OPS) \
 		--state-sample-nodes $(LOCALNET_STATE_SAMPLE_NODES) \
-		--app-hash-window $(LOCALNET_APP_HASH_WINDOW)
+		--app-hash-window $(LOCALNET_APP_HASH_WINDOW) \
+		--receipt-resolution "$(LOCALNET_RECEIPT_RESOLUTION)" \
+		--receipt-workers $(LOCALNET_RECEIPT_WORKERS) \
+		$(if $(filter 0,$(LOCALNET_WORKLOAD_MEASURE_MEMORY)),--no-measure-memory,--measure-memory)
 
 localnet-memwatch:
 	uv run --project "$(XIAN_PY_DIR)" python3 ./scripts/localnet-memwatch.py $(LOCALNET_MEMWATCH_MINUTES)

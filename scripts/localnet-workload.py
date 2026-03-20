@@ -10,6 +10,7 @@ import random
 import subprocess
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -175,9 +176,28 @@ class WorkloadContext:
         records: list[BroadcastRecord],
         *,
         timeout_seconds: float = RECEIPT_TIMEOUT_SECONDS,
+        concurrent: bool = False,
+        max_workers: int = 16,
     ) -> None:
-        for record in records:
-            self._resolve_record(record, timeout_seconds=timeout_seconds)
+        if not records:
+            return
+        if not concurrent or len(records) < 2:
+            for record in records:
+                self._resolve_record(record, timeout_seconds=timeout_seconds)
+            return
+
+        worker_count = max(1, min(max_workers, len(records)))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(
+                    self._resolve_record,
+                    record,
+                    timeout_seconds=timeout_seconds,
+                ): record
+                for record in records
+            }
+            for future in as_completed(futures):
+                future.result()
 
     def _resolve_record(
         self,
@@ -511,6 +531,8 @@ def run_counter_basic(
     *,
     seed: str,
     operations: int,
+    receipt_resolution: str,
+    receipt_workers: int,
 ) -> dict[str, Any]:
     founder = context.founder_wallet
     suffix = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8]
@@ -580,7 +602,11 @@ def run_counter_basic(
                 )
             )
 
-    context.resolve_records(records)
+    context.resolve_records(
+        records,
+        concurrent=receipt_resolution == "concurrent",
+        max_workers=receipt_workers,
+    )
     successes = sum(1 for record in records if record.final_success)
     if successes != len(records):
         raise WorkloadError("counter_basic: one or more workload transactions failed")
@@ -636,6 +662,8 @@ def run_dex_mixed(
     *,
     seed: str,
     rounds: int,
+    receipt_resolution: str,
+    receipt_workers: int,
 ) -> dict[str, Any]:
     founder = context.founder_wallet
     suffix = hashlib.sha256(f"dex:{seed}".encode("utf-8")).hexdigest()[:8]
@@ -882,7 +910,11 @@ def run_dex_mixed(
                 expected_message="INSUFFICIENT_OUTPUT_AMOUNT",
             ),
         ]
-        context.resolve_records(round_records)
+        context.resolve_records(
+            round_records,
+            concurrent=receipt_resolution == "concurrent",
+            max_workers=receipt_workers,
+        )
         plan_records.extend(round_records)
 
     plan_records.append(
@@ -1096,12 +1128,16 @@ def run_scenario(args: argparse.Namespace, context: WorkloadContext) -> dict[str
             context,
             seed=args.seed,
             operations=args.counter_ops,
+            receipt_resolution=args.receipt_resolution,
+            receipt_workers=args.receipt_workers,
         )
     if args.scenario == "dex_mixed":
         return run_dex_mixed(
             context,
             seed=args.seed,
             rounds=args.dex_rounds,
+            receipt_resolution=args.receipt_resolution,
+            receipt_workers=args.receipt_workers,
         )
     raise WorkloadError(f"unsupported scenario: {args.scenario}")
 
@@ -1157,6 +1193,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Submit transactions across RPC endpoints instead of pinning to one node",
     )
     parser.add_argument(
+        "--receipt-resolution",
+        choices=("serial", "concurrent"),
+        default="serial",
+        help="Resolve tx receipts one-by-one or concurrently after broadcast",
+    )
+    parser.add_argument(
+        "--receipt-workers",
+        type=int,
+        default=16,
+        help="Maximum concurrent receipt pollers when using concurrent resolution",
+    )
+    parser.add_argument(
+        "--measure-memory",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Collect docker memory samples at the end of the workload",
+    )
+    parser.add_argument(
         "--json",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -1200,7 +1254,12 @@ def main(argv: list[str] | None = None) -> int:
         "seed": args.seed,
         "consensus": consensus_summary,
         "scenario_summary": scenario_summary,
-        "memory": collect_container_memory(context.nodes),
+        "memory": (
+            collect_container_memory(context.nodes)
+            if args.measure_memory
+            else {}
+        ),
+        "receipt_resolution": args.receipt_resolution,
     }
 
     if args.json:
