@@ -5,6 +5,18 @@ networks:
     internal: true
 
 services:
+  abci:
+    environment:
+      XIAN_BDS_HOST: ${XIAN_BDS_HOST}
+      XIAN_BDS_PORT: ${XIAN_BDS_PORT}
+      XIAN_BDS_DATABASE: ${XIAN_BDS_DATABASE}
+      XIAN_BDS_USER: ${XIAN_BDS_USER}
+      XIAN_BDS_PASSWORD: ${XIAN_BDS_PASSWORD}
+      XIAN_BDS_POOL_MIN_SIZE: ${XIAN_BDS_POOL_MIN_SIZE}
+      XIAN_BDS_POOL_MAX_SIZE: ${XIAN_BDS_POOL_MAX_SIZE}
+      XIAN_BDS_STATEMENT_TIMEOUT_MS: ${XIAN_BDS_STATEMENT_TIMEOUT_MS}
+      XIAN_BDS_APPLICATION_NAME: ${XIAN_BDS_APPLICATION_NAME}
+
   postgres:
     restart: always
     init: true
@@ -19,11 +31,11 @@ services:
         soft: ${XIAN_DOCKER_POSTGRES_NOFILE_SOFT}
         hard: ${XIAN_DOCKER_POSTGRES_NOFILE_HARD}
     environment:
-      POSTGRES_USER: "postgres"
-      POSTGRES_PASSWORD: "1234"
-      POSTGRES_DB: "xian"
+      POSTGRES_USER: ${XIAN_BDS_USER}
+      POSTGRES_PASSWORD: ${XIAN_BDS_PASSWORD}
+      POSTGRES_DB: ${XIAN_BDS_DATABASE}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d xian"]
+      test: ["CMD-SHELL", "pg_isready -U ${XIAN_BDS_USER} -d ${XIAN_BDS_DATABASE}"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -55,8 +67,8 @@ services:
         condition: service_healthy
     environment:
       GRAPHILE_ENV: "development"
-      POSTGRAPHILE_CONNECTION: "postgres://readonly_user:readonly@postgres:5432/xian"
-      POSTGRAPHILE_SUPERUSER_CONNECTION: "postgres://postgres:1234@postgres:5432/xian"
+      POSTGRAPHILE_CONNECTION: "postgres://${XIAN_BDS_USER}:${XIAN_BDS_PASSWORD}@postgres:${XIAN_BDS_PORT}/${XIAN_BDS_DATABASE}"
+      POSTGRAPHILE_SUPERUSER_CONNECTION: "postgres://${XIAN_BDS_USER}:${XIAN_BDS_PASSWORD}@postgres:${XIAN_BDS_PORT}/${XIAN_BDS_DATABASE}"
       POSTGRAPHILE_HOST: "0.0.0.0"
       POSTGRAPHILE_PORT: "5000"
       POSTGRAPHILE_SCHEMA: "public"

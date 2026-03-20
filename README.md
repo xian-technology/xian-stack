@@ -112,6 +112,17 @@ make abci-bds-up
 make node-start-bds
 ```
 
+The BDS-enabled stack now reads PostgreSQL settings from environment variables
+instead of a checked-in config file inside `xian-abci`. The main knobs are:
+
+```bash
+export XIAN_BDS_HOST=postgres
+export XIAN_BDS_PORT=5432
+export XIAN_BDS_DATABASE=xian
+export XIAN_BDS_USER=xian
+export XIAN_BDS_PASSWORD=xian
+```
+
 For the optional explorer/dashboard service:
 
 ```bash

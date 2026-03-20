@@ -7,6 +7,15 @@ XIAN_CONTRACTING_DIR ?= ../xian-contracting
 XIAN_PY_DIR ?= ../xian-py
 XIAN_COMETBFT_HOME ?= ./.cometbft
 XIAN_BDS_DATA_DIR ?= ./.bds.db
+XIAN_BDS_HOST ?= postgres
+XIAN_BDS_PORT ?= 5432
+XIAN_BDS_DATABASE ?= xian
+XIAN_BDS_USER ?= xian
+XIAN_BDS_PASSWORD ?= xian
+XIAN_BDS_POOL_MIN_SIZE ?= 1
+XIAN_BDS_POOL_MAX_SIZE ?= 10
+XIAN_BDS_STATEMENT_TIMEOUT_MS ?= 0
+XIAN_BDS_APPLICATION_NAME ?= xian-bds
 XIAN_CONTRACTS_DIR ?= ./contracts
 XIAN_COMETBFT_VERSION ?= 0.38.21
 XIAN_S6_OVERLAY_VERSION ?= 3.2.1.0
@@ -79,6 +88,15 @@ export XIAN_CONTRACTING_DIR := $(abspath $(XIAN_CONTRACTING_DIR))
 export XIAN_PY_DIR := $(abspath $(XIAN_PY_DIR))
 export XIAN_COMETBFT_HOME := $(abspath $(XIAN_COMETBFT_HOME))
 export XIAN_BDS_DATA_DIR := $(abspath $(XIAN_BDS_DATA_DIR))
+export XIAN_BDS_HOST := $(XIAN_BDS_HOST)
+export XIAN_BDS_PORT := $(XIAN_BDS_PORT)
+export XIAN_BDS_DATABASE := $(XIAN_BDS_DATABASE)
+export XIAN_BDS_USER := $(XIAN_BDS_USER)
+export XIAN_BDS_PASSWORD := $(XIAN_BDS_PASSWORD)
+export XIAN_BDS_POOL_MIN_SIZE := $(XIAN_BDS_POOL_MIN_SIZE)
+export XIAN_BDS_POOL_MAX_SIZE := $(XIAN_BDS_POOL_MAX_SIZE)
+export XIAN_BDS_STATEMENT_TIMEOUT_MS := $(XIAN_BDS_STATEMENT_TIMEOUT_MS)
+export XIAN_BDS_APPLICATION_NAME := $(XIAN_BDS_APPLICATION_NAME)
 export XIAN_CONTRACTS_DIR := $(abspath $(XIAN_CONTRACTS_DIR))
 export XIAN_COMETBFT_VERSION := $(XIAN_COMETBFT_VERSION)
 export XIAN_S6_OVERLAY_VERSION := $(XIAN_S6_OVERLAY_VERSION)
@@ -232,6 +250,14 @@ print-env:
 	@printf "XIAN_PY_DIR=%s\n" "$(XIAN_PY_DIR)"
 	@printf "XIAN_COMETBFT_HOME=%s\n" "$(XIAN_COMETBFT_HOME)"
 	@printf "XIAN_BDS_DATA_DIR=%s\n" "$(XIAN_BDS_DATA_DIR)"
+	@printf "XIAN_BDS_HOST=%s\n" "$(XIAN_BDS_HOST)"
+	@printf "XIAN_BDS_PORT=%s\n" "$(XIAN_BDS_PORT)"
+	@printf "XIAN_BDS_DATABASE=%s\n" "$(XIAN_BDS_DATABASE)"
+	@printf "XIAN_BDS_USER=%s\n" "$(XIAN_BDS_USER)"
+	@printf "XIAN_BDS_POOL_MIN_SIZE=%s\n" "$(XIAN_BDS_POOL_MIN_SIZE)"
+	@printf "XIAN_BDS_POOL_MAX_SIZE=%s\n" "$(XIAN_BDS_POOL_MAX_SIZE)"
+	@printf "XIAN_BDS_STATEMENT_TIMEOUT_MS=%s\n" "$(XIAN_BDS_STATEMENT_TIMEOUT_MS)"
+	@printf "XIAN_BDS_APPLICATION_NAME=%s\n" "$(XIAN_BDS_APPLICATION_NAME)"
 	@printf "XIAN_CONTRACTS_DIR=%s\n" "$(XIAN_CONTRACTS_DIR)"
 	@printf "XIAN_COMETBFT_VERSION=%s\n" "$(XIAN_COMETBFT_VERSION)"
 	@printf "XIAN_S6_OVERLAY_VERSION=%s\n" "$(XIAN_S6_OVERLAY_VERSION)"
@@ -423,7 +449,7 @@ node-init:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci init
 
 node-configure:
-	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "xian-configure-node --tracer-mode $(XIAN_TRACER_MODE) ${CONFIGURE_ARGS}"
+	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "xian-configure-node --tracer-mode $(XIAN_TRACER_MODE) --bds-host $(XIAN_BDS_HOST) --bds-port $(XIAN_BDS_PORT) --bds-database $(XIAN_BDS_DATABASE) --bds-user $(XIAN_BDS_USER) --bds-password $(XIAN_BDS_PASSWORD) --bds-pool-min-size $(XIAN_BDS_POOL_MIN_SIZE) --bds-pool-max-size $(XIAN_BDS_POOL_MAX_SIZE) --bds-statement-timeout-ms $(XIAN_BDS_STATEMENT_TIMEOUT_MS) --bds-application-name $(XIAN_BDS_APPLICATION_NAME) ${CONFIGURE_ARGS}"
 
 node-id:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci show-node-id
