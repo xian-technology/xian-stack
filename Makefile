@@ -16,6 +16,11 @@ XIAN_BDS_POOL_MIN_SIZE ?= 1
 XIAN_BDS_POOL_MAX_SIZE ?= 10
 XIAN_BDS_STATEMENT_TIMEOUT_MS ?= 0
 XIAN_BDS_APPLICATION_NAME ?= xian-bds
+XIAN_BDS_SPOOL_DIR ?=
+XIAN_BDS_SPOOL_WARN_ENTRIES ?= 256
+XIAN_BDS_SPOOL_WARN_BYTES ?= 536870912
+XIAN_BDS_DISK_FREE_WARN_BYTES ?= 2147483648
+XIAN_STACK_DISK_FREE_WARN_BYTES ?= 10737418240
 XIAN_CONTRACTS_DIR ?= ./contracts
 XIAN_COMETBFT_VERSION ?= 0.38.21
 XIAN_S6_OVERLAY_VERSION ?= 3.2.1.0
@@ -97,6 +102,11 @@ export XIAN_BDS_POOL_MIN_SIZE := $(XIAN_BDS_POOL_MIN_SIZE)
 export XIAN_BDS_POOL_MAX_SIZE := $(XIAN_BDS_POOL_MAX_SIZE)
 export XIAN_BDS_STATEMENT_TIMEOUT_MS := $(XIAN_BDS_STATEMENT_TIMEOUT_MS)
 export XIAN_BDS_APPLICATION_NAME := $(XIAN_BDS_APPLICATION_NAME)
+export XIAN_BDS_SPOOL_DIR := $(XIAN_BDS_SPOOL_DIR)
+export XIAN_BDS_SPOOL_WARN_ENTRIES := $(XIAN_BDS_SPOOL_WARN_ENTRIES)
+export XIAN_BDS_SPOOL_WARN_BYTES := $(XIAN_BDS_SPOOL_WARN_BYTES)
+export XIAN_BDS_DISK_FREE_WARN_BYTES := $(XIAN_BDS_DISK_FREE_WARN_BYTES)
+export XIAN_STACK_DISK_FREE_WARN_BYTES := $(XIAN_STACK_DISK_FREE_WARN_BYTES)
 export XIAN_CONTRACTS_DIR := $(abspath $(XIAN_CONTRACTS_DIR))
 export XIAN_COMETBFT_VERSION := $(XIAN_COMETBFT_VERSION)
 export XIAN_S6_OVERLAY_VERSION := $(XIAN_S6_OVERLAY_VERSION)
@@ -193,6 +203,7 @@ LOCALNET_WORKLOAD_MEASURE_MEMORY ?= 1
 	wipe-bds node-wipe node-wipe-all node-reset \
 	node-stop node-start node-start-bds node-init node-configure node-id \
 	node-status node-status-fidelity \
+	storage-report \
 	localnet-init localnet-build localnet-up localnet-down localnet-status \
 	localnet-workload localnet-burst localnet-memwatch localnet-leak-hunt \
 	localnet-clean localnet-logs localnet-shell
@@ -226,6 +237,7 @@ help:
 	@printf "  %-24s %s\n" "node-start-bds" "Start the node runtime with block-service mode"
 	@printf "  %-24s %s\n" "node-status" "Report integrated runtime state as JSON"
 	@printf "  %-24s %s\n" "node-status-fidelity" "Report split fidelity runtime state as JSON"
+	@printf "  %-24s %s\n" "storage-report" "Report host-side chain, BDS, and free-disk usage"
 	@printf "  %-24s %s\n" "dev-abci-build/dev-abci-up" "Developer-only ABCI dev stack targets"
 	@printf "  %-24s %s\n" "dev-contracting-build" "Developer-only contracting image build"
 	@printf "\n  Localnet (multi-node):\n"
@@ -258,6 +270,11 @@ print-env:
 	@printf "XIAN_BDS_POOL_MAX_SIZE=%s\n" "$(XIAN_BDS_POOL_MAX_SIZE)"
 	@printf "XIAN_BDS_STATEMENT_TIMEOUT_MS=%s\n" "$(XIAN_BDS_STATEMENT_TIMEOUT_MS)"
 	@printf "XIAN_BDS_APPLICATION_NAME=%s\n" "$(XIAN_BDS_APPLICATION_NAME)"
+	@printf "XIAN_BDS_SPOOL_DIR=%s\n" "$(XIAN_BDS_SPOOL_DIR)"
+	@printf "XIAN_BDS_SPOOL_WARN_ENTRIES=%s\n" "$(XIAN_BDS_SPOOL_WARN_ENTRIES)"
+	@printf "XIAN_BDS_SPOOL_WARN_BYTES=%s\n" "$(XIAN_BDS_SPOOL_WARN_BYTES)"
+	@printf "XIAN_BDS_DISK_FREE_WARN_BYTES=%s\n" "$(XIAN_BDS_DISK_FREE_WARN_BYTES)"
+	@printf "XIAN_STACK_DISK_FREE_WARN_BYTES=%s\n" "$(XIAN_STACK_DISK_FREE_WARN_BYTES)"
 	@printf "XIAN_CONTRACTS_DIR=%s\n" "$(XIAN_CONTRACTS_DIR)"
 	@printf "XIAN_COMETBFT_VERSION=%s\n" "$(XIAN_COMETBFT_VERSION)"
 	@printf "XIAN_S6_OVERLAY_VERSION=%s\n" "$(XIAN_S6_OVERLAY_VERSION)"
@@ -449,7 +466,7 @@ node-init:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci init
 
 node-configure:
-	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "xian-configure-node --tracer-mode $(XIAN_TRACER_MODE) --bds-host $(XIAN_BDS_HOST) --bds-port $(XIAN_BDS_PORT) --bds-database $(XIAN_BDS_DATABASE) --bds-user $(XIAN_BDS_USER) --bds-password $(XIAN_BDS_PASSWORD) --bds-pool-min-size $(XIAN_BDS_POOL_MIN_SIZE) --bds-pool-max-size $(XIAN_BDS_POOL_MAX_SIZE) --bds-statement-timeout-ms $(XIAN_BDS_STATEMENT_TIMEOUT_MS) --bds-application-name $(XIAN_BDS_APPLICATION_NAME) ${CONFIGURE_ARGS}"
+	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "xian-configure-node --tracer-mode $(XIAN_TRACER_MODE) --bds-host $(XIAN_BDS_HOST) --bds-port $(XIAN_BDS_PORT) --bds-database $(XIAN_BDS_DATABASE) --bds-user $(XIAN_BDS_USER) --bds-password $(XIAN_BDS_PASSWORD) --bds-pool-min-size $(XIAN_BDS_POOL_MIN_SIZE) --bds-pool-max-size $(XIAN_BDS_POOL_MAX_SIZE) --bds-statement-timeout-ms $(XIAN_BDS_STATEMENT_TIMEOUT_MS) --bds-application-name $(XIAN_BDS_APPLICATION_NAME) $(if $(XIAN_BDS_SPOOL_DIR),--bds-spool-dir $(XIAN_BDS_SPOOL_DIR),) --bds-spool-warn-entries $(XIAN_BDS_SPOOL_WARN_ENTRIES) --bds-spool-warn-bytes $(XIAN_BDS_SPOOL_WARN_BYTES) --bds-disk-free-warn-bytes $(XIAN_BDS_DISK_FREE_WARN_BYTES) ${CONFIGURE_ARGS}"
 
 node-id:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci show-node-id
@@ -459,6 +476,9 @@ node-status:
 
 node-status-fidelity:
 	@XIAN_STACK_TOPOLOGY=fidelity ./scripts/node-status.sh
+
+storage-report:
+	@python3 ./scripts/storage-report.py
 
 
 # ── Localnet (multi-node) ────────────────────────────────────────────

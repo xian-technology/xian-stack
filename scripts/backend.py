@@ -356,6 +356,13 @@ def backend_make_result(target: str) -> dict:
     return payload
 
 
+def backend_storage_report() -> dict:
+    result = run_make_target("storage-report", capture_output=True)
+    payload = json.loads(result.stdout)
+    payload["target"] = "storage-report"
+    return payload
+
+
 def backend_localnet_init(*, nodes: int, clean: bool, topology: str) -> dict:
     args = ["--nodes", str(nodes), "--topology", topology]
     if clean:
@@ -528,6 +535,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("validate")
     subparsers.add_parser("smoke")
     subparsers.add_parser("smoke-cli")
+    subparsers.add_parser("storage-report")
 
     localnet_init = subparsers.add_parser("localnet-init")
     localnet_init.add_argument("--nodes", type=int, default=4)
@@ -663,6 +671,8 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_make_result("smoke")
     elif args.command == "smoke-cli":
         payload = backend_make_result("smoke-cli")
+    elif args.command == "storage-report":
+        payload = backend_storage_report()
     elif args.command == "localnet-init":
         payload = backend_localnet_init(
             nodes=args.nodes,
