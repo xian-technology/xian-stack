@@ -42,6 +42,9 @@ services:
     environment:
       XIAN_CONFIGS_DIR: /opt/xian-configs
       S6_VERBOSITY: ${XIAN_S6_VERBOSITY}
+      XIAN_PERF_ENABLED: ${XIAN_PERF_ENABLED}
+      XIAN_PERF_RECENT_BLOCKS: ${XIAN_PERF_RECENT_BLOCKS}
+      XIAN_PERF_OUTPUT_PATH: /root/.cometbft/xian-perf.json
     stdin_open: true
     tty: true
     networks:
@@ -51,6 +54,7 @@ services:
       - "26657:26657"
       - "26656:26656"
       - "26660:26660"
+      - "${XIAN_APP_METRICS_HOST}:${XIAN_APP_METRICS_PORT}:9108"
 
   dashboard:
     profiles: ["dashboard-integrated"]
@@ -111,12 +115,17 @@ services:
       - xian-abci-runtime-tmp:/tmp
     environment:
       XIAN_CONFIGS_DIR: /opt/xian-configs
+      XIAN_PERF_ENABLED: ${XIAN_PERF_ENABLED}
+      XIAN_PERF_RECENT_BLOCKS: ${XIAN_PERF_RECENT_BLOCKS}
+      XIAN_PERF_OUTPUT_PATH: /root/.cometbft/xian-perf.json
     stdin_open: true
     tty: true
     command: ["xian-abci"]
     networks:
       - xian-net
       - xian-db
+    ports:
+      - "${XIAN_APP_METRICS_HOST}:${XIAN_APP_METRICS_PORT}:9108"
 
   cometbft:
     profiles: ["fidelity"]

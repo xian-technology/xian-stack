@@ -26,6 +26,20 @@ XIAN_COMETBFT_VERSION ?= 0.38.21
 XIAN_S6_OVERLAY_VERSION ?= 3.2.1.0
 XIAN_S6_VERBOSITY ?= 1
 XIAN_TRACER_MODE ?= python_line_v1
+XIAN_APP_METRICS_ENABLED ?= 1
+XIAN_APP_METRICS_LISTEN_HOST ?= 0.0.0.0
+XIAN_APP_METRICS_HOST ?= 127.0.0.1
+XIAN_APP_METRICS_PORT ?= 9108
+XIAN_APP_METRICS_BDS_REFRESH_SECONDS ?= 5.0
+XIAN_PERF_ENABLED ?= 1
+XIAN_PERF_RECENT_BLOCKS ?= 64
+XIAN_PROMETHEUS_IMAGE ?= prom/prometheus:v3.10.0
+XIAN_PROMETHEUS_CONFIG ?= ./monitoring/prometheus/integrated.yml
+XIAN_PROMETHEUS_HOST ?= 127.0.0.1
+XIAN_PROMETHEUS_PORT ?= 9090
+XIAN_GRAFANA_IMAGE ?= grafana/grafana:12.2.0
+XIAN_GRAFANA_HOST ?= 127.0.0.1
+XIAN_GRAFANA_PORT ?= 3000
 XIAN_STACK_TOPOLOGY ?= integrated
 XIAN_DOCKER_ABCI_MEMORY_LIMIT ?= 2048m
 XIAN_DOCKER_ABCI_MEMORY_RESERVATION ?= 1024m
@@ -112,6 +126,20 @@ export XIAN_COMETBFT_VERSION := $(XIAN_COMETBFT_VERSION)
 export XIAN_S6_OVERLAY_VERSION := $(XIAN_S6_OVERLAY_VERSION)
 export XIAN_S6_VERBOSITY := $(XIAN_S6_VERBOSITY)
 export XIAN_TRACER_MODE := $(XIAN_TRACER_MODE)
+export XIAN_APP_METRICS_ENABLED := $(XIAN_APP_METRICS_ENABLED)
+export XIAN_APP_METRICS_LISTEN_HOST := $(XIAN_APP_METRICS_LISTEN_HOST)
+export XIAN_APP_METRICS_HOST := $(XIAN_APP_METRICS_HOST)
+export XIAN_APP_METRICS_PORT := $(XIAN_APP_METRICS_PORT)
+export XIAN_APP_METRICS_BDS_REFRESH_SECONDS := $(XIAN_APP_METRICS_BDS_REFRESH_SECONDS)
+export XIAN_PERF_ENABLED := $(XIAN_PERF_ENABLED)
+export XIAN_PERF_RECENT_BLOCKS := $(XIAN_PERF_RECENT_BLOCKS)
+export XIAN_PROMETHEUS_IMAGE := $(XIAN_PROMETHEUS_IMAGE)
+export XIAN_PROMETHEUS_CONFIG := $(XIAN_PROMETHEUS_CONFIG)
+export XIAN_PROMETHEUS_HOST := $(XIAN_PROMETHEUS_HOST)
+export XIAN_PROMETHEUS_PORT := $(XIAN_PROMETHEUS_PORT)
+export XIAN_GRAFANA_IMAGE := $(XIAN_GRAFANA_IMAGE)
+export XIAN_GRAFANA_HOST := $(XIAN_GRAFANA_HOST)
+export XIAN_GRAFANA_PORT := $(XIAN_GRAFANA_PORT)
 export XIAN_STACK_TOPOLOGY := $(XIAN_STACK_TOPOLOGY)
 export XIAN_DOCKER_ABCI_MEMORY_LIMIT := $(XIAN_DOCKER_ABCI_MEMORY_LIMIT)
 export XIAN_DOCKER_ABCI_MEMORY_RESERVATION := $(XIAN_DOCKER_ABCI_MEMORY_RESERVATION)
@@ -199,6 +227,7 @@ LOCALNET_WORKLOAD_MEASURE_MEMORY ?= 1
 	dev-abci-build dev-abci-up dev-abci-down dev-abci-shell \
 	abci-build abci-up abci-down abci-fidelity-build abci-fidelity-up abci-fidelity-down dev-base-abci-shell \
 	dashboard-build dashboard-up dashboard-down dashboard-bds-up dashboard-bds-down dashboard-fidelity-build dashboard-fidelity-up dashboard-fidelity-down \
+	monitoring-up monitoring-down monitoring-bds-up monitoring-bds-down monitoring-fidelity-up monitoring-fidelity-down \
 	abci-bds-build abci-bds-up abci-bds-down dev-bds-abci-shell \
 	wipe-bds node-wipe node-wipe-all node-reset \
 	node-stop node-start node-start-bds node-init node-configure node-id \
@@ -228,6 +257,12 @@ help:
 	@printf "  %-24s %s\n" "dashboard-fidelity-build" "Build the optional fidelity dashboard image"
 	@printf "  %-24s %s\n" "dashboard-fidelity-up" "Start the optional fidelity dashboard service"
 	@printf "  %-24s %s\n" "dashboard-fidelity-down" "Stop the optional fidelity dashboard service"
+	@printf "  %-24s %s\n" "monitoring-up" "Start optional Prometheus and Grafana for the integrated node"
+	@printf "  %-24s %s\n" "monitoring-down" "Stop optional Prometheus and Grafana for the integrated node"
+	@printf "  %-24s %s\n" "monitoring-bds-up" "Start optional Prometheus and Grafana for the integrated BDS stack"
+	@printf "  %-24s %s\n" "monitoring-bds-down" "Stop optional Prometheus and Grafana for the integrated BDS stack"
+	@printf "  %-24s %s\n" "monitoring-fidelity-up" "Start optional Prometheus and Grafana for the fidelity stack"
+	@printf "  %-24s %s\n" "monitoring-fidelity-down" "Stop optional Prometheus and Grafana for the fidelity stack"
 	@printf "  %-24s %s\n" "abci-bds-build" "Build the integrated ABCI + BDS stack"
 	@printf "  %-24s %s\n" "abci-bds-up" "Start the integrated ABCI + BDS stack"
 	@printf "  %-24s %s\n" "abci-bds-down" "Stop the integrated ABCI + BDS stack"
@@ -280,6 +315,20 @@ print-env:
 	@printf "XIAN_S6_OVERLAY_VERSION=%s\n" "$(XIAN_S6_OVERLAY_VERSION)"
 	@printf "XIAN_S6_VERBOSITY=%s\n" "$(XIAN_S6_VERBOSITY)"
 	@printf "XIAN_TRACER_MODE=%s\n" "$(XIAN_TRACER_MODE)"
+	@printf "XIAN_APP_METRICS_ENABLED=%s\n" "$(XIAN_APP_METRICS_ENABLED)"
+	@printf "XIAN_APP_METRICS_LISTEN_HOST=%s\n" "$(XIAN_APP_METRICS_LISTEN_HOST)"
+	@printf "XIAN_APP_METRICS_HOST=%s\n" "$(XIAN_APP_METRICS_HOST)"
+	@printf "XIAN_APP_METRICS_PORT=%s\n" "$(XIAN_APP_METRICS_PORT)"
+	@printf "XIAN_APP_METRICS_BDS_REFRESH_SECONDS=%s\n" "$(XIAN_APP_METRICS_BDS_REFRESH_SECONDS)"
+	@printf "XIAN_PERF_ENABLED=%s\n" "$(XIAN_PERF_ENABLED)"
+	@printf "XIAN_PERF_RECENT_BLOCKS=%s\n" "$(XIAN_PERF_RECENT_BLOCKS)"
+	@printf "XIAN_PROMETHEUS_IMAGE=%s\n" "$(XIAN_PROMETHEUS_IMAGE)"
+	@printf "XIAN_PROMETHEUS_CONFIG=%s\n" "$(XIAN_PROMETHEUS_CONFIG)"
+	@printf "XIAN_PROMETHEUS_HOST=%s\n" "$(XIAN_PROMETHEUS_HOST)"
+	@printf "XIAN_PROMETHEUS_PORT=%s\n" "$(XIAN_PROMETHEUS_PORT)"
+	@printf "XIAN_GRAFANA_IMAGE=%s\n" "$(XIAN_GRAFANA_IMAGE)"
+	@printf "XIAN_GRAFANA_HOST=%s\n" "$(XIAN_GRAFANA_HOST)"
+	@printf "XIAN_GRAFANA_PORT=%s\n" "$(XIAN_GRAFANA_PORT)"
 	@printf "XIAN_STACK_TOPOLOGY=%s\n" "$(XIAN_STACK_TOPOLOGY)"
 	@printf "XIAN_DOCKER_ABCI_MEMORY_LIMIT=%s\n" "$(XIAN_DOCKER_ABCI_MEMORY_LIMIT)"
 	@printf "XIAN_DASHBOARD_HOST=%s\n" "$(XIAN_DASHBOARD_HOST)"
@@ -424,6 +473,24 @@ dashboard-fidelity-up: prepare-dirs
 dashboard-fidelity-down:
 	$(DOCKER_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml rm -sf dashboard-fidelity
 
+monitoring-up: prepare-dirs
+	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d abci prometheus grafana
+
+monitoring-down:
+	$(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
+
+monitoring-bds-up: prepare-dirs
+	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml up -d abci postgres postgraphile prometheus grafana
+
+monitoring-bds-down:
+	$(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
+
+monitoring-fidelity-up: prepare-dirs
+	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/fidelity.yml $(DOCKER_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d abci-app cometbft prometheus grafana
+
+monitoring-fidelity-down:
+	$(DOCKER_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
+
 dev-base-abci-shell:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci
 
@@ -466,7 +533,7 @@ node-init:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci init
 
 node-configure:
-	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "xian-configure-node --tracer-mode $(XIAN_TRACER_MODE) --bds-host $(XIAN_BDS_HOST) --bds-port $(XIAN_BDS_PORT) --bds-database $(XIAN_BDS_DATABASE) --bds-user $(XIAN_BDS_USER) --bds-password $(XIAN_BDS_PASSWORD) --bds-pool-min-size $(XIAN_BDS_POOL_MIN_SIZE) --bds-pool-max-size $(XIAN_BDS_POOL_MAX_SIZE) --bds-statement-timeout-ms $(XIAN_BDS_STATEMENT_TIMEOUT_MS) --bds-application-name $(XIAN_BDS_APPLICATION_NAME) $(if $(XIAN_BDS_SPOOL_DIR),--bds-spool-dir $(XIAN_BDS_SPOOL_DIR),) --bds-spool-warn-entries $(XIAN_BDS_SPOOL_WARN_ENTRIES) --bds-spool-warn-bytes $(XIAN_BDS_SPOOL_WARN_BYTES) --bds-disk-free-warn-bytes $(XIAN_BDS_DISK_FREE_WARN_BYTES) ${CONFIGURE_ARGS}"
+	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "metrics_flag='--metrics-enabled'; if [ '$(XIAN_APP_METRICS_ENABLED)' = '0' ]; then metrics_flag='--no-metrics-enabled'; fi; xian-configure-node --tracer-mode $(XIAN_TRACER_MODE) $$metrics_flag --metrics-host $(XIAN_APP_METRICS_LISTEN_HOST) --metrics-port $(XIAN_APP_METRICS_PORT) --metrics-bds-refresh-seconds $(XIAN_APP_METRICS_BDS_REFRESH_SECONDS) --bds-host $(XIAN_BDS_HOST) --bds-port $(XIAN_BDS_PORT) --bds-database $(XIAN_BDS_DATABASE) --bds-user $(XIAN_BDS_USER) --bds-password $(XIAN_BDS_PASSWORD) --bds-pool-min-size $(XIAN_BDS_POOL_MIN_SIZE) --bds-pool-max-size $(XIAN_BDS_POOL_MAX_SIZE) --bds-statement-timeout-ms $(XIAN_BDS_STATEMENT_TIMEOUT_MS) --bds-application-name $(XIAN_BDS_APPLICATION_NAME) $(if $(XIAN_BDS_SPOOL_DIR),--bds-spool-dir $(XIAN_BDS_SPOOL_DIR),) --bds-spool-warn-entries $(XIAN_BDS_SPOOL_WARN_ENTRIES) --bds-spool-warn-bytes $(XIAN_BDS_SPOOL_WARN_BYTES) --bds-disk-free-warn-bytes $(XIAN_BDS_DISK_FREE_WARN_BYTES) ${CONFIGURE_ARGS}"
 
 node-id:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci show-node-id

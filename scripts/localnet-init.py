@@ -137,6 +137,9 @@ def write_node_config(
         allow_cors=True,
         prometheus=True,
         tracer_mode=tracer_mode,
+        metrics_enabled=True,
+        metrics_host="0.0.0.0",
+        metrics_port=9108,
         parallel_execution_enabled=parallel_execution_enabled,
         parallel_execution_workers=parallel_execution_workers,
         parallel_execution_min_transactions=(
