@@ -37,6 +37,38 @@ Trusted Publishing setup still has to be completed once in PyPI for each project
 - `xian-py`: `pypi`
 - `xian-linter`: `pypi`
 
+### PyPI Trusted Publisher Setup
+
+The PyPI-side registration is still a manual step. Use the PyPI project settings page for each package:
+
+- existing project: `https://pypi.org/manage/project/<project-name>/settings/publishing/`
+- new project: use the pending publisher flow in PyPI before the first release
+
+The helper below prints the exact values to enter:
+
+```bash
+python3 ./scripts/trusted_publishers.py markdown
+```
+
+Current publisher matrix:
+
+| PyPI project | GitHub owner | GitHub repo | Workflow filename | Environment |
+| --- | --- | --- | --- | --- |
+| `xian-contracting` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-contracting` |
+| `xian-runtime-types` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-runtime-types` |
+| `xian-native-tracer` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-native-tracer` |
+| `xian-abci` | `xian-technology` | `xian-abci` | `release.yml` | `pypi` |
+| `xian-cli` | `xian-technology` | `xian-cli` | `release.yml` | `pypi` |
+| `xian-py` | `xian-technology` | `xian-py` | `release.yml` | `pypi` |
+| `xian-linter` | `xian-technology` | `xian-linter` | `release.yml` | `pypi` |
+
+Notes:
+
+- the workflow value entered in PyPI is the workflow filename, `release.yml`
+- the environment value is optional on the PyPI side, but Xian uses it intentionally and it should match exactly
+- if a package name does not exist on PyPI yet, create a pending publisher for it first; that reserves nothing until the first successful publish
+- if a repo or workflow file is renamed later, update the PyPI publisher entry to match or releases will fail
+
 ## Stack Image Releases
 
 `xian-stack` publishes release images to GHCR from a committed release manifest in `release-manifest.json`.
