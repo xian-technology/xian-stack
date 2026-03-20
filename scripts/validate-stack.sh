@@ -11,6 +11,7 @@ require_uv
 
 cd "${stack_root}"
 
+python3 ./scripts/release_manifest.py validate
 docker compose --profile integrated -f docker-compose-abci.yml config -q
 docker compose --profile fidelity -f docker-compose-abci.yml config -q
 docker compose --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml config -q

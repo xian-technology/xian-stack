@@ -1,0 +1,229 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-manifest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      xian_abci_repository: ${{ steps.resolve.outputs.xian_abci_repository }}
+      xian_abci_ref: ${{ steps.resolve.outputs.xian_abci_ref }}
+      xian_configs_repository: ${{ steps.resolve.outputs.xian_configs_repository }}
+      xian_configs_ref: ${{ steps.resolve.outputs.xian_configs_ref }}
+      xian_contracting_repository: ${{ steps.resolve.outputs.xian_contracting_repository }}
+      xian_contracting_ref: ${{ steps.resolve.outputs.xian_contracting_ref }}
+      xian_py_repository: ${{ steps.resolve.outputs.xian_py_repository }}
+      xian_py_ref: ${{ steps.resolve.outputs.xian_py_ref }}
+      python_image: ${{ steps.resolve.outputs.python_image }}
+      cometbft_version: ${{ steps.resolve.outputs.cometbft_version }}
+      s6_overlay_version: ${{ steps.resolve.outputs.s6_overlay_version }}
+      integrated_image_name: ${{ steps.resolve.outputs.integrated_image_name }}
+      split_image_name: ${{ steps.resolve.outputs.split_image_name }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Validate release manifest
+        run: python ./scripts/release_manifest.py validate
+
+      - name: Export release manifest outputs
+        id: resolve
+        run: python ./scripts/release_manifest.py github-output --github-output "${GITHUB_OUTPUT}"
+
+  publish-images:
+    needs: release-manifest
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - name: Check out xian-stack
+        uses: actions/checkout@v6
+        with:
+          path: xian-stack
+
+      - name: Check out xian-abci
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ needs.release-manifest.outputs.xian_abci_repository }}
+          ref: ${{ needs.release-manifest.outputs.xian_abci_ref }}
+          path: xian-abci
+
+      - name: Check out xian-configs
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ needs.release-manifest.outputs.xian_configs_repository }}
+          ref: ${{ needs.release-manifest.outputs.xian_configs_ref }}
+          path: xian-configs
+
+      - name: Check out xian-contracting
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ needs.release-manifest.outputs.xian_contracting_repository }}
+          ref: ${{ needs.release-manifest.outputs.xian_contracting_ref }}
+          path: xian-contracting
+
+      - name: Check out xian-py
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ needs.release-manifest.outputs.xian_py_repository }}
+          ref: ${{ needs.release-manifest.outputs.xian_py_ref }}
+          path: xian-py
+
+      - name: Normalize registry owner
+        id: registry
+        run: echo "owner=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Generate integrated image metadata
+        id: meta-integrated
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.registry.outputs.owner }}/${{ needs.release-manifest.outputs.integrated_image_name }}
+          flavor: |
+            latest=auto
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+          labels: |
+            org.opencontainers.image.title=Xian Node
+            org.opencontainers.image.description=Integrated Xian node image with CometBFT and xian-abci
+            io.xian.release.manifest-sha=${{ hashFiles('xian-stack/release-manifest.json') }}
+
+      - name: Generate split image metadata
+        id: meta-split
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.registry.outputs.owner }}/${{ needs.release-manifest.outputs.split_image_name }}
+          flavor: |
+            latest=auto
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+          labels: |
+            org.opencontainers.image.title=Xian Node Split Runtime
+            org.opencontainers.image.description=Split Xian runtime image for ABCI, CometBFT, and dashboard services
+            io.xian.release.manifest-sha=${{ hashFiles('xian-stack/release-manifest.json') }}
+
+      - name: Build and publish integrated image
+        id: build-integrated
+        uses: docker/build-push-action@v7
+        with:
+          context: ./xian-stack
+          file: ./xian-stack/docker/xian-node.Dockerfile
+          target: integrated
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ steps.meta-integrated.outputs.tags }}
+          labels: ${{ steps.meta-integrated.outputs.labels }}
+          build-contexts: |
+            xian-abci=./xian-abci
+            xian-configs=./xian-configs
+            xian-contracting=./xian-contracting
+            xian-py=./xian-py
+          build-args: |
+            PYTHON_IMAGE=${{ needs.release-manifest.outputs.python_image }}
+            COMETBFT_VERSION=${{ needs.release-manifest.outputs.cometbft_version }}
+            S6_OVERLAY_VERSION=${{ needs.release-manifest.outputs.s6_overlay_version }}
+
+      - name: Build and publish split image
+        id: build-split
+        uses: docker/build-push-action@v7
+        with:
+          context: ./xian-stack
+          file: ./xian-stack/docker/xian-node.Dockerfile
+          target: split
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ steps.meta-split.outputs.tags }}
+          labels: ${{ steps.meta-split.outputs.labels }}
+          build-contexts: |
+            xian-abci=./xian-abci
+            xian-configs=./xian-configs
+            xian-contracting=./xian-contracting
+            xian-py=./xian-py
+          build-args: |
+            PYTHON_IMAGE=${{ needs.release-manifest.outputs.python_image }}
+            COMETBFT_VERSION=${{ needs.release-manifest.outputs.cometbft_version }}
+            S6_OVERLAY_VERSION=${{ needs.release-manifest.outputs.s6_overlay_version }}
+
+      - name: Stage release assets
+        run: |
+          mkdir -p /tmp/release-assets
+          cp xian-stack/release-manifest.json /tmp/release-assets/
+          cat > /tmp/release-assets/image-release.txt <<EOF
+          integrated_image=ghcr.io/${{ steps.registry.outputs.owner }}/${{ needs.release-manifest.outputs.integrated_image_name }}:${GITHUB_REF_NAME#v}
+          integrated_digest=${{ steps.build-integrated.outputs.digest }}
+          split_image=ghcr.io/${{ steps.registry.outputs.owner }}/${{ needs.release-manifest.outputs.split_image_name }}:${GITHUB_REF_NAME#v}
+          split_digest=${{ steps.build-split.outputs.digest }}
+          xian_abci_ref=${{ needs.release-manifest.outputs.xian_abci_ref }}
+          xian_configs_ref=${{ needs.release-manifest.outputs.xian_configs_ref }}
+          xian_contracting_ref=${{ needs.release-manifest.outputs.xian_contracting_ref }}
+          xian_py_ref=${{ needs.release-manifest.outputs.xian_py_ref }}
+          EOF
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-assets
+          path: /tmp/release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  github-release:
+    needs:
+      - release-manifest
+      - publish-images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v5
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" release-assets/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --title "xian-stack ${GITHUB_REF_NAME#v}" \
+            --generate-notes

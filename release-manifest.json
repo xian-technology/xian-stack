@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "components": {
+    "xian-abci": {
+      "repository": "xian-technology/xian-abci",
+      "ref": "0c88146ab63911deba497e79487272e4a7f52601"
+    },
+    "xian-configs": {
+      "repository": "xian-technology/xian-configs",
+      "ref": "3404db0d0553edf4176f8c62a7c019af0ce76534"
+    },
+    "xian-contracting": {
+      "repository": "xian-technology/xian-contracting",
+      "ref": "f13d973f26105638209cf7fbe9fbaa58869eb4e4"
+    },
+    "xian-py": {
+      "repository": "xian-technology/xian-py",
+      "ref": "a590ccf34ca435b52dc53a46c9f9e731864edc96"
+    }
+  },
+  "build": {
+    "python_image": "python:3.14-bookworm",
+    "cometbft_version": "0.38.21",
+    "s6_overlay_version": "3.2.1.0"
+  },
+  "images": {
+    "integrated": "xian-node",
+    "split": "xian-node-split"
+  }
+}
