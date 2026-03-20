@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import argparse
 import hashlib
 import json
@@ -10,12 +11,12 @@ import random
 import subprocess
 import time
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.request import urlopen
+
+import aiohttp
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent
@@ -24,7 +25,7 @@ NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 
 from xian_py import transaction as tr  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
-from xian_py.xian import Xian  # noqa: E402
+from xian_py.xian_async import XianAsync  # noqa: E402
 
 
 COUNTER_DEPLOY_STAMPS = 75_000
@@ -97,6 +98,27 @@ class WorkloadContext:
         self.submit_node_index = submit_node_index % len(self.nodes)
         self.round_robin_submission = round_robin_submission
         self._next_nonce: dict[str, int] = {}
+        self._session: aiohttp.ClientSession | None = None
+
+    async def __aenter__(self) -> WorkloadContext:
+        connector = aiohttp.TCPConnector(limit=256, ttl_dns_cache=300)
+        timeout = aiohttp.ClientTimeout(total=15, sock_connect=3, sock_read=10)
+        self._session = aiohttp.ClientSession(
+            timeout=timeout,
+            connector=connector,
+        )
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        if self._session is not None:
+            await self._session.close()
+        self._session = None
+
+    @property
+    def session(self) -> aiohttp.ClientSession:
+        if self._session is None:
+            raise WorkloadError("workload context session is not initialized")
+        return self._session
 
     def _select_sample_nodes(self, sample_nodes: int) -> list[LocalnetNode]:
         if sample_nodes <= 0:
@@ -114,27 +136,33 @@ class WorkloadContext:
                 indices.append(raw_index)
         return [self.nodes[index] for index in indices]
 
-    def client(self, wallet: Wallet, rpc_index: int) -> Xian:
+    def client(self, wallet: Wallet, rpc_index: int) -> XianAsync:
         node = self.nodes[rpc_index % len(self.nodes)]
-        return Xian(node_url=node.rpc_url, chain_id=self.chain_id, wallet=wallet)
+        return XianAsync(
+            node_url=node.rpc_url,
+            chain_id=self.chain_id,
+            wallet=wallet,
+            session=self.session,
+        )
 
     def submission_index(self, requested_rpc_index: int) -> int:
         if self.round_robin_submission:
             return requested_rpc_index % len(self.nodes)
         return self.submit_node_index
 
-    def next_nonce(self, wallet: Wallet, rpc_index: int) -> int:
+    async def next_nonce(self, wallet: Wallet, rpc_index: int) -> int:
         public_key = wallet.public_key
         if public_key not in self._next_nonce:
-            self._next_nonce[public_key] = tr.get_nonce(
+            self._next_nonce[public_key] = await tr.get_nonce_async(
                 self.nodes[rpc_index % len(self.nodes)].rpc_url,
                 public_key,
+                session=self.session,
             )
         nonce = self._next_nonce[public_key]
         self._next_nonce[public_key] += 1
         return nonce
 
-    def broadcast_tx(
+    async def broadcast_tx(
         self,
         *,
         label: str,
@@ -149,12 +177,12 @@ class WorkloadContext:
     ) -> BroadcastRecord:
         submission_index = self.submission_index(rpc_index)
         client = self.client(wallet, submission_index)
-        response = client.send_tx(
+        response = await client.send_tx(
             contract=contract,
             function=function,
             kwargs=kwargs,
             stamps=stamps,
-            nonce=self.next_nonce(wallet, submission_index),
+            nonce=await self.next_nonce(wallet, submission_index),
             chain_id=self.chain_id,
             synchronous=True,
         )
@@ -171,7 +199,7 @@ class WorkloadContext:
             tx_hash=tx_hash,
         )
 
-    def resolve_records(
+    async def resolve_records(
         self,
         records: list[BroadcastRecord],
         *,
@@ -183,23 +211,22 @@ class WorkloadContext:
             return
         if not concurrent or len(records) < 2:
             for record in records:
-                self._resolve_record(record, timeout_seconds=timeout_seconds)
+                await self._resolve_record(record, timeout_seconds=timeout_seconds)
             return
 
         worker_count = max(1, min(max_workers, len(records)))
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures = {
-                executor.submit(
-                    self._resolve_record,
+        semaphore = asyncio.Semaphore(worker_count)
+
+        async def resolve_one(record: BroadcastRecord) -> None:
+            async with semaphore:
+                await self._resolve_record(
                     record,
                     timeout_seconds=timeout_seconds,
-                ): record
-                for record in records
-            }
-            for future in as_completed(futures):
-                future.result()
+                )
 
-    def _resolve_record(
+        await asyncio.gather(*(resolve_one(record) for record in records))
+
+    async def _resolve_record(
         self,
         record: BroadcastRecord,
         *,
@@ -214,12 +241,13 @@ class WorkloadContext:
         if not record.tx_hash:
             raise WorkloadError(f"{record.label}: missing tx hash")
 
-        client = Xian(
+        client = XianAsync(
             node_url=record.rpc_url,
             chain_id=self.chain_id,
             wallet=self.founder_wallet,
+            session=self.session,
         )
-        receipt = wait_for_tx_receipt(
+        receipt = await wait_for_tx_receipt(
             client=client,
             tx_hash=record.tx_hash,
             timeout_seconds=timeout_seconds,
@@ -247,7 +275,7 @@ class WorkloadContext:
                 f"{record.expected_message!r}, got {record.final_message!r}"
             )
 
-    def compare_state(
+    async def compare_state(
         self,
         queries: list[dict[str, Any]],
     ) -> dict[str, Any]:
@@ -256,19 +284,29 @@ class WorkloadContext:
         founder = self.founder_wallet
 
         for query in queries:
-            values: dict[str, Any] = {}
-            canonical: dict[str, str] = {}
-            for node in self.sample_nodes:
-                client = Xian(
-                    node_url=node.rpc_url, chain_id=self.chain_id, wallet=founder
+            async def fetch_node_state(node: LocalnetNode) -> tuple[str, Any]:
+                client = XianAsync(
+                    node_url=node.rpc_url,
+                    chain_id=self.chain_id,
+                    wallet=founder,
+                    session=self.session,
                 )
-                value = client.get_state(
+                value = await client.get_state(
                     query["contract"],
                     query["variable"],
                     *(str(key) for key in query.get("keys", [])),
                 )
-                values[node.moniker] = normalize_value(value)
-                canonical[node.moniker] = canonical_json(values[node.moniker])
+                return node.moniker, normalize_value(value)
+
+            values = dict(
+                await asyncio.gather(
+                    *(fetch_node_state(node) for node in self.sample_nodes)
+                )
+            )
+            canonical = {
+                moniker: canonical_json(value)
+                for moniker, value in values.items()
+            }
             unique = set(canonical.values())
             ok = len(unique) == 1
             all_match = all_match and ok
@@ -334,16 +372,19 @@ def deadline_value(*, seconds_from_now: int) -> dict[str, list[int]]:
     }
 
 
-def fetch_json(url: str, *, timeout: float = 5.0) -> dict[str, Any]:
-    with urlopen(url, timeout=timeout) as response:
-        charset = response.headers.get_content_charset() or "utf-8"
-        payload = response.read().decode(charset)
-    return json.loads(payload)
-
-
-def wait_for_tx_receipt(
+async def fetch_json(
+    session: aiohttp.ClientSession,
+    url: str,
     *,
-    client: Xian,
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    async with session.get(url, timeout=timeout) as response:
+        return await response.json()
+
+
+async def wait_for_tx_receipt(
+    *,
+    client: XianAsync,
     tx_hash: str,
     timeout_seconds: float,
 ) -> dict[str, Any]:
@@ -352,7 +393,7 @@ def wait_for_tx_receipt(
 
     while time.monotonic() < deadline:
         try:
-            payload = client.get_tx(tx_hash)
+            payload = await client.get_tx(tx_hash)
             result = payload.get("result")
             if result is None:
                 raise WorkloadError(f"tx {tx_hash} returned no result")
@@ -375,17 +416,24 @@ def wait_for_tx_receipt(
             }
         except Exception as exc:  # noqa: PERF203
             last_error = exc
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
 
     raise WorkloadError(f"timed out waiting for tx {tx_hash}") from last_error
 
 
-def compare_app_hash_window(
-    nodes: list[LocalnetNode], *, window: int
+async def compare_app_hash_window(
+    session: aiohttp.ClientSession,
+    nodes: list[LocalnetNode],
+    *,
+    window: int,
 ) -> dict[str, Any]:
     heights = {}
     for node in nodes:
-        payload = fetch_json(f"{node.rpc_url}/status", timeout=5.0)
+        payload = await fetch_json(
+            session,
+            f"{node.rpc_url}/status",
+            timeout=5.0,
+        )
         heights[node.moniker] = int(
             payload["result"]["sync_info"]["latest_block_height"]
         )
@@ -398,7 +446,11 @@ def compare_app_hash_window(
     for height in range(start_height, min_height + 1):
         hashes = {}
         for node in nodes:
-            payload = fetch_json(f"{node.rpc_url}/block?height={height}", timeout=5.0)
+            payload = await fetch_json(
+                session,
+                f"{node.rpc_url}/block?height={height}",
+                timeout=5.0,
+            )
             hashes[node.moniker] = payload["result"]["block"]["header"]["app_hash"]
         unique = set(hashes.values())
         ok = len(unique) == 1
@@ -446,17 +498,17 @@ def require_successful(record: BroadcastRecord) -> None:
         raise WorkloadError(f"{record.label}: {record.final_message}")
 
 
-def broadcast_and_confirm(
+async def broadcast_and_confirm(
     context: WorkloadContext,
     **kwargs: Any,
 ) -> BroadcastRecord:
-    record = context.broadcast_tx(**kwargs)
-    context.resolve_records([record])
+    record = await context.broadcast_tx(**kwargs)
+    await context.resolve_records([record])
     require_successful(record)
     return record
 
 
-def broadcast_funding_record(
+async def broadcast_funding_record(
     context: WorkloadContext,
     *,
     founder: Wallet,
@@ -469,7 +521,7 @@ def broadcast_funding_record(
 ) -> list[BroadcastRecord]:
     rpc_index = index % len(context.nodes)
     return [
-        broadcast_and_confirm(
+        await broadcast_and_confirm(
             context,
             label=f"fund gas trader-{index}",
             wallet=founder,
@@ -480,7 +532,7 @@ def broadcast_funding_record(
             stamps=TOKEN_TX_STAMPS,
             expected_success=True,
         ),
-        broadcast_and_confirm(
+        await broadcast_and_confirm(
             context,
             label=f"fund tokenA trader-{index}",
             wallet=founder,
@@ -491,7 +543,7 @@ def broadcast_funding_record(
             stamps=TOKEN_TX_STAMPS,
             expected_success=True,
         ),
-        broadcast_and_confirm(
+        await broadcast_and_confirm(
             context,
             label=f"fund tokenB trader-{index}",
             wallet=founder,
@@ -505,7 +557,7 @@ def broadcast_funding_record(
     ]
 
 
-def broadcast_approval_record(
+async def broadcast_approval_record(
     context: WorkloadContext,
     *,
     wallet: Wallet,
@@ -513,7 +565,7 @@ def broadcast_approval_record(
     dex_contract: str,
     token_name: str,
 ) -> BroadcastRecord:
-    return broadcast_and_confirm(
+    return await broadcast_and_confirm(
         context,
         label=f"approve {token_name} wallet-{wallet_index}",
         wallet=wallet,
@@ -526,7 +578,7 @@ def broadcast_approval_record(
     )
 
 
-def run_counter_basic(
+async def run_counter_basic(
     context: WorkloadContext,
     *,
     seed: str,
@@ -540,7 +592,7 @@ def run_counter_basic(
     contract_code = read_fixture("counter_basic/con_counter.py")
 
     print(f"Deploying {contract_name}...")
-    deploy_record = context.broadcast_tx(
+    deploy_record = await context.broadcast_tx(
         label="deploy counter",
         wallet=founder,
         rpc_index=0,
@@ -550,7 +602,7 @@ def run_counter_basic(
         stamps=COUNTER_DEPLOY_STAMPS,
         expected_success=True,
     )
-    context.resolve_records([deploy_record])
+    await context.resolve_records([deploy_record])
     require_successful(deploy_record)
 
     print(f"Broadcasting {operations} counter_basic operations...")
@@ -561,7 +613,7 @@ def run_counter_basic(
         if index % 3 == 0:
             recipient = derive_wallet(seed, f"counter-transfer-{index}").public_key
             records.append(
-                context.broadcast_tx(
+                await context.broadcast_tx(
                     label=f"transfer #{index}",
                     wallet=founder,
                     rpc_index=rpc_index,
@@ -575,7 +627,7 @@ def run_counter_basic(
         elif index % 3 == 1:
             expected_counter += 1
             records.append(
-                context.broadcast_tx(
+                await context.broadcast_tx(
                     label=f"increment #{index}",
                     wallet=founder,
                     rpc_index=rpc_index,
@@ -590,7 +642,7 @@ def run_counter_basic(
             amount = float((index % 11) + 1)
             expected_counter += int(amount)
             records.append(
-                context.broadcast_tx(
+                await context.broadcast_tx(
                     label=f"add #{index}",
                     wallet=founder,
                     rpc_index=rpc_index,
@@ -602,7 +654,7 @@ def run_counter_basic(
                 )
             )
 
-    context.resolve_records(
+    await context.resolve_records(
         records,
         concurrent=receipt_resolution == "concurrent",
         max_workers=receipt_workers,
@@ -611,7 +663,7 @@ def run_counter_basic(
     if successes != len(records):
         raise WorkloadError("counter_basic: one or more workload transactions failed")
 
-    state = context.compare_state(
+    state = await context.compare_state(
         [
             {
                 "label": "counter value",
@@ -657,7 +709,7 @@ def render_dex_contract(
     return source.replace(needle, replacement, 1)
 
 
-def run_dex_mixed(
+async def run_dex_mixed(
     context: WorkloadContext,
     *,
     seed: str,
@@ -677,7 +729,7 @@ def run_dex_mixed(
 
     print("Deploying dex_mixed contract pack...")
     deployment_records = [
-        broadcast_and_confirm(
+        await broadcast_and_confirm(
             context,
             label=f"deploy {token_a}",
             wallet=founder,
@@ -697,7 +749,7 @@ def run_dex_mixed(
             stamps=TOKEN_DEPLOY_STAMPS,
             expected_success=True,
         ),
-        broadcast_and_confirm(
+        await broadcast_and_confirm(
             context,
             label=f"deploy {token_b}",
             wallet=founder,
@@ -717,7 +769,7 @@ def run_dex_mixed(
             stamps=TOKEN_DEPLOY_STAMPS,
             expected_success=True,
         ),
-        broadcast_and_confirm(
+        await broadcast_and_confirm(
             context,
             label=f"deploy {pairs_contract}",
             wallet=founder,
@@ -728,7 +780,7 @@ def run_dex_mixed(
             stamps=PAIR_DEPLOY_STAMPS,
             expected_success=True,
         ),
-        broadcast_and_confirm(
+        await broadcast_and_confirm(
             context,
             label=f"deploy {dex_contract}",
             wallet=founder,
@@ -746,7 +798,7 @@ def run_dex_mixed(
     funding_records: list[BroadcastRecord] = []
     for index, wallet in enumerate(trader_wallets):
         funding_records.extend(
-            broadcast_funding_record(
+            await broadcast_funding_record(
                 context,
                 founder=founder,
                 wallet=wallet,
@@ -761,7 +813,7 @@ def run_dex_mixed(
     approval_records: list[BroadcastRecord] = []
     for wallet_index, wallet in enumerate([founder, *trader_wallets[:-1]]):
         approval_records.append(
-            broadcast_approval_record(
+            await broadcast_approval_record(
                 context,
                 wallet=wallet,
                 wallet_index=wallet_index,
@@ -770,7 +822,7 @@ def run_dex_mixed(
             )
         )
         approval_records.append(
-            broadcast_approval_record(
+            await broadcast_approval_record(
                 context,
                 wallet=wallet,
                 wallet_index=wallet_index + len(context.nodes),
@@ -780,7 +832,7 @@ def run_dex_mixed(
         )
 
     print("Seeding initial liquidity...")
-    initial_liquidity = context.broadcast_tx(
+    initial_liquidity = await context.broadcast_tx(
         label="initial addLiquidity",
         wallet=founder,
         rpc_index=0,
@@ -799,19 +851,20 @@ def run_dex_mixed(
         stamps=DEX_TX_STAMPS,
         expected_success=True,
     )
-    context.resolve_records([initial_liquidity])
+    await context.resolve_records([initial_liquidity])
     require_successful(initial_liquidity)
 
     token0, token1 = sorted((token_a, token_b))
-    pair_id = Xian(
-        node_url=context.nodes[0].rpc_url,
-        chain_id=context.chain_id,
-        wallet=founder,
-    ).get_state(pairs_contract, "toks_to_pair", token0, token1)
+    pair_id = await context.client(founder, 0).get_state(
+        pairs_contract,
+        "toks_to_pair",
+        token0,
+        token1,
+    )
     if not isinstance(pair_id, int):
         raise WorkloadError(f"dex_mixed: expected pair id, got {pair_id!r}")
 
-    lp_approval = broadcast_and_confirm(
+    lp_approval = await broadcast_and_confirm(
         context,
         label="approve LP liquidity for dex",
         wallet=founder,
@@ -839,7 +892,7 @@ def run_dex_mixed(
         impossible_min = float(10_000_000 + round_index)
 
         round_records = [
-            context.broadcast_tx(
+            await context.broadcast_tx(
                 label=f"swap tokenA->tokenB round-{round_index}",
                 wallet=trader_a,
                 rpc_index=rpc_index,
@@ -856,7 +909,7 @@ def run_dex_mixed(
                 stamps=DEX_TX_STAMPS,
                 expected_success=True,
             ),
-            context.broadcast_tx(
+            await context.broadcast_tx(
                 label=f"swap tokenB->tokenA round-{round_index}",
                 wallet=trader_b,
                 rpc_index=(rpc_index + 1) % len(context.nodes),
@@ -873,7 +926,7 @@ def run_dex_mixed(
                 stamps=DEX_TX_STAMPS,
                 expected_success=True,
             ),
-            context.broadcast_tx(
+            await context.broadcast_tx(
                 label=f"expired swap round-{round_index}",
                 wallet=trader_c,
                 rpc_index=(rpc_index + 2) % len(context.nodes),
@@ -891,7 +944,7 @@ def run_dex_mixed(
                 expected_success=False,
                 expected_message="EXPIRED",
             ),
-            context.broadcast_tx(
+            await context.broadcast_tx(
                 label=f"impossible output round-{round_index}",
                 wallet=founder,
                 rpc_index=(rpc_index + 3) % len(context.nodes),
@@ -910,7 +963,7 @@ def run_dex_mixed(
                 expected_message="INSUFFICIENT_OUTPUT_AMOUNT",
             ),
         ]
-        context.resolve_records(
+        await context.resolve_records(
             round_records,
             concurrent=receipt_resolution == "concurrent",
             max_workers=receipt_workers,
@@ -918,7 +971,7 @@ def run_dex_mixed(
         plan_records.extend(round_records)
 
     plan_records.append(
-        context.broadcast_tx(
+        await context.broadcast_tx(
             label="insufficient allowance swap",
             wallet=unapproved_trader,
             rpc_index=rng.randrange(len(context.nodes)),
@@ -938,7 +991,7 @@ def run_dex_mixed(
         )
     )
     plan_records.append(
-        context.broadcast_tx(
+        await context.broadcast_tx(
             label="invalid pair swap",
             wallet=approved_traders[0],
             rpc_index=rng.randrange(len(context.nodes)),
@@ -958,7 +1011,7 @@ def run_dex_mixed(
         )
     )
     plan_records.append(
-        context.broadcast_tx(
+        await context.broadcast_tx(
             label="remove liquidity",
             wallet=founder,
             rpc_index=rng.randrange(len(context.nodes)),
@@ -978,7 +1031,7 @@ def run_dex_mixed(
         )
     )
 
-    context.resolve_records(plan_records[-3:])
+    await context.resolve_records(plan_records[-3:])
 
     successful_records = [record for record in plan_records if record.final_success]
     failed_records = [record for record in plan_records if not record.final_success]
@@ -1011,7 +1064,7 @@ def run_dex_mixed(
     if missing:
         raise WorkloadError(f"dex_mixed: missing expected events {missing}")
 
-    state = context.compare_state(
+    state = await context.compare_state(
         [
             {
                 "label": "pair count",
@@ -1122,9 +1175,12 @@ def run_dex_mixed(
     }
 
 
-def run_scenario(args: argparse.Namespace, context: WorkloadContext) -> dict[str, Any]:
+async def run_scenario(
+    args: argparse.Namespace,
+    context: WorkloadContext,
+) -> dict[str, Any]:
     if args.scenario == "counter_basic":
-        return run_counter_basic(
+        return await run_counter_basic(
             context,
             seed=args.seed,
             operations=args.counter_ops,
@@ -1132,7 +1188,7 @@ def run_scenario(args: argparse.Namespace, context: WorkloadContext) -> dict[str
             receipt_workers=args.receipt_workers,
         )
     if args.scenario == "dex_mixed":
-        return run_dex_mixed(
+        return await run_dex_mixed(
             context,
             seed=args.seed,
             rounds=args.dex_rounds,
@@ -1219,7 +1275,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+async def async_main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     network = load_network()
     context = WorkloadContext(
@@ -1229,47 +1285,55 @@ def main(argv: list[str] | None = None) -> int:
         round_robin_submission=args.round_robin_submission,
     )
 
-    print(f"Localnet workload scenario: {args.scenario}")
-    print(f"Chain ID: {context.chain_id}")
-    print(f"Sample nodes: {', '.join(node.moniker for node in context.sample_nodes)}")
-
-    started_at = time.monotonic()
-    scenario_summary = run_scenario(args, context)
-    consensus_summary = compare_app_hash_window(
-        context.nodes,
-        window=args.app_hash_window,
-    )
-    state_summary = scenario_summary.get("state", {"ok": True})
-    if not consensus_summary["ok"]:
-        raise WorkloadError("app_hash mismatch detected across localnet nodes")
-    if not state_summary["ok"]:
-        raise WorkloadError("state mismatch detected across sampled localnet nodes")
-
-    elapsed = time.monotonic() - started_at
-    final_summary = {
-        "ok": True,
-        "chain_id": context.chain_id,
-        "scenario": scenario_summary["scenario"],
-        "elapsed_seconds": round(elapsed, 3),
-        "seed": args.seed,
-        "consensus": consensus_summary,
-        "scenario_summary": scenario_summary,
-        "memory": (
-            collect_container_memory(context.nodes)
-            if args.measure_memory
-            else {}
-        ),
-        "receipt_resolution": args.receipt_resolution,
-    }
-
-    if args.json:
-        print(json.dumps(final_summary, indent=2, sort_keys=True))
-    else:
+    async with context:
+        print(f"Localnet workload scenario: {args.scenario}")
+        print(f"Chain ID: {context.chain_id}")
         print(
-            f"Scenario {scenario_summary['scenario']} completed in {elapsed:.2f}s; "
-            f"consensus and sampled state matched."
+            f"Sample nodes: {', '.join(node.moniker for node in context.sample_nodes)}"
         )
-    return 0
+
+        started_at = time.monotonic()
+        scenario_summary = await run_scenario(args, context)
+        consensus_summary = await compare_app_hash_window(
+            context.session,
+            context.nodes,
+            window=args.app_hash_window,
+        )
+        state_summary = scenario_summary.get("state", {"ok": True})
+        if not consensus_summary["ok"]:
+            raise WorkloadError("app_hash mismatch detected across localnet nodes")
+        if not state_summary["ok"]:
+            raise WorkloadError("state mismatch detected across sampled localnet nodes")
+
+        elapsed = time.monotonic() - started_at
+        final_summary = {
+            "ok": True,
+            "chain_id": context.chain_id,
+            "scenario": scenario_summary["scenario"],
+            "elapsed_seconds": round(elapsed, 3),
+            "seed": args.seed,
+            "consensus": consensus_summary,
+            "scenario_summary": scenario_summary,
+            "memory": (
+                collect_container_memory(context.nodes)
+                if args.measure_memory
+                else {}
+            ),
+            "receipt_resolution": args.receipt_resolution,
+        }
+
+        if args.json:
+            print(json.dumps(final_summary, indent=2, sort_keys=True))
+        else:
+            print(
+                f"Scenario {scenario_summary['scenario']} completed in {elapsed:.2f}s; "
+                f"consensus and sampled state matched."
+            )
+        return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    return asyncio.run(async_main(argv))
 
 
 if __name__ == "__main__":
