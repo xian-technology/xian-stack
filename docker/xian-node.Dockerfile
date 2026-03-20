@@ -16,6 +16,35 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go install -trimpath -buildvcs=false \
     "github.com/cometbft/cometbft/cmd/cometbft@v${COMETBFT_VERSION}"
 
+FROM ${PYTHON_IMAGE} AS python-wheel-builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PATH=/root/.cargo/bin:${PATH}
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
+
+WORKDIR /tmp/build
+
+COPY --from=xian-py . /tmp/build/xian-py
+COPY --from=xian-contracting . /tmp/build/xian-contracting
+COPY --from=xian-abci . /tmp/build/xian-abci
+
+RUN python -m pip install --upgrade pip wheel maturin \
+    && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-runtime-types \
+    && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-native-tracer \
+    && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-py \
+    && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting \
+    && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-abci
+
 FROM ${PYTHON_IMAGE} AS node-base
 
 ARG COMETBFT_VERSION=0.38.21
@@ -38,17 +67,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /opt/xian
 
-COPY --from=xian-py . /tmp/build/xian-py
-COPY --from=xian-contracting . /tmp/build/xian-contracting
-COPY --from=xian-abci . /tmp/build/xian-abci
 COPY --from=xian-configs . /opt/xian-configs
+COPY --from=python-wheel-builder /tmp/wheels /tmp/wheels
 COPY --from=cometbft-builder /out/cometbft /usr/local/bin/cometbft
 
 RUN python -m pip install \
-    /tmp/build/xian-py \
-    /tmp/build/xian-contracting \
-    /tmp/build/xian-abci \
-    && rm -rf /tmp/build
+    /tmp/wheels/*.whl \
+    && rm -rf /tmp/wheels
 
 FROM node-base AS split
 

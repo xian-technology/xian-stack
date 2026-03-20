@@ -58,6 +58,13 @@ def env_int(name: str, default: int) -> int:
     return int(raw)
 
 
+def env_str(name: str, default: str) -> str:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip()
+
+
 def node_build_config(target: str) -> dict:
     return {
         "context": ".",
@@ -112,6 +119,7 @@ def write_node_config(
     chain_id: str,
     genesis: dict,
     *,
+    tracer_mode: str,
     parallel_execution_enabled: bool,
     parallel_execution_workers: int,
     parallel_execution_min_transactions: int,
@@ -128,6 +136,7 @@ def write_node_config(
         seed_nodes=[],
         allow_cors=True,
         prometheus=True,
+        tracer_mode=tracer_mode,
         parallel_execution_enabled=parallel_execution_enabled,
         parallel_execution_workers=parallel_execution_workers,
         parallel_execution_min_transactions=(
@@ -190,6 +199,7 @@ def main():
     parallel_execution_enabled = env_bool(
         "XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED", False
     )
+    tracer_mode = env_str("XIAN_LOCALNET_TRACER_MODE", "python_line_v1")
     parallel_execution_workers = env_int(
         "XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS", 0
     )
@@ -231,6 +241,7 @@ def main():
             nodes,
             args.chain_id,
             genesis,
+            tracer_mode=tracer_mode,
             parallel_execution_enabled=parallel_execution_enabled,
             parallel_execution_workers=parallel_execution_workers,
             parallel_execution_min_transactions=(
@@ -272,6 +283,7 @@ def main():
             "workers": parallel_execution_workers,
             "min_transactions": parallel_execution_min_transactions,
         },
+        "tracer_mode": tracer_mode,
     }
     (LOCALNET_DIR / "network.json").write_text(
         json.dumps(summary, indent=2) + "\n",
