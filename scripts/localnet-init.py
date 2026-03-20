@@ -206,6 +206,10 @@ def main():
     parallel_execution_min_transactions = env_int(
         "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS", 8
     )
+    profiling_enabled = env_bool("XIAN_LOCALNET_PROFILE_ENABLED", False)
+    profiling_recent_blocks = env_int(
+        "XIAN_LOCALNET_PROFILE_RECENT_BLOCKS", 32
+    )
 
     # 1. Generate key material for all nodes
     nodes = [generate_node_material(i) for i in range(args.nodes)]
@@ -255,7 +259,12 @@ def main():
         print(f"  {node['moniker']}: RPC=:{host_rpc} P2P=:{host_p2p} id={node['node_key']['node_id'][:12]}...")
 
     # 4. Write docker-compose-localnet.yml
-    write_compose_file(nodes, args.topology)
+    write_compose_file(
+        nodes,
+        args.topology,
+        profiling_enabled=profiling_enabled,
+        profiling_recent_blocks=profiling_recent_blocks,
+    )
 
     # 5. Write node summary for scripts
     summary = {
@@ -283,6 +292,10 @@ def main():
             "workers": parallel_execution_workers,
             "min_transactions": parallel_execution_min_transactions,
         },
+        "profiling": {
+            "enabled": profiling_enabled,
+            "recent_blocks": profiling_recent_blocks,
+        },
         "tracer_mode": tracer_mode,
     }
     (LOCALNET_DIR / "network.json").write_text(
@@ -294,7 +307,13 @@ def main():
     print(f"Start with: make localnet-up")
 
 
-def write_compose_file(nodes: list[dict], topology: str):
+def write_compose_file(
+    nodes: list[dict],
+    topology: str,
+    *,
+    profiling_enabled: bool,
+    profiling_recent_blocks: int,
+):
     """Generate docker-compose-localnet.yml from node list."""
     services = {}
     integrated_build = node_build_config("integrated")
@@ -330,6 +349,9 @@ def write_compose_file(nodes: list[dict], topology: str):
                     "XIAN_CONFIGS_DIR": "/opt/xian-configs",
                     "S6_VERBOSITY": "${XIAN_S6_VERBOSITY}",
                     "NODE_INDEX": str(idx),
+                    "XIAN_PERF_ENABLED": "1" if profiling_enabled else "0",
+                    "XIAN_PERF_OUTPUT_PATH": "/root/.cometbft/xian-perf.json",
+                    "XIAN_PERF_RECENT_BLOCKS": str(profiling_recent_blocks),
                 },
                 "ports": [
                     f"{host_p2p}:26656",
@@ -363,6 +385,9 @@ def write_compose_file(nodes: list[dict], topology: str):
                 "environment": {
                     "XIAN_CONFIGS_DIR": "/opt/xian-configs",
                     "NODE_INDEX": str(idx),
+                    "XIAN_PERF_ENABLED": "1" if profiling_enabled else "0",
+                    "XIAN_PERF_OUTPUT_PATH": "/root/.cometbft/xian-perf.json",
+                    "XIAN_PERF_RECENT_BLOCKS": str(profiling_recent_blocks),
                 },
                 "command": ["xian-abci"],
                 "networks": ["localnet"],
