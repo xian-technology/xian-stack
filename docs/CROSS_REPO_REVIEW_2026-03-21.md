@@ -75,6 +75,9 @@ Primary focus:
 - Current state: when there is no current block meta, simulation uses local `datetime.now()`.
 - Impact: different nodes can simulate the same transaction under different `now` values.
 - Next action: define a stricter idle-chain simulation policy and expose it clearly.
+- Status: fixed on `main` in this review pass.
+  - Simulation now uses the latest committed chain time from local block metadata.
+  - If no chain time exists yet, it falls back to deterministic epoch time instead of wall clock.
 
 4. BDS snapshot extraction is less hardened than state-sync snapshot extraction.
 - `xian-abci/src/xian/services/bds/snapshot.py`
@@ -109,7 +112,6 @@ Primary focus:
 ### Current Execution Order
 
 1. Revisit nonce pending-state behavior.
-2. Tighten `simulate_tx` idle-chain time semantics.
-3. Harden BDS snapshot extraction path.
-4. Reduce parallel executor startup cost.
-5. Decide whether to further decouple BDS spool writes from the validator path.
+2. Harden BDS snapshot extraction path.
+3. Reduce parallel executor startup cost.
+4. Decide whether to further decouple BDS spool writes from the validator path.
