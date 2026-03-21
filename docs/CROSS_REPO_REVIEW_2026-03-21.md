@@ -58,9 +58,14 @@ Primary focus:
 - `xian-abci/src/xian/nonce.py`
 - `xian-abci/src/xian/methods/check_tx.py`
 - `xian-abci/src/xian/methods/commit.py`
-- Current state: pending nonces are advanced at `CheckTx` time and only cleared on commit.
-- Impact: dropped or evicted transactions can leave a sender blocked on an on-demand chain.
-- Next action: add mempool eviction / timeout reconciliation or move to a tighter proposer-aware nonce reservation model.
+- Previous state: pending nonces were advanced at `CheckTx` time and only cleared on commit.
+- Impact: dropped or evicted transactions could leave a sender blocked on an on-demand chain.
+- Next action: completed.
+- Status: fixed on `main` in this review pass.
+  - `CheckTx` now uses per-sender nonce reservations instead of a single latest pending nonce.
+  - Reservations survive commit reconciliation, so retained mempool sequences are not broken by block boundaries.
+  - Duplicate retransmission of the same transaction is idempotent.
+  - Stale reservations expire locally, so dropped transactions no longer strand a sender indefinitely.
 
 2. Query / SDK type contract is ambiguous.
 - `xian-abci/src/xian/methods/query.py`
@@ -81,14 +86,21 @@ Primary focus:
 
 4. BDS snapshot extraction is less hardened than state-sync snapshot extraction.
 - `xian-abci/src/xian/services/bds/snapshot.py`
-- Current state: path checks exist, but extraction should use the safer filtered extraction path consistently.
-- Next action: align BDS snapshot extraction with the state-sync safety path.
+- Previous state: path checks existed, but extraction did not use the safer filtered extraction path consistently.
+- Next action: completed.
+- Status: fixed on `main` in this review pass.
+  - BDS snapshot extraction now uses the same filtered tar extraction mode as state-sync snapshots.
+  - Unsafe tar members like symlinks are rejected during import.
 
 5. Parallel execution still pays high per-block startup cost.
 - `xian-abci/src/xian/parallel_executor.py`
-- Current state: a new process pool and fresh client/processor objects are created for each block / speculative task batch.
+- Previous state: a new process pool and fresh client/processor objects were created for each block / speculative task batch.
 - Impact: contract-engine speedups do not fully translate to network TPS.
-- Next action: investigate persistent workers and cheaper worker initialization.
+- Next action: partially completed.
+- Status: partially improved on `main` in this review pass.
+  - The process pool is now reused across blocks instead of being recreated every time.
+  - The pool is shut down cleanly with the node runtime.
+  - Remaining concern: each speculative task still constructs a fresh client / processor / rewards handler inside the worker process.
 
 ### Low Severity / Structural
 
@@ -112,6 +124,5 @@ Primary focus:
 ### Current Execution Order
 
 1. Revisit nonce pending-state behavior.
-2. Harden BDS snapshot extraction path.
-3. Reduce parallel executor startup cost.
-4. Decide whether to further decouple BDS spool writes from the validator path.
+2. Reduce per-task worker initialization cost in the parallel executor.
+3. Decide whether to further decouple BDS spool writes from the validator path.
