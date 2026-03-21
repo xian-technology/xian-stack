@@ -100,7 +100,9 @@ Primary focus:
 - Status: partially improved on `main` in this review pass.
   - The process pool is now reused across blocks instead of being recreated every time.
   - The pool is shut down cleanly with the node runtime.
-  - Remaining concern: each speculative task still constructs a fresh client / processor / rewards handler inside the worker process.
+  - Worker processes now also reuse their local driver / client / processor / rewards-handler runtime objects.
+  - Worker runtimes use `bypass_cache=True` and flush transient driver state before and after each speculative task to avoid stale state leakage.
+  - Remaining concern: startup cost is lower now, but the spool write path is still more important than parallel-worker startup for validator hot-path isolation.
 
 ### Low Severity / Structural
 
@@ -124,5 +126,4 @@ Primary focus:
 ### Current Execution Order
 
 1. Revisit nonce pending-state behavior.
-2. Reduce per-task worker initialization cost in the parallel executor.
-3. Decide whether to further decouple BDS spool writes from the validator path.
+2. Decide whether to further decouple BDS spool writes from the validator path.
