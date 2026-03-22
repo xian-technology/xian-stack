@@ -91,3 +91,7 @@ The image workflow:
 4. attaches the manifest and resolved image digests to the GitHub Release
 
 Update the manifest before tagging `xian-stack` so the published image is reproducible from explicit component refs.
+
+Use normal tags such as `v0.1.0` for stable image releases and prerelease tags
+such as `v0.1.0-alpha.1` while the node image line is still maturing. Tags that
+contain a hyphen are published as GitHub prereleases automatically.
