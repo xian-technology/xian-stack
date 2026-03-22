@@ -5,6 +5,10 @@
 - This repo is a backend, not the long-term operator UX. Public workflows should move into `xian-cli`.
 - Keep protocol logic out of this repo unless the runtime backend truly requires it.
 
+## Shared Convention
+- Follow the shared repo convention in `xian-meta/docs/REPO_CONVENTIONS.md`.
+- Keep this repo aligned with that standard for root docs, backlog notes, and major folder entrypoints.
+
 ## Project Layout
 - `Makefile`: backend entrypoints for build, `node-*` runtime operations, and
   `dev-*` shell utilities.
