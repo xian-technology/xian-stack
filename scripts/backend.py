@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import subprocess
@@ -9,6 +10,7 @@ import sys
 import time
 from pathlib import Path
 from urllib.error import URLError
+from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import urlopen
 
 STACK_DIR = Path(__file__).resolve().parent.parent
@@ -20,10 +22,12 @@ LOCALNET_MEMWATCH_SCRIPT = STACK_DIR / "scripts" / "localnet-memwatch.py"
 LOCALNET_LEAK_HUNT_SCRIPT = STACK_DIR / "scripts" / "localnet-leak-hunt.py"
 DEFAULT_RPC_TIMEOUT_SECONDS = 90.0
 DEFAULT_RPC_BASE_URL = "http://127.0.0.1:26657"
+DEFAULT_RPC_STATUS_URL = f"{DEFAULT_RPC_BASE_URL}/status"
 DEFAULT_COMETBFT_METRICS_URL = "http://127.0.0.1:26660/metrics"
 DEFAULT_XIAN_METRICS_URL = "http://127.0.0.1:9108/metrics"
 DEFAULT_PROMETHEUS_URL = "http://127.0.0.1:9090"
 DEFAULT_GRAFANA_URL = "http://127.0.0.1:3000"
+DEFAULT_GRAPHQL_URL = "http://127.0.0.1:5000/graphql"
 
 
 def resolve_repo_dir(name: str, env_var: str) -> Path:
@@ -46,6 +50,54 @@ def probe_http_endpoint(url: str, *, timeout: float = 2.0) -> dict:
             "status": getattr(response, "status", 200),
             "content_type": response.headers.get_content_type(),
         }
+
+
+def rpc_base_url(rpc_url: str) -> str:
+    parsed = urlsplit(rpc_url)
+    path = parsed.path
+    if path.endswith("/status"):
+        path = path[: -len("/status")]
+    path = path.rstrip("/")
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def build_abci_query_url(*, rpc_url: str, path: str) -> str:
+    encoded_path = quote(json.dumps(path), safe="")
+    return f"{rpc_base_url(rpc_url)}/abci_query?path={encoded_path}"
+
+
+def fetch_abci_query_value(
+    *,
+    rpc_url: str,
+    path: str,
+    timeout: float = 2.0,
+) -> dict:
+    payload = fetch_json(
+        build_abci_query_url(rpc_url=rpc_url, path=path),
+        timeout=timeout,
+    )
+    response = payload.get("result", {}).get("response", {})
+    response_code = int(response.get("code", 0) or 0)
+    if response_code != 0:
+        raise ValueError(
+            f"ABCI query {path} failed with response code {response_code}"
+        )
+    encoded_value = response.get("value")
+    if not isinstance(encoded_value, str) or not encoded_value:
+        raise ValueError(f"ABCI query {path} returned no value")
+    try:
+        decoded_value = base64.b64decode(encoded_value).decode("utf-8")
+    except Exception as exc:
+        raise ValueError(f"ABCI query {path} returned invalid base64") from exc
+    try:
+        result = json.loads(decoded_value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"ABCI query {path} returned invalid JSON payload"
+        ) from exc
+    if not isinstance(result, dict):
+        raise ValueError(f"ABCI query {path} returned a non-object payload")
+    return result
 
 
 def wait_for_rpc_ready(
@@ -428,11 +480,21 @@ def backend_endpoints(
 ) -> dict:
     endpoints = {
         "rpc": DEFAULT_RPC_BASE_URL,
-        "rpc_status": f"{DEFAULT_RPC_BASE_URL}/status",
+        "rpc_status": DEFAULT_RPC_STATUS_URL,
         "abci_query": f"{DEFAULT_RPC_BASE_URL}/abci_query",
         "cometbft_metrics": DEFAULT_COMETBFT_METRICS_URL,
         "xian_metrics": DEFAULT_XIAN_METRICS_URL,
     }
+    if service_node:
+        endpoints["bds_status_query"] = build_abci_query_url(
+            rpc_url=DEFAULT_RPC_STATUS_URL,
+            path="/bds_status",
+        )
+        endpoints["bds_spool_query"] = build_abci_query_url(
+            rpc_url=DEFAULT_RPC_STATUS_URL,
+            path="/bds_spool/limit=20/offset=0",
+        )
+        endpoints["graphql"] = DEFAULT_GRAPHQL_URL
     if dashboard_enabled:
         endpoints["dashboard"] = f"http://{dashboard_host}:{dashboard_port}"
         endpoints["dashboard_status"] = (
@@ -521,6 +583,89 @@ def backend_health(
                 "ok": False,
                 "detail": {"error": str(exc)},
             }
+
+    if service_node:
+        bds_query = endpoints.get("bds_status_query")
+        bds_detail: dict[str, object] = {
+            "query": bds_query,
+        }
+        if not checks["rpc"]["ok"]:
+            checks["bds"] = {
+                "ok": False,
+                "detail": {
+                    **bds_detail,
+                    "error": "RPC is unavailable; cannot inspect BDS status",
+                },
+            }
+        else:
+            try:
+                bds_status = fetch_abci_query_value(
+                    rpc_url=rpc_url,
+                    path="/bds_status",
+                    timeout=2.0,
+                )
+                alerts = bds_status.get("alerts", [])
+                error_alerts = [
+                    alert
+                    for alert in alerts
+                    if isinstance(alert, dict)
+                    and str(alert.get("level", "")).lower() == "error"
+                ]
+                indexed = (
+                    bds_status.get("indexed", {})
+                    if isinstance(bds_status.get("indexed"), dict)
+                    else {}
+                )
+                checks["bds"] = {
+                    "ok": (
+                        str(bds_status.get("db_status")) == "ok"
+                        and bool(bds_status.get("worker_running"))
+                        and not bds_status.get("last_enqueue_error")
+                        and not error_alerts
+                    ),
+                    "detail": {
+                        **bds_detail,
+                        "db_status": bds_status.get("db_status"),
+                        "worker_running": bds_status.get("worker_running"),
+                        "catchup_running": bds_status.get("catchup_running"),
+                        "catching_up": bds_status.get("catching_up"),
+                        "current_block_height": bds_status.get(
+                            "current_block_height"
+                        ),
+                        "indexed_height": indexed.get("indexed_height"),
+                        "height_lag": bds_status.get("height_lag"),
+                        "queue_depth": bds_status.get("queue_depth"),
+                        "queue_capacity": bds_status.get("queue_capacity"),
+                        "queue_utilization": bds_status.get(
+                            "queue_utilization"
+                        ),
+                        "spool_pending_count": bds_status.get(
+                            "spool_pending_count"
+                        ),
+                        "spool_total_bytes": bds_status.get(
+                            "spool_total_bytes"
+                        ),
+                        "storage": bds_status.get("storage"),
+                        "last_enqueue_error": bds_status.get(
+                            "last_enqueue_error"
+                        ),
+                        "alerts": alerts,
+                    },
+                }
+            except (
+                OSError,
+                URLError,
+                TimeoutError,
+                ValueError,
+                json.JSONDecodeError,
+            ) as exc:
+                checks["bds"] = {
+                    "ok": False,
+                    "detail": {
+                        **bds_detail,
+                        "error": str(exc),
+                    },
+                }
 
     if dashboard_enabled:
         checks["dashboard"] = {

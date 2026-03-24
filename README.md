@@ -86,6 +86,16 @@ python3 ./scripts/backend.py health --no-service-node --no-dashboard --no-monito
 python3 ./scripts/backend.py stop --no-service-node --no-dashboard --no-monitoring
 ```
 
+When `--service-node` is enabled, `endpoints` and `health` also expose the
+indexed-service surfaces:
+
+- `bds_status_query`
+- `bds_spool_query`
+- `graphql`
+
+And `health` now includes a dedicated `bds` check with queue, spool, lag, and
+database status details.
+
 Use the Makefile directly only for backend validation, smoke coverage, or local
 debugging:
 
