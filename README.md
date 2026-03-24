@@ -73,6 +73,71 @@ python3 ./scripts/backend.py localnet-workload --scenario counter_basic
 The Makefile remains the local implementation and debugging surface, but other
 tools should prefer the backend script contract.
 
+The backend script accepts optional monitoring state in addition to the
+existing service-node and dashboard flags:
+
+```bash
+python3 ./scripts/backend.py start --no-service-node --no-dashboard --no-monitoring
+python3 ./scripts/backend.py status --no-service-node --no-dashboard --no-monitoring
+python3 ./scripts/backend.py stop --no-service-node --no-dashboard --no-monitoring
+```
+
+Use the Makefile directly only for backend validation, smoke coverage, or local
+debugging:
+
+```bash
+make abci-build
+make abci-up
+make node-init
+make node-configure CONFIGURE_ARGS='--moniker "<node-name>" --copy-genesis --genesis-source "<network-name-or-path>" --validator-privkey "<validator-key>"'
+make node-status
+make node-start
+make node-stop
+make abci-fidelity-build
+make abci-fidelity-up
+make node-status-fidelity
+make dashboard-build
+make dashboard-up
+make dashboard-fidelity-build
+make dashboard-fidelity-up
+```
+
+For BDS-enabled paths:
+
+```bash
+make abci-bds-build
+make abci-bds-up
+make node-start-bds
+```
+
+The BDS-enabled stack reads PostgreSQL settings from environment variables
+instead of a checked-in config file inside `xian-abci`. The main knobs are:
+
+```bash
+export XIAN_BDS_HOST=postgres
+export XIAN_BDS_PORT=5432
+export XIAN_BDS_DATABASE=xian
+export XIAN_BDS_USER=xian
+export XIAN_BDS_PASSWORD=xian
+```
+
+For the optional explorer/dashboard service:
+
+```bash
+make dashboard-build
+make dashboard-up
+make dashboard-down
+make dashboard-fidelity-build
+make dashboard-fidelity-up
+make dashboard-fidelity-down
+```
+
+Developer-only shell targets are intentionally prefixed with `dev-`, for
+example `make dev-abci-shell` and `make dev-contracting-shell`.
+
+When documenting operator workflows, prefer `xian-cli` examples over `make
+node-*` examples.
+
 ## Runtime Notes
 
 - the default runtime topology is `integrated`

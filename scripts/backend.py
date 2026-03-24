@@ -240,6 +240,7 @@ def backend_start(
     *,
     service_node: bool,
     dashboard_enabled: bool,
+    monitoring_enabled: bool,
     dashboard_host: str,
     dashboard_port: int,
     wait_for_health: bool,
@@ -249,6 +250,9 @@ def backend_start(
     container_target = "abci-bds-up" if service_node else "abci-up"
     node_target = "node-start-bds" if service_node else "node-start"
     dashboard_target = "dashboard-bds-up" if service_node else "dashboard-up"
+    monitoring_target = (
+        "monitoring-bds-up" if service_node else "monitoring-up"
+    )
     env = runtime_env(
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
@@ -256,6 +260,8 @@ def backend_start(
     )
 
     run_make_target(node_target, env=env)
+    if monitoring_enabled:
+        run_make_target(monitoring_target, env=env)
     if dashboard_enabled:
         run_make_target(dashboard_target, env=env)
     wait_for_abci_runtime(
@@ -269,11 +275,16 @@ def backend_start(
         "container_target": container_target,
         "node_target": node_target,
         "dashboard_enabled": dashboard_enabled,
+        "monitoring_enabled": monitoring_enabled,
         "rpc_checked": wait_for_health,
     }
     if dashboard_enabled:
         result["dashboard_target"] = dashboard_target
         result["dashboard_url"] = f"http://{dashboard_host}:{dashboard_port}"
+    if monitoring_enabled:
+        result["monitoring_target"] = monitoring_target
+        result["prometheus_url"] = "http://127.0.0.1:9090"
+        result["grafana_url"] = "http://127.0.0.1:3000"
     if wait_for_health:
         result["rpc_status"] = wait_for_rpc_ready(
             rpc_url=rpc_url,
@@ -286,11 +297,15 @@ def backend_stop(
     *,
     service_node: bool,
     dashboard_enabled: bool,
+    monitoring_enabled: bool,
     dashboard_host: str,
     dashboard_port: int,
 ) -> dict:
     container_target = "abci-bds-down" if service_node else "abci-down"
     dashboard_target = "dashboard-bds-down" if service_node else "dashboard-down"
+    monitoring_target = (
+        "monitoring-bds-down" if service_node else "monitoring-down"
+    )
     env = runtime_env(
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
@@ -298,13 +313,17 @@ def backend_stop(
     )
     if dashboard_enabled:
         run_make_target(dashboard_target, env=env)
+    if monitoring_enabled:
+        run_make_target(monitoring_target, env=env)
     run_make_target("node-stop", env=env)
     return {
         "stack_dir": str(STACK_DIR),
         "service_node": service_node,
         "container_target": container_target,
         "dashboard_enabled": dashboard_enabled,
+        "monitoring_enabled": monitoring_enabled,
         "dashboard_target": dashboard_target if dashboard_enabled else None,
+        "monitoring_target": monitoring_target if monitoring_enabled else None,
     }
 
 
@@ -312,6 +331,7 @@ def backend_status(
     *,
     service_node: bool,
     dashboard_enabled: bool,
+    monitoring_enabled: bool,
     dashboard_host: str,
     dashboard_port: int,
 ) -> dict:
@@ -324,6 +344,7 @@ def backend_status(
     result = run_make_target("node-status", capture_output=True, env=env)
     payload = json.loads(result.stdout)
     payload["dashboard_enabled"] = dashboard_enabled
+    payload["monitoring_enabled"] = monitoring_enabled
     if dashboard_enabled:
         dashboard_url = f"http://{dashboard_host}:{dashboard_port}/api/status"
         payload["dashboard_url"] = dashboard_url
@@ -339,6 +360,41 @@ def backend_status(
         ) as exc:
             payload["dashboard_reachable"] = False
             payload["dashboard_error"] = str(exc)
+    if monitoring_enabled:
+        prometheus_url = "http://127.0.0.1:9090/api/v1/status/runtimeinfo"
+        grafana_url = "http://127.0.0.1:3000/api/health"
+        payload["prometheus_url"] = "http://127.0.0.1:9090"
+        payload["grafana_url"] = "http://127.0.0.1:3000"
+        try:
+            payload["prometheus_status"] = fetch_json(
+                prometheus_url,
+                timeout=2.0,
+            )
+            payload["prometheus_reachable"] = True
+        except (
+            OSError,
+            URLError,
+            TimeoutError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
+            payload["prometheus_reachable"] = False
+            payload["prometheus_error"] = str(exc)
+        try:
+            payload["grafana_status"] = fetch_json(
+                grafana_url,
+                timeout=2.0,
+            )
+            payload["grafana_reachable"] = True
+        except (
+            OSError,
+            URLError,
+            TimeoutError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
+            payload["grafana_reachable"] = False
+            payload["grafana_error"] = str(exc)
     return payload
 
 
@@ -467,6 +523,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
     )
     start.add_argument(
+        "--monitoring",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    start.add_argument(
         "--dashboard-host",
         default="127.0.0.1",
     )
@@ -502,6 +563,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
     )
     stop.add_argument(
+        "--monitoring",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    stop.add_argument(
         "--dashboard-host",
         default="127.0.0.1",
     )
@@ -519,6 +585,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status.add_argument(
         "--dashboard",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    status.add_argument(
+        "--monitoring",
         action=argparse.BooleanOptionalAction,
         default=False,
     )
@@ -645,6 +716,7 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_start(
             service_node=args.service_node,
             dashboard_enabled=args.dashboard,
+            monitoring_enabled=args.monitoring,
             dashboard_host=args.dashboard_host,
             dashboard_port=args.dashboard_port,
             wait_for_health=args.wait_for_health,
@@ -655,6 +727,7 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_stop(
             service_node=args.service_node,
             dashboard_enabled=args.dashboard,
+            monitoring_enabled=args.monitoring,
             dashboard_host=args.dashboard_host,
             dashboard_port=args.dashboard_port,
         )
@@ -662,6 +735,7 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_status(
             service_node=args.service_node,
             dashboard_enabled=args.dashboard,
+            monitoring_enabled=args.monitoring,
             dashboard_host=args.dashboard_host,
             dashboard_port=args.dashboard_port,
         )
