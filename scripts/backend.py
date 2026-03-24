@@ -135,42 +135,34 @@ def wait_for_abci_runtime(
     service_node: bool = False,
 ) -> None:
     deadline = time.monotonic() + timeout_seconds
-    cmd = [
-        "docker",
-        "compose",
-        "--profile",
-        "integrated",
-        "-f",
-        "docker-compose-abci.yml",
-    ]
-    if service_node:
-        cmd.extend(["-f", "docker-compose-abci-bds.yml"])
-    cmd.extend(
-        [
-            "exec",
-            "-T",
-            "abci",
-            "/bin/bash",
-            "-lc",
-            "python -c 'import contracting, xian'",
-        ]
-    )
+    shell_script = """
+source ./scripts/stack-env.sh
+export_stack_env
+compose_cmd=(docker compose --profile integrated -f docker-compose-abci.yml)
+if [[ "${XIAN_SERVICE_NODE:-0}" == "1" ]]; then
+  compose_cmd+=(-f docker-compose-abci-bds.yml)
+fi
+"${compose_cmd[@]}" exec -T abci /bin/bash -lc "python -c 'import contracting, xian'"
+""".strip()
     last_error: subprocess.CalledProcessError | None = None
 
     while time.monotonic() < deadline:
         result = subprocess.run(
-            cmd,
+            ["bash", "-lc", shell_script],
             cwd=STACK_DIR,
             check=False,
             capture_output=True,
             text=True,
-            env=os.environ.copy(),
+            env={
+                **os.environ.copy(),
+                "XIAN_SERVICE_NODE": "1" if service_node else "0",
+            },
         )
         if result.returncode == 0:
             return
         last_error = subprocess.CalledProcessError(
             result.returncode,
-            cmd,
+            ["bash", "-lc", shell_script],
             output=result.stdout,
             stderr=result.stderr,
         )
