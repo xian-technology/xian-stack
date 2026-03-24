@@ -75,6 +75,9 @@ python3 ./scripts/backend.py localnet-workload --scenario counter_basic
 The Makefile remains the local implementation and debugging surface, but other
 tools should prefer the backend script contract.
 
+For running stack-managed services, `endpoints` and `health` resolve the live
+published Docker host ports instead of only echoing configured defaults.
+
 The backend script accepts optional monitoring state in addition to the
 existing service-node and dashboard flags:
 

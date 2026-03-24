@@ -197,6 +197,156 @@ def run_make_target(
     )
 
 
+def _docker_compose_container_id(*, service: str) -> str | None:
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "ps",
+                "-q",
+                "--filter",
+                f"label=com.docker.compose.project.working_dir={STACK_DIR}",
+                "--filter",
+                f"label=com.docker.compose.service={service}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+    container_ids = result.stdout.strip().splitlines()
+    return container_ids[0] if container_ids else None
+
+
+def _docker_compose_binding(
+    *,
+    service: str,
+    container_port: int,
+) -> tuple[str, int] | None:
+    container_id = _docker_compose_container_id(service=service)
+    if container_id is None:
+        return None
+
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", container_id],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(result.stdout)
+    except (
+        FileNotFoundError,
+        subprocess.CalledProcessError,
+        json.JSONDecodeError,
+    ):
+        return None
+
+    if not payload or not isinstance(payload, list):
+        return None
+    container = payload[0]
+    if not isinstance(container, dict):
+        return None
+
+    ports = container.get("NetworkSettings", {}).get("Ports", {})
+    bindings = ports.get(f"{container_port}/tcp")
+    if not isinstance(bindings, list) or not bindings:
+        return None
+
+    binding = bindings[0]
+    if not isinstance(binding, dict):
+        return None
+
+    host_ip = str(binding.get("HostIp") or "127.0.0.1")
+    host_port = binding.get("HostPort")
+    if host_port is None:
+        return None
+    return host_ip, int(host_port)
+
+
+def _discover_runtime_endpoints(
+    *,
+    service_node: bool,
+    dashboard_enabled: bool,
+    monitoring_enabled: bool,
+) -> dict[str, str]:
+    endpoints: dict[str, str] = {}
+
+    abci_rpc_binding = _docker_compose_binding(service="abci", container_port=26657)
+    if abci_rpc_binding is not None:
+        rpc_host = display_host(abci_rpc_binding[0])
+        rpc_port = abci_rpc_binding[1]
+        rpc_base = f"http://{rpc_host}:{rpc_port}"
+        endpoints["rpc"] = rpc_base
+        endpoints["rpc_status"] = f"{rpc_base}/status"
+        endpoints["abci_query"] = f"{rpc_base}/abci_query"
+
+    comet_metrics_binding = _docker_compose_binding(
+        service="abci",
+        container_port=26660,
+    )
+    if comet_metrics_binding is not None:
+        metrics_host = display_host(comet_metrics_binding[0])
+        metrics_port = comet_metrics_binding[1]
+        endpoints["cometbft_metrics"] = (
+            f"http://{metrics_host}:{metrics_port}/metrics"
+        )
+
+    xian_metrics_binding = _docker_compose_binding(
+        service="abci",
+        container_port=9108,
+    )
+    if xian_metrics_binding is not None:
+        metrics_host = display_host(xian_metrics_binding[0])
+        metrics_port = xian_metrics_binding[1]
+        endpoints["xian_metrics"] = f"http://{metrics_host}:{metrics_port}/metrics"
+
+    if service_node:
+        graphql_binding = _docker_compose_binding(
+            service="postgraphile",
+            container_port=5000,
+        )
+        if graphql_binding is not None:
+            graphql_host = display_host(graphql_binding[0])
+            graphql_port = graphql_binding[1]
+            endpoints["graphql"] = f"http://{graphql_host}:{graphql_port}/graphql"
+
+    if dashboard_enabled:
+        dashboard_binding = _docker_compose_binding(
+            service="dashboard",
+            container_port=8080,
+        )
+        if dashboard_binding is not None:
+            dashboard_host = display_host(dashboard_binding[0])
+            dashboard_port = dashboard_binding[1]
+            dashboard_url = f"http://{dashboard_host}:{dashboard_port}"
+            endpoints["dashboard"] = dashboard_url
+            endpoints["dashboard_status"] = f"{dashboard_url}/api/status"
+
+    if monitoring_enabled:
+        prometheus_binding = _docker_compose_binding(
+            service="prometheus",
+            container_port=9090,
+        )
+        if prometheus_binding is not None:
+            prometheus_host = display_host(prometheus_binding[0])
+            prometheus_port = prometheus_binding[1]
+            endpoints["prometheus"] = f"http://{prometheus_host}:{prometheus_port}"
+
+        grafana_binding = _docker_compose_binding(
+            service="grafana",
+            container_port=3000,
+        )
+        if grafana_binding is not None:
+            grafana_host = display_host(grafana_binding[0])
+            grafana_port = grafana_binding[1]
+            endpoints["grafana"] = f"http://{grafana_host}:{grafana_port}"
+
+    return endpoints
+
+
 def runtime_env(
     *,
     dashboard_enabled: bool,
@@ -412,18 +562,17 @@ def backend_status(
     payload = json.loads(result.stdout)
     payload["dashboard_enabled"] = dashboard_enabled
     payload["monitoring_enabled"] = monitoring_enabled
-    payload["endpoints"] = backend_endpoints(
+    endpoints = backend_endpoints(
         service_node=service_node,
         dashboard_enabled=dashboard_enabled,
         monitoring_enabled=monitoring_enabled,
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
     )["endpoints"]
+    payload["endpoints"] = endpoints
     if dashboard_enabled:
-        dashboard_base_url = (
-            f"http://{display_host(dashboard_host)}:{dashboard_port}"
-        )
-        dashboard_status_url = f"{dashboard_base_url}/api/status"
+        dashboard_base_url = str(endpoints.get("dashboard", ""))
+        dashboard_status_url = str(endpoints.get("dashboard_status", ""))
         payload["dashboard_url"] = dashboard_base_url
         try:
             payload["dashboard_status"] = fetch_json(
@@ -441,10 +590,12 @@ def backend_status(
             payload["dashboard_reachable"] = False
             payload["dashboard_error"] = str(exc)
     if monitoring_enabled:
-        prometheus_url = "http://127.0.0.1:9090/api/v1/status/runtimeinfo"
-        grafana_url = "http://127.0.0.1:3000/api/health"
-        payload["prometheus_url"] = "http://127.0.0.1:9090"
-        payload["grafana_url"] = "http://127.0.0.1:3000"
+        prometheus_base = str(endpoints.get("prometheus", DEFAULT_PROMETHEUS_URL))
+        grafana_base = str(endpoints.get("grafana", DEFAULT_GRAFANA_URL))
+        prometheus_url = f"{prometheus_base}/api/v1/status/runtimeinfo"
+        grafana_url = f"{grafana_base}/api/health"
+        payload["prometheus_url"] = prometheus_base
+        payload["grafana_url"] = grafana_base
         try:
             payload["prometheus_status"] = fetch_json(
                 prometheus_url,
@@ -514,6 +665,22 @@ def backend_endpoints(
     if monitoring_enabled:
         endpoints["prometheus"] = DEFAULT_PROMETHEUS_URL
         endpoints["grafana"] = DEFAULT_GRAFANA_URL
+    endpoints.update(
+        _discover_runtime_endpoints(
+            service_node=service_node,
+            dashboard_enabled=dashboard_enabled,
+            monitoring_enabled=monitoring_enabled,
+        )
+    )
+    if service_node:
+        endpoints["bds_status_query"] = build_abci_query_url(
+            rpc_url=endpoints["rpc_status"],
+            path="/bds_status",
+        )
+        endpoints["bds_spool_query"] = build_abci_query_url(
+            rpc_url=endpoints["rpc_status"],
+            path="/bds_spool/limit=20/offset=0",
+        )
     return {
         "stack_dir": str(STACK_DIR),
         "service_node": service_node,
