@@ -40,6 +40,14 @@ def fetch_json(url: str, *, timeout: float = 10.0) -> dict:
     return json.loads(payload)
 
 
+def probe_http_endpoint(url: str, *, timeout: float = 2.0) -> dict:
+    with urlopen(url, timeout=timeout) as response:
+        return {
+            "status": getattr(response, "status", 200),
+            "content_type": response.headers.get_content_type(),
+        }
+
+
 def wait_for_rpc_ready(
     *,
     rpc_url: str,
@@ -442,6 +450,134 @@ def backend_endpoints(
     }
 
 
+def backend_health(
+    *,
+    service_node: bool,
+    dashboard_enabled: bool,
+    monitoring_enabled: bool,
+    dashboard_host: str,
+    dashboard_port: int,
+    rpc_url: str,
+    check_disk: bool,
+) -> dict:
+    status = backend_status(
+        service_node=service_node,
+        dashboard_enabled=dashboard_enabled,
+        monitoring_enabled=monitoring_enabled,
+        dashboard_host=dashboard_host,
+        dashboard_port=dashboard_port,
+    )
+    endpoints = status["endpoints"]
+
+    checks: dict[str, dict[str, object]] = {
+        "backend": {
+            "ok": bool(status.get("backend_running")),
+            "detail": {
+                "backend_running": bool(status.get("backend_running")),
+                "node_id": status.get("node_id"),
+            },
+        }
+    }
+
+    try:
+        rpc_status = fetch_json(rpc_url, timeout=2.0)
+        result = rpc_status.get("result", {})
+        sync_info = result.get("sync_info", {})
+        node_info = result.get("node_info", {})
+        checks["rpc"] = {
+            "ok": True,
+            "detail": {
+                "network": node_info.get("network"),
+                "height": sync_info.get("latest_block_height"),
+                "catching_up": sync_info.get("catching_up"),
+            },
+        }
+    except (
+        OSError,
+        URLError,
+        TimeoutError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
+        checks["rpc"] = {
+            "ok": False,
+            "detail": {"error": str(exc)},
+        }
+
+    for check_name, endpoint_key in (
+        ("cometbft_metrics", "cometbft_metrics"),
+        ("xian_metrics", "xian_metrics"),
+    ):
+        try:
+            detail = probe_http_endpoint(endpoints[endpoint_key])
+            checks[check_name] = {"ok": True, "detail": detail}
+        except (
+            OSError,
+            URLError,
+            TimeoutError,
+            ValueError,
+        ) as exc:
+            checks[check_name] = {
+                "ok": False,
+                "detail": {"error": str(exc)},
+            }
+
+    if dashboard_enabled:
+        checks["dashboard"] = {
+            "ok": bool(status.get("dashboard_reachable")),
+            "detail": {
+                "url": endpoints.get("dashboard"),
+                "error": status.get("dashboard_error"),
+            },
+        }
+    if monitoring_enabled:
+        checks["prometheus"] = {
+            "ok": bool(status.get("prometheus_reachable")),
+            "detail": {
+                "url": endpoints.get("prometheus"),
+                "error": status.get("prometheus_error"),
+            },
+        }
+        checks["grafana"] = {
+            "ok": bool(status.get("grafana_reachable")),
+            "detail": {
+                "url": endpoints.get("grafana"),
+                "error": status.get("grafana_error"),
+            },
+        }
+
+    storage = None
+    if check_disk:
+        storage = backend_storage_report()
+        checks["disk"] = {
+            "ok": not storage.get("alerts"),
+            "detail": {
+                "alerts": storage.get("alerts", []),
+                "paths": storage.get("paths", {}),
+            },
+        }
+
+    if not checks["backend"]["ok"] or not checks["rpc"]["ok"]:
+        state = "stopped"
+    elif any(not check["ok"] for check in checks.values()):
+        state = "degraded"
+    else:
+        state = "healthy"
+
+    payload = {
+        "stack_dir": str(STACK_DIR),
+        "service_node": service_node,
+        "dashboard_enabled": dashboard_enabled,
+        "monitoring_enabled": monitoring_enabled,
+        "state": state,
+        "checks": checks,
+        "endpoints": endpoints,
+    }
+    if storage is not None:
+        payload["storage"] = storage
+    return payload
+
+
 def backend_make_result(target: str) -> dict:
     result = run_make_target(target)
     payload = {
@@ -673,6 +809,41 @@ def build_parser() -> argparse.ArgumentParser:
         default=8080,
     )
 
+    health = subparsers.add_parser("health")
+    health.add_argument(
+        "--service-node",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    health.add_argument(
+        "--dashboard",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    health.add_argument(
+        "--monitoring",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    health.add_argument(
+        "--dashboard-host",
+        default="127.0.0.1",
+    )
+    health.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=8080,
+    )
+    health.add_argument(
+        "--rpc-url",
+        default=f"{DEFAULT_RPC_BASE_URL}/status",
+    )
+    health.add_argument(
+        "--check-disk",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+
     subparsers.add_parser("validate")
     subparsers.add_parser("smoke")
     subparsers.add_parser("smoke-cli")
@@ -816,6 +987,16 @@ def main(argv: list[str] | None = None) -> int:
             monitoring_enabled=args.monitoring,
             dashboard_host=args.dashboard_host,
             dashboard_port=args.dashboard_port,
+        )
+    elif args.command == "health":
+        payload = backend_health(
+            service_node=args.service_node,
+            dashboard_enabled=args.dashboard,
+            monitoring_enabled=args.monitoring,
+            dashboard_host=args.dashboard_host,
+            dashboard_port=args.dashboard_port,
+            rpc_url=args.rpc_url,
+            check_disk=args.check_disk,
         )
     elif args.command == "validate":
         payload = backend_make_result("validate")
