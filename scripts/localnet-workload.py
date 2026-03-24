@@ -12,11 +12,13 @@ import subprocess
 import time
 from collections import Counter
 from dataclasses import dataclass
+from decimal import Decimal
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import aiohttp
+from xian_runtime_types.decimal import ContractingDecimal
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent
@@ -24,6 +26,7 @@ WORKLOADS_DIR = STACK_DIR / "workloads"
 NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 
 from xian_py import transaction as tr  # noqa: E402
+from xian_py.models import TransactionSubmission  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian_async import XianAsync  # noqa: E402
 
@@ -58,7 +61,7 @@ class BroadcastRecord:
     sender: str
     expected_success: bool
     expected_message: str | None
-    response: dict[str, Any]
+    response: TransactionSubmission
     tx_hash: str | None = None
     final_success: bool | None = None
     final_message: str | None = None
@@ -184,9 +187,9 @@ class WorkloadContext:
             stamps=stamps,
             nonce=await self.next_nonce(wallet, submission_index),
             chain_id=self.chain_id,
-            synchronous=True,
+            mode="checktx",
+            wait_for_tx=False,
         )
-        tx_hash = response.get("tx_hash")
         return BroadcastRecord(
             label=label,
             contract=contract,
@@ -196,7 +199,7 @@ class WorkloadContext:
             expected_success=expected_success,
             expected_message=expected_message,
             response=response,
-            tx_hash=tx_hash,
+            tx_hash=response.tx_hash,
         )
 
     async def resolve_records(
@@ -232,9 +235,9 @@ class WorkloadContext:
         *,
         timeout_seconds: float,
     ) -> None:
-        if not record.response.get("success"):
+        if not record.response.submitted or record.response.accepted is False:
             record.final_success = False
-            record.final_message = record.response.get("message")
+            record.final_message = record.response.message
             self._assert_record(record)
             return
 
@@ -333,11 +336,35 @@ def canonical_json(value: Any) -> str:
 
 
 def normalize_value(value: Any) -> Any:
+    if isinstance(value, ContractingDecimal | Decimal):
+        return str(value)
     if isinstance(value, dict):
         return {str(k): normalize_value(v) for k, v in sorted(value.items())}
     if isinstance(value, list):
         return [normalize_value(item) for item in value]
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return value.hex()
     return value
+
+
+def coerce_numeric(value: Any) -> int | float | Decimal:
+    if isinstance(value, int | float | Decimal):
+        return value
+    if isinstance(value, str):
+        if value.isdigit():
+            return int(value)
+        try:
+            return Decimal(value)
+        except Exception as exc:  # noqa: BLE001
+            raise WorkloadError(
+                f"expected numeric workload value, got {value!r}"
+            ) from exc
+    raise WorkloadError(f"expected numeric workload value, got {value!r}")
 
 
 def load_network() -> dict[str, Any]:
@@ -393,24 +420,26 @@ async def wait_for_tx_receipt(
 
     while time.monotonic() < deadline:
         try:
-            payload = await client.get_tx(tx_hash)
-            result = payload.get("result")
-            if result is None:
+            receipt = await client.wait_for_tx(
+                tx_hash,
+                timeout_seconds=min(5.0, max(0.5, deadline - time.monotonic())),
+                poll_interval_seconds=0.5,
+            )
+            result = receipt.raw.get("result")
+            if not isinstance(result, dict):
                 raise WorkloadError(f"tx {tx_hash} returned no result")
-            tx_result = result.get("tx_result", {})
-            decoded = tx_result.get("data")
-            if isinstance(decoded, dict):
+            if isinstance(receipt.execution, dict):
                 return {
                     "height": int(result["height"]),
-                    "success": decoded.get("status") == 0,
-                    "result": decoded.get("result"),
-                    "events": decoded.get("events", []),
-                    "stamps_used": decoded.get("stamps_used"),
+                    "success": receipt.success,
+                    "result": receipt.message,
+                    "events": receipt.execution.get("events", []),
+                    "stamps_used": receipt.execution.get("stamps_used"),
                 }
             return {
                 "height": int(result["height"]),
-                "success": tx_result.get("code") == 0,
-                "result": tx_result.get("log"),
+                "success": receipt.success,
+                "result": receipt.message,
                 "events": [],
                 "stamps_used": None,
             }
@@ -673,6 +702,7 @@ async def run_counter_basic(
         ]
     )
     counter_value = state["queries"][0]["values"][context.sample_nodes[0].moniker]
+    counter_value = coerce_numeric(counter_value)
     if counter_value != expected_counter:
         raise WorkloadError(
             f"counter_basic: expected counter value {expected_counter}, got {counter_value}"
@@ -1135,9 +1165,9 @@ async def run_dex_mixed(
     )
 
     first_node = context.sample_nodes[0].moniker
-    reserve0 = state["queries"][2]["values"][first_node]
-    reserve1 = state["queries"][3]["values"][first_node]
-    total_supply = state["queries"][4]["values"][first_node]
+    reserve0 = coerce_numeric(state["queries"][2]["values"][first_node])
+    reserve1 = coerce_numeric(state["queries"][3]["values"][first_node])
+    total_supply = coerce_numeric(state["queries"][4]["values"][first_node])
     if reserve0 <= 0 or reserve1 <= 0 or total_supply <= 0:
         raise WorkloadError(
             f"dex_mixed: unexpected non-positive reserves or supply "

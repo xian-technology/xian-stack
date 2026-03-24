@@ -30,6 +30,14 @@ DEFAULT_GRAFANA_URL = "http://127.0.0.1:3000"
 DEFAULT_GRAPHQL_URL = "http://127.0.0.1:5000/graphql"
 
 
+def display_host(host: str) -> str:
+    if host == "0.0.0.0":
+        return "127.0.0.1"
+    if host == "::":
+        return "::1"
+    return host
+
+
 def resolve_repo_dir(name: str, env_var: str) -> Path:
     explicit = os.environ.get(env_var)
     if explicit:
@@ -337,7 +345,9 @@ def backend_start(
     }
     if dashboard_enabled:
         result["dashboard_target"] = dashboard_target
-        result["dashboard_url"] = f"http://{dashboard_host}:{dashboard_port}"
+        result["dashboard_url"] = (
+            f"http://{display_host(dashboard_host)}:{dashboard_port}"
+        )
     if monitoring_enabled:
         result["monitoring_target"] = monitoring_target
         result["prometheus_url"] = "http://127.0.0.1:9090"
@@ -410,10 +420,16 @@ def backend_status(
         dashboard_port=dashboard_port,
     )["endpoints"]
     if dashboard_enabled:
-        dashboard_url = f"http://{dashboard_host}:{dashboard_port}/api/status"
-        payload["dashboard_url"] = dashboard_url
+        dashboard_base_url = (
+            f"http://{display_host(dashboard_host)}:{dashboard_port}"
+        )
+        dashboard_status_url = f"{dashboard_base_url}/api/status"
+        payload["dashboard_url"] = dashboard_base_url
         try:
-            payload["dashboard_status"] = fetch_json(dashboard_url, timeout=2.0)
+            payload["dashboard_status"] = fetch_json(
+                dashboard_status_url,
+                timeout=2.0,
+            )
             payload["dashboard_reachable"] = True
         except (
             OSError,
@@ -488,9 +504,12 @@ def backend_endpoints(
         )
         endpoints["graphql"] = DEFAULT_GRAPHQL_URL
     if dashboard_enabled:
-        endpoints["dashboard"] = f"http://{dashboard_host}:{dashboard_port}"
+        display_dashboard_host = display_host(dashboard_host)
+        endpoints["dashboard"] = (
+            f"http://{display_dashboard_host}:{dashboard_port}"
+        )
         endpoints["dashboard_status"] = (
-            f"http://{dashboard_host}:{dashboard_port}/api/status"
+            f"http://{display_dashboard_host}:{dashboard_port}/api/status"
         )
     if monitoring_enabled:
         endpoints["prometheus"] = DEFAULT_PROMETHEUS_URL
@@ -740,12 +759,16 @@ def backend_localnet_init(*, nodes: int, clean: bool, topology: str) -> dict:
     args = ["--nodes", str(nodes), "--topology", topology]
     if clean:
         args.append("--clean")
-    result = run_python_script(
-        LOCALNET_INIT_SCRIPT,
-        *args,
-        capture_output=True,
-        uv_project=resolve_repo_dir("xian-abci", "XIAN_ABCI_DIR"),
-    )
+    try:
+        result = run_python_script(
+            LOCALNET_INIT_SCRIPT,
+            *args,
+            capture_output=True,
+            uv_project=resolve_repo_dir("xian-abci", "XIAN_ABCI_DIR"),
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise RuntimeError(f"localnet-init failed: {detail}") from exc
     metadata = load_localnet_metadata()
     return {
         "stack_dir": str(STACK_DIR),
@@ -762,13 +785,24 @@ def backend_localnet_up(
     wait_for_health: bool,
     rpc_timeout_seconds: float,
 ) -> dict:
-    run_make_target("localnet-up")
+    try:
+        run_make_target("localnet-up")
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise RuntimeError(f"localnet-up failed: {detail}") from exc
     result = {
         "stack_dir": str(STACK_DIR),
         "rpc_checked": wait_for_health,
     }
     if wait_for_health:
-        result["nodes"] = wait_for_localnet_ready(timeout_seconds=rpc_timeout_seconds)
+        try:
+            result["nodes"] = wait_for_localnet_ready(
+                timeout_seconds=rpc_timeout_seconds
+            )
+        except TimeoutError as exc:
+            raise RuntimeError(
+                f"localnet-up failed: {exc}"
+            ) from exc
     else:
         result["network"] = load_localnet_metadata()
     return result
@@ -800,12 +834,18 @@ def backend_localnet_diagnostic(
         args.append(str(duration_minutes))
     if script_args is not None:
         args.extend(script_args)
-    result = run_python_script(
-        script_path,
-        *args,
-        capture_output=True,
-        uv_project=resolve_repo_dir("xian-py", "XIAN_PY_DIR"),
-    )
+    try:
+        result = run_python_script(
+            script_path,
+            *args,
+            capture_output=True,
+            uv_project=resolve_repo_dir("xian-py", "XIAN_PY_DIR"),
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise RuntimeError(
+            f"{script_path.name} failed: {detail}"
+        ) from exc
     payload = {
         "stack_dir": str(STACK_DIR),
         "script": str(script_path.relative_to(STACK_DIR)),
@@ -987,7 +1027,12 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("storage-report")
 
     localnet_init = subparsers.add_parser("localnet-init")
-    localnet_init.add_argument("--nodes", type=int, default=4)
+    localnet_init.add_argument(
+        "--nodes",
+        type=int,
+        default=4,
+        help="number of validator nodes for the localnet (minimum 4)",
+    )
     localnet_init.add_argument(
         "--topology",
         choices=("integrated", "fidelity"),
@@ -1213,4 +1258,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1) from exc
