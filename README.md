@@ -63,6 +63,7 @@ The stable backend control surface is `scripts/backend.py`:
 
 ```bash
 python3 ./scripts/backend.py validate
+python3 ./scripts/backend.py endpoints --no-service-node --dashboard --monitoring
 python3 ./scripts/backend.py smoke
 python3 ./scripts/backend.py smoke-cli
 python3 ./scripts/backend.py localnet-init --nodes 4 --topology integrated --clean
@@ -79,6 +80,7 @@ existing service-node and dashboard flags:
 ```bash
 python3 ./scripts/backend.py start --no-service-node --no-dashboard --no-monitoring
 python3 ./scripts/backend.py status --no-service-node --no-dashboard --no-monitoring
+python3 ./scripts/backend.py endpoints --no-service-node --no-dashboard --no-monitoring
 python3 ./scripts/backend.py stop --no-service-node --no-dashboard --no-monitoring
 ```
 

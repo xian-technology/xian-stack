@@ -19,6 +19,11 @@ LOCALNET_BURST_SCRIPT = STACK_DIR / "scripts" / "localnet-burst-test.py"
 LOCALNET_MEMWATCH_SCRIPT = STACK_DIR / "scripts" / "localnet-memwatch.py"
 LOCALNET_LEAK_HUNT_SCRIPT = STACK_DIR / "scripts" / "localnet-leak-hunt.py"
 DEFAULT_RPC_TIMEOUT_SECONDS = 90.0
+DEFAULT_RPC_BASE_URL = "http://127.0.0.1:26657"
+DEFAULT_COMETBFT_METRICS_URL = "http://127.0.0.1:26660/metrics"
+DEFAULT_XIAN_METRICS_URL = "http://127.0.0.1:9108/metrics"
+DEFAULT_PROMETHEUS_URL = "http://127.0.0.1:9090"
+DEFAULT_GRAFANA_URL = "http://127.0.0.1:3000"
 
 
 def resolve_repo_dir(name: str, env_var: str) -> Path:
@@ -345,6 +350,13 @@ def backend_status(
     payload = json.loads(result.stdout)
     payload["dashboard_enabled"] = dashboard_enabled
     payload["monitoring_enabled"] = monitoring_enabled
+    payload["endpoints"] = backend_endpoints(
+        service_node=service_node,
+        dashboard_enabled=dashboard_enabled,
+        monitoring_enabled=monitoring_enabled,
+        dashboard_host=dashboard_host,
+        dashboard_port=dashboard_port,
+    )["endpoints"]
     if dashboard_enabled:
         dashboard_url = f"http://{dashboard_host}:{dashboard_port}/api/status"
         payload["dashboard_url"] = dashboard_url
@@ -396,6 +408,38 @@ def backend_status(
             payload["grafana_reachable"] = False
             payload["grafana_error"] = str(exc)
     return payload
+
+
+def backend_endpoints(
+    *,
+    service_node: bool,
+    dashboard_enabled: bool,
+    monitoring_enabled: bool,
+    dashboard_host: str,
+    dashboard_port: int,
+) -> dict:
+    endpoints = {
+        "rpc": DEFAULT_RPC_BASE_URL,
+        "rpc_status": f"{DEFAULT_RPC_BASE_URL}/status",
+        "abci_query": f"{DEFAULT_RPC_BASE_URL}/abci_query",
+        "cometbft_metrics": DEFAULT_COMETBFT_METRICS_URL,
+        "xian_metrics": DEFAULT_XIAN_METRICS_URL,
+    }
+    if dashboard_enabled:
+        endpoints["dashboard"] = f"http://{dashboard_host}:{dashboard_port}"
+        endpoints["dashboard_status"] = (
+            f"http://{dashboard_host}:{dashboard_port}/api/status"
+        )
+    if monitoring_enabled:
+        endpoints["prometheus"] = DEFAULT_PROMETHEUS_URL
+        endpoints["grafana"] = DEFAULT_GRAFANA_URL
+    return {
+        "stack_dir": str(STACK_DIR),
+        "service_node": service_node,
+        "dashboard_enabled": dashboard_enabled,
+        "monitoring_enabled": monitoring_enabled,
+        "endpoints": endpoints,
+    }
 
 
 def backend_make_result(target: str) -> dict:
@@ -603,6 +647,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=8080,
     )
 
+    endpoints = subparsers.add_parser("endpoints")
+    endpoints.add_argument(
+        "--service-node",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    endpoints.add_argument(
+        "--dashboard",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    endpoints.add_argument(
+        "--monitoring",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    endpoints.add_argument(
+        "--dashboard-host",
+        default="127.0.0.1",
+    )
+    endpoints.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=8080,
+    )
+
     subparsers.add_parser("validate")
     subparsers.add_parser("smoke")
     subparsers.add_parser("smoke-cli")
@@ -733,6 +803,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "status":
         payload = backend_status(
+            service_node=args.service_node,
+            dashboard_enabled=args.dashboard,
+            monitoring_enabled=args.monitoring,
+            dashboard_host=args.dashboard_host,
+            dashboard_port=args.dashboard_port,
+        )
+    elif args.command == "endpoints":
+        payload = backend_endpoints(
             service_node=args.service_node,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
