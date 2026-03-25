@@ -1,0 +1,48 @@
+groups:
+  - name: xian_shared_network
+    rules:
+      - alert: XianAbciTargetDown
+        expr: up{job="xian_abci"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          preset: shared_network
+        annotations:
+          summary: Xian ABCI metrics target is down
+          description: The Xian ABCI metrics endpoint has been unreachable for more than two minutes.
+      - alert: XianCometBftTargetDown
+        expr: up{job="xian_cometbft"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          preset: shared_network
+        annotations:
+          summary: CometBFT metrics target is down
+          description: The CometBFT metrics endpoint has been unreachable for more than two minutes.
+      - alert: XianSharedNetworkBlockProgressStalled
+        expr: increase(xian_current_block_height[15m]) < 1
+        for: 15m
+        labels:
+          severity: critical
+          preset: shared_network
+        annotations:
+          summary: Block progress appears stalled
+          description: Block height has not advanced over the last fifteen minutes on a shared-network posture.
+      - alert: XianBdsLagHigh
+        expr: xian_bds_metric{field="height_lag"} > 5
+        for: 10m
+        labels:
+          severity: warning
+          preset: shared_network
+        annotations:
+          summary: BDS indexing lag is elevated
+          description: BDS height lag has stayed above five blocks for ten minutes.
+      - alert: XianBdsAlertsPresent
+        expr: sum(xian_bds_alert) > 0
+        for: 5m
+        labels:
+          severity: warning
+          preset: shared_network
+        annotations:
+          summary: The node is reporting active BDS alerts
+          description: One or more BDS alerts have remained active for at least five minutes.

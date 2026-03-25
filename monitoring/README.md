@@ -5,5 +5,6 @@
 
 ## Contents
 - `prometheus/`: scrape configurations
-- `grafana/`: dashboard and provisioning assets
-
+- `prometheus/rules/`: monitoring alert presets aligned with runtime posture
+- `grafana/`: dashboard and provisioning assets, including extra embedded-backend
+  and shared-network views

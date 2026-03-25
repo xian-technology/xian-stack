@@ -19,6 +19,7 @@ services:
       ]
     volumes:
       - ${XIAN_PROMETHEUS_CONFIG}:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
     networks:
       - xian-net
     ports:

@@ -1,0 +1,48 @@
+groups:
+  - name: xian_embedded_backend
+    rules:
+      - alert: XianAbciTargetDown
+        expr: up{job="xian_abci"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          preset: embedded_backend
+        annotations:
+          summary: Xian ABCI metrics target is down
+          description: The Xian ABCI metrics endpoint has been unreachable for more than two minutes.
+      - alert: XianCometBftTargetDown
+        expr: up{job="xian_cometbft"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          preset: embedded_backend
+        annotations:
+          summary: CometBFT metrics target is down
+          description: The CometBFT metrics endpoint has been unreachable for more than two minutes.
+      - alert: XianBdsLagHigh
+        expr: xian_bds_metric{field="height_lag"} > 10
+        for: 10m
+        labels:
+          severity: warning
+          preset: embedded_backend
+        annotations:
+          summary: BDS indexing lag is elevated
+          description: BDS height lag has stayed above 10 blocks for ten minutes.
+      - alert: XianBdsAlertsPresent
+        expr: sum(xian_bds_alert) > 0
+        for: 5m
+        labels:
+          severity: warning
+          preset: embedded_backend
+        annotations:
+          summary: The node is reporting active BDS alerts
+          description: One or more BDS alerts have remained active for at least five minutes.
+      - alert: XianFinalizeSlow
+        expr: xian_perf_global_metric{metric="finalize_block",stat="avg_ms"} > 1000
+        for: 10m
+        labels:
+          severity: warning
+          preset: embedded_backend
+        annotations:
+          summary: FinalizeBlock average latency is elevated
+          description: Average FinalizeBlock latency has stayed above 1000 ms for ten minutes.
