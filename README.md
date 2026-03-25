@@ -50,6 +50,17 @@ python3 ./scripts/backend.py localnet-workload --scenario counter_basic
 - `workloads/`: localnet workload fixtures and contracts
 - `docs/`: repo-local runtime and release notes
 
+## What It Can Do
+
+- build and run the local Xian runtime in `integrated` or `fidelity` topology
+- expose a stable machine-facing backend command surface through
+  `scripts/backend.py`
+- start optional dashboard, BDS, Prometheus, and Grafana layers
+- run smoke checks and CLI-driven smoke flows
+- initialize multi-node localnets and drive workload scenarios against them
+- ship monitoring dashboards and alert rules that match the validated operator
+  profiles
+
 ## Backend Surface
 
 The stable backend interface is `scripts/backend.py`. It covers:
@@ -62,6 +73,9 @@ The stable backend interface is `scripts/backend.py`. It covers:
 
 Use the `Makefile` directly for lower-level debugging, image builds, and
 developer shell access.
+
+Use `xian-cli` for the human-facing operator workflows built on top of this
+backend contract.
 
 ## Validation
 
