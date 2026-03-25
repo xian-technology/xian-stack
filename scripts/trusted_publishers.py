@@ -25,6 +25,13 @@ PUBLISHERS = (
         environment="pypi-xian-contracting",
     ),
     TrustedPublisher(
+        project="xian-contract-tools",
+        owner="xian-technology",
+        repository="xian-contracting",
+        workflow="release.yml",
+        environment="pypi-xian-contract-tools",
+    ),
+    TrustedPublisher(
         project="xian-runtime-types",
         owner="xian-technology",
         repository="xian-contracting",

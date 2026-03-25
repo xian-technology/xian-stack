@@ -7,6 +7,7 @@ The publishable Python packages in the Xian stack now use tag-driven GitHub Acti
 Recommended release order:
 
 1. `xian-contracting` shared packages:
+   - `contract-tools-vX.Y.Z`
    - `runtime-types-vX.Y.Z`
    - `native-tracer-vX.Y.Z`
 2. `xian-contracting`:
@@ -30,6 +31,7 @@ Each release workflow:
 Trusted Publishing setup still has to be completed once in PyPI for each project. The workflows expect these GitHub environments:
 
 - `xian-contracting`: `pypi-xian-contracting`
+- `xian-contract-tools`: `pypi-xian-contract-tools`
 - `xian-runtime-types`: `pypi-xian-runtime-types`
 - `xian-native-tracer`: `pypi-xian-native-tracer`
 - `xian-abci`: `pypi`
@@ -55,6 +57,7 @@ Current publisher matrix:
 | PyPI project | GitHub owner | GitHub repo | Workflow filename | Environment |
 | --- | --- | --- | --- | --- |
 | `xian-contracting` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-contracting` |
+| `xian-contract-tools` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-contract-tools` |
 | `xian-runtime-types` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-runtime-types` |
 | `xian-native-tracer` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-native-tracer` |
 | `xian-abci` | `xian-technology` | `xian-abci` | `release.yml` | `pypi` |
