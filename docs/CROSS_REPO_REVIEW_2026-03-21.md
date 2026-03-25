@@ -37,7 +37,7 @@ Primary focus:
 3. `xian-py` decompiler is broken on Python 3.14.
 - `xian-py/src/xian_py/decompiler.py`
 - Current state: still uses removed AST node aliases such as `ast.Str`, and also converts decimal literals through `float`.
-- Impact: `get_contract(clean=True)` is currently broken on Python 3.14 and loses precision.
+- Impact: contract source retrieval/decompilation was broken on Python 3.14 and lost precision.
 - Next action: port decompiler transforms to modern AST nodes and keep decimal literals as strings / exact decimal syntax.
 - Status: fixed on `main` in this review pass.
 
