@@ -7,6 +7,16 @@ source "${script_dir}/stack-env.sh"
 smoke_root="${XIAN_SMOKE_ROOT:-${stack_root}/.smoke}"
 export XIAN_COMETBFT_HOME="${XIAN_COMETBFT_HOME:-${smoke_root}/cometbft}"
 export XIAN_BDS_DATA_DIR="${XIAN_BDS_DATA_DIR:-${smoke_root}/bds}"
+export XIAN_COMETBFT_RPC_HOST="${XIAN_SMOKE_COMETBFT_RPC_HOST:-127.0.0.1}"
+export XIAN_COMETBFT_RPC_PORT="${XIAN_SMOKE_COMETBFT_RPC_PORT:-28657}"
+export XIAN_COMETBFT_P2P_HOST="${XIAN_SMOKE_COMETBFT_P2P_HOST:-127.0.0.1}"
+export XIAN_COMETBFT_P2P_PORT="${XIAN_SMOKE_COMETBFT_P2P_PORT:-28656}"
+export XIAN_COMETBFT_METRICS_HOST="${XIAN_SMOKE_COMETBFT_METRICS_HOST:-127.0.0.1}"
+export XIAN_COMETBFT_METRICS_PORT="${XIAN_SMOKE_COMETBFT_METRICS_PORT:-28660}"
+export XIAN_APP_METRICS_HOST="${XIAN_SMOKE_APP_METRICS_HOST:-127.0.0.1}"
+export XIAN_APP_METRICS_PORT="${XIAN_SMOKE_APP_METRICS_PORT:-29108}"
+export XIAN_DASHBOARD_HOST="${XIAN_SMOKE_DASHBOARD_HOST:-127.0.0.1}"
+export XIAN_DASHBOARD_PORT="${XIAN_SMOKE_DASHBOARD_PORT:-28080}"
 export_stack_env
 prepare_stack_dirs
 require_stack_paths
@@ -17,8 +27,8 @@ smoke_genesis_source="${XIAN_SMOKE_GENESIS_SOURCE:-devnet}"
 smoke_validator_privkey="${XIAN_SMOKE_VALIDATOR_PRIVKEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
 smoke_skip_build="${XIAN_SMOKE_SKIP_BUILD:-0}"
 smoke_timeout_seconds="${XIAN_SMOKE_TIMEOUT_SECONDS:-90}"
-smoke_status_url="${XIAN_SMOKE_STATUS_URL:-http://127.0.0.1:26657/status}"
-smoke_abci_info_url="${XIAN_SMOKE_ABCI_INFO_URL:-http://127.0.0.1:26657/abci_info}"
+smoke_status_url="${XIAN_SMOKE_STATUS_URL:-http://${XIAN_COMETBFT_RPC_HOST}:${XIAN_COMETBFT_RPC_PORT}/status}"
+smoke_abci_info_url="${XIAN_SMOKE_ABCI_INFO_URL:-http://${XIAN_COMETBFT_RPC_HOST}:${XIAN_COMETBFT_RPC_PORT}/abci_info}"
 
 wait_for_endpoint() {
   local url="$1"

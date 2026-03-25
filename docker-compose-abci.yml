@@ -51,9 +51,9 @@ services:
       - xian-net
       - xian-db
     ports:
-      - "26657:26657"
-      - "26656:26656"
-      - "26660:26660"
+      - "${XIAN_COMETBFT_RPC_HOST}:${XIAN_COMETBFT_RPC_PORT}:26657"
+      - "${XIAN_COMETBFT_P2P_HOST}:${XIAN_COMETBFT_P2P_PORT}:26656"
+      - "${XIAN_COMETBFT_METRICS_HOST}:${XIAN_COMETBFT_METRICS_PORT}:26660"
       - "${XIAN_APP_METRICS_HOST}:${XIAN_APP_METRICS_PORT}:9108"
 
   dashboard:
@@ -154,9 +154,9 @@ services:
     networks:
       - xian-net
     ports:
-      - "26657:26657"
-      - "26656:26656"
-      - "26660:26660"
+      - "${XIAN_COMETBFT_RPC_HOST}:${XIAN_COMETBFT_RPC_PORT}:26657"
+      - "${XIAN_COMETBFT_P2P_HOST}:${XIAN_COMETBFT_P2P_PORT}:26656"
+      - "${XIAN_COMETBFT_METRICS_HOST}:${XIAN_COMETBFT_METRICS_PORT}:26660"
 
   dashboard-fidelity:
     profiles: ["dashboard-fidelity"]

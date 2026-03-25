@@ -39,6 +39,8 @@ COPY --from=xian-contracting . /tmp/build/xian-contracting
 COPY --from=xian-abci . /tmp/build/xian-abci
 
 RUN python -m pip install --upgrade pip wheel maturin \
+    && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-accounts \
+    && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-contract-tools \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-runtime-types \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-native-tracer \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-py \
