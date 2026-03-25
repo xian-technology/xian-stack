@@ -18,6 +18,13 @@ class TrustedPublisher:
 
 PUBLISHERS = (
     TrustedPublisher(
+        project="xian-accounts",
+        owner="xian-technology",
+        repository="xian-contracting",
+        workflow="release.yml",
+        environment="pypi-xian-accounts",
+    ),
+    TrustedPublisher(
         project="xian-contracting",
         owner="xian-technology",
         repository="xian-contracting",
