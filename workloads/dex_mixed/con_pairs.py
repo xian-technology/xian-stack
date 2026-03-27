@@ -465,8 +465,12 @@ def swap(pair: int, amount0Out: float, amount1Out: float, to: str):
 		safeTransferFromPair(pair, token1, to, amount1Out)
 	balance0 = pairs[pair, "balance0"]
 	balance1 = pairs[pair, "balance1"]
-	amount0In = balance0 - (reserve0 - amount0Out) if balance0 > reserve0 - amount0Out else 0
-	amount1In = balance1 - (reserve1 - amount1Out) if balance1 > reserve1 - amount1Out else 0
+	amount0In = 0
+	if balance0 > reserve0 - amount0Out:
+		amount0In = balance0 - (reserve0 - amount0Out)
+	amount1In = 0
+	if balance1 > reserve1 - amount1Out:
+		amount1In = balance1 - (reserve1 - amount1Out)
 	assert amount0In > 0 or amount1In > 0, 'SNAKX: INSUFFICIENT_INPUT_AMOUNT'
 	balance0Adjusted = (balance0) - (amount0In * 0.003)
 	balance1Adjusted = (balance1) - (amount1In * 0.003)
@@ -503,8 +507,12 @@ def swapToPair(pair: int, amount0Out: float, amount1Out: float, to: int):
 		safeTransferFromPairToPair(pair, token1, to, amount1Out)
 	balance0 = pairs[pair, "balance0"]
 	balance1 = pairs[pair, "balance1"]
-	amount0In = balance0 - (reserve0 - amount0Out) if balance0 > reserve0 - amount0Out else 0
-	amount1In = balance1 - (reserve1 - amount1Out) if balance1 > reserve1 - amount1Out else 0
+	amount0In = 0
+	if balance0 > reserve0 - amount0Out:
+		amount0In = balance0 - (reserve0 - amount0Out)
+	amount1In = 0
+	if balance1 > reserve1 - amount1Out:
+		amount1In = balance1 - (reserve1 - amount1Out)
 	assert amount0In > 0 or amount1In > 0, 'SNAKX: INSUFFICIENT_INPUT_AMOUNT'
 	balance0Adjusted = (balance0) - (amount0In * 0.003)
 	balance1Adjusted = (balance1) - (amount1In * 0.003)

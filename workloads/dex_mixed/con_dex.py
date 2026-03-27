@@ -132,7 +132,10 @@ def getAmountsOut(amountIn: float, src: str, path: list):
 		if(not order):
 			reserveIn, reserveOut = reserveOut, reserveIn
 		
-		src = pairsmap[path[x], "token1"] if order else tok0
+		if order:
+			src = pairsmap[path[x], "token1"]
+		else:
+			src = tok0
 			
 		amounts.append(getAmountOut(amounts[x], reserveIn, reserveOut))
 		
@@ -157,8 +160,11 @@ def swapExactTokenForToken(
 	assert amount >= amountOutMin, 'SNAKX: INSUFFICIENT_OUTPUT_AMOUNT'
 	safeTransferFrom(src, ctx.caller, DEX_PAIRS, amountIn)
 	pairs.sync2(pair)
-	out0 = 0 if order else amount
-	out1 = amount if order else 0
+	out0 = amount
+	out1 = 0
+	if order:
+		out0 = 0
+		out1 = amount
 	pairs.swap(pair, out0, out1, to)
 	
 	return amount
@@ -179,7 +185,10 @@ def swapExactTokenForTokenSupportingFeeOnTransferTokens(
 	
 	order = (src == TOK0)
 	
-	t = importlib.import_module(TOK0 if not order else pairsmap[pair, "token1"])
+	if order:
+		t = importlib.import_module(pairsmap[pair, "token1"])
+	else:
+		t = importlib.import_module(TOK0)
 	assert importlib.enforce_interface(t, token_interface)
 	
 	balanceBefore = t.balance_of(to)
@@ -193,10 +202,16 @@ def swapExactTokenForTokenSupportingFeeOnTransferTokens(
 	if(not order):
 		reserve0, reserve1 = reserve1, reserve0
 	
-	amount = getAmountOut(sur0 if order else sur1, reserve0, reserve1)
+	swap_amount = sur1
+	if order:
+		swap_amount = sur0
+	amount = getAmountOut(swap_amount, reserve0, reserve1)
 	
-	out0 = 0 if order else amount
-	out1 = amount if order else 0
+	out0 = amount
+	out1 = 0
+	if order:
+		out0 = 0
+		out1 = amount
 	pairs.swap(pair, out0, out1, to)
 	
 	rv = t.balance_of(to) - balanceBefore
@@ -213,10 +228,16 @@ def internal_swap(amounts: list[float], src: str, path: list[int], to: str):
 		
 		order = (src == tok0)
 		
-		out0 = 0 if order else amounts[x+1]
-		out1 = amounts[x+1] if order else 0
+		out0 = amounts[x+1]
+		out1 = 0
+		if order:
+			out0 = 0
+			out1 = amounts[x+1]
 		
-		src = pairsmap[path[x], "token1"] if order else tok0
+		if order:
+			src = pairsmap[path[x], "token1"]
+		else:
+			src = tok0
 			
 		pairs.swapToPair(path[x], out0, out1, path[x+1])
 		
@@ -224,8 +245,11 @@ def internal_swap(amounts: list[float], src: str, path: list[int], to: str):
 	tok0 = pairsmap[path[-1], "token0"]
 	order = (src == tok0)
 		
-	out0 = 0 if order else amounts[-1]
-	out1 = amounts[-1] if order else 0
+	out0 = amounts[-1]
+	out1 = 0
+	if order:
+		out0 = 0
+		out1 = amounts[-1]
 			
 	pairs.swap(path[-1], out0, out1, to)
 	
@@ -238,10 +262,16 @@ def internal_swap_fee(amounts: list[float], amountOutMin: float, src: str, path:
 		
 		order = (src == tok0)
 		
-		out0 = 0 if order else amounts[x+1]
-		out1 = amounts[x+1] if order else 0
+		out0 = amounts[x+1]
+		out1 = 0
+		if order:
+			out0 = 0
+			out1 = amounts[x+1]
 		
-		src = pairsmap[path[x], "token1"] if order else tok0
+		if order:
+			src = pairsmap[path[x], "token1"]
+		else:
+			src = tok0
 			
 		pairs.swapToPair(path[x], out0, out1, path[x+1])
 		
@@ -249,13 +279,19 @@ def internal_swap_fee(amounts: list[float], amountOutMin: float, src: str, path:
 	tok0 = pairsmap[path[-1], "token0"]
 	order = (src == tok0)
 	
-	t = importlib.import_module(tok0 if not order else pairsmap[path[-1], "token1"])
+	if order:
+		t = importlib.import_module(pairsmap[path[-1], "token1"])
+	else:
+		t = importlib.import_module(tok0)
 	assert importlib.enforce_interface(t, token_interface)
 	
 	balanceBefore = t.balance_of(to)
 		
-	out0 = 0 if order else amounts[-1]
-	out1 = amounts[-1] if order else 0
+	out0 = amounts[-1]
+	out1 = 0
+	if order:
+		out0 = 0
+		out1 = amounts[-1]
 			
 	pairs.swap(path[-1], out0, out1, to)
 	
@@ -288,7 +324,10 @@ def swapExactTokensForTokensSupportingFeeOnTransferTokens(
 	
 	sur0, sur1 = pairs.getSurplus(path[0])
 	
-	amounts = getAmountsOut(sur0 if order else sur1, src, path)
+	swap_amount = sur1
+	if order:
+		swap_amount = sur0
+	amounts = getAmountsOut(swap_amount, src, path)
 	
 	assert amounts[-1] >= amountOutMin, 'SNAKX: INSUFFICIENT_OUTPUT_AMOUNT'
 	

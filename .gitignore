@@ -4,6 +4,7 @@ __pycache__
 .cometbft*
 .smoke/
 .smoke-cli/
+.artifacts/
 .bds.db
 .localnet/
 .venv-localnet/

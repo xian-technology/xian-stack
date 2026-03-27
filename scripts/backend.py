@@ -1037,6 +1037,7 @@ def backend_localnet_e2e(
     nodes: int,
     topology: str,
     bds_node_index: int,
+    port_offset: int,
     seed: str,
     log_level: str,
     rpc_timeout_seconds: float,
@@ -1057,6 +1058,8 @@ def backend_localnet_e2e(
         str(bds_node_index),
         "--seed",
         seed,
+        "--port-offset",
+        str(port_offset),
         "--log-level",
         log_level,
         "--rpc-timeout-seconds",
@@ -1373,7 +1376,7 @@ def build_parser() -> argparse.ArgumentParser:
     localnet_e2e.add_argument(
         "--build",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=True,
     )
     localnet_e2e.add_argument(
         "--nodes",
@@ -1387,6 +1390,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     localnet_e2e.add_argument(
         "--bds-node-index",
+        type=int,
+        default=0,
+    )
+    localnet_e2e.add_argument(
+        "--port-offset",
         type=int,
         default=0,
     )
@@ -1570,6 +1578,7 @@ def main(argv: list[str] | None = None) -> int:
             nodes=args.nodes,
             topology=args.topology,
             bds_node_index=args.bds_node_index,
+            port_offset=args.port_offset,
             seed=args.seed,
             log_level=args.log_level,
             rpc_timeout_seconds=args.rpc_timeout_seconds,

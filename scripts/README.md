@@ -14,7 +14,8 @@ tooling behind `xian-stack`.
   validator keys, native tracer selection, and optional BDS wiring
 - `localnet-workload.py`: deterministic workload execution against the localnet
 - `localnet-e2e.py`: the layered 4-node end-to-end program that exercises the
-  live stack phase by phase and writes artifacts under `.localnet/e2e/<run-id>/`
+  live stack phase by phase and writes artifacts under
+  `.artifacts/localnet-e2e/<run-id>/`
 - `localnet-burst-test.py`, `localnet-memwatch.py`,
   `localnet-leak-hunt.py`, `localnet-perf-summary.py`: deeper runtime
   investigation helpers

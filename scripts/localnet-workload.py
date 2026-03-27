@@ -616,6 +616,7 @@ async def run_counter_basic(
     receipt_workers: int,
 ) -> dict[str, Any]:
     founder = context.founder_wallet
+    worker_wallets = [derive_wallet(seed, f"counter-worker-{index}") for index in range(len(context.nodes))]
     suffix = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8]
     contract_name = f"con_counter_{suffix}"
     contract_code = read_fixture("counter_basic/con_counter.py")
@@ -634,17 +635,34 @@ async def run_counter_basic(
     await context.resolve_records([deploy_record])
     require_successful(deploy_record)
 
+    funding_records = []
+    for index, wallet in enumerate(worker_wallets):
+        funding_records.append(
+            await broadcast_and_confirm(
+                context,
+                label=f"fund counter-worker-{index}",
+                wallet=founder,
+                rpc_index=index,
+                contract="currency",
+                function="transfer",
+                kwargs={"amount": 5_000.0, "to": wallet.public_key},
+                stamps=COUNTER_TX_STAMPS,
+                expected_success=True,
+            )
+        )
+
     print(f"Broadcasting {operations} counter_basic operations...")
     records: list[BroadcastRecord] = []
     expected_counter = 0
     for index in range(operations):
         rpc_index = index % len(context.nodes)
+        sender_wallet = worker_wallets[rpc_index]
         if index % 3 == 0:
-            recipient = derive_wallet(seed, f"counter-transfer-{index}").public_key
+            recipient = worker_wallets[(rpc_index + 1) % len(worker_wallets)].public_key
             records.append(
                 await context.broadcast_tx(
                     label=f"transfer #{index}",
-                    wallet=founder,
+                    wallet=sender_wallet,
                     rpc_index=rpc_index,
                     contract="currency",
                     function="transfer",
@@ -658,7 +676,7 @@ async def run_counter_basic(
             records.append(
                 await context.broadcast_tx(
                     label=f"increment #{index}",
-                    wallet=founder,
+                    wallet=sender_wallet,
                     rpc_index=rpc_index,
                     contract=contract_name,
                     function="increment",
@@ -673,7 +691,7 @@ async def run_counter_basic(
             records.append(
                 await context.broadcast_tx(
                     label=f"add #{index}",
-                    wallet=founder,
+                    wallet=sender_wallet,
                     rpc_index=rpc_index,
                     contract=contract_name,
                     function="add",
@@ -717,6 +735,7 @@ async def run_counter_basic(
         "scenario": "counter_basic",
         "contract_name": contract_name,
         "expected_counter": expected_counter,
+        "funding_transactions": len(funding_records),
         "transaction_count": len(records),
         "successful_transactions": successes,
         "failed_transactions": len(records) - successes,

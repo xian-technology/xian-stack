@@ -183,6 +183,7 @@ def write_node_config(
 
 
 def main():
+    global BASE_P2P_PORT, BASE_RPC_PORT, BASE_METRICS_PORT
     parser = argparse.ArgumentParser(description="Initialize a local N-node network")
     parser.add_argument(
         "--nodes", "-n", type=int, default=4,
@@ -221,6 +222,10 @@ def main():
         "XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED", False
     )
     tracer_mode = env_str("XIAN_LOCALNET_TRACER_MODE", "python_line_v1")
+    port_offset = env_int("XIAN_LOCALNET_PORT_OFFSET", 0)
+    BASE_P2P_PORT = 26656 + port_offset
+    BASE_RPC_PORT = 26657 + port_offset
+    BASE_METRICS_PORT = 26660 + port_offset
     bds_enabled = env_bool("XIAN_LOCALNET_ENABLE_BDS", False)
     bds_node_index = env_int("XIAN_LOCALNET_BDS_NODE_INDEX", 0)
     if bds_enabled and not 0 <= bds_node_index < args.nodes:
@@ -351,6 +356,7 @@ def main():
             "recent_blocks": profiling_recent_blocks,
         },
         "tracer_mode": tracer_mode,
+        "port_offset": port_offset,
         "bds": {
             "enabled": bds_enabled,
             "service_node_index": bds_node_index if bds_enabled else None,

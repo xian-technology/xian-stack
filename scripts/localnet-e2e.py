@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import functools
 import hashlib
 import json
 import os
@@ -26,7 +27,7 @@ STACK_DIR = SCRIPT_DIR.parent
 ROOT_DIR = STACK_DIR.parent
 NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 WORKLOADS_DIR = STACK_DIR / "workloads"
-OUTPUT_ROOT = STACK_DIR / ".localnet" / "e2e"
+OUTPUT_ROOT = STACK_DIR / ".artifacts" / "localnet-e2e"
 CONTRACTS_DIR = ROOT_DIR / "xian-contracts" / "contracts"
 XIAN_ZK_PYTHON_DIR = (
     ROOT_DIR / "xian-contracting" / "packages" / "xian-zk" / "python"
@@ -35,16 +36,23 @@ XIAN_ABCI_SRC = ROOT_DIR / "xian-abci" / "src"
 RUST_TRACER_MODE = "native_instruction_v1"
 DEFAULT_TX_STAMPS = 15_000
 DEFAULT_TRANSFER_STAMPS = 2_000
-GOVERNANCE_TX_STAMPS = 50_000
+GOVERNANCE_TX_STAMPS = 200_000
 STATE_PATCH_DELAY_BLOCKS = 8
+STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS = 8
 SIMULATOR_BURST_REQUESTS = 128
 WEBSOCKET_TIMEOUT_SECONDS = 20.0
+SHIELDED_TX_STAMPS = {
+    "deposit": 8_000_000,
+    "transfer": 10_000_000,
+    "withdraw": 8_000_000,
+}
 
 sys.path.append(str(XIAN_ZK_PYTHON_DIR))
 sys.path.append(str(XIAN_ABCI_SRC))
 
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian_async import XianAsync  # noqa: E402
+from xian_py.exception import SimulationError, TxTimeoutError  # noqa: E402
 
 try:  # noqa: SIM105
     from xian_zk import (  # noqa: E402
@@ -97,6 +105,8 @@ class E2EError(RuntimeError):
 def normalize_value(value: Any) -> Any:
     if isinstance(value, Decimal):
         return str(value)
+    if value.__class__.__name__ == "ContractingDecimal":
+        return str(value)
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, Path):
@@ -104,6 +114,8 @@ def normalize_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): normalize_value(val) for key, val in value.items()}
     if isinstance(value, list):
+        return [normalize_value(item) for item in value]
+    if isinstance(value, tuple):
         return [normalize_value(item) for item in value]
     return value
 
@@ -125,11 +137,44 @@ def derive_wallet(seed: str, label: str) -> Wallet:
     return Wallet(private_key=digest)
 
 
+@functools.lru_cache(maxsize=1)
+def load_stack_env() -> dict[str, str]:
+    shell_script = f"""
+source ./scripts/stack-env.sh
+export_stack_env
+{sys.executable} - <<'PY'
+import json
+import os
+
+print(
+    json.dumps(
+        {{
+            key: value
+            for key, value in os.environ.items()
+            if key.startswith("XIAN_")
+        }}
+    )
+)
+PY
+""".strip()
+    result = subprocess.run(
+        ["bash", "-lc", shell_script],
+        cwd=STACK_DIR,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    return json.loads(result.stdout)
+
+
 def make_localnet_env(args: argparse.Namespace) -> dict[str, str]:
     env = os.environ.copy()
+    env.update(load_stack_env())
     env["XIAN_LOCALNET_TRACER_MODE"] = RUST_TRACER_MODE
     env["XIAN_LOCALNET_ENABLE_BDS"] = "1"
     env["XIAN_LOCALNET_BDS_NODE_INDEX"] = str(args.bds_node_index)
+    env["XIAN_LOCALNET_PORT_OFFSET"] = str(args.port_offset)
     env["XIAN_LOCALNET_APP_LOG_LEVEL"] = args.log_level
     env["XIAN_LOCALNET_APP_LOG_JSON"] = "0"
     env["XIAN_LOCALNET_TRANSACTION_TRACE_LOGGING"] = "0"
@@ -356,6 +401,11 @@ def ensure_positive_submission(
         raise E2EError(f"{label}: CheckTx rejected: {submission.message}")
     if submission.receipt is None:
         raise E2EError(f"{label}: receipt missing")
+    if submission.receipt.success is not True:
+        raise E2EError(
+            f"{label}: transaction failed during execution: "
+            f"{submission.receipt.message}"
+        )
     return normalize_receipt(submission, label=label)
 
 
@@ -453,12 +503,33 @@ def compute_patch_bundle_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def decode_websocket_tx_execution(payload: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        tx_result = (
+            payload.get("result", {})
+            .get("data", {})
+            .get("value", {})
+            .get("TxResult", {})
+            .get("result", {})
+        )
+        encoded = tx_result.get("data")
+        if not encoded or not isinstance(encoded, str):
+            return None
+        return json.loads(base64.b64decode(encoded).decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class E2ERunner:
     def __init__(self, args: argparse.Namespace):
         self.args = args
-        self.run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        self.output_dir = OUTPUT_ROOT / self.run_id
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        if args.resume_dir is not None:
+            self.output_dir = Path(args.resume_dir).expanduser().resolve()
+            self.run_id = self.output_dir.name
+        else:
+            self.run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            self.output_dir = OUTPUT_ROOT / self.run_id
+            self.output_dir.mkdir(parents=True, exist_ok=True)
         self.network: dict[str, Any] | None = None
         self.nodes: list[LocalnetNode] = []
         self.founder_wallet: Wallet | None = None
@@ -470,6 +541,68 @@ class E2ERunner:
         self.sample_tx_hash: str | None = None
         self.sample_event_tx_hash: str | None = None
 
+    @staticmethod
+    def phase_names() -> list[str]:
+        return [
+            "00-bootstrap",
+            "01-health",
+            "02-xian-py-smoke",
+            "03-periodic-load",
+            "04-burst-load",
+            "05-conflict-invalid",
+            "06-dex-mixed",
+            "07-simulator-load",
+            "08-retrieval-surfaces",
+            "09-determinism",
+            "10-validator-governance",
+            "11-state-patch",
+            "12-logging",
+            "13-shielded-note-token",
+        ]
+
+    def _load_resume_json(self, phase_name: str) -> dict[str, Any]:
+        path = self.output_dir / json_file_name(phase_name)
+        if not path.exists():
+            raise E2EError(f"resume phase artifact not found: {path}")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def load_resume_context(self) -> None:
+        network_path = self.output_dir / "network.json"
+        if not network_path.exists():
+            raise E2EError(
+                f"resume directory does not contain network.json: {network_path}"
+            )
+        self.network = json.loads(network_path.read_text(encoding="utf-8"))
+        self.nodes = build_nodes(self.network)
+        self.service_node = next(
+            (node for node in self.nodes if node.service_node),
+            self.nodes[self.args.bds_node_index],
+        )
+        self.founder_wallet = Wallet(private_key=self.network["founder_key"])
+        self.validator_wallets = [
+            Wallet(private_key=node.account_private_key) for node in self.nodes
+        ]
+
+        smoke = self._load_resume_json("02-xian-py-smoke")
+        for deployment in smoke["details"]["deployments"]:
+            label = deployment.get("label", "")
+            if label.startswith("deploy con_e2e_conflict_"):
+                self.contracts["conflict"] = label.removeprefix("deploy ")
+            elif label.startswith("deploy con_e2e_patch_"):
+                self.contracts["patch_target"] = label.removeprefix("deploy ")
+
+        conflict = self._load_resume_json("05-conflict-invalid")
+        self.contracts["conflict"] = conflict["details"]["conflict_contract"]
+        self.sample_event_tx_hash = conflict["details"]["winning_tx_hash"]
+
+        dex = self._load_resume_json("06-dex-mixed")
+        contracts = dex["details"]["scenario_summary"]["contracts"]
+        self.contracts["dex_token_a"] = contracts["token_a"]
+        self.contracts["dex_token_b"] = contracts["token_b"]
+        self.contracts["dex_pairs"] = contracts["pairs"]
+        self.contracts["dex_router"] = contracts["dex"]
+        self.contracts["dex_pair_id"] = dex["details"]["scenario_summary"]["pair_id"]
+
     def write_phase(self, phase: PhaseResult) -> None:
         self.phase_results.append(phase)
         payload = {
@@ -480,7 +613,7 @@ class E2ERunner:
             "details": normalize_value(phase.details),
         }
         (self.output_dir / json_file_name(phase.name)).write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",
             encoding="utf-8",
         )
 
@@ -498,18 +631,26 @@ class E2ERunner:
         self.write_phase(phase)
         return details
 
+    def restart_localnet(self) -> None:
+        env = make_localnet_env(self.args)
+        run_make("localnet-down", env=env)
+        run_make("localnet-up", env=env)
+
     async def bootstrap(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         env = make_localnet_env(self.args)
         outputs: dict[str, Any] = {
             "env": {
                 "XIAN_LOCALNET_TRACER_MODE": env["XIAN_LOCALNET_TRACER_MODE"],
                 "XIAN_LOCALNET_ENABLE_BDS": env["XIAN_LOCALNET_ENABLE_BDS"],
-                "XIAN_LOCALNET_BDS_NODE_INDEX": env["XIAN_LOCALNET_BDS_NODE_INDEX"],
-                "XIAN_LOCALNET_APP_LOG_LEVEL": env["XIAN_LOCALNET_APP_LOG_LEVEL"],
+            "XIAN_LOCALNET_BDS_NODE_INDEX": env["XIAN_LOCALNET_BDS_NODE_INDEX"],
+            "XIAN_LOCALNET_PORT_OFFSET": env["XIAN_LOCALNET_PORT_OFFSET"],
+            "XIAN_LOCALNET_APP_LOG_LEVEL": env["XIAN_LOCALNET_APP_LOG_LEVEL"],
                 "XIAN_LOCALNET_TOPOLOGY": env["XIAN_LOCALNET_TOPOLOGY"],
             }
         }
         if self.args.bootstrap:
+            if (STACK_DIR / "docker-compose-localnet.yml").exists():
+                outputs["localnet_down"] = run_make("localnet-down", env=env).stdout
             outputs["localnet_init"] = run_make("localnet-init", env=env).stdout
             if self.args.build:
                 outputs["localnet_build"] = run_make("localnet-build", env=env).stdout
@@ -714,9 +855,11 @@ class E2ERunner:
         self,
         *,
         scenario: str,
+        seed_label: str | None = None,
         counter_ops: int | None = None,
         dex_rounds: int | None = None,
     ) -> dict[str, Any]:
+        workload_seed = self.seed if seed_label is None else f"{self.seed}:{seed_label}"
         cmd = [
             "uv",
             "run",
@@ -727,7 +870,7 @@ class E2ERunner:
             "--scenario",
             scenario,
             "--seed",
-            self.seed,
+            workload_seed,
             "--state-sample-nodes",
             str(self.args.state_sample_nodes),
             "--app-hash-window",
@@ -761,6 +904,7 @@ class E2ERunner:
     async def burst_phase(self) -> dict[str, Any]:
         payload = await self.run_localnet_workload(
             scenario="counter_basic",
+            seed_label=f"{self.run_id}:burst",
             counter_ops=self.args.burst_counter_ops,
         )
         tx_count = payload["scenario_summary"]["successful_transactions"]
@@ -771,7 +915,7 @@ class E2ERunner:
     async def conflict_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         conflict_contract = self.contracts["conflict"]
         wallets = [derive_wallet(self.seed, f"conflict-wallet-{index}") for index in range(2)]
-        await self.fund_wallets(session, wallets, amount=500)
+        await self.fund_wallets(session, wallets, amount=5_000)
 
         async def claim_once(wallet: Wallet, node_index: int, slot: str, label: str):
             async with self.client(wallet, node_index, session) as client:
@@ -780,9 +924,31 @@ class E2ERunner:
                     "claim",
                     {"slot": slot, "amount": 1},
                     stamps=DEFAULT_TX_STAMPS,
-                    wait_for_tx=True,
+                    wait_for_tx=False,
                 )
-                return normalize_receipt(submission, label=label)
+                receipt = normalize_receipt(submission, label=label)
+                if submission.accepted and submission.tx_hash:
+                    try:
+                        finalized = await client.wait_for_tx(
+                            submission.tx_hash,
+                            timeout_seconds=8.0,
+                            poll_interval_seconds=0.25,
+                        )
+                    except TxTimeoutError as exc:
+                        receipt["timed_out"] = True
+                        receipt["message"] = str(exc)
+                        return receipt
+                    execution = finalized.execution or {}
+                    receipt["finalized"] = True
+                    receipt["success"] = finalized.success
+                    receipt["message"] = finalized.message
+                    receipt["stamps_used"] = execution.get("stamps_used")
+                    receipt["events"] = execution.get("events", []) or []
+                    receipt["event_count"] = len(receipt["events"])
+                    receipt["state_write_count"] = len(
+                        execution.get("state", []) or []
+                    )
+                return receipt
 
         race_slot = f"race-{short_hash(self.run_id)}"
         race_results = await asyncio.gather(
@@ -790,10 +956,10 @@ class E2ERunner:
             claim_once(wallets[1], 1, race_slot, "claim-b"),
         )
         successes = [item for item in race_results if item["success"] is True]
-        failures = [item for item in race_results if item["success"] is False]
-        if len(successes) != 1 or len(failures) != 1:
+        non_applied = [item for item in race_results if item["success"] is not True]
+        if len(successes) != 1 or len(non_applied) != 1:
             raise E2EError(
-                "expected exactly one winning and one losing claim in conflict phase"
+                "expected exactly one applied and one non-applied claim in conflict phase"
             )
 
         async with self.client(wallets[0], 2, session) as client:
@@ -822,6 +988,7 @@ class E2ERunner:
     async def dex_phase(self) -> dict[str, Any]:
         payload = await self.run_localnet_workload(
             scenario="dex_mixed",
+            seed_label=f"{self.run_id}:dex",
             dex_rounds=self.args.dex_rounds,
         )
         contracts = payload["scenario_summary"]["contracts"]
@@ -842,15 +1009,27 @@ class E2ERunner:
     async def simulator_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         dex_contract = self.contracts.get("dex_router")
         token_a = self.contracts.get("dex_token_a")
-        token_b = self.contracts.get("dex_token_b")
         pair_id = self.contracts.get("dex_pair_id")
-        founder = self.founder_wallet
-        if not all([dex_contract, token_a, token_b, pair_id]):
+        if not all([dex_contract, token_a, pair_id]):
             raise E2EError("DEX contracts are not available for simulator phase")
+
+        dex_workload_seed = f"{self.seed}:{self.run_id}:dex"
+        sim_wallet = derive_wallet(dex_workload_seed, "dex-trader-0")
+        deadline = {
+            "__time__": [
+                2099,
+                1,
+                1,
+                0,
+                0,
+                0,
+                0,
+            ]
+        }
 
         async def one_simulation(index: int) -> dict[str, Any]:
             node_index = index % len(self.nodes)
-            async with self.client(founder, node_index, session) as client:
+            async with self.client(sim_wallet, node_index, session) as client:
                 started = time.monotonic()
                 result = await client.simulate(
                     dex_contract,
@@ -858,19 +1037,10 @@ class E2ERunner:
                     {
                         "amountIn": 5.0 + index,
                         "amountOutMin": 1.0,
-                        "path": [token_a, token_b],
-                        "to": founder.public_key,
-                        "deadline": {
-                            "__time__": [
-                                2099,
-                                1,
-                                1,
-                                0,
-                                0,
-                                0,
-                                0,
-                            ]
-                        },
+                        "pair": pair_id,
+                        "src": token_a,
+                        "to": sim_wallet.public_key,
+                        "deadline": deadline,
                     },
                 )
                 elapsed = time.monotonic() - started
@@ -881,19 +1051,58 @@ class E2ERunner:
                     "result": normalize_value(result.get("result")),
                 }
 
+        baseline = await asyncio.gather(
+            *(one_simulation(index) for index in range(len(self.nodes)))
+        )
+        baseline_failures = [
+            item for item in baseline if item["status"] not in (None, 0)
+        ]
+        if baseline_failures:
+            raise E2EError("baseline simulator checks failed before burst load")
+
         started = time.monotonic()
         responses = await asyncio.gather(
             *(one_simulation(index) for index in range(SIMULATOR_BURST_REQUESTS))
         )
         elapsed = time.monotonic() - started
-        failures = [item for item in responses if item["status"] not in (None, 0)]
-        if failures:
-            raise E2EError(f"simulator phase had {len(failures)} failing simulations")
+        failures = [
+            item for item in responses if item["status"] not in (None, 0)
+        ]
+        successes = [
+            item for item in responses if item["status"] in (None, 0)
+        ]
+        allowed_failure_markers = (
+            "Simulation capacity exceeded on this node; retry later",
+            "Simulation timed out on this node after",
+        )
+        unexpected_failures = [
+            item
+            for item in failures
+            if not any(
+                marker in str(item.get("result", ""))
+                for marker in allowed_failure_markers
+            )
+        ]
+        if unexpected_failures:
+            raise E2EError(
+                f"simulator phase had {len(unexpected_failures)} unexpected failures"
+            )
+        if not successes:
+            raise E2EError("simulator phase had no successful simulations under load")
+
+        recovery = await one_simulation(SIMULATOR_BURST_REQUESTS + 1)
+        if recovery["status"] not in (None, 0):
+            raise E2EError("simulator phase did not recover after burst load")
         return {
             "request_count": len(responses),
             "elapsed_seconds": round(elapsed, 3),
             "approx_qps": round(len(responses) / elapsed, 3),
-            "sample": responses[:8],
+            "success_count": len(successes),
+            "failure_count": len(failures),
+            "baseline_sample": baseline[:4],
+            "failure_sample": failures[:8],
+            "success_sample": successes[:8],
+            "recovery": recovery,
         }
 
     async def retrieval_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
@@ -961,7 +1170,7 @@ class E2ERunner:
             event_task = asyncio.create_task(next_event())
             await asyncio.sleep(0.5)
             trigger_wallet = derive_wallet(self.seed, "retrieval-trigger")
-            await self.fund_wallets(session, [trigger_wallet], amount=100)
+            await self.fund_wallets(session, [trigger_wallet], amount=5_000)
             ws_message = await self.websocket_tx_event(
                 session,
                 node=service,
@@ -1088,10 +1297,17 @@ class E2ERunner:
                     "params": {"query": "tm.event='Tx'"},
                 }
             )
+            expected_slot = None
             if trigger_tx_coro is not None:
-                trigger_tx_hash = await trigger_tx_coro
+                trigger_payload = await trigger_tx_coro
+                if isinstance(trigger_payload, dict):
+                    trigger_tx_hash = trigger_payload.get("tx_hash")
+                    expected_slot = trigger_payload.get("slot")
+                else:
+                    trigger_tx_hash = trigger_payload
             if trigger_tx_hash is None:
                 raise E2EError("websocket_tx_event requires a trigger tx hash")
+            expected_tx_hash = trigger_tx_hash.lower()
             deadline = time.monotonic() + WEBSOCKET_TIMEOUT_SECONDS
             while time.monotonic() < deadline:
                 message = await ws.receive(timeout=WEBSOCKET_TIMEOUT_SECONDS)
@@ -1103,20 +1319,37 @@ class E2ERunner:
                 value = data.get("value", {})
                 tx_result = value.get("TxResult", {}).get("result", {})
                 tx_hash = tx_result.get("hash")
-                if tx_hash == trigger_tx_hash:
+                if isinstance(tx_hash, str) and tx_hash.lower() == expected_tx_hash:
                     return payload
+                execution = decode_websocket_tx_execution(payload)
+                if execution is None:
+                    continue
+                execution_hash = execution.get("hash")
+                if (
+                    isinstance(execution_hash, str)
+                    and execution_hash.lower() == expected_tx_hash
+                ):
+                    return payload
+                if expected_slot is None:
+                    continue
+                events = execution.get("events") or []
+                for event in events:
+                    data_indexed = event.get("data_indexed") or {}
+                    if data_indexed.get("slot") == expected_slot:
+                        return payload
         raise E2EError("websocket did not emit the expected tx event")
 
     async def _send_retrieval_trigger(
         self,
         session: aiohttp.ClientSession,
         trigger_wallet: Wallet,
-    ) -> str:
+    ) -> dict[str, str]:
+        slot = f"retrieval-{short_hash(f'{self.run_id}:{time.time_ns()}')}"
         async with self.client(trigger_wallet, 0, session) as trigger_client:
             trigger = await trigger_client.send_tx(
                 self.contracts["conflict"],
                 "claim",
-                {"slot": f"retrieval-{short_hash(self.run_id)}", "amount": 1},
+                {"slot": slot, "amount": 1},
                 stamps=DEFAULT_TX_STAMPS,
                 wait_for_tx=True,
             )
@@ -1124,11 +1357,16 @@ class E2ERunner:
                 trigger,
                 label="retrieval-trigger",
             )
-            return trigger_receipt["tx_hash"]
+            return {"tx_hash": trigger_receipt["tx_hash"], "slot": slot}
 
     async def validator_governance_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         node0_wallet, node1_wallet, node2_wallet, node3_wallet = self.validator_wallets
         node3_key = self.nodes[3].account_public_key
+        await self.fund_wallets(
+            session,
+            [node1_wallet, node2_wallet, node3_wallet],
+            amount=500_000,
+        )
 
         async with self.client(node0_wallet, 0, session) as node0, self.client(
             node1_wallet, 1, session
@@ -1352,7 +1590,17 @@ class E2ERunner:
                 )
             )["result"]["sync_info"]["latest_block_height"]
         )
-        activation_height = current_height + STATE_PATCH_DELAY_BLOCKS
+        governance_min_patch_delay = await fetch_abci_query(
+            session,
+            service.rpc_url,
+            "/get/governance.metadata:min_patch_delay_blocks",
+        )
+        if governance_min_patch_delay is None:
+            governance_min_patch_delay = STATE_PATCH_DELAY_BLOCKS
+        activation_height = current_height + max(
+            int(governance_min_patch_delay) + STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS,
+            STATE_PATCH_DELAY_BLOCKS,
+        )
         patch_id = f"localnet-e2e-{short_hash(self.run_id)}"
         bundle_payload = {
             "version": 1,
@@ -1376,6 +1624,27 @@ class E2ERunner:
             ],
         }
         bundle_payload["bundle_hash"] = compute_patch_bundle_hash(bundle_payload)
+
+        existing_patch: dict[str, Any] | None = None
+        async with self.client(founder, service.index, session) as client:
+            try:
+                existing_patch = await client.call(
+                    "governance",
+                    "get_patch",
+                    {"patch_id": patch_id},
+                )
+            except SimulationError:
+                existing_patch = None
+
+        if existing_patch is not None:
+            activation_height = int(existing_patch["activation_height"])
+            bundle_payload["activation_height"] = activation_height
+            bundle_payload["bundle_hash"] = compute_patch_bundle_hash(bundle_payload)
+            if bundle_payload["bundle_hash"] != existing_patch["bundle_hash"]:
+                raise E2EError(
+                    "existing state patch bundle hash does not match the harness payload"
+                )
+
         for node in self.nodes:
             patch_dir = STACK_DIR / ".localnet" / node.moniker / ".cometbft" / "config" / "state-patches"
             patch_dir.mkdir(parents=True, exist_ok=True)
@@ -1383,10 +1652,7 @@ class E2ERunner:
                 json.dumps(bundle_payload, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-        run_cmd(
-            ["docker", "compose", "-f", "docker-compose-localnet.yml", "restart"],
-            cwd=STACK_DIR,
-        )
+        self.restart_localnet()
         await wait_for_localnet_ready(
             session,
             self.nodes,
@@ -1394,55 +1660,70 @@ class E2ERunner:
         )
 
         node0_wallet, node1_wallet, node2_wallet, node3_wallet = self.validator_wallets
-        async with self.client(node0_wallet, 0, session) as node0, self.client(
-            node1_wallet, 1, session
-        ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
-            node3_wallet, 3, session
-        ) as node3:
-            proposal = await node0.send_tx(
-                "governance",
-                "propose_state_patch",
-                {
-                    "patch_id": patch_id,
-                    "bundle_hash": bundle_payload["bundle_hash"],
-                    "activation_height": activation_height,
-                    "summary": bundle_payload["summary"],
-                    "uri": bundle_payload["uri"],
-                    "emergency": False,
-                },
-                stamps=GOVERNANCE_TX_STAMPS,
-                wait_for_tx=True,
-            )
-            proposal_receipt = ensure_positive_submission(
-                proposal,
-                label="state-patch-propose",
-            )
-            proposal_id = await node0.get_state("governance", "proposal_count")
-            for client, label in (
-                (node1, "state-patch-vote-1"),
-                (node2, "state-patch-vote-2"),
-                (node3, "state-patch-vote-3"),
-            ):
-                submission = await client.send_tx(
+        proposal_receipt: dict[str, Any] | None = None
+        if existing_patch is None:
+            async with self.client(node0_wallet, 0, session) as node0, self.client(
+                node1_wallet, 1, session
+            ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
+                node3_wallet, 3, session
+            ) as node3:
+                proposal = await node0.send_tx(
                     "governance",
-                    "vote",
-                    {"proposal_id": proposal_id, "support": True},
+                    "propose_state_patch",
+                    {
+                        "patch_id": patch_id,
+                        "bundle_hash": bundle_payload["bundle_hash"],
+                        "activation_height": activation_height,
+                        "summary": bundle_payload["summary"],
+                        "uri": bundle_payload["uri"],
+                        "emergency": False,
+                    },
                     stamps=GOVERNANCE_TX_STAMPS,
                     wait_for_tx=True,
                 )
-                ensure_positive_submission(submission, label=label)
+                proposal_receipt = ensure_positive_submission(
+                    proposal,
+                    label="state-patch-propose",
+                )
+                proposal_id = await node0.get_state("governance", "proposal_count")
+                for client, label in (
+                    (node1, "state-patch-vote-1"),
+                    (node2, "state-patch-vote-2"),
+                    (node3, "state-patch-vote-3"),
+                ):
+                    submission = await client.send_tx(
+                        "governance",
+                        "vote",
+                        {"proposal_id": proposal_id, "support": True},
+                        stamps=GOVERNANCE_TX_STAMPS,
+                        wait_for_tx=True,
+                    )
+                    ensure_positive_submission(submission, label=label)
 
+        current_height = int(
+            (
+                await fetch_json(
+                    session,
+                    f"{self.nodes[0].rpc_url}/status",
+                    timeout=5.0,
+                )
+            )["result"]["sync_info"]["latest_block_height"]
+        )
+        activation_wait_timeout = max(
+            120.0,
+            float(max((activation_height + 1) - current_height, 1) * 8),
+        )
         await wait_for_height(
             session,
             self.nodes[0].rpc_url,
             activation_height + 1,
-            timeout_seconds=60.0,
+            timeout_seconds=activation_wait_timeout,
         )
         async with self.client(founder, service.index, session) as client:
             indexed_status = await wait_for_bds_indexed(
                 client,
                 target_height=activation_height,
-                timeout_seconds=30.0,
+                timeout_seconds=60.0,
             )
             patch_status = await client.call("governance", "get_patch", {"patch_id": patch_id})
             contract_status = await client.call(
@@ -1473,6 +1754,9 @@ class E2ERunner:
 
         return {
             "bundle": bundle_payload,
+            "existing_patch": normalize_value(existing_patch),
+            "governance_min_patch_delay": governance_min_patch_delay,
+            "activation_wait_timeout_seconds": activation_wait_timeout,
             "proposal_receipt": proposal_receipt,
             "governance_patch": normalize_value(patch_status),
             "patch_target_status": normalize_value(contract_status),
@@ -1491,7 +1775,7 @@ class E2ERunner:
             for node in self.nodes
         }
         update_logging_config(level="DEBUG", trace_logging=False, json_logging=False)
-        run_cmd(["docker", "compose", "-f", "docker-compose-localnet.yml", "restart"], cwd=STACK_DIR)
+        self.restart_localnet()
         await wait_for_localnet_ready(
             session,
             self.nodes,
@@ -1499,7 +1783,19 @@ class E2ERunner:
         )
 
         trigger_wallet = derive_wallet(self.seed, "logging-trigger")
-        await self.fund_wallets(session, [trigger_wallet], amount=50)
+        rejected_wallet = derive_wallet(self.seed, "logging-checktx-reject")
+        await self.fund_wallets(session, [trigger_wallet], amount=5_000)
+        async with self.client(rejected_wallet, 0, session) as client:
+            rejected_submission = await client.send(
+                amount=1,
+                to_address=self.founder_wallet.public_key,
+                stamps=DEFAULT_TRANSFER_STAMPS,
+                wait_for_tx=True,
+            )
+            if rejected_submission.accepted:
+                raise E2EError(
+                    "logging checktx rejection probe unexpectedly succeeded"
+                )
         async with self.client(trigger_wallet, 0, session) as client:
             debug_submission = await client.send(
                 amount=1,
@@ -1510,7 +1806,7 @@ class E2ERunner:
             debug_receipt = ensure_positive_submission(debug_submission, label="debug-log-trigger")
 
         update_logging_config(level="TRACE", trace_logging=True, json_logging=False)
-        run_cmd(["docker", "compose", "-f", "docker-compose-localnet.yml", "restart"], cwd=STACK_DIR)
+        self.restart_localnet()
         await wait_for_localnet_ready(
             session,
             self.nodes,
@@ -1527,27 +1823,44 @@ class E2ERunner:
             trace_receipt = ensure_positive_submission(trace_submission, label="trace-log-trigger")
 
         debug_lines: dict[str, list[str]] = {}
+        checktx_lines: dict[str, list[str]] = {}
         trace_lines: dict[str, list[str]] = {}
         for node in self.nodes:
             logs = local_log_paths(node)
             if not logs:
                 raise E2EError(f"no logs found for {node.moniker}")
-            text = logs[-1].read_text(encoding="utf-8")
+            recent_logs = logs[-3:]
+            text = "\n".join(
+                path.read_text(encoding="utf-8") for path in recent_logs
+            )
             debug_lines[node.moniker] = [
-                line for line in text.splitlines() if "stage=check_tx" in line
+                line
+                for line in text.splitlines()
+                if "stage=execute_tx" in line
+            ][-3:]
+            checktx_lines[node.moniker] = [
+                line
+                for line in text.splitlines()
+                if rejected_wallet.public_key in line and "stage=check_tx" in line
             ][-3:]
             trace_lines[node.moniker] = [
-                line for line in text.splitlines() if "stage=finalize_tx_result" in line
+                line
+                for line in text.splitlines()
+                if "stage=finalize_tx_result" in line
             ][-3:]
             if not debug_lines[node.moniker]:
-                raise E2EError(f"DEBUG logs missing stage=check_tx for {node.moniker}")
+                raise E2EError(
+                    f"DEBUG logs missing stage=execute_tx for {node.moniker}"
+                )
             if not trace_lines[node.moniker]:
                 raise E2EError(
                     f"TRACE logs missing stage=finalize_tx_result for {node.moniker}"
                 )
+        if not any(checktx_lines.values()):
+            raise E2EError("WARNING logs missing stage=check_tx rejection probe")
 
         update_logging_config(level=self.args.log_level, trace_logging=False, json_logging=False)
-        run_cmd(["docker", "compose", "-f", "docker-compose-localnet.yml", "restart"], cwd=STACK_DIR)
+        self.restart_localnet()
         await wait_for_localnet_ready(
             session,
             self.nodes,
@@ -1556,8 +1869,10 @@ class E2ERunner:
 
         return {
             "initial_logs": initial_logs,
+            "rejected_submission": rejected_submission,
             "debug_receipt": debug_receipt,
             "trace_receipt": trace_receipt,
+            "checktx_matches": checktx_lines,
             "debug_matches": debug_lines,
             "trace_matches": trace_lines,
         }
@@ -1572,109 +1887,205 @@ class E2ERunner:
         founder = self.founder_wallet
         alice = derive_wallet(self.seed, "shielded-alice")
         bob = derive_wallet(self.seed, "shielded-bob")
-        await self.fund_wallets(session, [alice, bob], amount=5_000)
 
         registry_name = "zk_registry"
         token_name = f"con_private_e2e_{short_hash(self.run_id)}"
+        shielded_wallet_balance_target = 1_000_000
+        vk_registration_proposals: list[dict[str, Any]] = []
         async with self.client(founder, 0, session) as client:
-            registry_submission = await client.submit_contract(
-                name=registry_name,
-                code=read_text(
-                    ROOT_DIR
-                    / "xian-contracting"
-                    / "src"
-                    / "contracting"
-                    / "contracts"
-                    / "zk_registry.s.py"
-                ),
-                stamps=200_000,
-                wait_for_tx=True,
-            )
-            ensure_positive_submission(registry_submission, label="deploy-zk-registry")
-            token_submission = await client.submit_contract(
-                name=token_name,
-                code=read_text(
-                    CONTRACTS_DIR
-                    / "shielded-note-token"
-                    / "src"
-                    / "con_shielded_note_token.py"
-                ),
-                args={
-                    "token_name": "Local Private USD",
-                    "token_symbol": "lpUSD",
-                    "operator_address": founder.public_key,
-                    "root_window_size": 32,
-                },
-                stamps=400_000,
-                wait_for_tx=True,
-            )
-            ensure_positive_submission(token_submission, label="deploy-shielded-token")
-            prover = ShieldedNoteProver.build_insecure_dev_bundle()
-            for action in ("deposit", "transfer", "withdraw"):
-                vk = prover.bundle[action]
-                register_submission = await client.send_tx(
-                    registry_name,
-                    "register_vk",
-                    {
-                        "vk_id": vk["vk_id"],
-                        "vk_hex": vk["vk_hex"],
-                        "circuit_name": vk["circuit_name"],
-                        "version": vk["version"],
+            for wallet in (alice, bob):
+                current_balance = await client.get_balance(wallet.public_key)
+                delta = shielded_wallet_balance_target - int(current_balance)
+                if delta <= 0:
+                    continue
+                funding = await client.send(
+                    amount=delta,
+                    to_address=wallet.public_key,
+                    stamps=DEFAULT_TRANSFER_STAMPS,
+                    wait_for_tx=True,
+                )
+                ensure_positive_submission(
+                    funding,
+                    label=f"shielded-topup-{wallet.public_key[:12]}",
+                )
+            registry_owner = await client.call(registry_name, "owner", {})
+            if registry_owner != "governance":
+                raise E2EError(
+                    f"expected system zk_registry owner to be governance, got {registry_owner!r}"
+                )
+            token_source = await client.get_contract(token_name)
+            if token_source is None:
+                token_submission = await client.submit_contract(
+                    name=token_name,
+                    code=read_text(
+                        CONTRACTS_DIR
+                        / "shielded-note-token"
+                        / "src"
+                        / "con_shielded_note_token.py"
+                    ),
+                    args={
+                        "token_name": "Local Private USD",
+                        "token_symbol": "lpUSD",
+                        "operator_address": founder.public_key,
+                        "root_window_size": 32,
                     },
-                    stamps=200_000,
+                    stamps=25_000_000,
                     wait_for_tx=True,
                 )
                 ensure_positive_submission(
-                    register_submission,
-                    label=f"register-vk-{action}",
+                    token_submission,
+                    label="deploy-shielded-token",
                 )
-                bind_submission = await client.send_tx(
-                    token_name,
-                    "configure_vk",
-                    {"action": action, "vk_id": vk["vk_id"]},
-                    stamps=100_000,
-                    wait_for_tx=True,
-                )
-                ensure_positive_submission(
-                    bind_submission,
-                    label=f"bind-vk-{action}",
-                )
-            mint_submission = await client.send_tx(
+            prover = ShieldedNoteProver.build_insecure_dev_bundle()
+            alice_public_balance = await client.call(
                 token_name,
-                "mint_public",
-                {"amount": 100, "to": alice.public_key},
-                stamps=50_000,
-                wait_for_tx=True,
+                "balance_of",
+                {"account": alice.public_key},
             )
-            ensure_positive_submission(mint_submission, label="shielded-mint-public")
+            mint_amount = max(100 - int(alice_public_balance or 0), 0)
+            if mint_amount > 0:
+                mint_submission = await client.send_tx(
+                    token_name,
+                    "mint_public",
+                    {"amount": mint_amount, "to": alice.public_key},
+                    stamps=500_000,
+                    wait_for_tx=True,
+                )
+                ensure_positive_submission(
+                    mint_submission,
+                    label="shielded-mint-public",
+                )
             asset_id = await client.call(token_name, "asset_id", {})
             zero_root = await client.call(token_name, "zero_shielded_root", {})
 
+        node0_wallet, node1_wallet, node2_wallet, node3_wallet = self.validator_wallets
+        async with self.client(node0_wallet, 0, session) as node0, self.client(
+            node1_wallet, 1, session
+        ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
+            node3_wallet, 3, session
+        ) as node3:
+            for action in ("deposit", "transfer", "withdraw"):
+                vk = prover.bundle[action]
+                vk_info = await node0.call(
+                    registry_name,
+                    "get_vk_info",
+                    {"vk_id": vk["vk_id"]},
+                )
+                if vk_info is None:
+                    proposal_submission = await node0.send_tx(
+                        "governance",
+                        "propose_contract_call",
+                        {
+                            "target_contract": registry_name,
+                            "target_function": "register_vk",
+                            "kwargs": {
+                                "vk_id": vk["vk_id"],
+                                "vk_hex": vk["vk_hex"],
+                                "circuit_name": vk["circuit_name"],
+                                "version": vk["version"],
+                            },
+                            "summary": (
+                                f"register {action} vk for localnet shielded e2e"
+                            ),
+                        },
+                        stamps=5_000_000,
+                        wait_for_tx=True,
+                    )
+                    ensure_positive_submission(
+                        proposal_submission,
+                        label=f"register-vk-propose-{action}",
+                    )
+                    proposal_id = await node0.get_state(
+                        "governance",
+                        "proposal_count",
+                    )
+                    for governance_client, label in (
+                        (node1, f"register-vk-vote-1-{action}"),
+                        (node2, f"register-vk-vote-2-{action}"),
+                        (node3, f"register-vk-vote-3-{action}"),
+                    ):
+                        vote_submission = await governance_client.send_tx(
+                            "governance",
+                            "vote",
+                            {"proposal_id": proposal_id, "support": True},
+                            stamps=GOVERNANCE_TX_STAMPS,
+                            wait_for_tx=True,
+                        )
+                        ensure_positive_submission(vote_submission, label=label)
+
+                    proposal_status = await node0.call(
+                        "governance",
+                        "get_proposal",
+                        {"proposal_id": proposal_id},
+                    )
+                    if proposal_status["status"] != "executed":
+                        raise E2EError(
+                            f"vk registration proposal {proposal_id} did not execute"
+                        )
+                    vk_registration_proposals.append(
+                        normalize_value(proposal_status)
+                    )
+                    vk_info = await node0.call(
+                        registry_name,
+                        "get_vk_info",
+                        {"vk_id": vk["vk_id"]},
+                    )
+                if vk_info is None:
+                    raise E2EError(f"vk {vk['vk_id']} was not registered")
+
+                binding = await node0.call(
+                    token_name,
+                    "get_vk_binding",
+                    {"action": action},
+                )
+                if binding is None or binding.get("vk_id") != vk["vk_id"]:
+                    bind_submission = await node0.send_tx(
+                        token_name,
+                        "configure_vk",
+                        {"action": action, "vk_id": vk["vk_id"]},
+                        stamps=500_000,
+                        wait_for_tx=True,
+                    )
+                    ensure_positive_submission(
+                        bind_submission,
+                        label=f"bind-vk-{action}",
+                    )
+
         alice_keys = ShieldedKeyBundle.generate()
         bob_keys = ShieldedKeyBundle.generate()
+
+        def field_hex(value: int) -> str:
+            return f"0x{value:064x}"
+
         alice_note_1 = ShieldedNote(
             owner_secret=alice_keys.owner_secret,
-            amount=30,
-            rho=101,
-            blind=201,
+            amount=40,
+            rho=field_hex(101),
+            blind=field_hex(201),
         )
         alice_note_2 = ShieldedNote(
             owner_secret=alice_keys.owner_secret,
-            amount=20,
-            rho=102,
-            blind=202,
+            amount=30,
+            rho=field_hex(102),
+            blind=field_hex(202),
         )
         bob_note = ShieldedNote(
             owner_secret=bob_keys.owner_secret,
-            amount=20,
-            rho=103,
-            blind=203,
+            amount=25,
+            rho=field_hex(103),
+            blind=field_hex(203),
         )
         alice_change = ShieldedNote(
             owner_secret=alice_keys.owner_secret,
-            amount=30,
-            rho=104,
-            blind=204,
+            amount=45,
+            rho=field_hex(104),
+            blind=field_hex(204),
+        )
+        alice_withdraw_change = ShieldedNote(
+            owner_secret=alice_keys.owner_secret,
+            amount=25,
+            rho=field_hex(105),
+            blind=field_hex(205),
         )
 
         async with self.client(alice, 1, session) as alice_client, self.client(
@@ -1685,7 +2096,7 @@ class E2ERunner:
                     asset_id=asset_id,
                     old_root=zero_root,
                     append_state=tree_state([]),
-                    amount=50,
+                    amount=70,
                     outputs=[alice_note_1.to_output(), alice_note_2.to_output()],
                 )
             )
@@ -1693,7 +2104,7 @@ class E2ERunner:
                 token_name,
                 "deposit_shielded",
                 {
-                    "amount": 50,
+                    "amount": 70,
                     "old_root": deposit.old_root,
                     "output_commitments": deposit.output_commitments,
                     "proof_hex": deposit.proof_hex,
@@ -1708,7 +2119,7 @@ class E2ERunner:
                         ),
                     ],
                 },
-                stamps=300_000,
+                stamps=SHIELDED_TX_STAMPS["deposit"],
                 wait_for_tx=True,
             )
             ensure_positive_submission(
@@ -1774,7 +2185,7 @@ class E2ERunner:
                         ),
                     ],
                 },
-                stamps=400_000,
+                stamps=SHIELDED_TX_STAMPS["transfer"],
                 wait_for_tx=True,
             )
             ensure_positive_submission(
@@ -1810,25 +2221,30 @@ class E2ERunner:
                     append_state=tree_state(
                         deposit.output_commitments + transfer.output_commitments
                     ),
-                    amount=10,
+                    amount=20,
                     recipient=bob.public_key,
                     inputs=[discovered_after_transfer[0].to_input()],
-                    outputs=[],
+                    outputs=[alice_withdraw_change.to_output()],
                 )
             )
             withdraw_submission = await alice_client.send_tx(
                 token_name,
                 "withdraw_shielded",
                 {
-                    "amount": 10,
+                    "amount": 20,
                     "to": bob.public_key,
                     "old_root": withdraw.old_root,
                     "input_nullifiers": withdraw.input_nullifiers,
                     "output_commitments": withdraw.output_commitments,
                     "proof_hex": withdraw.proof_hex,
-                    "output_payloads": [],
+                    "output_payloads": [
+                        alice_withdraw_change.to_output().encrypt_for(
+                            asset_id=asset_id,
+                            viewing_public_key=alice_keys.viewing_public_key,
+                        )
+                    ],
                 },
-                stamps=300_000,
+                stamps=SHIELDED_TX_STAMPS["withdraw"],
                 wait_for_tx=True,
             )
             ensure_positive_submission(
@@ -1850,6 +2266,8 @@ class E2ERunner:
         return {
             "token": token_name,
             "registry": registry_name,
+            "registry_owner": registry_owner,
+            "vk_registration_proposals": vk_registration_proposals,
             "alice_public_balance": alice_public,
             "bob_public_balance": bob_public,
             "supply_state": normalize_value(supply_state),
@@ -1876,24 +2294,38 @@ class E2ERunner:
         }
 
     async def run(self) -> int:
+        start_phase = self.args.start_phase
+        valid_phase_names = self.phase_names()
+        if start_phase not in valid_phase_names:
+            raise E2EError(f"unknown start phase: {start_phase}")
+        if start_phase != "00-bootstrap" and self.args.resume_dir is None:
+            raise E2EError("--resume-dir is required when --start-phase is not 00-bootstrap")
+
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=30, sock_connect=5, sock_read=25),
             connector=aiohttp.TCPConnector(limit=256, ttl_dns_cache=300),
         ) as session:
-            await self.run_phase("00-bootstrap", lambda: self.bootstrap(session))
-            await self.run_phase("01-health", lambda: self.health_phase(session))
-            await self.run_phase("02-xian-py-smoke", lambda: self.xian_py_smoke(session))
-            await self.run_phase("03-periodic-load", lambda: self.periodic_load(session))
-            await self.run_phase("04-burst-load", self.burst_phase)
-            await self.run_phase("05-conflict-invalid", lambda: self.conflict_phase(session))
-            await self.run_phase("06-dex-mixed", self.dex_phase)
-            await self.run_phase("07-simulator-load", lambda: self.simulator_phase(session))
-            await self.run_phase("08-retrieval-surfaces", lambda: self.retrieval_phase(session))
-            await self.run_phase("09-determinism", lambda: self.determinism_phase(session))
-            await self.run_phase("10-validator-governance", lambda: self.validator_governance_phase(session))
-            await self.run_phase("11-state-patch", lambda: self.state_patch_phase(session))
-            await self.run_phase("12-logging", lambda: self.logging_phase(session))
-            await self.run_phase("13-shielded-note-token", lambda: self.shielded_phase(session))
+            phase_sequence = [
+                ("00-bootstrap", lambda: self.bootstrap(session)),
+                ("01-health", lambda: self.health_phase(session)),
+                ("02-xian-py-smoke", lambda: self.xian_py_smoke(session)),
+                ("03-periodic-load", lambda: self.periodic_load(session)),
+                ("04-burst-load", self.burst_phase),
+                ("05-conflict-invalid", lambda: self.conflict_phase(session)),
+                ("06-dex-mixed", self.dex_phase),
+                ("07-simulator-load", lambda: self.simulator_phase(session)),
+                ("08-retrieval-surfaces", lambda: self.retrieval_phase(session)),
+                ("09-determinism", lambda: self.determinism_phase(session)),
+                ("10-validator-governance", lambda: self.validator_governance_phase(session)),
+                ("11-state-patch", lambda: self.state_patch_phase(session)),
+                ("12-logging", lambda: self.logging_phase(session)),
+                ("13-shielded-note-token", lambda: self.shielded_phase(session)),
+            ]
+            if start_phase != "00-bootstrap":
+                self.load_resume_context()
+            start_index = valid_phase_names.index(start_phase)
+            for phase_name, fn in phase_sequence[start_index:]:
+                await self.run_phase(phase_name, fn)
 
         summary = await self.finalize_summary()
         (self.output_dir / "summary.json").write_text(
@@ -1909,10 +2341,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run a layered 4-node localnet end-to-end test program",
     )
     parser.add_argument("--bootstrap", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--build", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--build", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--nodes", type=int, default=4)
     parser.add_argument("--topology", choices=("integrated", "fidelity"), default="integrated")
     parser.add_argument("--bds-node-index", type=int, default=0)
+    parser.add_argument("--port-offset", type=int, default=1000)
     parser.add_argument("--seed", default="xian-localnet-e2e-v1")
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--rpc-timeout-seconds", type=float, default=180.0)
@@ -1923,6 +2356,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--periodic-interval-seconds", type=float, default=0.35)
     parser.add_argument("--burst-counter-ops", type=int, default=260)
     parser.add_argument("--dex-rounds", type=int, default=8)
+    parser.add_argument(
+        "--start-phase",
+        default="00-bootstrap",
+        choices=E2ERunner.phase_names(),
+    )
+    parser.add_argument("--resume-dir")
     return parser
 
 
