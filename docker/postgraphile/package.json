@@ -3,7 +3,7 @@
   "private": true,
   "dependencies": {
     "@graphile/pg-aggregates": "rc",
-    "postgraphile": "rc",
+    "postgraphile": "5.0.0",
     "postgraphile-plugin-connection-filter": "rc"
   }
 }

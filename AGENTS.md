@@ -32,7 +32,10 @@
   local debugging.
 - Prefer path-driven integration over copying code into images. The containers should consume mounted repos from the shared workspace.
 - Keep runtime images on supported LTS toolchains. Do not reintroduce the deprecated NodeSource 16 install path.
-- Keep the PostGraphile service on the current v5 RC line with `@rc` package tags until the v5 stable line is available and validated here.
+- Keep the PostGraphile service on the stable v5 line once validated here.
+- The current plugin ecosystem is mixed: `postgraphile` should track stable
+  v5, while plugins without a stable v5 release may remain on their current RC
+  line until upstream publishes stable versions.
 - Keep PostGraphile startup behavior explicit. Prefer health checks and wrapper scripts over legacy retry flags that no longer exist in v5.
 
 ## Validation
