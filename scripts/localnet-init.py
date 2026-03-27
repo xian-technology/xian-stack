@@ -11,7 +11,6 @@ mounted into Docker containers.
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 import secrets
@@ -42,6 +41,7 @@ BASE_METRICS_PORT = 26660
 PORT_STRIDE = 100  # node-0: 266xx, node-1: 267xx, node-2: 268xx, ...
 NODE_IMAGE_INTEGRATED = "xian-node-integrated:local"
 NODE_IMAGE_SPLIT = "xian-node-split:local"
+LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -120,9 +120,16 @@ def write_node_config(
     genesis: dict,
     *,
     tracer_mode: str,
+    service_node: bool,
+    bds_enabled: bool,
     parallel_execution_enabled: bool,
     parallel_execution_workers: int,
     parallel_execution_min_transactions: int,
+    transaction_trace_logging: bool,
+    app_log_level: str,
+    app_log_json: bool,
+    app_log_rotation_hours: int,
+    app_log_retention_days: int,
 ):
     """Write all CometBFT config files for a single node."""
     home = LOCALNET_DIR / node["moniker"] / ".cometbft"
@@ -133,6 +140,7 @@ def write_node_config(
 
     config = render_cometbft_config(
         moniker=node["moniker"],
+        service_node=service_node,
         seed_nodes=[],
         allow_cors=True,
         prometheus=True,
@@ -140,11 +148,21 @@ def write_node_config(
         metrics_enabled=True,
         metrics_host="0.0.0.0",
         metrics_port=9108,
+        transaction_trace_logging=transaction_trace_logging,
+        app_log_level=app_log_level,
+        app_log_json=app_log_json,
+        app_log_rotation_hours=app_log_rotation_hours,
+        app_log_retention_days=app_log_retention_days,
         parallel_execution_enabled=parallel_execution_enabled,
         parallel_execution_workers=parallel_execution_workers,
         parallel_execution_min_transactions=(
             parallel_execution_min_transactions
         ),
+        bds_host=LOCALNET_POSTGRES_SERVICE if bds_enabled else "",
+        bds_port=5432,
+        bds_database="xian",
+        bds_user="xian",
+        bds_password="xian",
     )
     # Override peers and listen addresses (inside container, always same ports)
     config["p2p"]["persistent_peers"] = peers
@@ -203,11 +221,30 @@ def main():
         "XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED", False
     )
     tracer_mode = env_str("XIAN_LOCALNET_TRACER_MODE", "python_line_v1")
+    bds_enabled = env_bool("XIAN_LOCALNET_ENABLE_BDS", False)
+    bds_node_index = env_int("XIAN_LOCALNET_BDS_NODE_INDEX", 0)
+    if bds_enabled and not 0 <= bds_node_index < args.nodes:
+        print(
+            "ERROR: XIAN_LOCALNET_BDS_NODE_INDEX must point to an existing node",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     parallel_execution_workers = env_int(
         "XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS", 0
     )
     parallel_execution_min_transactions = env_int(
         "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS", 8
+    )
+    transaction_trace_logging = env_bool(
+        "XIAN_LOCALNET_TRANSACTION_TRACE_LOGGING", False
+    )
+    app_log_level = env_str("XIAN_LOCALNET_APP_LOG_LEVEL", "INFO")
+    app_log_json = env_bool("XIAN_LOCALNET_APP_LOG_JSON", False)
+    app_log_rotation_hours = env_int(
+        "XIAN_LOCALNET_APP_LOG_ROTATION_HOURS", 1
+    )
+    app_log_retention_days = env_int(
+        "XIAN_LOCALNET_APP_LOG_RETENTION_DAYS", 7
     )
     profiling_enabled = env_bool("XIAN_LOCALNET_PROFILE_ENABLED", False)
     profiling_recent_blocks = env_int(
@@ -249,11 +286,18 @@ def main():
             args.chain_id,
             genesis,
             tracer_mode=tracer_mode,
+            service_node=bds_enabled and node["index"] == bds_node_index,
+            bds_enabled=bds_enabled and node["index"] == bds_node_index,
             parallel_execution_enabled=parallel_execution_enabled,
             parallel_execution_workers=parallel_execution_workers,
             parallel_execution_min_transactions=(
                 parallel_execution_min_transactions
             ),
+            transaction_trace_logging=transaction_trace_logging,
+            app_log_level=app_log_level,
+            app_log_json=app_log_json,
+            app_log_rotation_hours=app_log_rotation_hours,
+            app_log_retention_days=app_log_retention_days,
         )
         (LOCALNET_DIR / node["moniker"] / "tmp").mkdir(parents=True, exist_ok=True)
         idx = node["index"]
@@ -265,6 +309,8 @@ def main():
     write_compose_file(
         nodes,
         args.topology,
+        bds_enabled=bds_enabled,
+        bds_node_index=bds_node_index,
         profiling_enabled=profiling_enabled,
         profiling_recent_blocks=profiling_recent_blocks,
     )
@@ -286,6 +332,11 @@ def main():
                     else f"xian-{n['moniker']}-abci"
                 ),
                 "cometbft_container": f"xian-{n['moniker']}",
+                "account_public_key": n["account_public_key"],
+                "account_private_key": n["validator_material"][
+                    "validator_private_key_hex"
+                ],
+                "service_node": bds_enabled and n["index"] == bds_node_index,
             }
             for n in nodes
         ],
@@ -300,6 +351,22 @@ def main():
             "recent_blocks": profiling_recent_blocks,
         },
         "tracer_mode": tracer_mode,
+        "bds": {
+            "enabled": bds_enabled,
+            "service_node_index": bds_node_index if bds_enabled else None,
+            "service_rpc_url": (
+                f"http://127.0.0.1:{BASE_RPC_PORT + bds_node_index * PORT_STRIDE}"
+                if bds_enabled
+                else None
+            ),
+        },
+        "logging": {
+            "transaction_trace_logging": transaction_trace_logging,
+            "app_log_level": app_log_level,
+            "app_log_json": app_log_json,
+            "app_log_rotation_hours": app_log_rotation_hours,
+            "app_log_retention_days": app_log_retention_days,
+        },
     }
     (LOCALNET_DIR / "network.json").write_text(
         json.dumps(summary, indent=2) + "\n",
@@ -314,6 +381,8 @@ def write_compose_file(
     nodes: list[dict],
     topology: str,
     *,
+    bds_enabled: bool,
+    bds_node_index: int,
     profiling_enabled: bool,
     profiling_recent_blocks: int,
 ):
@@ -321,6 +390,44 @@ def write_compose_file(
     services = {}
     integrated_build = node_build_config("integrated")
     split_build = node_build_config("split")
+    if bds_enabled:
+        services[LOCALNET_POSTGRES_SERVICE] = {
+            "image": "postgres:17",
+            "restart": "always",
+            "init": True,
+            "stop_grace_period": "30s",
+            "hostname": LOCALNET_POSTGRES_SERVICE,
+            "container_name": f"xian-{LOCALNET_POSTGRES_SERVICE}",
+            "mem_limit": "${XIAN_DOCKER_POSTGRES_MEMORY_LIMIT}",
+            "mem_reservation": "${XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION}",
+            "memswap_limit": "${XIAN_DOCKER_POSTGRES_MEMORY_SWAP}",
+            "pids_limit": "${XIAN_DOCKER_POSTGRES_PIDS_LIMIT}",
+            "ulimits": {
+                "nofile": {
+                    "soft": "${XIAN_DOCKER_POSTGRES_NOFILE_SOFT}",
+                    "hard": "${XIAN_DOCKER_POSTGRES_NOFILE_HARD}",
+                }
+            },
+            "environment": {
+                "POSTGRES_USER": "xian",
+                "POSTGRES_PASSWORD": "xian",
+                "POSTGRES_DB": "xian",
+            },
+            "healthcheck": {
+                "test": [
+                    "CMD-SHELL",
+                    "pg_isready -U xian -d xian",
+                ],
+                "interval": "5s",
+                "timeout": "5s",
+                "retries": 12,
+            },
+            "volumes": [
+                "./.localnet/postgres:/var/lib/postgresql/data",
+            ],
+            "expose": ["5432"],
+            "networks": ["localnet"],
+        }
     for node in nodes:
         idx = node["index"]
         moniker = node["moniker"]
@@ -363,6 +470,12 @@ def write_compose_file(
                 ],
                 "networks": ["localnet"],
             }
+            if bds_enabled and idx == bds_node_index:
+                services[moniker]["depends_on"] = {
+                    LOCALNET_POSTGRES_SERVICE: {
+                        "condition": "service_healthy",
+                    }
+                }
         else:
             shared_tmp = f"./.localnet/{moniker}/tmp:/tmp"
             home_mount = f"./.localnet/{moniker}/.cometbft:/root/.cometbft"
@@ -395,6 +508,12 @@ def write_compose_file(
                 "command": ["xian-abci"],
                 "networks": ["localnet"],
             }
+            if bds_enabled and idx == bds_node_index:
+                services[f"{moniker}-abci"]["depends_on"] = {
+                    LOCALNET_POSTGRES_SERVICE: {
+                        "condition": "service_healthy",
+                    }
+                }
             services[moniker] = {
                 "image": NODE_IMAGE_SPLIT,
                 "restart": "always",

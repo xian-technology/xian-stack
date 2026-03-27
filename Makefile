@@ -231,6 +231,19 @@ LOCALNET_WORKLOAD_SCENARIO ?= counter_basic
 LOCALNET_RECEIPT_RESOLUTION ?= serial
 LOCALNET_RECEIPT_WORKERS ?= 16
 LOCALNET_WORKLOAD_MEASURE_MEMORY ?= 1
+LOCALNET_E2E_BOOTSTRAP ?= 1
+LOCALNET_E2E_BUILD ?= 0
+LOCALNET_E2E_BDS_NODE_INDEX ?= 0
+LOCALNET_E2E_SEED ?= xian-localnet-e2e-v1
+LOCALNET_E2E_LOG_LEVEL ?= INFO
+LOCALNET_E2E_RPC_TIMEOUT_SECONDS ?= 180
+LOCALNET_E2E_STATE_SAMPLE_NODES ?= 4
+LOCALNET_E2E_APP_HASH_WINDOW ?= 4
+LOCALNET_E2E_RECEIPT_WORKERS ?= 24
+LOCALNET_E2E_PERIODIC_ROUNDS ?= 8
+LOCALNET_E2E_PERIODIC_INTERVAL_SECONDS ?= 0.35
+LOCALNET_E2E_BURST_COUNTER_OPS ?= 260
+LOCALNET_E2E_DEX_ROUNDS ?= 8
 
 .DEFAULT_GOAL := help
 
@@ -246,7 +259,7 @@ LOCALNET_WORKLOAD_MEASURE_MEMORY ?= 1
 	node-status node-status-fidelity \
 	storage-report \
 	localnet-init localnet-build localnet-up localnet-down localnet-status \
-	localnet-workload localnet-burst localnet-memwatch localnet-leak-hunt \
+	localnet-workload localnet-burst localnet-memwatch localnet-leak-hunt localnet-e2e \
 	localnet-clean localnet-logs localnet-shell
 
 help:
@@ -297,6 +310,7 @@ help:
 	@printf "  %-24s %s\n" "localnet-burst" "Drive the legacy counter_basic workload alias"
 	@printf "  %-24s %s\n" "localnet-memwatch" "Sample container memory during localnet tx load"
 	@printf "  %-24s %s\n" "localnet-leak-hunt" "Split localnet memory growth by process"
+	@printf "  %-24s %s\n" "localnet-e2e" "Run the full layered 4-node localnet end-to-end program"
 	@printf "  %-24s %s\n" "localnet-logs" "Tail logs from all nodes"
 	@printf "  %-24s %s\n" "localnet-shell" "Open a shell in node-0"
 	@printf "  %-24s %s\n" "localnet-clean" "Stop nodes and delete all localnet data"
@@ -610,6 +624,24 @@ localnet-memwatch:
 
 localnet-leak-hunt:
 	uv run --project "$(XIAN_PY_DIR)" python3 ./scripts/localnet-leak-hunt.py $(LOCALNET_LEAK_HUNT_MINUTES)
+
+localnet-e2e:
+	uv run --project "$(XIAN_PY_DIR)" python3 ./scripts/localnet-e2e.py \
+		$(if $(filter 0,$(LOCALNET_E2E_BOOTSTRAP)),--no-bootstrap,--bootstrap) \
+		$(if $(filter 1,$(LOCALNET_E2E_BUILD)),--build,--no-build) \
+		--nodes $(LOCALNET_NODES) \
+		--topology "$(XIAN_LOCALNET_TOPOLOGY)" \
+		--bds-node-index $(LOCALNET_E2E_BDS_NODE_INDEX) \
+		--seed "$(LOCALNET_E2E_SEED)" \
+		--log-level "$(LOCALNET_E2E_LOG_LEVEL)" \
+		--rpc-timeout-seconds $(LOCALNET_E2E_RPC_TIMEOUT_SECONDS) \
+		--state-sample-nodes $(LOCALNET_E2E_STATE_SAMPLE_NODES) \
+		--app-hash-window $(LOCALNET_E2E_APP_HASH_WINDOW) \
+		--receipt-workers $(LOCALNET_E2E_RECEIPT_WORKERS) \
+		--periodic-rounds $(LOCALNET_E2E_PERIODIC_ROUNDS) \
+		--periodic-interval-seconds $(LOCALNET_E2E_PERIODIC_INTERVAL_SECONDS) \
+		--burst-counter-ops $(LOCALNET_E2E_BURST_COUNTER_OPS) \
+		--dex-rounds $(LOCALNET_E2E_DEX_ROUNDS)
 
 localnet-logs:
 	$(LOCALNET_COMPOSE) logs -f --tail=50

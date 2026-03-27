@@ -17,6 +17,7 @@ STACK_DIR = Path(__file__).resolve().parent.parent
 LOCALNET_NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 LOCALNET_INIT_SCRIPT = STACK_DIR / "scripts" / "localnet-init.py"
 LOCALNET_WORKLOAD_SCRIPT = STACK_DIR / "scripts" / "localnet-workload.py"
+LOCALNET_E2E_SCRIPT = STACK_DIR / "scripts" / "localnet-e2e.py"
 LOCALNET_BURST_SCRIPT = STACK_DIR / "scripts" / "localnet-burst-test.py"
 LOCALNET_MEMWATCH_SCRIPT = STACK_DIR / "scripts" / "localnet-memwatch.py"
 LOCALNET_LEAK_HUNT_SCRIPT = STACK_DIR / "scripts" / "localnet-leak-hunt.py"
@@ -1029,6 +1030,77 @@ def backend_localnet_diagnostic(
     return payload
 
 
+def backend_localnet_e2e(
+    *,
+    bootstrap: bool,
+    build: bool,
+    nodes: int,
+    topology: str,
+    bds_node_index: int,
+    seed: str,
+    log_level: str,
+    rpc_timeout_seconds: float,
+    state_sample_nodes: int,
+    app_hash_window: int,
+    receipt_workers: int,
+    periodic_rounds: int,
+    periodic_interval_seconds: float,
+    burst_counter_ops: int,
+    dex_rounds: int,
+) -> dict:
+    args = [
+        "--nodes",
+        str(nodes),
+        "--topology",
+        topology,
+        "--bds-node-index",
+        str(bds_node_index),
+        "--seed",
+        seed,
+        "--log-level",
+        log_level,
+        "--rpc-timeout-seconds",
+        str(rpc_timeout_seconds),
+        "--state-sample-nodes",
+        str(state_sample_nodes),
+        "--app-hash-window",
+        str(app_hash_window),
+        "--receipt-workers",
+        str(receipt_workers),
+        "--periodic-rounds",
+        str(periodic_rounds),
+        "--periodic-interval-seconds",
+        str(periodic_interval_seconds),
+        "--burst-counter-ops",
+        str(burst_counter_ops),
+        "--dex-rounds",
+        str(dex_rounds),
+        "--bootstrap" if bootstrap else "--no-bootstrap",
+        "--build" if build else "--no-build",
+    ]
+    try:
+        result = run_python_script(
+            LOCALNET_E2E_SCRIPT,
+            *args,
+            capture_output=True,
+            uv_project=resolve_repo_dir("xian-py", "XIAN_PY_DIR"),
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise RuntimeError(f"localnet-e2e failed: {detail}") from exc
+
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "localnet-e2e did not return a JSON summary"
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("localnet-e2e returned a non-object summary")
+    return payload
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Stable machine-readable backend control surface for xian-stack"
@@ -1292,6 +1364,81 @@ def build_parser() -> argparse.ArgumentParser:
         default=10,
     )
 
+    localnet_e2e = subparsers.add_parser("localnet-e2e")
+    localnet_e2e.add_argument(
+        "--bootstrap",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    localnet_e2e.add_argument(
+        "--build",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    localnet_e2e.add_argument(
+        "--nodes",
+        type=int,
+        default=4,
+    )
+    localnet_e2e.add_argument(
+        "--topology",
+        choices=("integrated", "fidelity"),
+        default="integrated",
+    )
+    localnet_e2e.add_argument(
+        "--bds-node-index",
+        type=int,
+        default=0,
+    )
+    localnet_e2e.add_argument(
+        "--seed",
+        default="xian-localnet-e2e-v1",
+    )
+    localnet_e2e.add_argument(
+        "--log-level",
+        default="INFO",
+    )
+    localnet_e2e.add_argument(
+        "--rpc-timeout-seconds",
+        type=float,
+        default=180.0,
+    )
+    localnet_e2e.add_argument(
+        "--state-sample-nodes",
+        type=int,
+        default=4,
+    )
+    localnet_e2e.add_argument(
+        "--app-hash-window",
+        type=int,
+        default=4,
+    )
+    localnet_e2e.add_argument(
+        "--receipt-workers",
+        type=int,
+        default=24,
+    )
+    localnet_e2e.add_argument(
+        "--periodic-rounds",
+        type=int,
+        default=8,
+    )
+    localnet_e2e.add_argument(
+        "--periodic-interval-seconds",
+        type=float,
+        default=0.35,
+    )
+    localnet_e2e.add_argument(
+        "--burst-counter-ops",
+        type=int,
+        default=260,
+    )
+    localnet_e2e.add_argument(
+        "--dex-rounds",
+        type=int,
+        default=8,
+    )
+
     subparsers.add_parser("localnet-build")
     subparsers.add_parser("localnet-down")
     subparsers.add_parser("localnet-clean")
@@ -1415,6 +1562,24 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_localnet_diagnostic(
             script_path=LOCALNET_LEAK_HUNT_SCRIPT,
             duration_minutes=args.duration_minutes,
+        )
+    elif args.command == "localnet-e2e":
+        payload = backend_localnet_e2e(
+            bootstrap=args.bootstrap,
+            build=args.build,
+            nodes=args.nodes,
+            topology=args.topology,
+            bds_node_index=args.bds_node_index,
+            seed=args.seed,
+            log_level=args.log_level,
+            rpc_timeout_seconds=args.rpc_timeout_seconds,
+            state_sample_nodes=args.state_sample_nodes,
+            app_hash_window=args.app_hash_window,
+            receipt_workers=args.receipt_workers,
+            periodic_rounds=args.periodic_rounds,
+            periodic_interval_seconds=args.periodic_interval_seconds,
+            burst_counter_ops=args.burst_counter_ops,
+            dex_rounds=args.dex_rounds,
         )
     else:
         raise ValueError(f"unsupported command: {args.command}")
