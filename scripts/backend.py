@@ -1048,6 +1048,8 @@ def backend_localnet_e2e(
     periodic_interval_seconds: float,
     burst_counter_ops: int,
     dex_rounds: int,
+    start_phase: str,
+    resume_dir: str | None,
 ) -> dict:
     args = [
         "--nodes",
@@ -1078,9 +1080,13 @@ def backend_localnet_e2e(
         str(burst_counter_ops),
         "--dex-rounds",
         str(dex_rounds),
+        "--start-phase",
+        start_phase,
         "--bootstrap" if bootstrap else "--no-bootstrap",
         "--build" if build else "--no-build",
     ]
+    if resume_dir:
+        args.extend(["--resume-dir", resume_dir])
     try:
         result = run_python_script(
             LOCALNET_E2E_SCRIPT,
@@ -1396,7 +1402,7 @@ def build_parser() -> argparse.ArgumentParser:
     localnet_e2e.add_argument(
         "--port-offset",
         type=int,
-        default=0,
+        default=1000,
     )
     localnet_e2e.add_argument(
         "--seed",
@@ -1445,6 +1451,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--dex-rounds",
         type=int,
         default=8,
+    )
+    localnet_e2e.add_argument(
+        "--start-phase",
+        default="00-bootstrap",
+    )
+    localnet_e2e.add_argument(
+        "--resume-dir",
     )
 
     subparsers.add_parser("localnet-build")
@@ -1589,6 +1602,8 @@ def main(argv: list[str] | None = None) -> int:
             periodic_interval_seconds=args.periodic_interval_seconds,
             burst_counter_ops=args.burst_counter_ops,
             dex_rounds=args.dex_rounds,
+            start_phase=args.start_phase,
+            resume_dir=args.resume_dir,
         )
     else:
         raise ValueError(f"unsupported command: {args.command}")

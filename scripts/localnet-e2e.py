@@ -41,6 +41,13 @@ STATE_PATCH_DELAY_BLOCKS = 8
 STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS = 8
 SIMULATOR_BURST_REQUESTS = 128
 WEBSOCKET_TIMEOUT_SECONDS = 20.0
+LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
+LOCALNET_POSTGRES_CONTAINER = "xian-localnet-postgres"
+CONTRACT_ORCHESTRATION_TX_STAMPS = {
+    "deploy_contract": 180_000,
+    "deploy_family": 100_000,
+    "dynamic_call": 50_000,
+}
 SHIELDED_TX_STAMPS = {
     "deposit": 8_000_000,
     "transfer": 10_000_000,
@@ -204,6 +211,17 @@ def run_make(target: str, *, env: dict[str, str]) -> subprocess.CompletedProcess
     return run_cmd(["make", target], env=env)
 
 
+def run_localnet_compose(
+    *compose_args: str,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    return run_cmd(
+        ["docker", "compose", "-f", "docker-compose-localnet.yml", *compose_args],
+        cwd=STACK_DIR,
+        env=env,
+    )
+
+
 async def fetch_abci_query(
     session: aiohttp.ClientSession,
     rpc_url: str,
@@ -329,6 +347,108 @@ async def wait_for_bds_indexed(
     )
 
 
+async def wait_for_bds_backlog(
+    client: XianAsync,
+    *,
+    target_height: int,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last_status: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        try:
+            status = await client.get_bds_status()
+        except Exception as exc:  # noqa: BLE001
+            last_status = {"error": str(exc)}
+            await asyncio.sleep(0.5)
+            continue
+
+        raw = normalize_value(status.raw)
+        last_status = raw
+        indexed_height = status.indexed_height
+        if indexed_height is not None and indexed_height < target_height:
+            return raw
+        if status.spool_pending_count > 0:
+            return raw
+        if raw.get("last_enqueue_error"):
+            return raw
+        if str(raw.get("db_status")) not in {"ok", "None"}:
+            return raw
+        await asyncio.sleep(0.5)
+
+    raise E2EError(
+        f"BDS did not show backlog or degradation before timeout; last={last_status}"
+    )
+
+
+async def wait_for_bds_recovered(
+    client: XianAsync,
+    *,
+    target_height: int,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last_status: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        try:
+            status = await client.get_bds_status()
+        except Exception as exc:  # noqa: BLE001
+            last_status = {"error": str(exc)}
+            await asyncio.sleep(0.5)
+            continue
+
+        raw = normalize_value(status.raw)
+        last_status = raw
+        indexed_height = status.indexed_height
+        recovered = (
+            indexed_height is not None
+            and indexed_height >= target_height
+            and status.spool_pending_count == 0
+            and str(raw.get("db_status")) == "ok"
+            and not raw.get("last_enqueue_error")
+        )
+        if recovered:
+            return raw
+        await asyncio.sleep(0.5)
+
+    raise E2EError(
+        f"BDS did not recover to height {target_height}; last={last_status}"
+    )
+
+
+async def wait_for_container_state(
+    container_name: str,
+    *,
+    expected_states: set[str],
+    timeout_seconds: float,
+) -> str:
+    deadline = time.monotonic() + timeout_seconds
+    last_state: str | None = None
+    while time.monotonic() < deadline:
+        result = run_cmd(
+            [
+                "docker",
+                "inspect",
+                "-f",
+                "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}",
+                container_name,
+            ],
+            cwd=STACK_DIR,
+        )
+        state_status, _, health_status = result.stdout.strip().partition("|")
+        candidates = [state_status.strip(), health_status.strip()]
+        last_state = next((state for state in candidates if state), None)
+        for candidate in candidates:
+            if candidate in expected_states:
+                return candidate
+        await asyncio.sleep(1.0)
+
+    raise E2EError(
+        f"container {container_name} did not reach state {sorted(expected_states)}; "
+        f"last={last_state!r}"
+    )
+
+
 async def compare_app_hash_window(
     session: aiohttp.ClientSession,
     nodes: list[LocalnetNode],
@@ -400,6 +520,8 @@ def ensure_positive_submission(
     if submission.accepted is False:
         raise E2EError(f"{label}: CheckTx rejected: {submission.message}")
     if submission.receipt is None:
+        if submission.mode == "commit" and submission.accepted is True and submission.finalized:
+            return normalize_receipt(submission, label=label)
         raise E2EError(f"{label}: receipt missing")
     if submission.receipt.success is not True:
         raise E2EError(
@@ -416,15 +538,19 @@ def normalize_receipt(submission, *, label: str) -> dict[str, Any]:
     if isinstance(execution, dict):
         state = execution.get("state", []) or []
         events = execution.get("events", []) or []
+    success = None if submission.receipt is None else submission.receipt.success
+    message = submission.message if submission.receipt is None else submission.receipt.message
+    if submission.receipt is None and submission.mode == "commit":
+        success = bool(submission.accepted and submission.finalized)
+        if success and message is None:
+            message = "Transaction committed"
     return {
         "label": label,
         "submitted": submission.submitted,
         "accepted": submission.accepted,
         "finalized": submission.finalized,
-        "success": None if submission.receipt is None else submission.receipt.success,
-        "message": submission.message
-        if submission.receipt is None
-        else submission.receipt.message,
+        "success": success,
+        "message": message,
         "tx_hash": submission.tx_hash,
         "nonce": submission.nonce,
         "stamps_supplied": submission.stamps_supplied,
@@ -547,17 +673,19 @@ class E2ERunner:
             "00-bootstrap",
             "01-health",
             "02-xian-py-smoke",
-            "03-periodic-load",
-            "04-burst-load",
-            "05-conflict-invalid",
-            "06-dex-mixed",
-            "07-simulator-load",
-            "08-retrieval-surfaces",
-            "09-determinism",
-            "10-validator-governance",
-            "11-state-patch",
-            "12-logging",
-            "13-shielded-note-token",
+            "03-contract-orchestration",
+            "04-periodic-load",
+            "05-burst-load",
+            "06-conflict-invalid",
+            "07-dex-mixed",
+            "08-simulator-load",
+            "09-bds-catchup",
+            "10-retrieval-surfaces",
+            "11-determinism",
+            "12-validator-governance",
+            "13-state-patch",
+            "14-logging",
+            "15-shielded-note-token",
         ]
 
     def _load_resume_json(self, phase_name: str) -> dict[str, Any]:
@@ -582,26 +710,42 @@ class E2ERunner:
         self.validator_wallets = [
             Wallet(private_key=node.account_private_key) for node in self.nodes
         ]
+        completed_phase_names = set(
+            self.phase_names()[: self.phase_names().index(self.args.start_phase)]
+        )
 
-        smoke = self._load_resume_json("02-xian-py-smoke")
-        for deployment in smoke["details"]["deployments"]:
-            label = deployment.get("label", "")
-            if label.startswith("deploy con_e2e_conflict_"):
-                self.contracts["conflict"] = label.removeprefix("deploy ")
-            elif label.startswith("deploy con_e2e_patch_"):
-                self.contracts["patch_target"] = label.removeprefix("deploy ")
+        if "02-xian-py-smoke" in completed_phase_names:
+            smoke = self._load_resume_json("02-xian-py-smoke")
+            for deployment in smoke["details"]["deployments"]:
+                label = deployment.get("label", "")
+                if label.startswith("deploy con_e2e_conflict_"):
+                    self.contracts["conflict"] = label.removeprefix("deploy ")
+                elif label.startswith("deploy con_e2e_patch_"):
+                    self.contracts["patch_target"] = label.removeprefix("deploy ")
 
-        conflict = self._load_resume_json("05-conflict-invalid")
-        self.contracts["conflict"] = conflict["details"]["conflict_contract"]
-        self.sample_event_tx_hash = conflict["details"]["winning_tx_hash"]
+        if "03-contract-orchestration" in completed_phase_names:
+            orchestration = self._load_resume_json("03-contract-orchestration")
+            self.contracts.update(orchestration["details"]["contracts"])
 
-        dex = self._load_resume_json("06-dex-mixed")
-        contracts = dex["details"]["scenario_summary"]["contracts"]
-        self.contracts["dex_token_a"] = contracts["token_a"]
-        self.contracts["dex_token_b"] = contracts["token_b"]
-        self.contracts["dex_pairs"] = contracts["pairs"]
-        self.contracts["dex_router"] = contracts["dex"]
-        self.contracts["dex_pair_id"] = dex["details"]["scenario_summary"]["pair_id"]
+        if "06-conflict-invalid" in completed_phase_names:
+            conflict = self._load_resume_json("06-conflict-invalid")
+            self.contracts["conflict"] = conflict["details"]["conflict_contract"]
+            self.sample_event_tx_hash = conflict["details"]["winning_tx_hash"]
+
+        if "07-dex-mixed" in completed_phase_names:
+            dex = self._load_resume_json("07-dex-mixed")
+            contracts = dex["details"]["scenario_summary"]["contracts"]
+            self.contracts["dex_token_a"] = contracts["token_a"]
+            self.contracts["dex_token_b"] = contracts["token_b"]
+            self.contracts["dex_pairs"] = contracts["pairs"]
+            self.contracts["dex_router"] = contracts["dex"]
+            self.contracts["dex_pair_id"] = dex["details"]["scenario_summary"]["pair_id"]
+
+        if "09-bds-catchup" in completed_phase_names:
+            catchup = self._load_resume_json("09-bds-catchup")
+            tx_hashes = catchup["details"].get("catchup_tx_hashes") or []
+            if tx_hashes:
+                self.sample_event_tx_hash = tx_hashes[-1]
 
     def write_phase(self, phase: PhaseResult) -> None:
         self.phase_results.append(phase)
@@ -752,6 +896,7 @@ class E2ERunner:
                     amount=amount,
                     to_address=wallet.public_key,
                     stamps=DEFAULT_TRANSFER_STAMPS,
+                    mode="commit",
                     wait_for_tx=True,
                 )
                 receipts.append(
@@ -808,6 +953,259 @@ class E2ERunner:
             "simulate_balance": normalize_value(simulated),
             "conflict_counter_state": counter_state,
             "patch_status": patch_status,
+        }
+
+    async def contract_orchestration_phase(
+        self,
+        session: aiohttp.ClientSession,
+    ) -> dict[str, Any]:
+        operator = derive_wallet(self.seed, "contract-orchestration-operator")
+        await self.fund_wallets(session, [operator], amount=15_000)
+
+        suffix = short_hash(f"{self.run_id}:orchestration")
+        factory_name = f"con_orch_factory_{suffix}"
+        router_name = f"con_orch_router_{suffix}"
+        mid_name = f"con_orch_mid_{suffix}"
+        root_name = f"con_orch_root_{suffix}"
+        family_prefix = f"con_orch_family_{suffix}"
+        failed_prefix = f"con_orch_fail_{suffix}"
+        alpha_name = family_prefix + "_alpha"
+        beta_name = family_prefix + "_beta"
+        failed_good_name = failed_prefix + "_good"
+        failed_bad_name = failed_prefix + "_bad"
+
+        factory_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_factory.py")
+        router_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_router.py")
+        mid_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_mid.py")
+        root_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_root.py")
+
+        self.contracts.update(
+            {
+                "orchestration_factory": factory_name,
+                "orchestration_router": router_name,
+                "orchestration_mid": mid_name,
+                "orchestration_root": root_name,
+                "orchestrated_alpha": alpha_name,
+                "orchestrated_beta": beta_name,
+            }
+        )
+
+        async with self.client(operator, 1, session) as client:
+            deployments = []
+            for name, code in (
+                (factory_name, factory_code),
+                (router_name, router_code),
+                (mid_name, mid_code),
+                (root_name, root_code),
+            ):
+                existing_code = await client.get_contract_code(name)
+                if existing_code is not None:
+                    deployments.append(
+                        {
+                            "accepted": True,
+                            "reused": True,
+                            "contract": name,
+                        }
+                    )
+                    continue
+                submission = await client.submit_contract(
+                    name=name,
+                    code=code,
+                    stamps=CONTRACT_ORCHESTRATION_TX_STAMPS["deploy_contract"],
+                    mode="commit",
+                )
+                deployments.append(
+                    ensure_positive_submission(
+                        submission,
+                        label=f"deploy {name}",
+                    )
+                )
+
+            alpha_existing = await client.get_contract_code(alpha_name)
+            beta_existing = await client.get_contract_code(beta_name)
+            if alpha_existing is not None and beta_existing is not None:
+                family_receipt = {
+                    "accepted": True,
+                    "reused": True,
+                    "label": "orchestration-deploy-family",
+                }
+            else:
+                family_submission = await client.send_tx(
+                    factory_name,
+                    "deploy_family",
+                    {"prefix": family_prefix},
+                    stamps=CONTRACT_ORCHESTRATION_TX_STAMPS["deploy_family"],
+                    mode="commit",
+                )
+                family_receipt = ensure_positive_submission(
+                    family_submission,
+                    label="orchestration-deploy-family",
+                )
+            family_info = await client.call(
+                factory_name,
+                "get_last_family",
+                {"prefix": family_prefix},
+            )
+            alpha_construct = await client.call(alpha_name, "get_construct_meta", {})
+            beta_construct = await client.call(beta_name, "get_construct_meta", {})
+            alpha_source = await client.get_contract_code(alpha_name)
+            beta_source = await client.get_contract_code(beta_name)
+            alpha_developer = await client.get_state(alpha_name, "__developer__")
+            alpha_deployer = await client.get_state(alpha_name, "__deployer__")
+            alpha_initiator = await client.get_state(alpha_name, "__initiator__")
+            if alpha_source is None or beta_source is None:
+                raise E2EError("factory-deployed child contracts were not persisted")
+            if family_info["first"] != alpha_name or family_info["second"] != beta_name:
+                raise E2EError("factory returned unexpected child contract names")
+            if alpha_construct["caller"] != factory_name or beta_construct["caller"] != factory_name:
+                raise E2EError("child constructor caller did not resolve to the factory contract")
+            if alpha_construct["signer"] != operator.public_key:
+                raise E2EError("child constructor signer drifted from the external caller")
+            if alpha_construct["submission_name"] != alpha_name:
+                raise E2EError("child constructor submission_name did not match the child contract")
+            if (
+                alpha_developer != factory_name
+                or alpha_deployer != factory_name
+                or alpha_initiator != operator.public_key
+            ):
+                raise E2EError("factory child deployment metadata is incorrect")
+
+            touch_preview = await client.call(
+                router_name,
+                "dynamic_touch",
+                {
+                    "target_contract": alpha_name,
+                    "function_name": "touch",
+                    "account": operator.public_key,
+                    "amount": 3,
+                },
+            )
+            ping_preview = await client.call(
+                router_name,
+                "dynamic_ping_module",
+                {
+                    "target_contract": beta_name,
+                    "label": "module-ping",
+                },
+            )
+
+        async with self.client(operator, 2, session) as client:
+            touch_submission = await client.send_tx(
+                router_name,
+                "dynamic_touch",
+                {
+                    "target_contract": alpha_name,
+                    "function_name": "touch",
+                    "account": operator.public_key,
+                    "amount": 3,
+                },
+                stamps=CONTRACT_ORCHESTRATION_TX_STAMPS["dynamic_call"],
+                mode="commit",
+            )
+            touch_receipt = ensure_positive_submission(
+                touch_submission,
+                label="orchestration-dynamic-touch",
+            )
+            alpha_touch_total = await client.call(alpha_name, "get_touch_total", {})
+            private_submission = await client.send_tx(
+                router_name,
+                "private_probe",
+                {
+                    "target_contract": alpha_name,
+                    "function_name": "internal_secret",
+                },
+                stamps=CONTRACT_ORCHESTRATION_TX_STAMPS["dynamic_call"],
+                mode="commit",
+            )
+            private_receipt = normalize_receipt(
+                private_submission,
+                label="orchestration-private-probe",
+            )
+            if (
+                private_receipt["accepted"] is not False
+                and private_receipt["success"] is not False
+            ):
+                raise E2EError("private dynamic probe unexpectedly succeeded")
+
+            failed_submission = await client.send_tx(
+                factory_name,
+                "deploy_family_with_failure",
+                {"prefix": failed_prefix},
+                stamps=CONTRACT_ORCHESTRATION_TX_STAMPS["deploy_family"],
+                mode="commit",
+            )
+            failed_receipt = normalize_receipt(
+                failed_submission,
+                label="orchestration-failed-family",
+            )
+            if (
+                failed_receipt["accepted"] is not False
+                and failed_receipt["success"] is not False
+            ):
+                raise E2EError("factory batch failure probe unexpectedly succeeded")
+            failed_good_source = await client.get_contract_code(failed_good_name)
+            failed_bad_source = await client.get_contract_code(failed_bad_name)
+            if failed_good_source is not None or failed_bad_source is not None:
+                raise E2EError("failed batch deployment left child contracts behind")
+
+        async with self.client(operator, 3, session) as client:
+            chain_preview = await client.call(
+                root_name,
+                "start",
+                {
+                    "router_contract": router_name,
+                    "mid_contract": mid_name,
+                    "leaf_contract": alpha_name,
+                    "function_name": "describe",
+                    "account": operator.public_key,
+                    "amount": 7,
+                },
+            )
+
+        expected_root_entry = f"{root_name}.start"
+        router_before = chain_preview["nested"]["router_before"]
+        router_after = chain_preview["nested"]["router_after"]
+        mid_before = chain_preview["nested"]["nested"]["mid_before"]
+        mid_after = chain_preview["nested"]["nested"]["mid_after"]
+        leaf_ctx = chain_preview["nested"]["nested"]["leaf"]
+        if chain_preview["root_ctx"]["caller"] != operator.public_key:
+            raise E2EError("root caller drifted from the external signer")
+        if router_before["caller"] != root_name or router_after["caller"] != root_name:
+            raise E2EError("router caller drifted from the root contract")
+        if mid_before["caller"] != router_name or mid_after["caller"] != router_name:
+            raise E2EError("mid caller drifted from the router contract")
+        if leaf_ctx["caller"] != mid_name:
+            raise E2EError("leaf caller drifted from the mid contract")
+        if leaf_ctx["signer"] != operator.public_key:
+            raise E2EError("leaf signer drifted from the external signer")
+        if leaf_ctx["entry"] != expected_root_entry:
+            raise E2EError("leaf entry context did not preserve the root entrypoint")
+        if alpha_touch_total != 3:
+            raise E2EError("dynamic touch did not persist the expected leaf state")
+
+        return {
+            "contracts": normalize_value(self.contracts),
+            "deployments": deployments,
+            "family_receipt": family_receipt,
+            "family_info": normalize_value(family_info),
+            "alpha_construct_meta": normalize_value(alpha_construct),
+            "beta_construct_meta": normalize_value(beta_construct),
+            "alpha_deployment_meta": {
+                "developer": alpha_developer,
+                "deployer": alpha_deployer,
+                "initiator": alpha_initiator,
+            },
+            "touch_preview": normalize_value(touch_preview),
+            "touch_receipt": touch_receipt,
+            "alpha_touch_total": alpha_touch_total,
+            "ping_preview": normalize_value(ping_preview),
+            "private_receipt": private_receipt,
+            "failed_receipt": failed_receipt,
+            "failed_contracts_absent": {
+                failed_good_name: failed_good_source is None,
+                failed_bad_name: failed_bad_source is None,
+            },
+            "chain_preview": normalize_value(chain_preview),
         }
 
     async def periodic_load(self, session: aiohttp.ClientSession) -> dict[str, Any]:
@@ -1105,6 +1503,104 @@ class E2ERunner:
             "recovery": recovery,
         }
 
+    async def bds_catchup_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
+        service = self.service_node
+        if service is None:
+            raise E2EError("service node not available for BDS catch-up phase")
+
+        env = make_localnet_env(self.args)
+        current_height = await latest_height(session, service.rpc_url)
+        catchup_wallets = [
+            derive_wallet(self.seed, f"bds-catchup-{index}")
+            for index in range(len(self.nodes))
+        ]
+        await self.fund_wallets(session, catchup_wallets, amount=5_000)
+
+        async with self.client(self.founder_wallet, service.index, session) as client:
+            baseline_status = await wait_for_bds_indexed(
+                client,
+                target_height=current_height,
+                timeout_seconds=30.0,
+            )
+
+        run_localnet_compose("stop", LOCALNET_POSTGRES_SERVICE, env=env)
+        stopped_state = await wait_for_container_state(
+            LOCALNET_POSTGRES_CONTAINER,
+            expected_states={"exited"},
+            timeout_seconds=30.0,
+        )
+
+        catchup_records = []
+        for index, wallet in enumerate(catchup_wallets * 2):
+            node_index = index % len(self.nodes)
+            slot = f"bds-catchup-{short_hash(f'{self.run_id}:{index}')}"
+            async with self.client(wallet, node_index, session) as client:
+                submission = await client.send_tx(
+                    self.contracts["conflict"],
+                    "claim",
+                    {"slot": slot, "amount": 1},
+                    stamps=DEFAULT_TX_STAMPS,
+                    wait_for_tx=True,
+                )
+                receipt = ensure_positive_submission(
+                    submission,
+                    label=f"bds-catchup-claim-{index}",
+                )
+                receipt["slot"] = slot
+                catchup_records.append(receipt)
+
+        catchup_height = await latest_height(session, service.rpc_url)
+
+        async with self.client(self.founder_wallet, service.index, session) as client:
+            lagged_status = await wait_for_bds_backlog(
+                client,
+                target_height=catchup_height,
+                timeout_seconds=30.0,
+            )
+
+        run_localnet_compose("start", LOCALNET_POSTGRES_SERVICE, env=env)
+        healthy_state = await wait_for_container_state(
+            LOCALNET_POSTGRES_CONTAINER,
+            expected_states={"healthy"},
+            timeout_seconds=45.0,
+        )
+
+        async with self.client(self.founder_wallet, service.index, session) as client:
+            recovered_status = await wait_for_bds_recovered(
+                client,
+                target_height=catchup_height,
+                timeout_seconds=120.0,
+            )
+            indexed_txs = []
+            for record in catchup_records[-3:]:
+                indexed_tx = await client.get_indexed_tx(record["tx_hash"])
+                if indexed_tx is None:
+                    raise E2EError("BDS catch-up did not index a lagged transaction")
+                indexed_txs.append(normalize_value(indexed_tx.raw))
+            indexed_events = await client.get_events_for_tx(catchup_records[-1]["tx_hash"])
+            indexed_state = await client.get_state_for_tx(catchup_records[-1]["tx_hash"])
+            if not indexed_events or not indexed_state:
+                raise E2EError("BDS catch-up did not restore indexed tx details")
+
+        self.sample_event_tx_hash = catchup_records[-1]["tx_hash"]
+        return {
+            "postgres_stopped_state": stopped_state,
+            "postgres_recovered_state": healthy_state,
+            "baseline_status": baseline_status,
+            "lagged_status": lagged_status,
+            "recovered_status": recovered_status,
+            "catchup_height": catchup_height,
+            "catchup_tx_hashes": [record["tx_hash"] for record in catchup_records],
+            "catchup_receipts": catchup_records,
+            "indexed_tx_sample": indexed_txs,
+            "indexed_events_for_last_tx": normalize_value(
+                [item.raw for item in indexed_events]
+            ),
+            "indexed_state_for_last_tx": normalize_value(
+                [item.raw for item in indexed_state]
+            ),
+        }
+
     async def retrieval_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         founder = self.founder_wallet
         service = self.service_node
@@ -1218,11 +1714,27 @@ class E2ERunner:
             contract=patch_contract,
             variable="mode",
         )
+        orchestration_touch_state = None
+        orchestrated_alpha = self.contracts.get("orchestrated_alpha")
+        if orchestrated_alpha:
+            orchestration_touch_state = await query_state_from_all_nodes(
+                session,
+                self.nodes,
+                contract=orchestrated_alpha,
+                variable="touch_total",
+            )
 
         unique_state_groups = {
             "conflict_counter": sorted({json.dumps(value, sort_keys=True) for value in counter_state.values()}),
             "patch_mode": sorted({json.dumps(value, sort_keys=True) for value in patch_mode_state.values()}),
         }
+        if orchestration_touch_state is not None:
+            unique_state_groups["orchestrated_alpha_touch_total"] = sorted(
+                {
+                    json.dumps(value, sort_keys=True)
+                    for value in orchestration_touch_state.values()
+                }
+            )
 
         if any(len(group) != 1 for group in unique_state_groups.values()):
             raise E2EError("state values diverged across validators")
@@ -1275,6 +1787,7 @@ class E2ERunner:
             "state_samples": {
                 "conflict_counter": counter_state,
                 "patch_mode": patch_mode_state,
+                "orchestrated_alpha_touch_total": orchestration_touch_state,
             },
             "simulation_results": simulation_results,
         }
@@ -2309,17 +2822,25 @@ class E2ERunner:
                 ("00-bootstrap", lambda: self.bootstrap(session)),
                 ("01-health", lambda: self.health_phase(session)),
                 ("02-xian-py-smoke", lambda: self.xian_py_smoke(session)),
-                ("03-periodic-load", lambda: self.periodic_load(session)),
-                ("04-burst-load", self.burst_phase),
-                ("05-conflict-invalid", lambda: self.conflict_phase(session)),
-                ("06-dex-mixed", self.dex_phase),
-                ("07-simulator-load", lambda: self.simulator_phase(session)),
-                ("08-retrieval-surfaces", lambda: self.retrieval_phase(session)),
-                ("09-determinism", lambda: self.determinism_phase(session)),
-                ("10-validator-governance", lambda: self.validator_governance_phase(session)),
-                ("11-state-patch", lambda: self.state_patch_phase(session)),
-                ("12-logging", lambda: self.logging_phase(session)),
-                ("13-shielded-note-token", lambda: self.shielded_phase(session)),
+                (
+                    "03-contract-orchestration",
+                    lambda: self.contract_orchestration_phase(session),
+                ),
+                ("04-periodic-load", lambda: self.periodic_load(session)),
+                ("05-burst-load", self.burst_phase),
+                ("06-conflict-invalid", lambda: self.conflict_phase(session)),
+                ("07-dex-mixed", self.dex_phase),
+                ("08-simulator-load", lambda: self.simulator_phase(session)),
+                ("09-bds-catchup", lambda: self.bds_catchup_phase(session)),
+                ("10-retrieval-surfaces", lambda: self.retrieval_phase(session)),
+                ("11-determinism", lambda: self.determinism_phase(session)),
+                (
+                    "12-validator-governance",
+                    lambda: self.validator_governance_phase(session),
+                ),
+                ("13-state-patch", lambda: self.state_patch_phase(session)),
+                ("14-logging", lambda: self.logging_phase(session)),
+                ("15-shielded-note-token", lambda: self.shielded_phase(session)),
             ]
             if start_phase != "00-bootstrap":
                 self.load_resume_context()
