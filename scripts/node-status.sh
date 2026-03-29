@@ -162,6 +162,7 @@ def normalize_compose_service(item: dict) -> dict:
         "status": item.get("Status") or item.get("status"),
         "health": item.get("Health") or item.get("health"),
         "exit_code": item.get("ExitCode") or item.get("exit_code"),
+        "image": item.get("Image") or item.get("image"),
     }
 
 
