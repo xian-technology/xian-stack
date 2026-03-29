@@ -13,6 +13,15 @@ from urllib.error import URLError
 from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import urlopen
 
+from intentkit_backend import (
+    SUPPORTED_INTENTKIT_NETWORK_IDS,
+    ensure_intentkit_env,
+    get_intentkit_status,
+    intentkit_endpoints,
+    start_intentkit_runtime,
+    stop_intentkit_runtime,
+)
+
 STACK_DIR = Path(__file__).resolve().parent.parent
 LOCALNET_NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 LOCALNET_INIT_SCRIPT = STACK_DIR / "scripts" / "localnet-init.py"
@@ -73,6 +82,13 @@ def rpc_base_url(rpc_url: str) -> str:
 def build_abci_query_url(*, rpc_url: str, path: str) -> str:
     encoded_path = quote(json.dumps(path), safe="")
     return f"{rpc_base_url(rpc_url)}/abci_query?path={encoded_path}"
+
+
+def rpc_chain_id(payload: dict) -> str:
+    chain_id = payload.get("result", {}).get("node_info", {}).get("network")
+    if not isinstance(chain_id, str) or not chain_id:
+        raise ValueError("RPC status did not include node_info.network")
+    return chain_id
 
 
 def fetch_abci_query_value(
@@ -196,6 +212,27 @@ def run_make_target(
         text=True,
         env=env,
     )
+
+
+def format_subprocess_error(exc: subprocess.CalledProcessError) -> str:
+    command = exc.cmd
+    if isinstance(command, (list, tuple)):
+        command_str = " ".join(str(part) for part in command)
+    else:
+        command_str = str(command)
+
+    lines = [f"command failed with exit code {exc.returncode}: {command_str}"]
+    stdout = (exc.stdout or "").strip()
+    stderr = (exc.stderr or "").strip()
+    if stdout:
+        lines.append("")
+        lines.append("stdout:")
+        lines.append(stdout)
+    if stderr:
+        lines.append("")
+        lines.append("stderr:")
+        lines.append(stderr)
+    return "\n".join(lines)
 
 
 def _docker_compose_container_id(*, service: str) -> str | None:
@@ -353,11 +390,34 @@ def runtime_env(
     dashboard_enabled: bool,
     dashboard_host: str,
     dashboard_port: int,
+    intentkit_enabled: bool,
+    intentkit_network_id: str,
+    intentkit_host: str,
+    intentkit_port: int,
+    intentkit_api_port: int,
 ) -> dict[str, str]:
     env = os.environ.copy()
     env["XIAN_DASHBOARD_ENABLED"] = "1" if dashboard_enabled else "0"
     env["XIAN_DASHBOARD_HOST"] = dashboard_host
     env["XIAN_DASHBOARD_PORT"] = str(dashboard_port)
+    env["XIAN_INTENTKIT_ENABLED"] = "1" if intentkit_enabled else "0"
+    env["XIAN_INTENTKIT_DIR"] = str(
+        resolve_repo_dir("xian-intentkit", "XIAN_INTENTKIT_DIR")
+    )
+    env["XIAN_INTENTKIT_RELEASE"] = env.get("XIAN_INTENTKIT_RELEASE", "local")
+    env["XIAN_INTENTKIT_PROJECT_NAME"] = env.get(
+        "XIAN_INTENTKIT_PROJECT_NAME", "xian-intentkit-stack"
+    )
+    env["XIAN_INTENTKIT_ENV_FILE"] = env.get(
+        "XIAN_INTENTKIT_ENV_FILE",
+        str(resolve_repo_dir("xian-intentkit", "XIAN_INTENTKIT_DIR") / "deployment" / ".env"),
+    )
+    env["XIAN_INTENTKIT_NETWORK_ID"] = intentkit_network_id
+    env["XIAN_INTENTKIT_HOST"] = intentkit_host
+    env["XIAN_INTENTKIT_PUBLIC_HOST"] = display_host(intentkit_host)
+    env["XIAN_INTENTKIT_PORT"] = str(intentkit_port)
+    env["XIAN_INTENTKIT_API_PORT"] = str(intentkit_api_port)
+    env["XIAN_INTENTKIT_S3_PORT"] = env.get("XIAN_INTENTKIT_S3_PORT", "39000")
     return env
 
 
@@ -459,6 +519,11 @@ def backend_start(
     monitoring_enabled: bool,
     dashboard_host: str,
     dashboard_port: int,
+    intentkit_enabled: bool,
+    intentkit_network_id: str,
+    intentkit_host: str,
+    intentkit_port: int,
+    intentkit_api_port: int,
     wait_for_health: bool,
     rpc_timeout_seconds: float,
     rpc_url: str,
@@ -473,6 +538,11 @@ def backend_start(
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
+        intentkit_enabled=intentkit_enabled,
+        intentkit_network_id=intentkit_network_id,
+        intentkit_host=intentkit_host,
+        intentkit_port=intentkit_port,
+        intentkit_api_port=intentkit_api_port,
     )
 
     run_make_target(node_target, env=env)
@@ -492,6 +562,7 @@ def backend_start(
         "node_target": node_target,
         "dashboard_enabled": dashboard_enabled,
         "monitoring_enabled": monitoring_enabled,
+        "intentkit_enabled": intentkit_enabled,
         "rpc_checked": wait_for_health,
     }
     if dashboard_enabled:
@@ -503,11 +574,29 @@ def backend_start(
         result["monitoring_target"] = monitoring_target
         result["prometheus_url"] = "http://127.0.0.1:9090"
         result["grafana_url"] = "http://127.0.0.1:3000"
-    if wait_for_health:
-        result["rpc_status"] = wait_for_rpc_ready(
+    rpc_status = None
+    if wait_for_health or intentkit_enabled:
+        rpc_status = wait_for_rpc_ready(
             rpc_url=rpc_url,
             timeout_seconds=rpc_timeout_seconds,
         )
+    if wait_for_health and rpc_status is not None:
+        result["rpc_status"] = rpc_status
+    if intentkit_enabled:
+        if rpc_status is None:
+            raise RuntimeError("xian-intentkit requires RPC readiness")
+        result.update(
+            ensure_intentkit_env(
+                network_id=intentkit_network_id,
+                chain_id=rpc_chain_id(rpc_status),
+                rpc_status_url=rpc_url,
+                bind_host=intentkit_host,
+                frontend_port=intentkit_port,
+                api_port=intentkit_api_port,
+                env=env,
+            )
+        )
+        result["intentkit_status"] = start_intentkit_runtime(env=env)
     return result
 
 
@@ -518,6 +607,11 @@ def backend_stop(
     monitoring_enabled: bool,
     dashboard_host: str,
     dashboard_port: int,
+    intentkit_enabled: bool,
+    intentkit_network_id: str,
+    intentkit_host: str,
+    intentkit_port: int,
+    intentkit_api_port: int,
 ) -> dict:
     container_target = "abci-bds-down" if service_node else "abci-down"
     dashboard_target = "dashboard-bds-down" if service_node else "dashboard-down"
@@ -528,7 +622,15 @@ def backend_stop(
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
+        intentkit_enabled=intentkit_enabled,
+        intentkit_network_id=intentkit_network_id,
+        intentkit_host=intentkit_host,
+        intentkit_port=intentkit_port,
+        intentkit_api_port=intentkit_api_port,
     )
+    intentkit_result = None
+    if intentkit_enabled:
+        intentkit_result = stop_intentkit_runtime(env=env)
     if dashboard_enabled:
         run_make_target(dashboard_target, env=env)
     if monitoring_enabled:
@@ -540,8 +642,10 @@ def backend_stop(
         "container_target": container_target,
         "dashboard_enabled": dashboard_enabled,
         "monitoring_enabled": monitoring_enabled,
+        "intentkit_enabled": intentkit_enabled,
         "dashboard_target": dashboard_target if dashboard_enabled else None,
         "monitoring_target": monitoring_target if monitoring_enabled else None,
+        "intentkit_status": intentkit_result,
     }
 
 
@@ -552,23 +656,39 @@ def backend_status(
     monitoring_enabled: bool,
     dashboard_host: str,
     dashboard_port: int,
+    intentkit_enabled: bool,
+    intentkit_network_id: str,
+    intentkit_host: str,
+    intentkit_port: int,
+    intentkit_api_port: int,
 ) -> dict:
     env = runtime_env(
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
+        intentkit_enabled=intentkit_enabled,
+        intentkit_network_id=intentkit_network_id,
+        intentkit_host=intentkit_host,
+        intentkit_port=intentkit_port,
+        intentkit_api_port=intentkit_api_port,
     )
     env["XIAN_SERVICE_NODE"] = "1" if service_node else "0"
     result = run_make_target("node-status", capture_output=True, env=env)
     payload = json.loads(result.stdout)
     payload["dashboard_enabled"] = dashboard_enabled
     payload["monitoring_enabled"] = monitoring_enabled
+    payload["intentkit_enabled"] = intentkit_enabled
     endpoints = backend_endpoints(
         service_node=service_node,
         dashboard_enabled=dashboard_enabled,
         monitoring_enabled=monitoring_enabled,
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
+        intentkit_enabled=intentkit_enabled,
+        intentkit_network_id=intentkit_network_id,
+        intentkit_host=intentkit_host,
+        intentkit_port=intentkit_port,
+        intentkit_api_port=intentkit_api_port,
     )["endpoints"]
     payload["endpoints"] = endpoints
     if dashboard_enabled:
@@ -627,6 +747,51 @@ def backend_status(
         ) as exc:
             payload["grafana_reachable"] = False
             payload["grafana_error"] = str(exc)
+    if intentkit_enabled:
+        payload["intentkit_url"] = str(endpoints.get("intentkit", ""))
+        payload["intentkit_api_url"] = str(endpoints.get("intentkit_api", ""))
+        try:
+            payload["intentkit_status"] = get_intentkit_status(env=env)
+            payload["intentkit_running"] = payload["intentkit_status"].get(
+                "intentkit_running"
+            )
+        except (
+            FileNotFoundError,
+            subprocess.CalledProcessError,
+            json.JSONDecodeError,
+            ValueError,
+        ) as exc:
+            payload["intentkit_running"] = False
+            payload["intentkit_error"] = str(exc)
+        try:
+            payload["intentkit_probe"] = probe_http_endpoint(
+                str(endpoints["intentkit"]),
+                timeout=2.0,
+            )
+            payload["intentkit_reachable"] = True
+        except (
+            OSError,
+            URLError,
+            TimeoutError,
+            ValueError,
+        ) as exc:
+            payload["intentkit_reachable"] = False
+            payload["intentkit_probe_error"] = str(exc)
+        try:
+            payload["intentkit_api_status"] = fetch_json(
+                str(endpoints["intentkit_api_health"]),
+                timeout=2.0,
+            )
+            payload["intentkit_api_reachable"] = True
+        except (
+            OSError,
+            URLError,
+            TimeoutError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
+            payload["intentkit_api_reachable"] = False
+            payload["intentkit_api_error"] = str(exc)
     return payload
 
 
@@ -637,6 +802,11 @@ def backend_endpoints(
     monitoring_enabled: bool,
     dashboard_host: str,
     dashboard_port: int,
+    intentkit_enabled: bool,
+    intentkit_network_id: str,
+    intentkit_host: str,
+    intentkit_port: int,
+    intentkit_api_port: int,
 ) -> dict:
     endpoints = {
         "rpc": DEFAULT_RPC_BASE_URL,
@@ -666,6 +836,14 @@ def backend_endpoints(
     if monitoring_enabled:
         endpoints["prometheus"] = DEFAULT_PROMETHEUS_URL
         endpoints["grafana"] = DEFAULT_GRAFANA_URL
+    if intentkit_enabled:
+        endpoints.update(
+            intentkit_endpoints(
+                bind_host=intentkit_host,
+                frontend_port=intentkit_port,
+                api_port=intentkit_api_port,
+            )
+        )
     endpoints.update(
         _discover_runtime_endpoints(
             service_node=service_node,
@@ -687,6 +865,8 @@ def backend_endpoints(
         "service_node": service_node,
         "dashboard_enabled": dashboard_enabled,
         "monitoring_enabled": monitoring_enabled,
+        "intentkit_enabled": intentkit_enabled,
+        "intentkit_network_id": intentkit_network_id,
         "endpoints": endpoints,
     }
 
@@ -698,6 +878,11 @@ def backend_health(
     monitoring_enabled: bool,
     dashboard_host: str,
     dashboard_port: int,
+    intentkit_enabled: bool,
+    intentkit_network_id: str,
+    intentkit_host: str,
+    intentkit_port: int,
+    intentkit_api_port: int,
     rpc_url: str,
     check_disk: bool,
 ) -> dict:
@@ -707,6 +892,11 @@ def backend_health(
         monitoring_enabled=monitoring_enabled,
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
+        intentkit_enabled=intentkit_enabled,
+        intentkit_network_id=intentkit_network_id,
+        intentkit_host=intentkit_host,
+        intentkit_port=intentkit_port,
+        intentkit_api_port=intentkit_api_port,
     )
     endpoints = status["endpoints"]
 
@@ -862,6 +1052,22 @@ def backend_health(
                 "error": status.get("prometheus_error"),
             },
         }
+    if intentkit_enabled:
+        checks["intentkit"] = {
+            "ok": bool(status.get("intentkit_reachable")),
+            "detail": {
+                "url": endpoints.get("intentkit"),
+                "error": status.get("intentkit_probe_error")
+                or status.get("intentkit_error"),
+            },
+        }
+        checks["intentkit_api"] = {
+            "ok": bool(status.get("intentkit_api_reachable")),
+            "detail": {
+                "url": endpoints.get("intentkit_api"),
+                "error": status.get("intentkit_api_error"),
+            },
+        }
         checks["grafana"] = {
             "ok": bool(status.get("grafana_reachable")),
             "detail": {
@@ -893,6 +1099,8 @@ def backend_health(
         "service_node": service_node,
         "dashboard_enabled": dashboard_enabled,
         "monitoring_enabled": monitoring_enabled,
+        "intentkit_enabled": intentkit_enabled,
+        "intentkit_network_id": intentkit_network_id,
         "state": state,
         "checks": checks,
         "endpoints": endpoints,
@@ -1110,6 +1318,33 @@ def backend_localnet_e2e(
     return payload
 
 
+def add_intentkit_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--intentkit",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--intentkit-network-id",
+        choices=SUPPORTED_INTENTKIT_NETWORK_IDS,
+        default="xian-localnet",
+    )
+    parser.add_argument(
+        "--intentkit-host",
+        default="127.0.0.1",
+    )
+    parser.add_argument(
+        "--intentkit-port",
+        type=int,
+        default=38000,
+    )
+    parser.add_argument(
+        "--intentkit-api-port",
+        type=int,
+        default=38080,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Stable machine-readable backend control surface for xian-stack"
@@ -1141,6 +1376,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8080,
     )
+    add_intentkit_args(start)
     start.add_argument(
         "--wait-for-health",
         action=argparse.BooleanOptionalAction,
@@ -1181,6 +1417,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8080,
     )
+    add_intentkit_args(stop)
 
     status = subparsers.add_parser("status")
     status.add_argument(
@@ -1207,6 +1444,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8080,
     )
+    add_intentkit_args(status)
 
     endpoints = subparsers.add_parser("endpoints")
     endpoints.add_argument(
@@ -1233,6 +1471,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8080,
     )
+    add_intentkit_args(endpoints)
 
     health = subparsers.add_parser("health")
     health.add_argument(
@@ -1259,6 +1498,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8080,
     )
+    add_intentkit_args(health)
     health.add_argument(
         "--rpc-url",
         default=f"{DEFAULT_RPC_BASE_URL}/status",
@@ -1477,6 +1717,11 @@ def main(argv: list[str] | None = None) -> int:
             monitoring_enabled=args.monitoring,
             dashboard_host=args.dashboard_host,
             dashboard_port=args.dashboard_port,
+            intentkit_enabled=args.intentkit,
+            intentkit_network_id=args.intentkit_network_id,
+            intentkit_host=args.intentkit_host,
+            intentkit_port=args.intentkit_port,
+            intentkit_api_port=args.intentkit_api_port,
             wait_for_health=args.wait_for_health,
             rpc_timeout_seconds=args.rpc_timeout_seconds,
             rpc_url=args.rpc_url,
@@ -1488,6 +1733,11 @@ def main(argv: list[str] | None = None) -> int:
             monitoring_enabled=args.monitoring,
             dashboard_host=args.dashboard_host,
             dashboard_port=args.dashboard_port,
+            intentkit_enabled=args.intentkit,
+            intentkit_network_id=args.intentkit_network_id,
+            intentkit_host=args.intentkit_host,
+            intentkit_port=args.intentkit_port,
+            intentkit_api_port=args.intentkit_api_port,
         )
     elif args.command == "status":
         payload = backend_status(
@@ -1496,6 +1746,11 @@ def main(argv: list[str] | None = None) -> int:
             monitoring_enabled=args.monitoring,
             dashboard_host=args.dashboard_host,
             dashboard_port=args.dashboard_port,
+            intentkit_enabled=args.intentkit,
+            intentkit_network_id=args.intentkit_network_id,
+            intentkit_host=args.intentkit_host,
+            intentkit_port=args.intentkit_port,
+            intentkit_api_port=args.intentkit_api_port,
         )
     elif args.command == "endpoints":
         payload = backend_endpoints(
@@ -1504,6 +1759,11 @@ def main(argv: list[str] | None = None) -> int:
             monitoring_enabled=args.monitoring,
             dashboard_host=args.dashboard_host,
             dashboard_port=args.dashboard_port,
+            intentkit_enabled=args.intentkit,
+            intentkit_network_id=args.intentkit_network_id,
+            intentkit_host=args.intentkit_host,
+            intentkit_port=args.intentkit_port,
+            intentkit_api_port=args.intentkit_api_port,
         )
     elif args.command == "health":
         payload = backend_health(
@@ -1512,6 +1772,11 @@ def main(argv: list[str] | None = None) -> int:
             monitoring_enabled=args.monitoring,
             dashboard_host=args.dashboard_host,
             dashboard_port=args.dashboard_port,
+            intentkit_enabled=args.intentkit,
+            intentkit_network_id=args.intentkit_network_id,
+            intentkit_host=args.intentkit_host,
+            intentkit_port=args.intentkit_port,
+            intentkit_api_port=args.intentkit_api_port,
             rpc_url=args.rpc_url,
             check_disk=args.check_disk,
         )
@@ -1616,6 +1881,9 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except subprocess.CalledProcessError as exc:
+        print(format_subprocess_error(exc), file=sys.stderr)
+        raise SystemExit(1) from exc
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(1) from exc

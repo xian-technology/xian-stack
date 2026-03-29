@@ -1,0 +1,55 @@
+services:
+  api:
+    build:
+      context: ${XIAN_INTENTKIT_DIR}
+      dockerfile: ${XIAN_INTENTKIT_STACK_DOCKERFILE}
+      additional_contexts:
+        xian_py: ${XIAN_PY_DIR}
+        xian_accounts: ${XIAN_CONTRACTING_DIR}/packages/xian-accounts
+        xian_runtime_types: ${XIAN_CONTRACTING_DIR}/packages/xian-runtime-types
+      args:
+        RELEASE: ${XIAN_INTENTKIT_RELEASE}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${XIAN_INTENTKIT_HOST}:${XIAN_INTENTKIT_API_PORT}:8000"
+
+  autonomous:
+    build:
+      context: ${XIAN_INTENTKIT_DIR}
+      dockerfile: ${XIAN_INTENTKIT_STACK_DOCKERFILE}
+      additional_contexts:
+        xian_py: ${XIAN_PY_DIR}
+        xian_accounts: ${XIAN_CONTRACTING_DIR}/packages/xian-accounts
+        xian_runtime_types: ${XIAN_CONTRACTING_DIR}/packages/xian-runtime-types
+      args:
+        RELEASE: ${XIAN_INTENTKIT_RELEASE}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  scheduler:
+    build:
+      context: ${XIAN_INTENTKIT_DIR}
+      dockerfile: ${XIAN_INTENTKIT_STACK_DOCKERFILE}
+      additional_contexts:
+        xian_py: ${XIAN_PY_DIR}
+        xian_accounts: ${XIAN_CONTRACTING_DIR}/packages/xian-accounts
+        xian_runtime_types: ${XIAN_CONTRACTING_DIR}/packages/xian-runtime-types
+      args:
+        RELEASE: ${XIAN_INTENTKIT_RELEASE}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build:
+      context: ${XIAN_INTENTKIT_DIR}/frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://${XIAN_INTENTKIT_PUBLIC_HOST}:${XIAN_INTENTKIT_API_PORT}
+        NEXT_PUBLIC_AWS_S3_CDN_URL: http://${XIAN_INTENTKIT_PUBLIC_HOST}:${XIAN_INTENTKIT_S3_PORT}/static
+    ports:
+      - "${XIAN_INTENTKIT_HOST}:${XIAN_INTENTKIT_PORT}:3000"
+
+  rustfs:
+    ports:
+      - "${XIAN_INTENTKIT_HOST}:${XIAN_INTENTKIT_S3_PORT}:9000"

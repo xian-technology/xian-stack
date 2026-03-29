@@ -39,6 +39,8 @@ python3 ./scripts/backend.py localnet-workload --scenario counter_basic
   remains the developer and debugging surface.
 - Monitoring, dashboard, and BDS are optional stack layers. They should be easy
   to enable without becoming required to understand the core node.
+- `xian-intentkit` can be attached as another optional stack-managed service
+  without copying its compose topology into this repo.
 - Localnet and smoke flows matter as product safety nets, not just as internal
   convenience scripts.
 
@@ -56,6 +58,8 @@ python3 ./scripts/backend.py localnet-workload --scenario counter_basic
 - expose a stable machine-facing backend command surface through
   `scripts/backend.py`
 - start optional dashboard, BDS, Prometheus, and Grafana layers
+- attach a stack-managed `xian-intentkit` deployment while keeping its repo and
+  compose files independent
 - run smoke checks and CLI-driven smoke flows
 - initialize multi-node localnets and drive workload scenarios against them
 - ship monitoring dashboards and alert rules that match the validated operator
