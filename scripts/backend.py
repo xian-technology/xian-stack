@@ -387,6 +387,9 @@ def _discover_runtime_endpoints(
 
 def runtime_env(
     *,
+    node_image_mode: str,
+    node_integrated_image: str | None,
+    node_split_image: str | None,
     dashboard_enabled: bool,
     dashboard_host: str,
     dashboard_port: int,
@@ -397,6 +400,11 @@ def runtime_env(
     intentkit_api_port: int,
 ) -> dict[str, str]:
     env = os.environ.copy()
+    env["XIAN_NODE_IMAGE_MODE"] = node_image_mode
+    if node_integrated_image is not None:
+        env["XIAN_NODE_INTEGRATED_IMAGE"] = node_integrated_image
+    if node_split_image is not None:
+        env["XIAN_NODE_SPLIT_IMAGE"] = node_split_image
     env["XIAN_DASHBOARD_ENABLED"] = "1" if dashboard_enabled else "0"
     env["XIAN_DASHBOARD_HOST"] = dashboard_host
     env["XIAN_DASHBOARD_PORT"] = str(dashboard_port)
@@ -419,6 +427,16 @@ def runtime_env(
     env["XIAN_INTENTKIT_API_PORT"] = str(intentkit_api_port)
     env["XIAN_INTENTKIT_S3_PORT"] = env.get("XIAN_INTENTKIT_S3_PORT", "39000")
     return env
+
+
+def add_node_image_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--node-image-mode",
+        choices=("local_build", "registry"),
+        default="local_build",
+    )
+    parser.add_argument("--node-integrated-image")
+    parser.add_argument("--node-split-image")
 
 
 def run_python_script(
@@ -514,6 +532,9 @@ def wait_for_localnet_ready(*, timeout_seconds: float) -> list[dict]:
 
 def backend_start(
     *,
+    node_image_mode: str,
+    node_integrated_image: str | None,
+    node_split_image: str | None,
     service_node: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
@@ -535,6 +556,9 @@ def backend_start(
         "monitoring-bds-up" if service_node else "monitoring-up"
     )
     env = runtime_env(
+        node_image_mode=node_image_mode,
+        node_integrated_image=node_integrated_image,
+        node_split_image=node_split_image,
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
@@ -558,6 +582,9 @@ def backend_start(
     result = {
         "stack_dir": str(STACK_DIR),
         "service_node": service_node,
+        "node_image_mode": node_image_mode,
+        "node_integrated_image": node_integrated_image,
+        "node_split_image": node_split_image,
         "container_target": container_target,
         "node_target": node_target,
         "dashboard_enabled": dashboard_enabled,
@@ -602,6 +629,9 @@ def backend_start(
 
 def backend_stop(
     *,
+    node_image_mode: str,
+    node_integrated_image: str | None,
+    node_split_image: str | None,
     service_node: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
@@ -619,6 +649,9 @@ def backend_stop(
         "monitoring-bds-down" if service_node else "monitoring-down"
     )
     env = runtime_env(
+        node_image_mode=node_image_mode,
+        node_integrated_image=node_integrated_image,
+        node_split_image=node_split_image,
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
@@ -639,6 +672,9 @@ def backend_stop(
     return {
         "stack_dir": str(STACK_DIR),
         "service_node": service_node,
+        "node_image_mode": node_image_mode,
+        "node_integrated_image": node_integrated_image,
+        "node_split_image": node_split_image,
         "container_target": container_target,
         "dashboard_enabled": dashboard_enabled,
         "monitoring_enabled": monitoring_enabled,
@@ -651,6 +687,9 @@ def backend_stop(
 
 def backend_status(
     *,
+    node_image_mode: str,
+    node_integrated_image: str | None,
+    node_split_image: str | None,
     service_node: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
@@ -663,6 +702,9 @@ def backend_status(
     intentkit_api_port: int,
 ) -> dict:
     env = runtime_env(
+        node_image_mode=node_image_mode,
+        node_integrated_image=node_integrated_image,
+        node_split_image=node_split_image,
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
@@ -678,7 +720,13 @@ def backend_status(
     payload["dashboard_enabled"] = dashboard_enabled
     payload["monitoring_enabled"] = monitoring_enabled
     payload["intentkit_enabled"] = intentkit_enabled
+    payload["node_image_mode"] = node_image_mode
+    payload["node_integrated_image"] = node_integrated_image
+    payload["node_split_image"] = node_split_image
     endpoints = backend_endpoints(
+        node_image_mode=node_image_mode,
+        node_integrated_image=node_integrated_image,
+        node_split_image=node_split_image,
         service_node=service_node,
         dashboard_enabled=dashboard_enabled,
         monitoring_enabled=monitoring_enabled,
@@ -797,6 +845,9 @@ def backend_status(
 
 def backend_endpoints(
     *,
+    node_image_mode: str,
+    node_integrated_image: str | None,
+    node_split_image: str | None,
     service_node: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
@@ -863,6 +914,9 @@ def backend_endpoints(
     return {
         "stack_dir": str(STACK_DIR),
         "service_node": service_node,
+        "node_image_mode": node_image_mode,
+        "node_integrated_image": node_integrated_image,
+        "node_split_image": node_split_image,
         "dashboard_enabled": dashboard_enabled,
         "monitoring_enabled": monitoring_enabled,
         "intentkit_enabled": intentkit_enabled,
@@ -873,6 +927,9 @@ def backend_endpoints(
 
 def backend_health(
     *,
+    node_image_mode: str,
+    node_integrated_image: str | None,
+    node_split_image: str | None,
     service_node: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
@@ -887,6 +944,9 @@ def backend_health(
     check_disk: bool,
 ) -> dict:
     status = backend_status(
+        node_image_mode=node_image_mode,
+        node_integrated_image=node_integrated_image,
+        node_split_image=node_split_image,
         service_node=service_node,
         dashboard_enabled=dashboard_enabled,
         monitoring_enabled=monitoring_enabled,
@@ -1097,6 +1157,9 @@ def backend_health(
     payload = {
         "stack_dir": str(STACK_DIR),
         "service_node": service_node,
+        "node_image_mode": node_image_mode,
+        "node_integrated_image": node_integrated_image,
+        "node_split_image": node_split_image,
         "dashboard_enabled": dashboard_enabled,
         "monitoring_enabled": monitoring_enabled,
         "intentkit_enabled": intentkit_enabled,
@@ -1376,6 +1439,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8080,
     )
+    add_node_image_args(start)
     add_intentkit_args(start)
     start.add_argument(
         "--wait-for-health",
@@ -1417,6 +1481,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8080,
     )
+    add_node_image_args(stop)
     add_intentkit_args(stop)
 
     status = subparsers.add_parser("status")
@@ -1444,6 +1509,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8080,
     )
+    add_node_image_args(status)
     add_intentkit_args(status)
 
     endpoints = subparsers.add_parser("endpoints")
@@ -1471,6 +1537,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8080,
     )
+    add_node_image_args(endpoints)
     add_intentkit_args(endpoints)
 
     health = subparsers.add_parser("health")
@@ -1498,6 +1565,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8080,
     )
+    add_node_image_args(health)
     add_intentkit_args(health)
     health.add_argument(
         "--rpc-url",
@@ -1712,6 +1780,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "start":
         payload = backend_start(
+            node_image_mode=args.node_image_mode,
+            node_integrated_image=args.node_integrated_image,
+            node_split_image=args.node_split_image,
             service_node=args.service_node,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
@@ -1728,6 +1799,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "stop":
         payload = backend_stop(
+            node_image_mode=args.node_image_mode,
+            node_integrated_image=args.node_integrated_image,
+            node_split_image=args.node_split_image,
             service_node=args.service_node,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
@@ -1741,6 +1815,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "status":
         payload = backend_status(
+            node_image_mode=args.node_image_mode,
+            node_integrated_image=args.node_integrated_image,
+            node_split_image=args.node_split_image,
             service_node=args.service_node,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
@@ -1754,6 +1831,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "endpoints":
         payload = backend_endpoints(
+            node_image_mode=args.node_image_mode,
+            node_integrated_image=args.node_integrated_image,
+            node_split_image=args.node_split_image,
             service_node=args.service_node,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
@@ -1767,6 +1847,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "health":
         payload = backend_health(
+            node_image_mode=args.node_image_mode,
+            node_integrated_image=args.node_integrated_image,
+            node_split_image=args.node_split_image,
             service_node=args.service_node,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,

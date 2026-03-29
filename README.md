@@ -55,6 +55,8 @@ python3 ./scripts/backend.py localnet-workload --scenario counter_basic
 ## What It Can Do
 
 - build and run the local Xian runtime in `integrated` or `fidelity` topology
+- run canonical-network nodes from pinned published `xian-node` release images
+  while keeping source builds available as a local override
 - expose a stable machine-facing backend command surface through
   `scripts/backend.py`
 - start optional dashboard, BDS, Prometheus, and Grafana layers

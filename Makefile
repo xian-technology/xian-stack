@@ -26,6 +26,9 @@ XIAN_COMETBFT_VERSION ?= 0.38.21
 XIAN_S6_OVERLAY_VERSION ?= 3.2.1.0
 XIAN_S6_VERBOSITY ?= 1
 XIAN_TRACER_MODE ?= python_line_v1
+XIAN_NODE_IMAGE_MODE ?= local_build
+XIAN_NODE_INTEGRATED_IMAGE ?= xian-node-integrated:local
+XIAN_NODE_SPLIT_IMAGE ?= xian-node-split:local
 XIAN_COMETBFT_RPC_HOST ?= 0.0.0.0
 XIAN_COMETBFT_RPC_PORT ?= 26657
 XIAN_COMETBFT_P2P_HOST ?= 0.0.0.0
@@ -132,6 +135,9 @@ export XIAN_COMETBFT_VERSION := $(XIAN_COMETBFT_VERSION)
 export XIAN_S6_OVERLAY_VERSION := $(XIAN_S6_OVERLAY_VERSION)
 export XIAN_S6_VERBOSITY := $(XIAN_S6_VERBOSITY)
 export XIAN_TRACER_MODE := $(XIAN_TRACER_MODE)
+export XIAN_NODE_IMAGE_MODE := $(XIAN_NODE_IMAGE_MODE)
+export XIAN_NODE_INTEGRATED_IMAGE := $(XIAN_NODE_INTEGRATED_IMAGE)
+export XIAN_NODE_SPLIT_IMAGE := $(XIAN_NODE_SPLIT_IMAGE)
 export XIAN_COMETBFT_RPC_HOST := $(XIAN_COMETBFT_RPC_HOST)
 export XIAN_COMETBFT_RPC_PORT := $(XIAN_COMETBFT_RPC_PORT)
 export XIAN_COMETBFT_P2P_HOST := $(XIAN_COMETBFT_P2P_HOST)
@@ -218,6 +224,20 @@ ABCI_FIDELITY_COMPOSE = XIAN_SERVICE_NODE=0 $(DOCKER_COMPOSE) --profile fidelity
 ABCI_DEV_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-abci-dev.yml -f docker-compose-abci-bds.yml
 CONTRACTING_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-contracting.yml
 LOCALNET_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-localnet.yml
+NODE_UP_BUILD_FLAG = $(if $(filter registry,$(XIAN_NODE_IMAGE_MODE)),--no-build,)
+DASHBOARD_UP_BUILD_FLAG = $(if $(filter registry,$(XIAN_NODE_IMAGE_MODE)),--no-build,--build)
+
+define maybe_pull_integrated
+	@if [ "$(XIAN_NODE_IMAGE_MODE)" = "registry" ]; then \
+		$(1) pull $(2); \
+	fi
+endef
+
+define maybe_pull_fidelity
+	@if [ "$(XIAN_NODE_IMAGE_MODE)" = "registry" ]; then \
+		$(1) pull $(2); \
+	fi
+endef
 
 LOCALNET_NODES ?= 4
 LOCALNET_MEMWATCH_MINUTES ?= 10
@@ -342,6 +362,9 @@ print-env:
 	@printf "XIAN_S6_OVERLAY_VERSION=%s\n" "$(XIAN_S6_OVERLAY_VERSION)"
 	@printf "XIAN_S6_VERBOSITY=%s\n" "$(XIAN_S6_VERBOSITY)"
 	@printf "XIAN_TRACER_MODE=%s\n" "$(XIAN_TRACER_MODE)"
+	@printf "XIAN_NODE_IMAGE_MODE=%s\n" "$(XIAN_NODE_IMAGE_MODE)"
+	@printf "XIAN_NODE_INTEGRATED_IMAGE=%s\n" "$(XIAN_NODE_INTEGRATED_IMAGE)"
+	@printf "XIAN_NODE_SPLIT_IMAGE=%s\n" "$(XIAN_NODE_SPLIT_IMAGE)"
 	@printf "XIAN_APP_METRICS_ENABLED=%s\n" "$(XIAN_APP_METRICS_ENABLED)"
 	@printf "XIAN_APP_METRICS_LISTEN_HOST=%s\n" "$(XIAN_APP_METRICS_LISTEN_HOST)"
 	@printf "XIAN_APP_METRICS_HOST=%s\n" "$(XIAN_APP_METRICS_HOST)"
@@ -462,7 +485,8 @@ abci-build: prepare-dirs
 	$(ABCI_COMPOSE) build --no-cache abci
 
 abci-up: prepare-dirs
-	$(ABCI_COMPOSE) up -d abci
+	$(call maybe_pull_integrated,$(ABCI_COMPOSE),abci)
+	$(ABCI_COMPOSE) up -d $(NODE_UP_BUILD_FLAG) abci
 
 abci-down:
 	$(ABCI_COMPOSE) down --remove-orphans
@@ -471,7 +495,8 @@ abci-fidelity-build: prepare-dirs
 	$(ABCI_FIDELITY_COMPOSE) build --no-cache abci-app cometbft
 
 abci-fidelity-up: prepare-dirs
-	$(ABCI_FIDELITY_COMPOSE) up -d abci-app cometbft
+	$(call maybe_pull_fidelity,$(ABCI_FIDELITY_COMPOSE),abci-app cometbft)
+	$(ABCI_FIDELITY_COMPOSE) up -d $(NODE_UP_BUILD_FLAG) abci-app cometbft
 
 abci-fidelity-down:
 	$(ABCI_FIDELITY_COMPOSE) down --remove-orphans
@@ -480,13 +505,15 @@ dashboard-build: prepare-dirs
 	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml build --no-cache dashboard
 
 dashboard-up: prepare-dirs
-	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml up -d --build abci dashboard
+	$(call maybe_pull_integrated,$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml,abci dashboard)
+	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml up -d $(DASHBOARD_UP_BUILD_FLAG) abci dashboard
 
 dashboard-down:
 	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml rm -sf dashboard
 
 dashboard-bds-up: prepare-dirs
-	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml up -d --build abci postgres postgraphile dashboard
+	$(call maybe_pull_integrated,$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml,abci dashboard)
+	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml up -d $(DASHBOARD_UP_BUILD_FLAG) abci postgres postgraphile dashboard
 
 dashboard-bds-down:
 	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml rm -sf dashboard
@@ -495,25 +522,29 @@ dashboard-fidelity-build: prepare-dirs
 	$(DOCKER_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml build --no-cache dashboard-fidelity
 
 dashboard-fidelity-up: prepare-dirs
-	$(DOCKER_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml up -d --build abci-app cometbft dashboard-fidelity
+	$(call maybe_pull_fidelity,$(DOCKER_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml,abci-app cometbft dashboard-fidelity)
+	$(DOCKER_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml up -d $(DASHBOARD_UP_BUILD_FLAG) abci-app cometbft dashboard-fidelity
 
 dashboard-fidelity-down:
 	$(DOCKER_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml rm -sf dashboard-fidelity
 
 monitoring-up: prepare-dirs
-	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d abci prometheus grafana
+	$(call maybe_pull_integrated,XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml,abci)
+	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci prometheus grafana
 
 monitoring-down:
 	$(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
 
 monitoring-bds-up: prepare-dirs
-	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml up -d abci postgres postgraphile prometheus grafana
+	$(call maybe_pull_integrated,XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml,abci)
+	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci postgres postgraphile prometheus grafana
 
 monitoring-bds-down:
 	$(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
 
 monitoring-fidelity-up: prepare-dirs
-	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/fidelity.yml $(DOCKER_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d abci-app cometbft prometheus grafana
+	$(call maybe_pull_fidelity,XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/fidelity.yml $(DOCKER_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml,abci-app cometbft)
+	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/fidelity.yml $(DOCKER_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci-app cometbft prometheus grafana
 
 monitoring-fidelity-down:
 	$(DOCKER_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
@@ -527,7 +558,8 @@ abci-bds-build: prepare-dirs
 	$(ABCI_BDS_COMPOSE) build --no-cache abci postgres postgraphile
 
 abci-bds-up: prepare-dirs
-	$(ABCI_BDS_COMPOSE) up -d
+	$(call maybe_pull_integrated,$(ABCI_BDS_COMPOSE),abci)
+	$(ABCI_BDS_COMPOSE) up -d $(NODE_UP_BUILD_FLAG)
 
 abci-bds-down:
 	$(ABCI_BDS_COMPOSE) down --remove-orphans
@@ -551,10 +583,12 @@ node-stop:
 	$(ABCI_COMPOSE) down --remove-orphans
 
 node-start:
-	$(ABCI_COMPOSE) up -d abci
+	$(call maybe_pull_integrated,$(ABCI_COMPOSE),abci)
+	$(ABCI_COMPOSE) up -d $(NODE_UP_BUILD_FLAG) abci
 
 node-start-bds:
-	$(ABCI_BDS_COMPOSE) up -d
+	$(call maybe_pull_integrated,$(ABCI_BDS_COMPOSE),abci)
+	$(ABCI_BDS_COMPOSE) up -d $(NODE_UP_BUILD_FLAG)
 
 node-init:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci init

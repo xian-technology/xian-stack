@@ -95,6 +95,12 @@ The image workflow:
 
 Update the manifest before tagging `xian-stack` so the published image is reproducible from explicit component refs.
 
+Canonical network manifests in `xian-configs/networks/*/manifest.json` can then
+pin those published images by digest, and `xian-cli network join` will carry
+those pinned image references into generated node profiles by default. Operators
+can still override that posture and fall back to local `xian-stack` builds for
+development or custom testing.
+
 Use normal tags such as `v0.1.0` for stable image releases and prerelease tags
 such as `v0.1.0-alpha.1` while the node image line is still maturing. Tags that
 contain a hyphen are published as GitHub prereleases automatically.

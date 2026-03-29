@@ -22,7 +22,7 @@ volumes:
 services:
   abci:
     profiles: ["integrated"]
-    image: xian-node-integrated:local
+    image: ${XIAN_NODE_INTEGRATED_IMAGE:-xian-node-integrated:local}
     restart: always
     stop_grace_period: 45s
     hostname: xian-stack
@@ -58,7 +58,7 @@ services:
 
   dashboard:
     profiles: ["dashboard-integrated"]
-    image: xian-node-split:local
+    image: ${XIAN_NODE_SPLIT_IMAGE:-xian-node-split:local}
     restart: always
     init: true
     stop_grace_period: 30s
@@ -94,7 +94,7 @@ services:
 
   abci-app:
     profiles: ["fidelity"]
-    image: xian-node-split:local
+    image: ${XIAN_NODE_SPLIT_IMAGE:-xian-node-split:local}
     restart: always
     init: true
     stop_grace_period: 45s
@@ -129,7 +129,7 @@ services:
 
   cometbft:
     profiles: ["fidelity"]
-    image: xian-node-split:local
+    image: ${XIAN_NODE_SPLIT_IMAGE:-xian-node-split:local}
     restart: always
     init: true
     stop_grace_period: 45s
@@ -160,7 +160,7 @@ services:
 
   dashboard-fidelity:
     profiles: ["dashboard-fidelity"]
-    image: xian-node-split:local
+    image: ${XIAN_NODE_SPLIT_IMAGE:-xian-node-split:local}
     restart: always
     init: true
     stop_grace_period: 30s
