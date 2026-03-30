@@ -16,6 +16,10 @@ tooling behind `xian-stack`.
 - `localnet-e2e.py`: the layered 4-node end-to-end program that exercises the
   live stack phase by phase and writes artifacts under
   `.artifacts/localnet-e2e/<run-id>/`
+- `localnet-validator-governance.py`: focused validator/delegation/governance
+  exercise against a real 4-node localnet, including real duplicate-vote
+  evidence injection and announce-leave coverage, with JSON artifacts under
+  `.artifacts/localnet-validator-governance/<run-id>/`
 - `localnet-burst-test.py`, `localnet-memwatch.py`,
   `localnet-leak-hunt.py`, `localnet-perf-summary.py`: deeper runtime
   investigation helpers
@@ -31,3 +35,6 @@ tooling behind `xian-stack`.
 - `network.json` under `.localnet/` includes local-only validator private keys
   for automated governance flows. Treat it as disposable dev material and do
   not reuse it outside the local test network.
+- The validator/governance runner should be executed through `uv` with the
+  `xian-abci` project and local `xian-py` package available, for example:
+  `uv run --project ../xian-abci --with ../xian-py python3 ./scripts/localnet-validator-governance.py`
