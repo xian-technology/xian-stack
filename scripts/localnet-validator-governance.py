@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a focused validator, delegation, and governance program on a 4-node localnet."""
+"""Run a focused validator, delegation, governance, and patch program."""
 
 from __future__ import annotations
 
@@ -31,7 +31,10 @@ XIAN_ABCI_SRC = ROOT_DIR / "xian-abci" / "src"
 DEFAULT_TRANSFER_STAMPS = 2_000
 DEFAULT_TX_STAMPS = 200_000
 GOVERNANCE_TX_STAMPS = 2_000_000
-DEFAULT_LOCALNET_NODES = 4
+DEFAULT_LOCALNET_NODES = 5
+DEFAULT_GENESIS_NETWORK = "testnet"
+STATE_PATCH_DELAY_BLOCKS = 8
+STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS = 8
 LOCALNET_IMAGE_BY_TOPOLOGY = {
     "integrated": "xian-node-integrated:local",
     "fidelity": "xian-node-split:local",
@@ -122,6 +125,36 @@ def normalize_value(value: Any) -> Any:
     if isinstance(value, tuple):
         return [normalize_value(item) for item in value]
     return value
+
+
+def compute_patch_bundle_hash(payload: dict[str, Any]) -> str:
+    canonical_changes = sorted(
+        (
+            {
+                "comment": change.get("comment", ""),
+                "key": change["key"],
+                "value": change["value"],
+            }
+            for change in payload["changes"]
+        ),
+        key=lambda item: item["key"],
+    )
+    canonical_payload = {
+        "activation_height": payload["activation_height"],
+        "chain_id": payload.get("chain_id"),
+        "changes": canonical_changes,
+        "governance_contract": payload["governance_contract"],
+        "patch_id": payload["patch_id"],
+        "summary": payload.get("summary", ""),
+        "uri": payload.get("uri", ""),
+        "version": payload["version"],
+    }
+    serialized = json.dumps(
+        canonical_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def coerce_int(value: Any) -> int:
@@ -216,6 +249,7 @@ def make_localnet_env(args: argparse.Namespace) -> dict[str, str]:
     env = os.environ.copy()
     env.update(load_stack_env())
     env["XIAN_LOCALNET_TRACER_MODE"] = args.tracer_mode
+    env["XIAN_LOCALNET_GENESIS_NETWORK"] = args.genesis_network
     env["XIAN_LOCALNET_ENABLE_BDS"] = "0"
     env["XIAN_LOCALNET_PORT_OFFSET"] = str(args.port_offset)
     env["XIAN_LOCALNET_APP_LOG_LEVEL"] = args.log_level
@@ -269,6 +303,35 @@ async def fetch_json(
 ) -> dict[str, Any]:
     async with session.get(url, params=params, timeout=timeout) as response:
         return await response.json()
+
+
+async def fetch_abci_query(
+    session: aiohttp.ClientSession,
+    rpc_url: str,
+    path: str,
+    *,
+    timeout: float = 10.0,
+) -> Any:
+    encoded_path = json.dumps(path)
+    async with session.get(
+        f"{rpc_url}/abci_query",
+        params={"path": encoded_path},
+        timeout=timeout,
+    ) as response:
+        payload = await response.json()
+    abci_response = payload.get("result", {}).get("response", {})
+    if int(abci_response.get("code", 0) or 0) != 0:
+        raise RunnerError(
+            f"ABCI query failed for {path}: {abci_response.get('log')}"
+        )
+    encoded_value = abci_response.get("value")
+    if not encoded_value:
+        return None
+    decoded = base64.b64decode(encoded_value).decode("utf-8")
+    try:
+        return json.loads(decoded)
+    except json.JSONDecodeError:
+        return decoded
 
 
 def build_nodes(network: dict[str, Any]) -> list[LocalnetNode]:
@@ -429,6 +492,7 @@ class ValidatorGovernanceRunner:
         self.founder_wallet: Wallet | None = None
         self.validator_wallets: list[Wallet] = []
         self.delegator_wallet: Wallet = derive_wallet(args.seed, "validator-delegator")
+        self.probe_contract: str | None = None
 
     def client(
         self,
@@ -456,6 +520,7 @@ class ValidatorGovernanceRunner:
         env = make_localnet_env(self.args)
         outputs: dict[str, Any] = {
             "env": {
+                "XIAN_LOCALNET_GENESIS_NETWORK": env["XIAN_LOCALNET_GENESIS_NETWORK"],
                 "XIAN_LOCALNET_PORT_OFFSET": env["XIAN_LOCALNET_PORT_OFFSET"],
                 "XIAN_LOCALNET_TOPOLOGY": env["XIAN_LOCALNET_TOPOLOGY"],
                 "XIAN_LOCALNET_TRACER_MODE": env["XIAN_LOCALNET_TRACER_MODE"],
@@ -477,6 +542,17 @@ class ValidatorGovernanceRunner:
         self.validator_wallets = [
             Wallet(private_key=node.account_private_key) for node in self.nodes
         ]
+        if self.network.get("genesis_network") != self.args.genesis_network:
+            raise RunnerError(
+                "loaded localnet genesis network "
+                f"{self.network.get('genesis_network')!r} does not match "
+                f"requested {self.args.genesis_network!r}"
+            )
+        if len(self.nodes) != DEFAULT_LOCALNET_NODES:
+            raise RunnerError(
+                f"this runner expects exactly {DEFAULT_LOCALNET_NODES} validators, "
+                f"got {len(self.nodes)}"
+            )
         await wait_for_localnet_ready(
             session,
             self.nodes,
@@ -485,9 +561,20 @@ class ValidatorGovernanceRunner:
         self.write_json("network", self.network)
         outputs["network"] = {
             "chain_id": self.network["chain_id"],
+            "genesis_network": self.network.get("genesis_network"),
             "node_count": len(self.nodes),
         }
         return outputs
+
+    async def restart_localnet(self, session: aiohttp.ClientSession) -> None:
+        env = make_localnet_env(self.args)
+        run_make("localnet-down", env=env)
+        run_make("localnet-up", env=env)
+        await wait_for_localnet_ready(
+            session,
+            self.nodes,
+            timeout_seconds=self.args.rpc_timeout_seconds,
+        )
 
     async def fund_wallets(
         self,
@@ -533,9 +620,17 @@ class ValidatorGovernanceRunner:
             active_validators = await node0.call("masternodes", "get_active_validators", {})
             governance_members = await node0.call("governance", "get_members", {})
 
-        assert_equal(len(active_validators), 4, label="initial active validator count")
+        assert_equal(
+            len(active_validators),
+            DEFAULT_LOCALNET_NODES,
+            label="initial active validator count",
+        )
         assert_equal(policy["selection_mode"], "manual", label="initial selection mode")
-        assert_equal(len(governance_members), 4, label="initial governance members")
+        assert_equal(
+            len(governance_members),
+            DEFAULT_LOCALNET_NODES,
+            label="initial governance members",
+        )
 
         return {
             "nodes": node_statuses,
@@ -646,7 +741,16 @@ class ValidatorGovernanceRunner:
         )
 
         vote_receipts = []
+        proposal_final = None
         for index, (name, voter) in enumerate(voters, start=1):
+            current_proposal = await proposer.call(
+                "governance",
+                "get_proposal",
+                {"proposal_id": proposal_id},
+            )
+            if current_proposal["status"] == "executed":
+                proposal_final = current_proposal
+                break
             vote_receipts.append(
                 await self.submit_tx(
                     voter,
@@ -657,12 +761,21 @@ class ValidatorGovernanceRunner:
                     stamps=GOVERNANCE_TX_STAMPS,
                 )
             )
+            current_proposal = await proposer.call(
+                "governance",
+                "get_proposal",
+                {"proposal_id": proposal_id},
+            )
+            if current_proposal["status"] == "executed":
+                proposal_final = current_proposal
+                break
 
-        proposal_final = await self.wait_for_governance_proposal_status(
-            proposer,
-            proposal_id,
-            expected_status="executed",
-        )
+        if proposal_final is None:
+            proposal_final = await self.wait_for_governance_proposal_status(
+                proposer,
+                proposal_id,
+                expected_status="executed",
+            )
         return {
             "proposal_id": proposal_id,
             "proposal_receipt": proposal_receipt,
@@ -697,7 +810,12 @@ class ValidatorGovernanceRunner:
         )
 
         vote_receipts = []
+        proposal_final = None
         for index, (name, voter) in enumerate(voters, start=1):
+            current_vote = await proposer.get_state("masternodes", "votes", proposal_id)
+            if current_vote["status"] == "approved":
+                proposal_final = current_vote
+                break
             vote_receipts.append(
                 await self.submit_tx(
                     voter,
@@ -708,12 +826,17 @@ class ValidatorGovernanceRunner:
                     stamps=GOVERNANCE_TX_STAMPS,
                 )
             )
+            current_vote = await proposer.get_state("masternodes", "votes", proposal_id)
+            if current_vote["status"] == "approved":
+                proposal_final = current_vote
+                break
 
-        proposal_final = await self.wait_for_members_vote_status(
-            proposer,
-            proposal_id,
-            expected_status="approved",
-        )
+        if proposal_final is None:
+            proposal_final = await self.wait_for_members_vote_status(
+                proposer,
+                proposal_id,
+                expected_status="approved",
+            )
         return {
             "proposal_id": proposal_id,
             "proposal_receipt": proposal_receipt,
@@ -1012,24 +1135,40 @@ class ValidatorGovernanceRunner:
         }
 
     async def generic_governance_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
-        node0_wallet, node1_wallet, node2_wallet, node3_wallet = self.validator_wallets
+        (
+            node0_wallet,
+            node1_wallet,
+            node2_wallet,
+            node3_wallet,
+            node4_wallet,
+        ) = self.validator_wallets
         funding = await self.fund_wallets(
             session,
-            [node0_wallet, node1_wallet, node2_wallet, node3_wallet],
+            [
+                node0_wallet,
+                node1_wallet,
+                node2_wallet,
+                node3_wallet,
+                node4_wallet,
+            ],
             amount=2_000_000,
         )
         async with self.client(node0_wallet, 0, session) as node0, self.client(
             node1_wallet, 1, session
         ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
             node3_wallet, 3, session
-        ) as node3:
+        ) as node3, self.client(node4_wallet, 4, session) as node4:
             probe_contract = f"con_governance_probe_{short_hash(self.run_id)}"
             probe_code = """
 value = Variable()
+mode = Variable()
+patch_count = Variable()
 
 @construct
 def seed():
     value.set(0)
+    mode.set("live")
+    patch_count.set(0)
 
 @export
 def set_value(new_value: int):
@@ -1038,6 +1177,14 @@ def set_value(new_value: int):
 @export
 def get_value():
     return value.get()
+
+@export
+def get_status():
+    return {
+        "value": value.get(),
+        "mode": mode.get(),
+        "patch_count": patch_count.get(),
+    }
 """.strip()
             deploy_submission = await node0.submit_contract(
                 name=probe_contract,
@@ -1053,7 +1200,12 @@ def get_value():
             next_value = 42 if original_value != 42 else 43
             approval = await self.approve_governance_contract_call(
                 node0,
-                [("node1", node1), ("node2", node2), ("node3", node3)],
+                [
+                    ("node1", node1),
+                    ("node2", node2),
+                    ("node3", node3),
+                    ("node4", node4),
+                ],
                 target_contract=probe_contract,
                 target_function="set_value",
                 kwargs={"new_value": next_value},
@@ -1062,6 +1214,7 @@ def get_value():
             )
             updated_value = coerce_int(await node0.get_state(probe_contract, "value"))
             assert_equal(updated_value, next_value, label="updated governance probe value")
+            self.probe_contract = probe_contract
 
         return {
             "funding": funding,
@@ -1072,13 +1225,190 @@ def get_value():
             "approval": approval,
         }
 
+    async def state_patch_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
+        if self.network is None:
+            raise RunnerError("network is not initialized")
+        if self.probe_contract is None:
+            raise RunnerError("governance probe contract is not initialized")
+
+        current_height = await latest_height(session, self.nodes[0].rpc_url)
+        governance_min_patch_delay = await fetch_abci_query(
+            session,
+            self.nodes[0].rpc_url,
+            "/get/governance.metadata:min_patch_delay_blocks",
+        )
+        if governance_min_patch_delay is None:
+            governance_min_patch_delay = STATE_PATCH_DELAY_BLOCKS
+        activation_height = current_height + max(
+            int(governance_min_patch_delay) + STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS,
+            STATE_PATCH_DELAY_BLOCKS,
+        )
+        patch_id = f"localnet-validator-governance-{short_hash(self.run_id)}"
+        bundle_payload = {
+            "version": 1,
+            "patch_id": patch_id,
+            "activation_height": activation_height,
+            "governance_contract": "governance",
+            "summary": "Validator governance localnet state patch exercise",
+            "uri": "local://localnet-validator-governance",
+            "chain_id": self.network["chain_id"],
+            "changes": [
+                {
+                    "key": f"{self.probe_contract}.mode",
+                    "value": "patched",
+                    "comment": "switch governance probe into patched mode",
+                },
+                {
+                    "key": f"{self.probe_contract}.patch_count",
+                    "value": 1,
+                    "comment": "record a single applied patch",
+                },
+            ],
+        }
+        bundle_payload["bundle_hash"] = compute_patch_bundle_hash(bundle_payload)
+
+        for node in self.nodes:
+            patch_dir = (
+                STACK_DIR
+                / ".localnet"
+                / node.moniker
+                / ".cometbft"
+                / "config"
+                / "state-patches"
+            )
+            patch_dir.mkdir(parents=True, exist_ok=True)
+            (patch_dir / f"{patch_id}.json").write_text(
+                json.dumps(bundle_payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+        await self.restart_localnet(session)
+
+        (
+            node0_wallet,
+            node1_wallet,
+            node2_wallet,
+            node3_wallet,
+            _node4_wallet,
+        ) = self.validator_wallets
+        async with self.client(node0_wallet, 0, session) as node0, self.client(
+            node1_wallet, 1, session
+        ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
+            node3_wallet, 3, session
+        ) as node3:
+            proposal = await node0.send_tx(
+                "governance",
+                "propose_state_patch",
+                {
+                    "patch_id": patch_id,
+                    "bundle_hash": bundle_payload["bundle_hash"],
+                    "activation_height": activation_height,
+                    "summary": bundle_payload["summary"],
+                    "uri": bundle_payload["uri"],
+                    "emergency": False,
+                },
+                stamps=GOVERNANCE_TX_STAMPS,
+                wait_for_tx=True,
+            )
+            proposal_receipt = ensure_positive_submission(
+                proposal,
+                label="state-patch-propose",
+            )
+            proposal_id = coerce_int(await node0.get_state("governance", "proposal_count"))
+            vote_receipts = []
+            for client, label in (
+                (node1, "state-patch-vote-1"),
+                (node2, "state-patch-vote-2"),
+                (node3, "state-patch-vote-3"),
+            ):
+                submission = await client.send_tx(
+                    "governance",
+                    "vote",
+                    {"proposal_id": proposal_id, "support": True},
+                    stamps=GOVERNANCE_TX_STAMPS,
+                    wait_for_tx=True,
+                )
+                vote_receipts.append(
+                    ensure_positive_submission(submission, label=label)
+                )
+            proposal_final = await self.wait_for_governance_proposal_status(
+                node0,
+                proposal_id,
+                expected_status="approved",
+            )
+
+        current_height = await latest_height(session, self.nodes[0].rpc_url)
+        activation_wait_timeout = max(
+            120.0,
+            float(max((activation_height + 1) - current_height, 1) * 8),
+        )
+        await wait_for_height(
+            session,
+            self.nodes[0].rpc_url,
+            activation_height + 1,
+            timeout_seconds=activation_wait_timeout,
+        )
+
+        async with self.client(node0_wallet, 0, session) as node0:
+            patch_status = await node0.call(
+                "governance",
+                "get_patch",
+                {"patch_id": patch_id},
+            )
+            probe_status = await node0.call(
+                self.probe_contract,
+                "get_status",
+                {},
+            )
+
+        local_bundles = await fetch_abci_query(
+            session,
+            self.nodes[0].rpc_url,
+            "/state_patch_bundles",
+        )
+        scheduled_inventory = await fetch_abci_query(
+            session,
+            self.nodes[0].rpc_url,
+            f"/scheduled_state_patches/{activation_height}",
+        )
+
+        assert_equal(
+            probe_status["mode"],
+            "patched",
+            label="state patch updated probe mode",
+        )
+        assert_equal(
+            probe_status["patch_count"],
+            1,
+            label="state patch updated probe patch_count",
+        )
+
+        return {
+            "bundle": bundle_payload,
+            "governance_min_patch_delay": governance_min_patch_delay,
+            "activation_wait_timeout_seconds": activation_wait_timeout,
+            "proposal_receipt": proposal_receipt,
+            "vote_receipts": vote_receipts,
+            "proposal_final": proposal_final,
+            "governance_patch": patch_status,
+            "probe_status": probe_status,
+            "local_bundle_inventory": normalize_value(local_bundles),
+            "scheduled_inventory": normalize_value(scheduled_inventory),
+        }
+
     async def manual_members_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
-        node0_wallet, node1_wallet, node2_wallet, node3_wallet = self.validator_wallets
+        (
+            node0_wallet,
+            node1_wallet,
+            node2_wallet,
+            node3_wallet,
+            node4_wallet,
+        ) = self.validator_wallets
         node3_key = self.nodes[3].account_public_key
 
         await self.fund_wallets(
             session,
-            [node1_wallet, node2_wallet, node3_wallet],
+            [node1_wallet, node2_wallet, node3_wallet, node4_wallet],
             amount=500_000,
         )
 
@@ -1086,10 +1416,15 @@ def get_value():
             node1_wallet, 1, session
         ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
             node3_wallet, 3, session
-        ) as node3:
+        ) as node3, self.client(node4_wallet, 4, session) as node4:
             set_power = await self.approve_members_vote(
                 node0,
-                [("node1", node1), ("node2", node2), ("node3", node3)],
+                [
+                    ("node1", node1),
+                    ("node2", node2),
+                    ("node3", node3),
+                    ("node4", node4),
+                ],
                 type_of_vote="set_member_power",
                 arg={"member": node3_key, "power": 15},
                 label_prefix="manual-set-member-power",
@@ -1114,7 +1449,7 @@ def get_value():
             )
             live_after_power = await self.wait_for_validator_count(
                 session,
-                expected_count=4,
+                expected_count=5,
             )
             assert_true(
                 any(15 in snapshot["powers"] for snapshot in live_after_power),
@@ -1123,14 +1458,19 @@ def get_value():
 
             remove_member = await self.approve_members_vote(
                 node0,
-                [("node1", node1), ("node2", node2), ("node3", node3)],
+                [
+                    ("node1", node1),
+                    ("node2", node2),
+                    ("node3", node3),
+                    ("node4", node4),
+                ],
                 type_of_vote="remove_member",
                 arg=node3_key,
                 label_prefix="manual-remove-member",
             )
             live_after_remove = await self.wait_for_validator_count(
                 session,
-                expected_count=3,
+                expected_count=4,
             )
             validator_after_remove = await node0.call(
                 "masternodes",
@@ -1195,14 +1535,14 @@ def get_value():
 
             add_member = await self.approve_members_vote(
                 node0,
-                [("node1", node1), ("node2", node2)],
+                [("node1", node1), ("node2", node2), ("node4", node4)],
                 type_of_vote="add_member",
                 arg=node3_key,
                 label_prefix="manual-add-member",
             )
             live_after_readd = await self.wait_for_validator_count(
                 session,
-                expected_count=4,
+                expected_count=5,
             )
             validator_after_readd = await node0.call(
                 "masternodes",
@@ -1237,7 +1577,13 @@ def get_value():
         }
 
     async def auto_delegation_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
-        node0_wallet, node1_wallet, node2_wallet, node3_wallet = self.validator_wallets
+        (
+            node0_wallet,
+            node1_wallet,
+            node2_wallet,
+            node3_wallet,
+            node4_wallet,
+        ) = self.validator_wallets
         await self.fund_wallets(
             session,
             [self.delegator_wallet],
@@ -1248,13 +1594,16 @@ def get_value():
             node1_wallet, 1, session
         ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
             node3_wallet, 3, session
-        ) as node3, self.client(self.delegator_wallet, 0, session) as delegator:
+        ) as node3, self.client(node4_wallet, 4, session) as node4, self.client(
+            self.delegator_wallet, 0, session
+        ) as delegator:
             approvals = []
             for name, client in (
                 ("node0", node0),
                 ("node1", node1),
                 ("node2", node2),
                 ("node3", node3),
+                ("node4", node4),
             ):
                 approvals.append(
                     await self.submit_tx(
@@ -1295,11 +1644,23 @@ def get_value():
                     {"amount": 100},
                     label="bond-self-node3",
                 ),
+                await self.submit_tx(
+                    node4,
+                    "masternodes",
+                    "bond_self",
+                    {"amount": 50},
+                    label="bond-self-node4",
+                ),
             ]
 
             policy_update = await self.approve_members_vote(
                 node0,
-                [("node1", node1), ("node2", node2), ("node3", node3)],
+                [
+                    ("node1", node1),
+                    ("node2", node2),
+                    ("node3", node3),
+                    ("node4", node4),
+                ],
                 type_of_vote="update_policy",
                 arg={
                     "selection_mode": "auto_top_n",
@@ -1978,13 +2339,14 @@ def get_value():
                 expected_accounts=[
                     self.nodes[0].account_public_key,
                     self.nodes[2].account_public_key,
+                    self.nodes[4].account_public_key,
                 ],
                 timeout_seconds=30.0,
                 label="active set after announce_leave rebalance",
             )
             live_after_rebalance = await self.wait_for_validator_count(
                 session,
-                expected_count=2,
+                expected_count=3,
             )
             validator_after_rebalance = await node0.call(
                 "masternodes",
@@ -2031,24 +2393,27 @@ def get_value():
             self.write_json("01-health", summary["health"])
             summary["generic_governance"] = await self.generic_governance_phase(session)
             self.write_json("02-generic-governance", summary["generic_governance"])
+            summary["state_patch"] = await self.state_patch_phase(session)
+            self.write_json("03-state-patch", summary["state_patch"])
             summary["manual_members"] = await self.manual_members_phase(session)
-            self.write_json("03-manual-members", summary["manual_members"])
+            self.write_json("04-manual-members", summary["manual_members"])
             summary["auto_delegation"] = await self.auto_delegation_phase(session)
-            self.write_json("04-auto-delegation", summary["auto_delegation"])
+            self.write_json("05-auto-delegation", summary["auto_delegation"])
             summary["hybrid"] = await self.hybrid_phase(session)
-            self.write_json("05-hybrid", summary["hybrid"])
+            self.write_json("06-hybrid", summary["hybrid"])
             summary["evidence"] = await self.evidence_phase(session)
-            self.write_json("06-evidence", summary["evidence"])
+            self.write_json("07-evidence", summary["evidence"])
             summary["leave_announcement"] = await self.leave_announcement_phase(session)
-            self.write_json("07-leave-announcement", summary["leave_announcement"])
+            self.write_json("08-leave-announcement", summary["leave_announcement"])
             summary["ended_at"] = datetime.now(UTC).isoformat()
             summary["coverage_notes"] = [
                 "Covered: generic governance contract calls and proposal voting.",
+                "Covered: bundle-backed governance state-patch approval, scheduling, activation, and on-disk patch inventory.",
                 "Covered: manual validator votes, removal, registration update, and re-addition.",
                 "Covered: self-bonding, delegation, reward-distribution getters, auto_top_n rebalancing, jail, unjail, slash, undelegate, claim_unbond, and hybrid approval gating.",
                 "Covered: real CometBFT duplicate-vote evidence broadcast and ABCI-driven slashing/jailing with active-set replacement.",
-                "Covered: announce_leave, enforced delay on immediate leave, and validator-set rebalance while leave is pending.",
-                "Not covered: delayed leave completion after the full 7-day waiting period, generic governance state-patch application, and real light-client-attack evidence.",
+                "Covered: announce_leave, enforced delay on immediate leave, and validator-set rebalance while leave is pending, including standby validator promotion.",
+                "Not covered: delayed leave completion after the full 7-day waiting period and real light-client-attack evidence.",
             ]
             self.write_json("summary", summary)
             return summary
@@ -2057,16 +2422,21 @@ def get_value():
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Run a focused validator/governance exercise against a disposable 4-node localnet."
+            "Run a focused validator/governance exercise against a disposable 5-validator localnet."
         )
     )
-    parser.add_argument("--seed", default="validator-governance-localnet")
+    parser.add_argument("--seed", default="xian-localnet-testnet-governance-v1")
     parser.add_argument("--nodes", type=int, default=DEFAULT_LOCALNET_NODES)
     parser.add_argument("--port-offset", type=int, default=1000)
     parser.add_argument(
         "--topology",
         choices=sorted(LOCALNET_IMAGE_BY_TOPOLOGY),
         default="integrated",
+    )
+    parser.add_argument(
+        "--genesis-network",
+        default=DEFAULT_GENESIS_NETWORK,
+        help="contract bundle preset used to seed localnet genesis",
     )
     parser.add_argument("--tracer-mode", default="native_instruction_v1")
     parser.add_argument("--log-level", default="INFO")

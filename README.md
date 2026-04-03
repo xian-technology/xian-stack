@@ -31,6 +31,22 @@ python3 ./scripts/backend.py localnet-up --wait-for-health --rpc-timeout-seconds
 python3 ./scripts/backend.py localnet-workload --scenario counter_basic
 ```
 
+Run the richer 5-validator testnet-shaped governance exercise:
+
+```bash
+make localnet-validator-governance
+```
+
+Run the broader layered 5-validator e2e harness:
+
+```bash
+make localnet-e2e
+```
+
+The `localnet-e2e` harness now also validates direct `currency.approve` /
+`transfer_from` behavior and the `permit_authorizer -> approve_from_authorizer`
+path against the same 5-validator `testnet`-shaped network.
+
 ## Principles
 
 - `xian-stack` owns runtime plumbing, images, and smoke-tested local flows.

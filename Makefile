@@ -5,6 +5,7 @@ XIAN_ABCI_DIR ?= ../xian-abci
 XIAN_CONFIGS_DIR ?= ../xian-configs
 XIAN_CONTRACTING_DIR ?= ../xian-contracting
 XIAN_PY_DIR ?= ../xian-py
+XIAN_STACK_PYTHON ?= 3.14
 XIAN_COMETBFT_HOME ?= ./.cometbft
 XIAN_BDS_DATA_DIR ?= ./.bds.db
 XIAN_BDS_HOST ?= postgres
@@ -89,6 +90,7 @@ XIAN_DOCKER_POSTGRAPHILE_PIDS_LIMIT ?= 256
 XIAN_DOCKER_POSTGRAPHILE_NOFILE_SOFT ?= 65536
 XIAN_DOCKER_POSTGRAPHILE_NOFILE_HARD ?= 65536
 XIAN_LOCALNET_TOPOLOGY ?= integrated
+XIAN_LOCALNET_GENESIS_NETWORK ?= local
 XIAN_LOCALNET_TRACER_MODE ?= $(XIAN_TRACER_MODE)
 XIAN_LOCALNET_NODE_MEMORY_LIMIT ?= 1536m
 XIAN_LOCALNET_NODE_MEMORY_RESERVATION ?= 1024m
@@ -240,6 +242,7 @@ define maybe_pull_fidelity
 endef
 
 LOCALNET_NODES ?= 4
+LOCALNET_BUILD_SERVICE ?= $(if $(filter integrated,$(XIAN_LOCALNET_TOPOLOGY)),node-0,node-0-abci)
 LOCALNET_MEMWATCH_MINUTES ?= 10
 LOCALNET_LEAK_HUNT_MINUTES ?= 10
 LOCALNET_COUNTER_OPS ?= 180
@@ -253,18 +256,28 @@ LOCALNET_RECEIPT_WORKERS ?= 16
 LOCALNET_WORKLOAD_MEASURE_MEMORY ?= 1
 LOCALNET_E2E_BOOTSTRAP ?= 1
 LOCALNET_E2E_BUILD ?= 1
+LOCALNET_E2E_NODES ?= 5
+LOCALNET_E2E_GENESIS_NETWORK ?= testnet
 LOCALNET_E2E_BDS_NODE_INDEX ?= 0
 LOCALNET_E2E_PORT_OFFSET ?= 1000
-LOCALNET_E2E_SEED ?= xian-localnet-e2e-v1
+LOCALNET_E2E_SEED ?= xian-localnet-testnet-e2e-v1
 LOCALNET_E2E_LOG_LEVEL ?= INFO
 LOCALNET_E2E_RPC_TIMEOUT_SECONDS ?= 180
-LOCALNET_E2E_STATE_SAMPLE_NODES ?= 4
-LOCALNET_E2E_APP_HASH_WINDOW ?= 4
+LOCALNET_E2E_STATE_SAMPLE_NODES ?= 5
+LOCALNET_E2E_APP_HASH_WINDOW ?= 5
 LOCALNET_E2E_RECEIPT_WORKERS ?= 24
 LOCALNET_E2E_PERIODIC_ROUNDS ?= 8
 LOCALNET_E2E_PERIODIC_INTERVAL_SECONDS ?= 0.35
 LOCALNET_E2E_BURST_COUNTER_OPS ?= 260
 LOCALNET_E2E_DEX_ROUNDS ?= 8
+LOCALNET_VALIDATOR_GOVERNANCE_BOOTSTRAP ?= 1
+LOCALNET_VALIDATOR_GOVERNANCE_BUILD ?= 0
+LOCALNET_VALIDATOR_GOVERNANCE_NODES ?= 5
+LOCALNET_VALIDATOR_GOVERNANCE_PORT_OFFSET ?= 1000
+LOCALNET_VALIDATOR_GOVERNANCE_SEED ?= xian-localnet-testnet-governance-v1
+LOCALNET_VALIDATOR_GOVERNANCE_LOG_LEVEL ?= INFO
+LOCALNET_VALIDATOR_GOVERNANCE_RPC_TIMEOUT_SECONDS ?= 180
+LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK ?= testnet
 
 .DEFAULT_GOAL := help
 
@@ -280,7 +293,7 @@ LOCALNET_E2E_DEX_ROUNDS ?= 8
 	node-status node-status-fidelity \
 	storage-report \
 	localnet-init localnet-build localnet-up localnet-down localnet-status \
-	localnet-workload localnet-burst localnet-memwatch localnet-leak-hunt localnet-e2e \
+	localnet-workload localnet-burst localnet-memwatch localnet-leak-hunt localnet-e2e localnet-validator-governance \
 	localnet-clean localnet-logs localnet-shell
 
 help:
@@ -331,7 +344,8 @@ help:
 	@printf "  %-24s %s\n" "localnet-burst" "Drive the legacy counter_basic workload alias"
 	@printf "  %-24s %s\n" "localnet-memwatch" "Sample container memory during localnet tx load"
 	@printf "  %-24s %s\n" "localnet-leak-hunt" "Split localnet memory growth by process"
-	@printf "  %-24s %s\n" "localnet-e2e" "Run the full layered 4-node localnet end-to-end program"
+	@printf "  %-24s %s\n" "localnet-e2e" "Run the full layered 5-validator testnet-shaped localnet end-to-end program"
+	@printf "  %-24s %s\n" "localnet-validator-governance" "Run the 5-validator testnet-shaped governance/state-patch exercise"
 	@printf "  %-24s %s\n" "localnet-logs" "Tail logs from all nodes"
 	@printf "  %-24s %s\n" "localnet-shell" "Open a shell in node-0"
 	@printf "  %-24s %s\n" "localnet-clean" "Stop nodes and delete all localnet data"
@@ -612,10 +626,10 @@ storage-report:
 # ── Localnet (multi-node) ────────────────────────────────────────────
 
 localnet-init:
-	uv run --project "$(XIAN_ABCI_DIR)" python3 ./scripts/localnet-init.py --nodes $(LOCALNET_NODES) --topology $(XIAN_LOCALNET_TOPOLOGY) --clean
+	uv run --project "$(XIAN_ABCI_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-init.py --nodes $(LOCALNET_NODES) --topology $(XIAN_LOCALNET_TOPOLOGY) --genesis-network "$(XIAN_LOCALNET_GENESIS_NETWORK)" --clean
 
 localnet-build:
-	$(LOCALNET_COMPOSE) build
+	$(LOCALNET_COMPOSE) build $(LOCALNET_BUILD_SERVICE)
 
 localnet-up:
 	@if [ ! -f docker-compose-localnet.yml ]; then \
@@ -632,7 +646,7 @@ localnet-status:
 	@./scripts/localnet-status.sh
 
 localnet-workload:
-	uv run --project "$(XIAN_PY_DIR)" python3 ./scripts/localnet-workload.py \
+	uv run --project "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-workload.py \
 		--scenario "$(LOCALNET_WORKLOAD_SCENARIO)" \
 		--seed "$(LOCALNET_WORKLOAD_SEED)" \
 		--counter-ops $(LOCALNET_COUNTER_OPS) \
@@ -644,7 +658,7 @@ localnet-workload:
 		$(if $(filter 0,$(LOCALNET_WORKLOAD_MEASURE_MEMORY)),--no-measure-memory,--measure-memory)
 
 localnet-burst:
-	uv run --project "$(XIAN_PY_DIR)" python3 ./scripts/localnet-workload.py \
+	uv run --project "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-workload.py \
 		--scenario counter_basic \
 		--seed "$(LOCALNET_WORKLOAD_SEED)" \
 		--counter-ops $(LOCALNET_COUNTER_OPS) \
@@ -655,17 +669,18 @@ localnet-burst:
 		$(if $(filter 0,$(LOCALNET_WORKLOAD_MEASURE_MEMORY)),--no-measure-memory,--measure-memory)
 
 localnet-memwatch:
-	uv run --project "$(XIAN_PY_DIR)" python3 ./scripts/localnet-memwatch.py $(LOCALNET_MEMWATCH_MINUTES)
+	uv run --project "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-memwatch.py $(LOCALNET_MEMWATCH_MINUTES)
 
 localnet-leak-hunt:
-	uv run --project "$(XIAN_PY_DIR)" python3 ./scripts/localnet-leak-hunt.py $(LOCALNET_LEAK_HUNT_MINUTES)
+	uv run --project "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-leak-hunt.py $(LOCALNET_LEAK_HUNT_MINUTES)
 
 localnet-e2e:
-	uv run --project "$(XIAN_PY_DIR)" python3 ./scripts/localnet-e2e.py \
+	uv run --project "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-e2e.py \
 		$(if $(filter 0,$(LOCALNET_E2E_BOOTSTRAP)),--no-bootstrap,--bootstrap) \
 		$(if $(filter 1,$(LOCALNET_E2E_BUILD)),--build,--no-build) \
-		--nodes $(LOCALNET_NODES) \
+		--nodes $(LOCALNET_E2E_NODES) \
 		--topology "$(XIAN_LOCALNET_TOPOLOGY)" \
+		--genesis-network "$(LOCALNET_E2E_GENESIS_NETWORK)" \
 		--bds-node-index $(LOCALNET_E2E_BDS_NODE_INDEX) \
 		--port-offset $(LOCALNET_E2E_PORT_OFFSET) \
 		--seed "$(LOCALNET_E2E_SEED)" \
@@ -678,6 +693,19 @@ localnet-e2e:
 		--periodic-interval-seconds $(LOCALNET_E2E_PERIODIC_INTERVAL_SECONDS) \
 		--burst-counter-ops $(LOCALNET_E2E_BURST_COUNTER_OPS) \
 		--dex-rounds $(LOCALNET_E2E_DEX_ROUNDS)
+
+localnet-validator-governance:
+	uv run --project "$(XIAN_ABCI_DIR)" --with "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-validator-governance.py \
+		$(if $(filter 0,$(LOCALNET_VALIDATOR_GOVERNANCE_BOOTSTRAP)),--no-bootstrap,--bootstrap) \
+		$(if $(filter 1,$(LOCALNET_VALIDATOR_GOVERNANCE_BUILD)),--build,--no-build) \
+		--nodes $(LOCALNET_VALIDATOR_GOVERNANCE_NODES) \
+		--topology "$(XIAN_LOCALNET_TOPOLOGY)" \
+		--genesis-network "$(LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK)" \
+		--port-offset $(LOCALNET_VALIDATOR_GOVERNANCE_PORT_OFFSET) \
+		--seed "$(LOCALNET_VALIDATOR_GOVERNANCE_SEED)" \
+		--tracer-mode "$(XIAN_LOCALNET_TRACER_MODE)" \
+		--log-level "$(LOCALNET_VALIDATOR_GOVERNANCE_LOG_LEVEL)" \
+		--rpc-timeout-seconds $(LOCALNET_VALIDATOR_GOVERNANCE_RPC_TIMEOUT_SECONDS)
 
 localnet-logs:
 	$(LOCALNET_COMPOSE) logs -f --tail=50

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a layered 4-node localnet end-to-end program against real services."""
+"""Run a layered 5-validator testnet-shaped localnet e2e program."""
 
 from __future__ import annotations
 
@@ -15,12 +15,14 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import aiohttp
+from governance_vote_helpers import cast_votes_until_status, wait_for_status
+from state_convergence_helpers import wait_for_uniform_state
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent
@@ -34,6 +36,8 @@ XIAN_ZK_PYTHON_DIR = (
 )
 XIAN_ABCI_SRC = ROOT_DIR / "xian-abci" / "src"
 RUST_TRACER_MODE = "native_instruction_v1"
+DEFAULT_LOCALNET_NODES = 5
+DEFAULT_GENESIS_NETWORK = "testnet"
 DEFAULT_TX_STAMPS = 15_000
 DEFAULT_TRANSFER_STAMPS = 2_000
 GOVERNANCE_TX_STAMPS = 200_000
@@ -53,6 +57,7 @@ SHIELDED_TX_STAMPS = {
     "transfer": 10_000_000,
     "withdraw": 8_000_000,
 }
+CURRENT_UV_PYTHON = f"{sys.version_info.major}.{sys.version_info.minor}"
 
 sys.path.append(str(XIAN_ZK_PYTHON_DIR))
 sys.path.append(str(XIAN_ABCI_SRC))
@@ -179,6 +184,7 @@ def make_localnet_env(args: argparse.Namespace) -> dict[str, str]:
     env = os.environ.copy()
     env.update(load_stack_env())
     env["XIAN_LOCALNET_TRACER_MODE"] = RUST_TRACER_MODE
+    env["XIAN_LOCALNET_GENESIS_NETWORK"] = args.genesis_network
     env["XIAN_LOCALNET_ENABLE_BDS"] = "1"
     env["XIAN_LOCALNET_BDS_NODE_INDEX"] = str(args.bds_node_index)
     env["XIAN_LOCALNET_PORT_OFFSET"] = str(args.port_offset)
@@ -197,14 +203,48 @@ def run_cmd(
     env: dict[str, str] | None = None,
     capture_output: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        cmd,
-        cwd=cwd,
-        env=env,
-        check=True,
-        capture_output=capture_output,
-        text=True,
-    )
+    try:
+        return subprocess.run(
+            cmd,
+            cwd=cwd,
+            env=env,
+            check=True,
+            capture_output=capture_output,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise E2EError(format_subprocess_error(exc)) from exc
+
+
+def format_subprocess_error(
+    exc: subprocess.CalledProcessError,
+    *,
+    max_lines: int = 80,
+) -> str:
+    command = exc.cmd
+    if isinstance(command, (list, tuple)):
+        command_str = " ".join(str(part) for part in command)
+    else:
+        command_str = str(command)
+
+    def tail(text: str | None) -> str:
+        if not text:
+            return ""
+        lines = text.strip().splitlines()
+        if len(lines) <= max_lines:
+            return "\n".join(lines)
+        return "\n".join(
+            ["..."] + lines[-max_lines:]
+        )
+
+    lines = [f"command failed with exit code {exc.returncode}: {command_str}"]
+    stdout_tail = tail(exc.stdout)
+    stderr_tail = tail(exc.stderr)
+    if stdout_tail:
+        lines.extend(["", "stdout (tail):", stdout_tail])
+    if stderr_tail:
+        lines.extend(["", "stderr (tail):", stderr_tail])
+    return "\n".join(lines)
 
 
 def run_make(target: str, *, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -253,6 +293,22 @@ async def fetch_abci_query(
 
 def short_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+
+
+def construct_token_permit_message(
+    *,
+    token_contract: str,
+    owner: str,
+    spender: str,
+    value: int | float,
+    deadline: str,
+    authorizer_contract: str,
+    chain_id: str,
+) -> str:
+    return (
+        f"{token_contract}:{owner}:{spender}:{value}:{deadline}:"
+        f"{authorizer_contract}:{chain_id}"
+    )
 
 
 def build_nodes(network: dict[str, Any]) -> list[LocalnetNode]:
@@ -325,6 +381,18 @@ async def latest_height(
 ) -> int:
     payload = await fetch_json(session, f"{rpc_url}/status", timeout=5.0)
     return int(payload["result"]["sync_info"]["latest_block_height"])
+
+
+async def latest_heights(
+    session: aiohttp.ClientSession,
+    nodes: list[LocalnetNode],
+) -> dict[str, int]:
+    heights = await asyncio.gather(
+        *(latest_height(session, node.rpc_url) for node in nodes)
+    )
+    return {
+        node.moniker: height for node, height in zip(nodes, heights, strict=True)
+    }
 
 
 async def wait_for_bds_indexed(
@@ -493,10 +561,43 @@ async def query_state_from_all_nodes(
     path = f"/get/{contract}.{variable}"
     if keys:
         path = f"{path}:{':'.join(keys)}"
-    results: dict[str, Any] = {}
-    for node in nodes:
-        results[node.moniker] = await fetch_abci_query(session, node.rpc_url, path)
-    return results
+    values = await asyncio.gather(
+        *(fetch_abci_query(session, node.rpc_url, path) for node in nodes)
+    )
+    return {
+        node.moniker: value for node, value in zip(nodes, values, strict=True)
+    }
+
+
+async def wait_for_uniform_node_state(
+    session: aiohttp.ClientSession,
+    nodes: list[LocalnetNode],
+    *,
+    contract: str,
+    variable: str,
+    label: str,
+    expected: Any,
+    keys: list[str] | None = None,
+    timeout_seconds: float = 30.0,
+) -> dict[str, str]:
+    try:
+        return await wait_for_uniform_state(
+            fetch_values=lambda: query_state_from_all_nodes(
+                session,
+                nodes,
+                contract=contract,
+                variable=variable,
+                keys=keys,
+            ),
+            fetch_heights=lambda: latest_heights(session, nodes),
+            label=label,
+            normalize_value=normalize_value,
+            expected=expected,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=0.25,
+        )
+    except RuntimeError as exc:
+        raise E2EError(str(exc)) from exc
 
 
 async def fetch_json(
@@ -710,6 +811,17 @@ class E2ERunner:
         self.validator_wallets = [
             Wallet(private_key=node.account_private_key) for node in self.nodes
         ]
+        if len(self.nodes) != DEFAULT_LOCALNET_NODES:
+            raise E2EError(
+                f"resume context has {len(self.nodes)} validators; expected "
+                f"{DEFAULT_LOCALNET_NODES}"
+            )
+        if self.network.get("genesis_network") != DEFAULT_GENESIS_NETWORK:
+            raise E2EError(
+                "resume context genesis network "
+                f"{self.network.get('genesis_network')!r} does not match "
+                f"{DEFAULT_GENESIS_NETWORK!r}"
+            )
         completed_phase_names = set(
             self.phase_names()[: self.phase_names().index(self.args.start_phase)]
         )
@@ -775,6 +887,188 @@ class E2ERunner:
         self.write_phase(phase)
         return details
 
+    async def submit_tx(
+        self,
+        client: XianAsync,
+        contract: str,
+        function: str,
+        kwargs: dict[str, Any],
+        *,
+        label: str,
+        stamps: int = DEFAULT_TX_STAMPS,
+    ) -> dict[str, Any]:
+        submission = await client.send_tx(
+            contract,
+            function,
+            kwargs,
+            stamps=stamps,
+            wait_for_tx=True,
+        )
+        return ensure_positive_submission(submission, label=label)
+
+    async def wait_for_governance_proposal_status(
+        self,
+        client: XianAsync,
+        proposal_id: int,
+        *,
+        expected_status: str,
+        timeout_seconds: float = 15.0,
+    ) -> dict[str, Any]:
+        try:
+            return await wait_for_status(
+                lambda: client.call(
+                    "governance",
+                    "get_proposal",
+                    {"proposal_id": proposal_id},
+                ),
+                expected_status=expected_status,
+                label=f"governance proposal {proposal_id}",
+                timeout_seconds=timeout_seconds,
+            )
+        except RuntimeError as exc:
+            raise E2EError(str(exc)) from exc
+
+    async def wait_for_members_vote_status(
+        self,
+        client: XianAsync,
+        proposal_id: int,
+        *,
+        expected_status: str,
+        timeout_seconds: float = 15.0,
+    ) -> dict[str, Any]:
+        try:
+            return await wait_for_status(
+                lambda: client.get_state("masternodes", "votes", proposal_id),
+                expected_status=expected_status,
+                label=f"members vote {proposal_id}",
+                timeout_seconds=timeout_seconds,
+            )
+        except RuntimeError as exc:
+            raise E2EError(str(exc)) from exc
+
+    async def approve_governance_proposal(
+        self,
+        proposer: XianAsync,
+        voters: list[tuple[str, XianAsync]],
+        *,
+        proposal_function: str,
+        proposal_kwargs: dict[str, Any],
+        expected_final_status: str,
+        label_prefix: str,
+    ) -> dict[str, Any]:
+        proposal_receipt = await self.submit_tx(
+            proposer,
+            "governance",
+            proposal_function,
+            proposal_kwargs,
+            label=f"{label_prefix}-propose",
+            stamps=GOVERNANCE_TX_STAMPS,
+        )
+        proposal_id = int(await proposer.get_state("governance", "proposal_count"))
+        proposal_pending = await proposer.call(
+            "governance",
+            "get_proposal",
+            {"proposal_id": proposal_id},
+        )
+        if proposal_pending["status"] != "pending":
+            raise E2EError(
+                f"{label_prefix} expected pending proposal, got "
+                f"{proposal_pending['status']!r}"
+            )
+
+        vote_senders = [
+            functools.partial(
+                self.submit_tx,
+                voter,
+                "governance",
+                "vote",
+                {"proposal_id": proposal_id, "support": True},
+                label=f"{label_prefix}-vote-{index}-{name}",
+                stamps=GOVERNANCE_TX_STAMPS,
+            )
+            for index, (name, voter) in enumerate(voters, start=1)
+        ]
+        vote_receipts, proposal_final = await cast_votes_until_status(
+            vote_senders,
+            fetch_status=lambda: proposer.call(
+                "governance",
+                "get_proposal",
+                {"proposal_id": proposal_id},
+            ),
+            completed_statuses={expected_final_status},
+        )
+        if proposal_final is None:
+            proposal_final = await self.wait_for_governance_proposal_status(
+                proposer,
+                proposal_id,
+                expected_status=expected_final_status,
+            )
+
+        return {
+            "proposal_id": proposal_id,
+            "proposal_receipt": proposal_receipt,
+            "proposal_pending": proposal_pending,
+            "vote_receipts": vote_receipts,
+            "proposal_final": proposal_final,
+        }
+
+    async def approve_members_vote(
+        self,
+        proposer: XianAsync,
+        voters: list[tuple[str, XianAsync]],
+        *,
+        type_of_vote: str,
+        arg: Any,
+        label_prefix: str,
+    ) -> dict[str, Any]:
+        proposal_receipt = await self.submit_tx(
+            proposer,
+            "masternodes",
+            "propose_vote",
+            {"type_of_vote": type_of_vote, "arg": arg},
+            label=f"{label_prefix}-propose",
+            stamps=GOVERNANCE_TX_STAMPS,
+        )
+        proposal_id = int(await proposer.get_state("masternodes", "total_votes"))
+        proposal_pending = await proposer.get_state("masternodes", "votes", proposal_id)
+        if proposal_pending["status"] != "pending":
+            raise E2EError(
+                f"{label_prefix} expected pending vote, got "
+                f"{proposal_pending['status']!r}"
+            )
+
+        vote_senders = [
+            functools.partial(
+                self.submit_tx,
+                voter,
+                "masternodes",
+                "vote",
+                {"proposal_id": proposal_id, "vote": "yes"},
+                label=f"{label_prefix}-vote-{index}-{name}",
+                stamps=GOVERNANCE_TX_STAMPS,
+            )
+            for index, (name, voter) in enumerate(voters, start=1)
+        ]
+        vote_receipts, proposal_final = await cast_votes_until_status(
+            vote_senders,
+            fetch_status=lambda: proposer.get_state("masternodes", "votes", proposal_id),
+            completed_statuses={"approved"},
+        )
+        if proposal_final is None:
+            proposal_final = await self.wait_for_members_vote_status(
+                proposer,
+                proposal_id,
+                expected_status="approved",
+            )
+
+        return {
+            "proposal_id": proposal_id,
+            "proposal_receipt": proposal_receipt,
+            "proposal_pending": proposal_pending,
+            "vote_receipts": vote_receipts,
+            "proposal_final": proposal_final,
+        }
+
     def restart_localnet(self) -> None:
         env = make_localnet_env(self.args)
         run_make("localnet-down", env=env)
@@ -784,12 +1078,14 @@ class E2ERunner:
         env = make_localnet_env(self.args)
         outputs: dict[str, Any] = {
             "env": {
+                "XIAN_LOCALNET_GENESIS_NETWORK": env["XIAN_LOCALNET_GENESIS_NETWORK"],
                 "XIAN_LOCALNET_TRACER_MODE": env["XIAN_LOCALNET_TRACER_MODE"],
                 "XIAN_LOCALNET_ENABLE_BDS": env["XIAN_LOCALNET_ENABLE_BDS"],
-            "XIAN_LOCALNET_BDS_NODE_INDEX": env["XIAN_LOCALNET_BDS_NODE_INDEX"],
-            "XIAN_LOCALNET_PORT_OFFSET": env["XIAN_LOCALNET_PORT_OFFSET"],
-            "XIAN_LOCALNET_APP_LOG_LEVEL": env["XIAN_LOCALNET_APP_LOG_LEVEL"],
+                "XIAN_LOCALNET_BDS_NODE_INDEX": env["XIAN_LOCALNET_BDS_NODE_INDEX"],
+                "XIAN_LOCALNET_PORT_OFFSET": env["XIAN_LOCALNET_PORT_OFFSET"],
+                "XIAN_LOCALNET_APP_LOG_LEVEL": env["XIAN_LOCALNET_APP_LOG_LEVEL"],
                 "XIAN_LOCALNET_TOPOLOGY": env["XIAN_LOCALNET_TOPOLOGY"],
+                "LOCALNET_NODES": env["LOCALNET_NODES"],
             }
         }
         if self.args.bootstrap:
@@ -810,6 +1106,25 @@ class E2ERunner:
         self.validator_wallets = [
             Wallet(private_key=node.account_private_key) for node in self.nodes
         ]
+        if self.args.nodes != DEFAULT_LOCALNET_NODES:
+            raise E2EError(
+                f"this e2e harness expects exactly {DEFAULT_LOCALNET_NODES} validators"
+            )
+        if self.args.genesis_network != DEFAULT_GENESIS_NETWORK:
+            raise E2EError(
+                f"this e2e harness expects genesis_network={DEFAULT_GENESIS_NETWORK!r}"
+            )
+        if len(self.nodes) != DEFAULT_LOCALNET_NODES:
+            raise E2EError(
+                f"loaded localnet has {len(self.nodes)} validators; expected "
+                f"{DEFAULT_LOCALNET_NODES}"
+            )
+        if self.network.get("genesis_network") != self.args.genesis_network:
+            raise E2EError(
+                "loaded localnet genesis network "
+                f"{self.network.get('genesis_network')!r} does not match "
+                f"requested {self.args.genesis_network!r}"
+            )
         await wait_for_localnet_ready(
             session,
             self.nodes,
@@ -817,6 +1132,7 @@ class E2ERunner:
         )
         outputs["network"] = {
             "chain_id": self.network["chain_id"],
+            "genesis_network": self.network.get("genesis_network"),
             "node_count": len(self.nodes),
             "tracer_mode": self.network["tracer_mode"],
             "bds": self.network.get("bds", {}),
@@ -905,6 +1221,22 @@ class E2ERunner:
                         label=f"fund {wallet.public_key[:12]}",
                     )
                 )
+        for wallet in wallets:
+            expected_balance = await fetch_abci_query(
+                session,
+                self.nodes[0].rpc_url,
+                f"/get/currency.balances:{wallet.public_key}",
+            )
+            await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract="currency",
+                variable="balances",
+                keys=[wallet.public_key],
+                expected=expected_balance,
+                label=f"funded balance {wallet.public_key[:12]}",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
         return receipts
 
     async def xian_py_smoke(self, session: aiohttp.ClientSession) -> dict[str, Any]:
@@ -960,7 +1292,19 @@ class E2ERunner:
         session: aiohttp.ClientSession,
     ) -> dict[str, Any]:
         operator = derive_wallet(self.seed, "contract-orchestration-operator")
-        await self.fund_wallets(session, [operator], amount=15_000)
+        spender = derive_wallet(self.seed, "contract-orchestration-spender")
+        permit_spender = derive_wallet(
+            self.seed, "contract-orchestration-permit-spender"
+        )
+        recipient = derive_wallet(self.seed, "contract-orchestration-recipient")
+        permit_recipient = derive_wallet(
+            self.seed, "contract-orchestration-permit-recipient"
+        )
+        await self.fund_wallets(
+            session,
+            [operator, spender, permit_spender],
+            amount=15_000,
+        )
 
         suffix = short_hash(f"{self.run_id}:orchestration")
         factory_name = f"con_orch_factory_{suffix}"
@@ -1183,6 +1527,146 @@ class E2ERunner:
         if alpha_touch_total != 3:
             raise E2EError("dynamic touch did not persist the expected leaf state")
 
+        direct_allowance = 321
+        direct_spend = 123
+        permit_allowance = 222
+        permit_spend = 111
+        permit_deadline = (
+            datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=10)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        permit_msg = construct_token_permit_message(
+            token_contract="currency",
+            owner=operator.public_key,
+            spender=permit_spender.public_key,
+            value=permit_allowance,
+            deadline=permit_deadline,
+            authorizer_contract="permit_authorizer",
+            chain_id=self.network["chain_id"],
+        )
+        permit_signature = operator.sign_msg(permit_msg)
+
+        async with self.client(operator, 0, session) as owner_client, self.client(
+            spender, 1, session
+        ) as spender_client, self.client(
+            permit_spender, 2, session
+        ) as permit_spender_client:
+            direct_approve_receipt = ensure_positive_submission(
+                await owner_client.send_tx(
+                    "currency",
+                    "approve",
+                    {"amount": direct_allowance, "to": spender.public_key},
+                    stamps=DEFAULT_TX_STAMPS,
+                    wait_for_tx=True,
+                ),
+                label="currency-direct-approve",
+            )
+            direct_allowance_state = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract="currency",
+                variable="approvals",
+                keys=[operator.public_key, spender.public_key],
+                expected=direct_allowance,
+                label="direct allowance state",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+            direct_transfer_receipt = ensure_positive_submission(
+                await spender_client.send_tx(
+                    "currency",
+                    "transfer_from",
+                    {
+                        "amount": direct_spend,
+                        "to": recipient.public_key,
+                        "main_account": operator.public_key,
+                    },
+                    stamps=DEFAULT_TRANSFER_STAMPS,
+                    wait_for_tx=True,
+                ),
+                label="currency-direct-transfer-from",
+            )
+            direct_remaining_allowance = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract="currency",
+                variable="approvals",
+                keys=[operator.public_key, spender.public_key],
+                expected=direct_allowance - direct_spend,
+                label="direct remaining allowance",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+            direct_recipient_balance = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract="currency",
+                variable="balances",
+                keys=[recipient.public_key],
+                expected=direct_spend,
+                label="direct transfer recipient balance",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+
+            permit_receipt = ensure_positive_submission(
+                await permit_spender_client.send_tx(
+                    "permit_authorizer",
+                    "permit",
+                    {
+                        "token_contract": "currency",
+                        "owner": operator.public_key,
+                        "spender": permit_spender.public_key,
+                        "value": permit_allowance,
+                        "deadline": permit_deadline,
+                        "signature": permit_signature,
+                    },
+                    stamps=DEFAULT_TX_STAMPS,
+                    wait_for_tx=True,
+                ),
+                label="currency-permit-approve",
+            )
+            permit_allowance_state = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract="currency",
+                variable="approvals",
+                keys=[operator.public_key, permit_spender.public_key],
+                expected=permit_allowance,
+                label="permit allowance state",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+            permit_transfer_receipt = ensure_positive_submission(
+                await permit_spender_client.send_tx(
+                    "currency",
+                    "transfer_from",
+                    {
+                        "amount": permit_spend,
+                        "to": permit_recipient.public_key,
+                        "main_account": operator.public_key,
+                    },
+                    stamps=DEFAULT_TRANSFER_STAMPS,
+                    wait_for_tx=True,
+                ),
+                label="currency-permit-transfer-from",
+            )
+            permit_remaining_allowance = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract="currency",
+                variable="approvals",
+                keys=[operator.public_key, permit_spender.public_key],
+                expected=permit_allowance - permit_spend,
+                label="permit remaining allowance",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+            permit_recipient_balance = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract="currency",
+                variable="balances",
+                keys=[permit_recipient.public_key],
+                expected=permit_spend,
+                label="permit transfer recipient balance",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+
         return {
             "contracts": normalize_value(self.contracts),
             "deployments": deployments,
@@ -1206,6 +1690,18 @@ class E2ERunner:
                 failed_bad_name: failed_bad_source is None,
             },
             "chain_preview": normalize_value(chain_preview),
+            "currency_allowance_path": {
+                "direct_approve_receipt": direct_approve_receipt,
+                "direct_allowance_state": direct_allowance_state,
+                "direct_transfer_receipt": direct_transfer_receipt,
+                "direct_remaining_allowance": direct_remaining_allowance,
+                "direct_recipient_balance": direct_recipient_balance,
+                "permit_receipt": permit_receipt,
+                "permit_allowance_state": permit_allowance_state,
+                "permit_transfer_receipt": permit_transfer_receipt,
+                "permit_remaining_allowance": permit_remaining_allowance,
+                "permit_recipient_balance": permit_recipient_balance,
+            },
         }
 
     async def periodic_load(self, session: aiohttp.ClientSession) -> dict[str, Any]:
@@ -1263,6 +1759,8 @@ class E2ERunner:
             "run",
             "--project",
             str(ROOT_DIR / "xian-py"),
+            "--python",
+            CURRENT_UV_PYTHON,
             "python3",
             str(SCRIPT_DIR / "localnet-workload.py"),
             "--scenario",
@@ -1873,11 +2371,17 @@ class E2ERunner:
             return {"tx_hash": trigger_receipt["tx_hash"], "slot": slot}
 
     async def validator_governance_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
-        node0_wallet, node1_wallet, node2_wallet, node3_wallet = self.validator_wallets
+        (
+            node0_wallet,
+            node1_wallet,
+            node2_wallet,
+            node3_wallet,
+            node4_wallet,
+        ) = self.validator_wallets
         node3_key = self.nodes[3].account_public_key
         await self.fund_wallets(
             session,
-            [node1_wallet, node2_wallet, node3_wallet],
+            [node1_wallet, node2_wallet, node3_wallet, node4_wallet],
             amount=500_000,
         )
 
@@ -1885,49 +2389,20 @@ class E2ERunner:
             node1_wallet, 1, session
         ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
             node3_wallet, 3, session
-        ) as node3:
-            power_proposal = await node0.send_tx(
-                "masternodes",
-                "propose_vote",
-                {
-                    "type_of_vote": "set_member_power",
-                    "arg": {"member": node3_key, "power": 15},
-                },
-                stamps=GOVERNANCE_TX_STAMPS,
-                wait_for_tx=True,
+        ) as node3, self.client(node4_wallet, 4, session) as node4:
+            power_vote = await self.approve_members_vote(
+                node0,
+                [
+                    ("node1", node1),
+                    ("node2", node2),
+                    ("node3", node3),
+                    ("node4", node4),
+                ],
+                type_of_vote="set_member_power",
+                arg={"member": node3_key, "power": 15},
+                label_prefix="set-power",
             )
-            power_receipt = ensure_positive_submission(
-                power_proposal,
-                label="set-power-propose",
-            )
-            power_proposal_id = await node0.get_state("masternodes", "total_votes")
-            vote_1 = await node1.send_tx(
-                "masternodes",
-                "vote",
-                {"proposal_id": power_proposal_id, "vote": "yes"},
-                stamps=GOVERNANCE_TX_STAMPS,
-                wait_for_tx=True,
-            )
-            vote_2 = await node2.send_tx(
-                "masternodes",
-                "vote",
-                {"proposal_id": power_proposal_id, "vote": "yes"},
-                stamps=GOVERNANCE_TX_STAMPS,
-                wait_for_tx=True,
-            )
-            vote_3 = await node3.send_tx(
-                "masternodes",
-                "vote",
-                {"proposal_id": power_proposal_id, "vote": "yes"},
-                stamps=GOVERNANCE_TX_STAMPS,
-                wait_for_tx=True,
-            )
-            for receipt, label in (
-                (vote_1, "set-power-vote-1"),
-                (vote_2, "set-power-vote-2"),
-                (vote_3, "set-power-vote-3"),
-            ):
-                ensure_positive_submission(receipt, label=label)
+            power_receipt = power_vote["proposal_receipt"]
 
             power_wait_height = await latest_height(session, self.nodes[0].rpc_url) + 2
             await wait_for_height(
@@ -1944,34 +2419,19 @@ class E2ERunner:
             if power_record["power"] != 15:
                 raise E2EError("validator power change did not apply")
 
-            remove_proposal = await node0.send_tx(
-                "masternodes",
-                "propose_vote",
-                {
-                    "type_of_vote": "remove_member",
-                    "arg": node3_key,
-                },
-                stamps=GOVERNANCE_TX_STAMPS,
-                wait_for_tx=True,
+            remove_vote = await self.approve_members_vote(
+                node0,
+                [
+                    ("node1", node1),
+                    ("node2", node2),
+                    ("node3", node3),
+                    ("node4", node4),
+                ],
+                type_of_vote="remove_member",
+                arg=node3_key,
+                label_prefix="remove-member",
             )
-            remove_receipt = ensure_positive_submission(
-                remove_proposal,
-                label="remove-member-propose",
-            )
-            remove_proposal_id = await node0.get_state("masternodes", "total_votes")
-            for client, label in (
-                (node1, "remove-vote-1"),
-                (node2, "remove-vote-2"),
-                (node3, "remove-vote-3"),
-            ):
-                vote_submission = await client.send_tx(
-                    "masternodes",
-                    "vote",
-                    {"proposal_id": remove_proposal_id, "vote": "yes"},
-                    stamps=GOVERNANCE_TX_STAMPS,
-                    wait_for_tx=True,
-                )
-                ensure_positive_submission(vote_submission, label=label)
+            remove_receipt = remove_vote["proposal_receipt"]
 
             remove_wait_height = (
                 int(
@@ -1996,8 +2456,8 @@ class E2ERunner:
                 f"{self.nodes[0].rpc_url}/validators",
                 timeout=5.0,
             )
-            if len(validators_after_remove["result"]["validators"]) != 3:
-                raise E2EError("validator removal did not reduce the validator set to 3")
+            if len(validators_after_remove["result"]["validators"]) != 4:
+                raise E2EError("validator removal did not reduce the validator set to 4")
 
             registration_fee = await node0.get_state("masternodes", "registration_fee")
             approval_submission = await node3.send_tx(
@@ -2024,30 +2484,18 @@ class E2ERunner:
                 wait_for_tx=True,
             )
             ensure_positive_submission(register_submission, label="re-register-node3")
-            add_proposal = await node0.send_tx(
-                "masternodes",
-                "propose_vote",
-                {"type_of_vote": "add_member", "arg": node3_key},
-                stamps=GOVERNANCE_TX_STAMPS,
-                wait_for_tx=True,
+            add_vote = await self.approve_members_vote(
+                node0,
+                [
+                    ("node1", node1),
+                    ("node2", node2),
+                    ("node4", node4),
+                ],
+                type_of_vote="add_member",
+                arg=node3_key,
+                label_prefix="add-member",
             )
-            add_receipt = ensure_positive_submission(
-                add_proposal,
-                label="add-member-propose",
-            )
-            add_proposal_id = await node0.get_state("masternodes", "total_votes")
-            for client, label in (
-                (node1, "add-vote-1"),
-                (node2, "add-vote-2"),
-            ):
-                vote_submission = await client.send_tx(
-                    "masternodes",
-                    "vote",
-                    {"proposal_id": add_proposal_id, "vote": "yes"},
-                    stamps=GOVERNANCE_TX_STAMPS,
-                    wait_for_tx=True,
-                )
-                ensure_positive_submission(vote_submission, label=label)
+            add_receipt = add_vote["proposal_receipt"]
 
             readd_wait_height = (
                 int(
@@ -2072,8 +2520,8 @@ class E2ERunner:
                 f"{self.nodes[0].rpc_url}/validators",
                 timeout=5.0,
             )
-            if len(validators_after_add["result"]["validators"]) != 4:
-                raise E2EError("validator add-back did not restore the validator set to 4")
+            if len(validators_after_add["result"]["validators"]) != 5:
+                raise E2EError("validator add-back did not restore the validator set to 5")
             validator_record = await node0.call(
                 "masternodes",
                 "get_validator",
@@ -2082,10 +2530,13 @@ class E2ERunner:
 
         return {
             "power_change": power_receipt,
+            "power_vote": normalize_value(power_vote),
             "power_record": normalize_value(power_record),
             "remove_receipt": remove_receipt,
+            "remove_vote": normalize_value(remove_vote),
             "re_register_approval": approval_receipt,
             "add_receipt": add_receipt,
+            "add_vote": normalize_value(add_vote),
             "validators_after_remove": normalize_value(validators_after_remove),
             "validators_after_add": normalize_value(validators_after_add),
             "node3_validator_record": normalize_value(validator_record),
@@ -2172,18 +2623,30 @@ class E2ERunner:
             timeout_seconds=self.args.rpc_timeout_seconds,
         )
 
-        node0_wallet, node1_wallet, node2_wallet, node3_wallet = self.validator_wallets
+        (
+            node0_wallet,
+            node1_wallet,
+            node2_wallet,
+            node3_wallet,
+            node4_wallet,
+        ) = self.validator_wallets
         proposal_receipt: dict[str, Any] | None = None
         if existing_patch is None:
             async with self.client(node0_wallet, 0, session) as node0, self.client(
                 node1_wallet, 1, session
             ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
                 node3_wallet, 3, session
-            ) as node3:
-                proposal = await node0.send_tx(
-                    "governance",
-                    "propose_state_patch",
-                    {
+            ) as node3, self.client(node4_wallet, 4, session) as node4:
+                proposal_vote = await self.approve_governance_proposal(
+                    node0,
+                    [
+                        ("node1", node1),
+                        ("node2", node2),
+                        ("node3", node3),
+                        ("node4", node4),
+                    ],
+                    proposal_function="propose_state_patch",
+                    proposal_kwargs={
                         "patch_id": patch_id,
                         "bundle_hash": bundle_payload["bundle_hash"],
                         "activation_height": activation_height,
@@ -2191,27 +2654,10 @@ class E2ERunner:
                         "uri": bundle_payload["uri"],
                         "emergency": False,
                     },
-                    stamps=GOVERNANCE_TX_STAMPS,
-                    wait_for_tx=True,
+                    expected_final_status="approved",
+                    label_prefix="state-patch",
                 )
-                proposal_receipt = ensure_positive_submission(
-                    proposal,
-                    label="state-patch-propose",
-                )
-                proposal_id = await node0.get_state("governance", "proposal_count")
-                for client, label in (
-                    (node1, "state-patch-vote-1"),
-                    (node2, "state-patch-vote-2"),
-                    (node3, "state-patch-vote-3"),
-                ):
-                    submission = await client.send_tx(
-                        "governance",
-                        "vote",
-                        {"proposal_id": proposal_id, "support": True},
-                        stamps=GOVERNANCE_TX_STAMPS,
-                        wait_for_tx=True,
-                    )
-                    ensure_positive_submission(submission, label=label)
+                proposal_receipt = proposal_vote["proposal_receipt"]
 
         current_height = int(
             (
@@ -2271,6 +2717,7 @@ class E2ERunner:
             "governance_min_patch_delay": governance_min_patch_delay,
             "activation_wait_timeout_seconds": activation_wait_timeout,
             "proposal_receipt": proposal_receipt,
+            "proposal_vote": normalize_value(proposal_vote) if existing_patch is None else None,
             "governance_patch": normalize_value(patch_status),
             "patch_target_status": normalize_value(contract_status),
             "local_bundle_inventory": normalize_value(local_bundles),
@@ -2471,12 +2918,18 @@ class E2ERunner:
             asset_id = await client.call(token_name, "asset_id", {})
             zero_root = await client.call(token_name, "zero_shielded_root", {})
 
-        node0_wallet, node1_wallet, node2_wallet, node3_wallet = self.validator_wallets
+        (
+            node0_wallet,
+            node1_wallet,
+            node2_wallet,
+            node3_wallet,
+            node4_wallet,
+        ) = self.validator_wallets
         async with self.client(node0_wallet, 0, session) as node0, self.client(
             node1_wallet, 1, session
         ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
             node3_wallet, 3, session
-        ) as node3:
+        ) as node3, self.client(node4_wallet, 4, session) as node4:
             for action in ("deposit", "transfer", "withdraw"):
                 vk = prover.bundle[action]
                 vk_info = await node0.call(
@@ -2485,10 +2938,16 @@ class E2ERunner:
                     {"vk_id": vk["vk_id"]},
                 )
                 if vk_info is None:
-                    proposal_submission = await node0.send_tx(
-                        "governance",
-                        "propose_contract_call",
-                        {
+                    vk_vote = await self.approve_governance_proposal(
+                        node0,
+                        [
+                            ("node1", node1),
+                            ("node2", node2),
+                            ("node3", node3),
+                            ("node4", node4),
+                        ],
+                        proposal_function="propose_contract_call",
+                        proposal_kwargs={
                             "target_contract": registry_name,
                             "target_function": "register_vk",
                             "kwargs": {
@@ -2501,42 +2960,11 @@ class E2ERunner:
                                 f"register {action} vk for localnet shielded e2e"
                             ),
                         },
-                        stamps=5_000_000,
-                        wait_for_tx=True,
+                        expected_final_status="executed",
+                        label_prefix=f"register-vk-{action}",
                     )
-                    ensure_positive_submission(
-                        proposal_submission,
-                        label=f"register-vk-propose-{action}",
-                    )
-                    proposal_id = await node0.get_state(
-                        "governance",
-                        "proposal_count",
-                    )
-                    for governance_client, label in (
-                        (node1, f"register-vk-vote-1-{action}"),
-                        (node2, f"register-vk-vote-2-{action}"),
-                        (node3, f"register-vk-vote-3-{action}"),
-                    ):
-                        vote_submission = await governance_client.send_tx(
-                            "governance",
-                            "vote",
-                            {"proposal_id": proposal_id, "support": True},
-                            stamps=GOVERNANCE_TX_STAMPS,
-                            wait_for_tx=True,
-                        )
-                        ensure_positive_submission(vote_submission, label=label)
-
-                    proposal_status = await node0.call(
-                        "governance",
-                        "get_proposal",
-                        {"proposal_id": proposal_id},
-                    )
-                    if proposal_status["status"] != "executed":
-                        raise E2EError(
-                            f"vk registration proposal {proposal_id} did not execute"
-                        )
                     vk_registration_proposals.append(
-                        normalize_value(proposal_status)
+                        normalize_value(vk_vote)
                     )
                     vk_info = await node0.call(
                         registry_name,
@@ -2859,19 +3287,20 @@ class E2ERunner:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run a layered 4-node localnet end-to-end test program",
+        description="Run a layered 5-validator testnet-shaped localnet end-to-end program",
     )
     parser.add_argument("--bootstrap", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--build", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--nodes", type=int, default=4)
+    parser.add_argument("--nodes", type=int, default=DEFAULT_LOCALNET_NODES)
     parser.add_argument("--topology", choices=("integrated", "fidelity"), default="integrated")
+    parser.add_argument("--genesis-network", default=DEFAULT_GENESIS_NETWORK)
     parser.add_argument("--bds-node-index", type=int, default=0)
     parser.add_argument("--port-offset", type=int, default=1000)
-    parser.add_argument("--seed", default="xian-localnet-e2e-v1")
+    parser.add_argument("--seed", default="xian-localnet-testnet-e2e-v1")
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--rpc-timeout-seconds", type=float, default=180.0)
-    parser.add_argument("--state-sample-nodes", type=int, default=4)
-    parser.add_argument("--app-hash-window", type=int, default=4)
+    parser.add_argument("--state-sample-nodes", type=int, default=DEFAULT_LOCALNET_NODES)
+    parser.add_argument("--app-hash-window", type=int, default=DEFAULT_LOCALNET_NODES)
     parser.add_argument("--receipt-workers", type=int, default=24)
     parser.add_argument("--periodic-rounds", type=int, default=8)
     parser.add_argument("--periodic-interval-seconds", type=float, default=0.35)

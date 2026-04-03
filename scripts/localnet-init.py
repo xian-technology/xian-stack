@@ -2,7 +2,7 @@
 """Generate keys, genesis, and CometBFT config for an N-node local network.
 
 Usage:
-    python localnet-init.py --nodes 4 --chain-id xian-localnet-1
+    python localnet-init.py --nodes 5 --genesis-network testnet --chain-id xian-localnet-1
 
 Outputs everything under .localnet/node-{i}/.cometbft/ ready to be
 mounted into Docker containers.
@@ -194,6 +194,14 @@ def main():
         help="Chain ID for the network",
     )
     parser.add_argument(
+        "--genesis-network",
+        default=env_str("XIAN_LOCALNET_GENESIS_NETWORK", "local"),
+        help=(
+            "Contract bundle preset used to seed the localnet genesis "
+            "(for example: local, devnet, testnet)"
+        ),
+    )
+    parser.add_argument(
         "--clean", action="store_true",
         help="Remove existing .localnet directory before init",
     )
@@ -217,7 +225,11 @@ def main():
         print(f"ERROR: {LOCALNET_DIR} already exists. Use --clean to overwrite.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Generating {args.nodes}-node localnet (chain_id={args.chain_id})")
+    print(
+        "Generating "
+        f"{args.nodes}-node localnet "
+        f"(chain_id={args.chain_id}, genesis_network={args.genesis_network})"
+    )
     parallel_execution_enabled = env_bool(
         "XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED", False
     )
@@ -273,12 +285,15 @@ def main():
         for n in nodes
     ]
 
-    print("Building genesis block (submitting system contracts)...")
+    print(
+        "Building genesis block "
+        f"(submitting {args.genesis_network} system contracts)..."
+    )
     genesis = build_local_network_genesis(
         chain_id=args.chain_id,
         founder_private_key=founder_key,
         validators=validators,
-        network="local",
+        network=args.genesis_network,
         contracts_dir=CONFIGS_DIR / "contracts",
     )
     print(f"  Genesis has {len(genesis.get('validators', []))} validators")
@@ -323,6 +338,7 @@ def main():
     # 5. Write node summary for scripts
     summary = {
         "chain_id": args.chain_id,
+        "genesis_network": args.genesis_network,
         "topology": args.topology,
         "nodes": [
             {

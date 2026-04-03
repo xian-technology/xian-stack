@@ -27,9 +27,13 @@ LOCALNET_NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 LOCALNET_INIT_SCRIPT = STACK_DIR / "scripts" / "localnet-init.py"
 LOCALNET_WORKLOAD_SCRIPT = STACK_DIR / "scripts" / "localnet-workload.py"
 LOCALNET_E2E_SCRIPT = STACK_DIR / "scripts" / "localnet-e2e.py"
+LOCALNET_VALIDATOR_GOVERNANCE_SCRIPT = (
+    STACK_DIR / "scripts" / "localnet-validator-governance.py"
+)
 LOCALNET_BURST_SCRIPT = STACK_DIR / "scripts" / "localnet-burst-test.py"
 LOCALNET_MEMWATCH_SCRIPT = STACK_DIR / "scripts" / "localnet-memwatch.py"
 LOCALNET_LEAK_HUNT_SCRIPT = STACK_DIR / "scripts" / "localnet-leak-hunt.py"
+STACK_UV_PYTHON = "3.14"
 DEFAULT_RPC_TIMEOUT_SECONDS = 90.0
 DEFAULT_RPC_BASE_URL = "http://127.0.0.1:26657"
 DEFAULT_RPC_STATUS_URL = f"{DEFAULT_RPC_BASE_URL}/status"
@@ -444,6 +448,7 @@ def run_python_script(
     *args: str,
     capture_output: bool = False,
     uv_project: Path | None = None,
+    uv_python: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, str(script_path), *args]
     if uv_project is not None:
@@ -452,10 +457,10 @@ def run_python_script(
             "run",
             "--project",
             str(uv_project),
-            "python3",
-            str(script_path),
-            *args,
         ]
+        if uv_python is not None:
+            cmd.extend(["--python", uv_python])
+        cmd.extend(["python3", str(script_path), *args])
     return subprocess.run(
         cmd,
         cwd=STACK_DIR,
@@ -1194,8 +1199,21 @@ def backend_storage_report() -> dict:
     return payload
 
 
-def backend_localnet_init(*, nodes: int, clean: bool, topology: str) -> dict:
-    args = ["--nodes", str(nodes), "--topology", topology]
+def backend_localnet_init(
+    *,
+    nodes: int,
+    clean: bool,
+    topology: str,
+    genesis_network: str,
+) -> dict:
+    args = [
+        "--nodes",
+        str(nodes),
+        "--topology",
+        topology,
+        "--genesis-network",
+        genesis_network,
+    ]
     if clean:
         args.append("--clean")
     try:
@@ -1204,6 +1222,7 @@ def backend_localnet_init(*, nodes: int, clean: bool, topology: str) -> dict:
             *args,
             capture_output=True,
             uv_project=resolve_repo_dir("xian-abci", "XIAN_ABCI_DIR"),
+            uv_python=STACK_UV_PYTHON,
         )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()
@@ -1214,6 +1233,7 @@ def backend_localnet_init(*, nodes: int, clean: bool, topology: str) -> dict:
         "node_count": nodes,
         "clean": clean,
         "topology": topology,
+        "genesis_network": genesis_network,
         "network": metadata,
         "stdout": result.stdout,
     }
@@ -1267,6 +1287,7 @@ def backend_localnet_diagnostic(
     script_path: Path,
     duration_minutes: int | None = None,
     script_args: list[str] | None = None,
+    uv_project: Path | None = None,
 ) -> dict:
     args: list[str] = []
     if duration_minutes is not None:
@@ -1278,7 +1299,8 @@ def backend_localnet_diagnostic(
             script_path,
             *args,
             capture_output=True,
-            uv_project=resolve_repo_dir("xian-py", "XIAN_PY_DIR"),
+            uv_project=uv_project or resolve_repo_dir("xian-py", "XIAN_PY_DIR"),
+            uv_python=STACK_UV_PYTHON,
         )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()
@@ -1307,6 +1329,7 @@ def backend_localnet_e2e(
     build: bool,
     nodes: int,
     topology: str,
+    genesis_network: str,
     bds_node_index: int,
     port_offset: int,
     seed: str,
@@ -1327,6 +1350,8 @@ def backend_localnet_e2e(
         str(nodes),
         "--topology",
         topology,
+        "--genesis-network",
+        genesis_network,
         "--bds-node-index",
         str(bds_node_index),
         "--seed",
@@ -1364,6 +1389,7 @@ def backend_localnet_e2e(
             *args,
             capture_output=True,
             uv_project=resolve_repo_dir("xian-py", "XIAN_PY_DIR"),
+            uv_python=STACK_UV_PYTHON,
         )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()
@@ -1599,6 +1625,11 @@ def build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=True,
     )
+    localnet_init.add_argument(
+        "--genesis-network",
+        default="local",
+        help="contract bundle preset used to seed localnet genesis",
+    )
 
     localnet_up = subparsers.add_parser("localnet-up")
     localnet_up.add_argument(
@@ -1650,6 +1681,58 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
     )
 
+    localnet_validator_governance = subparsers.add_parser(
+        "localnet-validator-governance"
+    )
+    localnet_validator_governance.add_argument(
+        "--seed",
+        default="xian-localnet-testnet-governance-v1",
+    )
+    localnet_validator_governance.add_argument(
+        "--nodes",
+        type=int,
+        default=5,
+        help="validator count for the governance exercise (expects 5)",
+    )
+    localnet_validator_governance.add_argument(
+        "--port-offset",
+        type=int,
+        default=1000,
+    )
+    localnet_validator_governance.add_argument(
+        "--topology",
+        choices=("integrated", "fidelity"),
+        default="integrated",
+    )
+    localnet_validator_governance.add_argument(
+        "--genesis-network",
+        default="testnet",
+        help="contract bundle preset used to seed localnet genesis",
+    )
+    localnet_validator_governance.add_argument(
+        "--tracer-mode",
+        default="native_instruction_v1",
+    )
+    localnet_validator_governance.add_argument(
+        "--log-level",
+        default="INFO",
+    )
+    localnet_validator_governance.add_argument(
+        "--rpc-timeout-seconds",
+        type=float,
+        default=180.0,
+    )
+    localnet_validator_governance.add_argument(
+        "--bootstrap",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    localnet_validator_governance.add_argument(
+        "--build",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+
     localnet_burst = subparsers.add_parser("localnet-burst")
     localnet_burst.add_argument(
         "--counter-ops",
@@ -1695,12 +1778,16 @@ def build_parser() -> argparse.ArgumentParser:
     localnet_e2e.add_argument(
         "--nodes",
         type=int,
-        default=4,
+        default=5,
     )
     localnet_e2e.add_argument(
         "--topology",
         choices=("integrated", "fidelity"),
         default="integrated",
+    )
+    localnet_e2e.add_argument(
+        "--genesis-network",
+        default="testnet",
     )
     localnet_e2e.add_argument(
         "--bds-node-index",
@@ -1714,7 +1801,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     localnet_e2e.add_argument(
         "--seed",
-        default="xian-localnet-e2e-v1",
+        default="xian-localnet-testnet-e2e-v1",
     )
     localnet_e2e.add_argument(
         "--log-level",
@@ -1728,12 +1815,12 @@ def build_parser() -> argparse.ArgumentParser:
     localnet_e2e.add_argument(
         "--state-sample-nodes",
         type=int,
-        default=4,
+        default=5,
     )
     localnet_e2e.add_argument(
         "--app-hash-window",
         type=int,
-        default=4,
+        default=5,
     )
     localnet_e2e.add_argument(
         "--receipt-workers",
@@ -1876,6 +1963,7 @@ def main(argv: list[str] | None = None) -> int:
             nodes=args.nodes,
             clean=args.clean,
             topology=args.topology,
+            genesis_network=args.genesis_network,
         )
     elif args.command == "localnet-build":
         payload = backend_make_result("localnet-build")
@@ -1908,6 +1996,31 @@ def main(argv: list[str] | None = None) -> int:
                 str(args.app_hash_window),
             ],
         )
+    elif args.command == "localnet-validator-governance":
+        payload = backend_localnet_diagnostic(
+            script_path=LOCALNET_VALIDATOR_GOVERNANCE_SCRIPT,
+            script_args=[
+                "--seed",
+                args.seed,
+                "--nodes",
+                str(args.nodes),
+                "--port-offset",
+                str(args.port_offset),
+                "--topology",
+                args.topology,
+                "--genesis-network",
+                args.genesis_network,
+                "--tracer-mode",
+                args.tracer_mode,
+                "--log-level",
+                args.log_level,
+                "--rpc-timeout-seconds",
+                str(args.rpc_timeout_seconds),
+                "--bootstrap" if args.bootstrap else "--no-bootstrap",
+                "--build" if args.build else "--no-build",
+            ],
+            uv_project=resolve_repo_dir("xian-abci", "XIAN_ABCI_DIR"),
+        )
     elif args.command == "localnet-burst":
         payload = backend_localnet_diagnostic(
             script_path=LOCALNET_WORKLOAD_SCRIPT,
@@ -1938,6 +2051,7 @@ def main(argv: list[str] | None = None) -> int:
             build=args.build,
             nodes=args.nodes,
             topology=args.topology,
+            genesis_network=args.genesis_network,
             bds_node_index=args.bds_node_index,
             port_offset=args.port_offset,
             seed=args.seed,

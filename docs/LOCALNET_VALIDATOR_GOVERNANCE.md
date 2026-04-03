@@ -4,7 +4,7 @@
 
 `scripts/localnet-validator-governance.py` is the focused live validation
 program for validator, delegation, governance, and evidence behavior on a real
-4-node localnet.
+5-validator localnet seeded from the canonical `testnet` contract bundle.
 
 It exists to cover the operator-critical flows that are too coupled or too
 stateful to trust to unit tests alone.
@@ -14,8 +14,7 @@ stateful to trust to unit tests alone.
 Run it through the `xian-abci` project with local `xian-py` available:
 
 ```bash
-uv run --project ../xian-abci --with ../xian-py \
-  python3 ./scripts/localnet-validator-governance.py --bootstrap
+make localnet-validator-governance
 ```
 
 Artifacts are written under:
@@ -29,6 +28,7 @@ Artifacts are written under:
 The runner exercises these phases against a real localnet:
 
 - generic governance proposal and voting
+- governance state-patch approval, scheduling, and activation
 - manual validator membership, power update, remove, re-register, and re-add
 - self-bonding, delegation, undelegation, and unbond claim
 - `auto_top_n` selection and rebalance
@@ -50,6 +50,7 @@ The leave phase confirms that:
 - `announce_leave` succeeds
 - immediate `leave` is rejected until the delay expires
 - a pending-leave validator is excluded from the active set on rebalance
+- a standby validator can be promoted into the live set during that rebalance
 - validator status remains `leaving` until the actual exit path completes
 
 ## Important Regression
@@ -76,9 +77,11 @@ size-sensitive work and checked before adding more code to the contract.
 
 Use this runner when changing any of the following:
 
+- the canonical `testnet` contract preset or its validator policy surface
 - validator selection policy
 - delegation and unbonding behavior
 - governance actions on `masternodes`
+- governance state-patch lifecycle
 - evidence handling and slashing
 - dashboard or query surfaces that depend on validator state
 
