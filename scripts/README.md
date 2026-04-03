@@ -28,6 +28,8 @@ tooling behind `xian-stack`.
   investigation helpers
 - `release_manifest.py` and `trusted_publishers.py`: release and publisher
   support helpers
+- `release_orchestrator.py`: local multi-repo release planner and tag pusher for
+  the full Xian workspace
 
 ## Notes
 

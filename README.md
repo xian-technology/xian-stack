@@ -43,6 +43,13 @@ Run the broader layered 5-validator e2e harness:
 make localnet-e2e
 ```
 
+Plan or apply a coordinated workspace release:
+
+```bash
+python3 ./scripts/release_orchestrator.py plan
+python3 ./scripts/release_orchestrator.py apply
+```
+
 The `localnet-e2e` harness now also validates direct `currency.approve` /
 `transfer_from` behavior and the `permit_authorizer -> approve_from_authorizer`
 path against the same 5-validator `testnet`-shaped network.
