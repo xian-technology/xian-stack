@@ -74,9 +74,12 @@ try:  # noqa: SIM105
         ShieldedNoteProver,
         ShieldedOutput,
         ShieldedTransferRequest,
+        ShieldedWallet,
         ShieldedWithdrawRequest,
+        output_payload_hashes,
         recover_encrypted_notes,
         scan_notes,
+        shielded_registry_manifest,
         tree_state,
     )
 except Exception as exc:  # noqa: BLE001
@@ -665,6 +668,25 @@ def ensure_positive_submission(
     return normalize_receipt(submission, label=label)
 
 
+def ensure_failed_submission(
+    submission,
+    *,
+    label: str,
+    expected_message_fragment: str | None = None,
+) -> dict[str, Any]:
+    receipt = normalize_receipt(submission, label=label)
+    if receipt["accepted"] is not False and receipt["success"] is not False:
+        raise E2EError(f"{label}: transaction unexpectedly succeeded")
+    if expected_message_fragment is not None and expected_message_fragment not in str(
+        receipt.get("message")
+    ):
+        raise E2EError(
+            f"{label}: expected failure containing {expected_message_fragment!r}, "
+            f"got {receipt.get('message')!r}"
+        )
+    return receipt
+
+
 def normalize_receipt(submission, *, label: str) -> dict[str, Any]:
     execution = submission.receipt.execution if submission.receipt else None
     state = []
@@ -856,9 +878,26 @@ class E2ERunner:
                 f"{self.network.get('genesis_network')!r} does not match "
                 f"{DEFAULT_GENESIS_NETWORK!r}"
             )
-        completed_phase_names = set(
-            self.phase_names()[: self.phase_names().index(self.args.start_phase)]
-        )
+        prior_phase_names = self.phase_names()[
+            : self.phase_names().index(self.args.start_phase)
+        ]
+        self.phase_results = []
+        for phase_name in prior_phase_names:
+            path = self.output_dir / json_file_name(phase_name)
+            if not path.exists():
+                continue
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.phase_results.append(
+                PhaseResult(
+                    name=payload["name"],
+                    ok=bool(payload["ok"]),
+                    started_at=payload["started_at"],
+                    ended_at=payload["ended_at"],
+                    details=payload["details"],
+                )
+            )
+
+        completed_phase_names = set(prior_phase_names)
 
         if "02-xian-py-smoke" in completed_phase_names:
             smoke = self._load_resume_json("02-xian-py-smoke")
@@ -2949,6 +2988,8 @@ class E2ERunner:
         token_name = f"con_private_e2e_{short_hash(self.run_id)}"
         shielded_wallet_balance_target = 1_000_000
         vk_registration_proposals: list[dict[str, Any]] = []
+        vk_infos: dict[str, dict[str, Any]] = {}
+        vk_bindings: dict[str, dict[str, Any]] = {}
         async with self.client(founder, 0, session) as client:
             for wallet in (alice, bob):
                 current_balance = await client.get_balance(wallet.public_key)
@@ -2994,6 +3035,8 @@ class E2ERunner:
                     label="deploy-shielded-token",
                 )
             prover = ShieldedNoteProver.build_insecure_dev_bundle()
+            registry_manifest = shielded_registry_manifest(prover)
+            proof_config = await client.call(token_name, "get_proof_config", {})
             alice_public_balance = await client.call(
                 token_name,
                 "balance_of",
@@ -3014,6 +3057,18 @@ class E2ERunner:
                 )
             asset_id = await client.call(token_name, "asset_id", {})
             zero_root = await client.call(token_name, "zero_shielded_root", {})
+            initial_tree_state = await client.call(token_name, "get_tree_state", {})
+
+        if proof_config["zero_root"] != zero_root:
+            raise E2EError("shielded proof config zero_root drifted from contract root")
+        if proof_config["root_history_window"] != 32:
+            raise E2EError(
+                f"shielded token root history window drifted: {proof_config['root_history_window']!r}"
+            )
+        if proof_config["circuit_family"] != "shielded_note_v3":
+            raise E2EError("shielded token circuit family drifted")
+        if initial_tree_state["root"] != zero_root or initial_tree_state["note_count"] != 0:
+            raise E2EError("shielded token did not start from the zero root")
 
         (
             node0_wallet,
@@ -3027,8 +3082,13 @@ class E2ERunner:
         ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
             node3_wallet, 3, session
         ) as node3, self.client(node4_wallet, 4, session) as node4:
+            registry_entries = {
+                entry["action"]: entry
+                for entry in registry_manifest["registry_entries"]
+            }
             for action in ("deposit", "transfer", "withdraw"):
                 vk = prover.bundle[action]
+                vk_entry = registry_entries[action]
                 vk_info = await node0.call(
                     registry_name,
                     "get_vk_info",
@@ -3049,9 +3109,25 @@ class E2ERunner:
                             "target_function": "register_vk",
                             "kwargs": {
                                 "vk_id": vk["vk_id"],
-                                "vk_hex": vk["vk_hex"],
-                                "circuit_name": vk["circuit_name"],
-                                "version": vk["version"],
+                                "vk_hex": vk_entry["vk_hex"],
+                                "circuit_name": vk_entry["circuit_name"],
+                                "version": vk_entry["version"],
+                                "artifact_contract_name": vk_entry[
+                                    "artifact_contract_name"
+                                ],
+                                "circuit_family": vk_entry["circuit_family"],
+                                "statement_version": vk_entry[
+                                    "statement_version"
+                                ],
+                                "tree_depth": vk_entry["tree_depth"],
+                                "leaf_capacity": vk_entry["leaf_capacity"],
+                                "max_inputs": vk_entry["max_inputs"],
+                                "max_outputs": vk_entry["max_outputs"],
+                                "setup_mode": vk_entry["setup_mode"],
+                                "setup_ceremony": vk_entry["setup_ceremony"],
+                                "bundle_hash": vk_entry["bundle_hash"],
+                                "artifact_hash": vk_entry["artifact_hash"],
+                                "warning": vk_entry["warning"],
                             },
                             "summary": (
                                 f"register {action} vk for localnet shielded e2e"
@@ -3070,6 +3146,31 @@ class E2ERunner:
                     )
                 if vk_info is None:
                     raise E2EError(f"vk {vk['vk_id']} was not registered")
+                vk_infos[action] = normalize_value(vk_info)
+                if vk_info.get("circuit_family") != vk_entry["circuit_family"]:
+                    raise E2EError(
+                        f"shielded vk {vk['vk_id']} circuit family drifted"
+                    )
+                if vk_info.get("statement_version") != vk_entry["statement_version"]:
+                    raise E2EError(
+                        f"shielded vk {vk['vk_id']} statement version drifted"
+                    )
+                if vk_info.get("tree_depth") != vk_entry["tree_depth"]:
+                    raise E2EError(
+                        f"shielded vk {vk['vk_id']} tree depth drifted"
+                    )
+                if vk_info.get("leaf_capacity") != vk_entry["leaf_capacity"]:
+                    raise E2EError(
+                        f"shielded vk {vk['vk_id']} leaf capacity drifted"
+                    )
+                if vk_info.get("max_inputs") != vk_entry["max_inputs"]:
+                    raise E2EError(
+                        f"shielded vk {vk['vk_id']} max_inputs drifted"
+                    )
+                if vk_info.get("max_outputs") != vk_entry["max_outputs"]:
+                    raise E2EError(
+                        f"shielded vk {vk['vk_id']} max_outputs drifted"
+                    )
 
                 binding = await node0.call(
                     token_name,
@@ -3088,9 +3189,31 @@ class E2ERunner:
                         bind_submission,
                         label=f"bind-vk-{action}",
                     )
+                    binding = await node0.call(
+                        token_name,
+                        "get_vk_binding",
+                        {"action": action},
+                    )
+                if binding is None:
+                    raise E2EError(f"shielded vk binding missing for {action}")
+                if binding.get("vk_hash") != vk_info.get("vk_hash"):
+                    raise E2EError(
+                        f"shielded vk binding hash drifted for {action}"
+                    )
+                vk_bindings[action] = normalize_value(binding)
 
         alice_keys = ShieldedKeyBundle.generate()
         bob_keys = ShieldedKeyBundle.generate()
+        alice_wallet = ShieldedWallet.from_parts(
+            asset_id=asset_id,
+            owner_secret=alice_keys.owner_secret,
+            viewing_private_key=alice_keys.viewing_private_key,
+        )
+        bob_wallet = ShieldedWallet.from_parts(
+            asset_id=asset_id,
+            owner_secret=bob_keys.owner_secret,
+            viewing_private_key=bob_keys.viewing_private_key,
+        )
 
         def field_hex(value: int) -> str:
             return f"0x{value:064x}"
@@ -3125,10 +3248,27 @@ class E2ERunner:
             rho=field_hex(105),
             blind=field_hex(205),
         )
+        recent_root_note = ShieldedNote(
+            owner_secret=alice_keys.owner_secret,
+            amount=5,
+            rho=field_hex(106),
+            blind=field_hex(206),
+        )
 
         async with self.client(alice, 1, session) as alice_client, self.client(
             founder, 0, session
         ) as founder_client:
+            deposit_payloads = [
+                alice_note_1.to_output().encrypt_for(
+                    asset_id=asset_id,
+                    viewing_public_key=alice_keys.viewing_public_key,
+                ),
+                alice_note_2.to_output().encrypt_for(
+                    asset_id=asset_id,
+                    viewing_public_key=alice_keys.viewing_public_key,
+                ),
+            ]
+            deposit_payload_hashes = output_payload_hashes(deposit_payloads)
             deposit = prover.prove_deposit(
                 ShieldedDepositRequest(
                     asset_id=asset_id,
@@ -3136,6 +3276,7 @@ class E2ERunner:
                     append_state=tree_state([]),
                     amount=70,
                     outputs=[alice_note_1.to_output(), alice_note_2.to_output()],
+                    output_payload_hashes=deposit_payload_hashes,
                 )
             )
             deposit_submission = await alice_client.send_tx(
@@ -3146,21 +3287,12 @@ class E2ERunner:
                     "old_root": deposit.old_root,
                     "output_commitments": deposit.output_commitments,
                     "proof_hex": deposit.proof_hex,
-                    "output_payloads": [
-                        alice_note_1.to_output().encrypt_for(
-                            asset_id=asset_id,
-                            viewing_public_key=alice_keys.viewing_public_key,
-                        ),
-                        alice_note_2.to_output().encrypt_for(
-                            asset_id=asset_id,
-                            viewing_public_key=alice_keys.viewing_public_key,
-                        ),
-                    ],
+                    "output_payloads": deposit_payloads,
                 },
                 stamps=SHIELDED_TX_STAMPS["deposit"],
                 wait_for_tx=True,
             )
-            ensure_positive_submission(
+            deposit_receipt = ensure_positive_submission(
                 deposit_submission,
                 label="shielded-deposit",
             )
@@ -3170,6 +3302,25 @@ class E2ERunner:
                 "list_note_records",
                 {"start": 0, "limit": 8},
             )
+            if len(records_after_deposit) != 2:
+                raise E2EError("shielded deposit did not create two note records")
+            if records_after_deposit[0]["payload"] != deposit_payloads[0]:
+                raise E2EError("shielded deposit did not persist the first payload")
+            if records_after_deposit[1]["payload"] != deposit_payloads[1]:
+                raise E2EError("shielded deposit did not persist the second payload")
+            alice_sync_after_deposit = alice_wallet.sync_records(records_after_deposit)
+            if len(alice_sync_after_deposit.discovered_notes) != 2:
+                raise E2EError("shielded wallet did not discover both deposit notes")
+            if alice_wallet.available_balance() != 70:
+                raise E2EError("shielded wallet deposit balance drifted")
+            alice_wallet_snapshot = ShieldedWallet.from_json(alice_wallet.to_json())
+            if alice_wallet_snapshot.available_balance() != 70:
+                raise E2EError("shielded wallet snapshot restore drifted")
+            alice_wallet_seed = ShieldedWallet.from_seed_json(
+                alice_wallet.export_seed_json()
+            )
+            if alice_wallet_seed.owner_secret != alice_wallet.owner_secret:
+                raise E2EError("shielded wallet seed export/import drifted")
             recovered_alice = recover_encrypted_notes(
                 asset_id=asset_id,
                 commitments=[record["commitment"] for record in records_after_deposit],
@@ -3182,6 +3333,22 @@ class E2ERunner:
                 commitments=deposit.output_commitments,
                 notes=[alice_note_1, alice_note_2],
             )
+            transfer_payloads = [
+                ShieldedOutput.for_recipient(
+                    bob_keys.recipient,
+                    amount=bob_note.amount,
+                    rho=bob_note.rho,
+                    blind=bob_note.blind,
+                ).encrypt_for(
+                    asset_id=asset_id,
+                    viewing_public_key=bob_keys.viewing_public_key,
+                ),
+                alice_change.to_output().encrypt_for(
+                    asset_id=asset_id,
+                    viewing_public_key=alice_keys.viewing_public_key,
+                ),
+            ]
+            transfer_payload_hashes = output_payload_hashes(transfer_payloads)
             transfer = prover.prove_transfer(
                 ShieldedTransferRequest(
                     asset_id=asset_id,
@@ -3197,6 +3364,7 @@ class E2ERunner:
                         ),
                         alice_change.to_output(),
                     ],
+                    output_payload_hashes=transfer_payload_hashes,
                 )
             )
             transfer_submission = await alice_client.send_tx(
@@ -3207,26 +3375,12 @@ class E2ERunner:
                     "input_nullifiers": transfer.input_nullifiers,
                     "output_commitments": transfer.output_commitments,
                     "proof_hex": transfer.proof_hex,
-                    "output_payloads": [
-                        ShieldedOutput.for_recipient(
-                            bob_keys.recipient,
-                            amount=bob_note.amount,
-                            rho=bob_note.rho,
-                            blind=bob_note.blind,
-                        ).encrypt_for(
-                            asset_id=asset_id,
-                            viewing_public_key=bob_keys.viewing_public_key,
-                        ),
-                        alice_change.to_output().encrypt_for(
-                            asset_id=asset_id,
-                            viewing_public_key=alice_keys.viewing_public_key,
-                        ),
-                    ],
+                    "output_payloads": transfer_payloads,
                 },
                 stamps=SHIELDED_TX_STAMPS["transfer"],
                 wait_for_tx=True,
             )
-            ensure_positive_submission(
+            transfer_receipt = ensure_positive_submission(
                 transfer_submission,
                 label="shielded-transfer",
             )
@@ -3243,6 +3397,23 @@ class E2ERunner:
                 owner_secret=bob_keys.owner_secret,
                 viewing_private_key=bob_keys.viewing_private_key,
             )
+            alice_sync_after_transfer = alice_wallet.sync_records(records_after_transfer)
+            bob_sync_after_transfer = bob_wallet.sync_records(records_after_transfer)
+            if len(alice_sync_after_transfer.discovered_notes) != 1:
+                raise E2EError(
+                    "shielded wallet did not discover the transfer change note"
+                )
+            if len(bob_sync_after_transfer.discovered_notes) != 1:
+                raise E2EError("shielded wallet did not discover Bob's transfer note")
+            alice_spent_after_transfer = alice_wallet.apply_spent_nullifiers(
+                transfer.input_nullifiers
+            )
+            if len(alice_spent_after_transfer) != 2:
+                raise E2EError("shielded wallet did not mark both transfer inputs spent")
+            if alice_wallet.available_balance() != 45:
+                raise E2EError("shielded wallet transfer balance drifted")
+            if bob_wallet.available_balance() != 25:
+                raise E2EError("shielded Bob wallet balance drifted")
             discovered_after_transfer = scan_notes(
                 asset_id=asset_id,
                 commitments=deposit.output_commitments + transfer.output_commitments,
@@ -3252,6 +3423,13 @@ class E2ERunner:
         async with self.client(alice, 1, session) as alice_client, self.client(
             founder, 0, session
         ) as founder_client:
+            withdraw_payloads = [
+                alice_withdraw_change.to_output().encrypt_for(
+                    asset_id=asset_id,
+                    viewing_public_key=alice_keys.viewing_public_key,
+                )
+            ]
+            withdraw_payload_hashes = output_payload_hashes(withdraw_payloads)
             withdraw = prover.prove_withdraw(
                 ShieldedWithdrawRequest(
                     asset_id=asset_id,
@@ -3263,6 +3441,7 @@ class E2ERunner:
                     recipient=bob.public_key,
                     inputs=[discovered_after_transfer[0].to_input()],
                     outputs=[alice_withdraw_change.to_output()],
+                    output_payload_hashes=withdraw_payload_hashes,
                 )
             )
             withdraw_submission = await alice_client.send_tx(
@@ -3275,20 +3454,36 @@ class E2ERunner:
                     "input_nullifiers": withdraw.input_nullifiers,
                     "output_commitments": withdraw.output_commitments,
                     "proof_hex": withdraw.proof_hex,
-                    "output_payloads": [
-                        alice_withdraw_change.to_output().encrypt_for(
-                            asset_id=asset_id,
-                            viewing_public_key=alice_keys.viewing_public_key,
-                        )
-                    ],
+                    "output_payloads": withdraw_payloads,
                 },
                 stamps=SHIELDED_TX_STAMPS["withdraw"],
                 wait_for_tx=True,
             )
-            ensure_positive_submission(
+            withdraw_receipt = ensure_positive_submission(
                 withdraw_submission,
                 label="shielded-withdraw",
             )
+            records_after_withdraw = await founder_client.call(
+                token_name,
+                "list_note_records",
+                {"start": 0, "limit": 16},
+            )
+            if len(records_after_withdraw) != 5:
+                raise E2EError("shielded withdraw did not leave the expected note count")
+            alice_sync_after_withdraw = alice_wallet.sync_records(records_after_withdraw)
+            if len(alice_sync_after_withdraw.discovered_notes) != 1:
+                raise E2EError(
+                    "shielded wallet did not discover the withdraw change note"
+                )
+            alice_spent_after_withdraw = alice_wallet.apply_spent_nullifiers(
+                withdraw.input_nullifiers
+            )
+            if len(alice_spent_after_withdraw) != 1:
+                raise E2EError(
+                    "shielded wallet did not mark the withdraw input as spent"
+                )
+            if alice_wallet.available_balance() != 25:
+                raise E2EError("shielded wallet withdraw balance drifted")
             alice_public = await founder_client.call(
                 token_name,
                 "balance_of",
@@ -3300,17 +3495,312 @@ class E2ERunner:
                 {"account": bob.public_key},
             )
             supply_state = await founder_client.call(token_name, "get_supply_state", {})
+            current_root_after_withdraw = await founder_client.call(
+                token_name,
+                "current_shielded_root",
+                {},
+            )
+            tree_state_after_withdraw = await founder_client.call(
+                token_name,
+                "get_tree_state",
+                {},
+            )
+            transfer_nullifier_spent = await founder_client.call(
+                token_name,
+                "is_nullifier_spent",
+                {"nullifier": transfer.input_nullifiers[0]},
+            )
+            withdraw_nullifier_spent = await founder_client.call(
+                token_name,
+                "is_nullifier_spent",
+                {"nullifier": withdraw.input_nullifiers[0]},
+            )
+            replay_submission = await alice_client.send_tx(
+                token_name,
+                "withdraw_shielded",
+                {
+                    "amount": 20,
+                    "to": bob.public_key,
+                    "old_root": withdraw.old_root,
+                    "input_nullifiers": withdraw.input_nullifiers,
+                    "output_commitments": withdraw.output_commitments,
+                    "proof_hex": withdraw.proof_hex,
+                    "output_payloads": withdraw_payloads,
+                },
+                stamps=SHIELDED_TX_STAMPS["withdraw"],
+                wait_for_tx=True,
+            )
+            replay_receipt = ensure_failed_submission(
+                replay_submission,
+                label="shielded-replay-withdraw",
+                expected_message_fragment="Nullifier already spent",
+            )
+
+            exact_withdraw_plan = alice_wallet.build_withdraw(
+                amount=25,
+                recipient=alice.public_key,
+            )
+            if exact_withdraw_plan.request.outputs != []:
+                raise E2EError("shielded exact withdraw unexpectedly created outputs")
+            if exact_withdraw_plan.output_payloads != []:
+                raise E2EError(
+                    "shielded exact withdraw unexpectedly created payloads"
+                )
+            exact_withdraw = prover.prove_withdraw(exact_withdraw_plan.request)
+            exact_withdraw_submission = await alice_client.send_tx(
+                token_name,
+                "withdraw_shielded",
+                {
+                    "amount": 25,
+                    "to": alice.public_key,
+                    "old_root": exact_withdraw.old_root,
+                    "input_nullifiers": exact_withdraw.input_nullifiers,
+                    "output_commitments": exact_withdraw.output_commitments,
+                    "proof_hex": exact_withdraw.proof_hex,
+                    "output_payloads": exact_withdraw_plan.output_payloads,
+                },
+                stamps=SHIELDED_TX_STAMPS["withdraw"],
+                wait_for_tx=True,
+            )
+            exact_withdraw_receipt = ensure_positive_submission(
+                exact_withdraw_submission,
+                label="shielded-exact-withdraw",
+            )
+            if exact_withdraw.output_commitments != []:
+                raise E2EError(
+                    "shielded exact withdraw proof unexpectedly produced commitments"
+                )
+            alice_spent_after_exact_withdraw = alice_wallet.apply_spent_nullifiers(
+                exact_withdraw.input_nullifiers
+            )
+            if len(alice_spent_after_exact_withdraw) != 1:
+                raise E2EError(
+                    "shielded wallet did not mark the exact withdraw input as spent"
+                )
+            if alice_wallet.available_balance() != 0:
+                raise E2EError("shielded wallet exact withdraw balance drifted")
+            alice_public_after_exact = await founder_client.call(
+                token_name,
+                "balance_of",
+                {"account": alice.public_key},
+            )
+            current_root_before_recent = await founder_client.call(
+                token_name,
+                "current_shielded_root",
+                {},
+            )
+            if current_root_before_recent != current_root_after_withdraw:
+                raise E2EError(
+                    "shielded exact withdraw with no outputs unexpectedly changed the root"
+                )
+
+            zero_root_still_accepted = await founder_client.call(
+                token_name,
+                "is_root_accepted",
+                {"root": zero_root},
+            )
+            if current_root_before_recent == zero_root:
+                raise E2EError("shielded recent-root probe did not start from a non-current root")
+            if not zero_root_still_accepted:
+                raise E2EError("shielded token no longer accepts the zero root in-window")
+
+            recent_root_deposit_payloads = [
+                recent_root_note.to_output().encrypt_for(
+                    asset_id=asset_id,
+                    viewing_public_key=alice_keys.viewing_public_key,
+                )
+            ]
+            recent_root_deposit_payload_hashes = output_payload_hashes(
+                recent_root_deposit_payloads
+            )
+            recent_root_deposit = prover.prove_deposit(
+                ShieldedDepositRequest(
+                    asset_id=asset_id,
+                    old_root=zero_root,
+                    append_state=tree_state(alice_wallet.commitments()),
+                    amount=5,
+                    outputs=[recent_root_note.to_output()],
+                    output_payload_hashes=recent_root_deposit_payload_hashes,
+                )
+            )
+            recent_root_deposit_submission = await alice_client.send_tx(
+                token_name,
+                "deposit_shielded",
+                {
+                    "amount": 5,
+                    "old_root": recent_root_deposit.old_root,
+                    "output_commitments": recent_root_deposit.output_commitments,
+                    "proof_hex": recent_root_deposit.proof_hex,
+                    "output_payloads": recent_root_deposit_payloads,
+                },
+                stamps=SHIELDED_TX_STAMPS["deposit"],
+                wait_for_tx=True,
+            )
+            recent_root_deposit_receipt = ensure_positive_submission(
+                recent_root_deposit_submission,
+                label="shielded-recent-root-deposit",
+            )
+            records_after_recent_root = await founder_client.call(
+                token_name,
+                "list_note_records",
+                {"start": 0, "limit": 16},
+            )
+            alice_sync_after_recent_root = alice_wallet.sync_records(
+                records_after_recent_root
+            )
+            if len(alice_sync_after_recent_root.discovered_notes) != 1:
+                raise E2EError(
+                    "shielded wallet did not discover the recent-root deposit note"
+                )
+            if alice_wallet.available_balance() != 5:
+                raise E2EError("shielded wallet recent-root balance drifted")
+            alice_wallet_restored = ShieldedWallet.from_json(alice_wallet.to_json())
+            if alice_wallet_restored.available_balance() != 5:
+                raise E2EError("shielded wallet restore drifted after recent-root deposit")
+            bob_wallet.sync_records(records_after_recent_root)
+
+            alice_public = await founder_client.call(
+                token_name,
+                "balance_of",
+                {"account": alice.public_key},
+            )
+            bob_public = await founder_client.call(
+                token_name,
+                "balance_of",
+                {"account": bob.public_key},
+            )
+            supply_state = await founder_client.call(
+                token_name,
+                "get_supply_state",
+                {},
+            )
+            final_root = await founder_client.call(
+                token_name,
+                "current_shielded_root",
+                {},
+            )
+            final_tree_state = await founder_client.call(
+                token_name,
+                "get_tree_state",
+                {},
+            )
+            final_note_count = await founder_client.call(
+                token_name,
+                "get_note_count",
+                {},
+            )
+
+        if len(recovered_alice) != 2:
+            raise E2EError("shielded Alice recovery did not find both deposit notes")
+        if len(recovered_bob) != 1:
+            raise E2EError("shielded Bob recovery did not find the transfer note")
+        if len(discovered_after_deposit) != 2:
+            raise E2EError("shielded note scan did not find the deposit notes")
+        if len(discovered_after_transfer) != 1:
+            raise E2EError("shielded note scan did not find the change note")
+        if transfer_nullifier_spent is not True or withdraw_nullifier_spent is not True:
+            raise E2EError("shielded nullifier spend tracking drifted")
+        if alice_public != 50:
+            raise E2EError(
+                f"shielded Alice public balance drifted: {alice_public!r}"
+            )
+        if bob_public != 20:
+            raise E2EError(
+                f"shielded Bob public balance drifted: {bob_public!r}"
+            )
+        expected_supply_state = {
+            "total_supply": 100,
+            "public_supply": 70,
+            "shielded_supply": 30,
+        }
+        if normalize_value(supply_state) != expected_supply_state:
+            raise E2EError(
+                f"shielded supply state drifted: {supply_state!r}"
+            )
+        if alice_wallet.available_balance() != 5 or bob_wallet.available_balance() != 25:
+            raise E2EError("shielded wallet final balances drifted")
+        if final_note_count != 6:
+            raise E2EError(f"shielded note count drifted: {final_note_count!r}")
+        if final_tree_state["root"] != final_root:
+            raise E2EError("shielded final tree-state root drifted")
+        if alice_wallet.current_root() != final_root:
+            raise E2EError("shielded wallet commitment root drifted from contract root")
 
         return {
             "token": token_name,
             "registry": registry_name,
             "registry_owner": registry_owner,
+            "proof_config": normalize_value(proof_config),
+            "initial_tree_state": normalize_value(initial_tree_state),
+            "vk_infos": vk_infos,
+            "vk_bindings": vk_bindings,
             "vk_registration_proposals": vk_registration_proposals,
+            "deposit_receipt": deposit_receipt,
+            "transfer_receipt": transfer_receipt,
+            "withdraw_receipt": withdraw_receipt,
+            "replay_receipt": replay_receipt,
+            "exact_withdraw_receipt": exact_withdraw_receipt,
+            "recent_root_deposit_receipt": recent_root_deposit_receipt,
             "alice_public_balance": alice_public,
             "bob_public_balance": bob_public,
             "supply_state": normalize_value(supply_state),
             "alice_recovered_notes": len(recovered_alice),
             "bob_recovered_notes": len(recovered_bob),
+            "note_counts": {
+                "after_deposit": len(records_after_deposit),
+                "after_transfer": len(records_after_transfer),
+                "after_withdraw": len(records_after_withdraw),
+                "final": final_note_count,
+            },
+            "root_checks": {
+                "zero_root": zero_root,
+                "current_root_after_withdraw": current_root_after_withdraw,
+                "current_root_before_recent_root_probe": current_root_before_recent,
+                "final_root": final_root,
+                "zero_root_still_accepted": zero_root_still_accepted,
+            },
+            "wallet_checks": {
+                "alice_available_balance": alice_wallet.available_balance(),
+                "bob_available_balance": bob_wallet.available_balance(),
+                "alice_discovered_after_deposit": len(
+                    alice_sync_after_deposit.discovered_notes
+                ),
+                "alice_discovered_after_transfer": len(
+                    alice_sync_after_transfer.discovered_notes
+                ),
+                "alice_discovered_after_withdraw": len(
+                    alice_sync_after_withdraw.discovered_notes
+                ),
+                "alice_discovered_after_recent_root": len(
+                    alice_sync_after_recent_root.discovered_notes
+                ),
+                "bob_discovered_after_transfer": len(
+                    bob_sync_after_transfer.discovered_notes
+                ),
+                "exact_withdraw_output_count": len(
+                    exact_withdraw.output_commitments
+                ),
+            },
+            "nullifier_checks": {
+                "transfer_input_count": len(transfer.input_nullifiers),
+                "withdraw_input_count": len(withdraw.input_nullifiers),
+                "exact_withdraw_input_count": len(
+                    exact_withdraw.input_nullifiers
+                ),
+                "transfer_nullifier_spent": transfer_nullifier_spent,
+                "withdraw_nullifier_spent": withdraw_nullifier_spent,
+            },
+            "records_sample": normalize_value(
+                {
+                    "after_deposit": records_after_deposit,
+                    "after_transfer_tail": records_after_transfer[-2:],
+                    "after_withdraw_tail": records_after_withdraw[-2:],
+                    "after_recent_root_tail": records_after_recent_root[-2:],
+                }
+            ),
+            "tree_state_after_withdraw": normalize_value(tree_state_after_withdraw),
+            "final_tree_state": normalize_value(final_tree_state),
+            "alice_public_after_exact_withdraw": alice_public_after_exact,
         }
 
     async def parallel_execution_phase(

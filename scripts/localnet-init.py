@@ -263,9 +263,13 @@ def main():
     app_log_retention_days = env_int(
         "XIAN_LOCALNET_APP_LOG_RETENTION_DAYS", 7
     )
-    profiling_enabled = env_bool("XIAN_LOCALNET_PROFILE_ENABLED", False)
+    profiling_enabled = env_bool(
+        "XIAN_LOCALNET_PROFILE_ENABLED",
+        env_bool("XIAN_PERF_ENABLED", False),
+    )
     profiling_recent_blocks = env_int(
-        "XIAN_LOCALNET_PROFILE_RECENT_BLOCKS", 32
+        "XIAN_LOCALNET_PROFILE_RECENT_BLOCKS",
+        env_int("XIAN_PERF_RECENT_BLOCKS", 32),
     )
 
     # 1. Generate key material for all nodes
@@ -396,7 +400,7 @@ def main():
     )
 
     print(f"\nLocalnet initialized in {LOCALNET_DIR}")
-    print(f"Start with: make localnet-up")
+    print("Start with: make localnet-up")
 
 
 def write_compose_file(

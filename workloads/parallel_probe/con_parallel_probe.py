@@ -1,36 +1,38 @@
+# ruff: noqa: F821
+
 values = Hash(default_value=0)
 observations = Hash(default_value=0)
-flag = Variable()
+flags = Hash(default_value=0)
 
 
 @construct
 def seed():
-    flag.set(0)
+    pass
 
 
 @export
-def write_value(key: str, value: int):
-    values[key] = value
-    return values[key]
+def write_value(group: str, key: str, value: int):
+    values[group, key] = value
+    return values[group, key]
 
 
 @export
-def set_flag(value: int):
-    flag.set(value)
-    return flag.get()
+def set_flag(group: str, value: int):
+    flags[group] = value
+    return flags[group]
 
 
 @export
-def observe_flag(tag: str):
-    observed = flag.get() or 0
+def observe_flag(group: str, tag: str):
+    observed = flags[group] or 0
     observations[tag] = observed
     return observed
 
 
 @export
-def snapshot_sum(tag: str):
+def snapshot_sum(group: str, tag: str):
     total = 0
-    for value in values.all():
+    for value in values.all(group):
         total += value
     observations[tag] = total
     return total
