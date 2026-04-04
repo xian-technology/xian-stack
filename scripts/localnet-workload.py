@@ -38,6 +38,8 @@ PAIR_DEPLOY_STAMPS = 300_000
 DEX_DEPLOY_STAMPS = 200_000
 TOKEN_TX_STAMPS = 7_500
 DEX_TX_STAMPS = 60_000
+PARALLEL_PROBE_DEPLOY_STAMPS = 90_000
+PARALLEL_PROBE_TX_STAMPS = 2_000
 RECEIPT_TIMEOUT_SECONDS = 45.0
 
 
@@ -66,6 +68,7 @@ class BroadcastRecord:
     final_success: bool | None = None
     final_message: str | None = None
     height: int | None = None
+    tx_index: int | None = None
     stamps_used: int | None = None
     events: list[dict[str, Any]] | None = None
 
@@ -83,6 +86,7 @@ class WorkloadContext:
         submit_node_index: int,
         round_robin_submission: bool,
     ):
+        self.network = network
         self.chain_id = network["chain_id"]
         self.founder_wallet = Wallet(private_key=network["founder_key"])
         self.nodes = [
@@ -256,6 +260,7 @@ class WorkloadContext:
             timeout_seconds=timeout_seconds,
         )
         record.height = receipt["height"]
+        record.tx_index = receipt["tx_index"]
         record.final_success = receipt["success"]
         record.final_message = receipt["result"]
         record.stamps_used = receipt["stamps_used"]
@@ -431,6 +436,7 @@ async def wait_for_tx_receipt(
             if isinstance(receipt.execution, dict):
                 return {
                     "height": int(result["height"]),
+                    "tx_index": int(result["index"]),
                     "success": receipt.success,
                     "result": receipt.message,
                     "events": receipt.execution.get("events", []),
@@ -438,6 +444,7 @@ async def wait_for_tx_receipt(
                 }
             return {
                 "height": int(result["height"]),
+                "tx_index": int(result["index"]),
                 "success": receipt.success,
                 "result": receipt.message,
                 "events": [],
@@ -525,6 +532,49 @@ def collect_container_memory(nodes: list[LocalnetNode]) -> dict[str, str]:
 def require_successful(record: BroadcastRecord) -> None:
     if not record.final_success:
         raise WorkloadError(f"{record.label}: {record.final_message}")
+
+
+def require_all_successful(
+    label: str,
+    records: list[BroadcastRecord],
+) -> None:
+    failures = [record.label for record in records if not record.final_success]
+    if failures:
+        raise WorkloadError(f"{label}: workload transactions failed: {failures}")
+
+
+def summarize_records(records: list[BroadcastRecord]) -> dict[str, Any]:
+    heights = [
+        int(record.height)
+        for record in records
+        if record.height is not None
+    ]
+    return {
+        "transaction_count": len(records),
+        "successful_transactions": sum(
+            1 for record in records if record.final_success
+        ),
+        "failed_transactions": sum(
+            1 for record in records if record.final_success is False
+        ),
+        "min_height": min(heights) if heights else None,
+        "max_height": max(heights) if heights else None,
+        "tx_hashes": [
+            record.tx_hash for record in records if record.tx_hash is not None
+        ],
+    }
+
+
+def canonical_record_position(record: BroadcastRecord) -> tuple[int, int]:
+    if record.height is None or record.tx_index is None:
+        raise WorkloadError(
+            f"{record.label}: missing canonical transaction position metadata"
+        )
+    return int(record.height), int(record.tx_index)
+
+
+def record_precedes(left: BroadcastRecord, right: BroadcastRecord) -> bool:
+    return canonical_record_position(left) < canonical_record_position(right)
 
 
 async def broadcast_and_confirm(
@@ -1224,6 +1274,431 @@ async def run_dex_mixed(
     }
 
 
+async def run_parallel_probe(
+    context: WorkloadContext,
+    *,
+    seed: str,
+    receipt_resolution: str,
+    receipt_workers: int,
+) -> dict[str, Any]:
+    founder = context.founder_wallet
+    parallel_config = context.network.get("parallel_execution", {})
+    configured_min_transactions = int(
+        parallel_config.get("min_transactions", 8) or 8
+    )
+    parallel_batch_size = max(configured_min_transactions + 2, len(context.nodes) * 2)
+
+    suffix = hashlib.sha256(
+        f"parallel:{seed}:{time.time_ns()}".encode("utf-8")
+    ).hexdigest()[:8]
+    contract_name = f"con_parallel_probe_{suffix}"
+    contract_code = read_fixture("parallel_probe/con_parallel_probe.py")
+    writer_wallets = [
+        derive_wallet(seed, f"parallel-probe-writer-{index}")
+        for index in range(parallel_batch_size)
+    ]
+    same_sender_wallet = derive_wallet(seed, "parallel-probe-same-sender")
+    funded_wallets = [*writer_wallets, same_sender_wallet]
+
+    print(f"Deploying {contract_name}...")
+    deploy_record = await context.broadcast_tx(
+        label="deploy parallel_probe",
+        wallet=founder,
+        rpc_index=0,
+        contract="submission",
+        function="submit_contract",
+        kwargs={"name": contract_name, "code": contract_code},
+        stamps=PARALLEL_PROBE_DEPLOY_STAMPS,
+        expected_success=True,
+    )
+    await context.resolve_records([deploy_record])
+    require_successful(deploy_record)
+
+    funding_records = []
+    for index, wallet in enumerate(funded_wallets):
+        funding_records.append(
+            await broadcast_and_confirm(
+                context,
+                label=f"fund parallel-probe-{index}",
+                wallet=founder,
+                rpc_index=index % len(context.nodes),
+                contract="currency",
+                function="transfer",
+                kwargs={"amount": 5_000.0, "to": wallet.public_key},
+                stamps=PARALLEL_PROBE_TX_STAMPS,
+                expected_success=True,
+            )
+        )
+
+    print(
+        f"Broadcasting parallel_probe batches ({parallel_batch_size} tx per batch)..."
+    )
+
+    non_conflicting_group = f"unique-{suffix}"
+    non_conflicting_records: list[BroadcastRecord] = []
+    for index, wallet in enumerate(writer_wallets):
+        value = index + 1
+        non_conflicting_records.append(
+            await context.broadcast_tx(
+                label=f"parallel unique #{index}",
+                wallet=wallet,
+                rpc_index=index % len(context.nodes),
+                contract=contract_name,
+                function="write_value",
+                kwargs={
+                    "group": non_conflicting_group,
+                    "key": f"unique-{index}",
+                    "value": value,
+                },
+                stamps=PARALLEL_PROBE_TX_STAMPS,
+                expected_success=True,
+            )
+        )
+    await context.resolve_records(
+        non_conflicting_records,
+        concurrent=receipt_resolution == "concurrent",
+        max_workers=receipt_workers,
+    )
+    require_all_successful("parallel_probe non_conflicting", non_conflicting_records)
+
+    same_sender_group = f"same-{suffix}"
+    same_sender_records: list[BroadcastRecord] = []
+    for index in range(parallel_batch_size):
+        value = 100 + index
+        same_sender_records.append(
+            await context.broadcast_tx(
+                label=f"parallel same-sender #{index}",
+                wallet=same_sender_wallet,
+                rpc_index=0,
+                contract=contract_name,
+                function="write_value",
+                kwargs={
+                    "group": same_sender_group,
+                    "key": f"same-{index}",
+                    "value": value,
+                },
+                stamps=PARALLEL_PROBE_TX_STAMPS,
+                expected_success=True,
+            )
+        )
+    await context.resolve_records(
+        same_sender_records,
+        concurrent=receipt_resolution == "concurrent",
+        max_workers=receipt_workers,
+    )
+    require_all_successful("parallel_probe same_sender", same_sender_records)
+
+    max_ordering_attempts = 6
+
+    async def execute_read_after_write_attempt(attempt: int) -> dict[str, Any]:
+        flag_group = f"flag-{suffix}-{attempt}"
+        tail_group = f"read-tail-{suffix}-{attempt}"
+        observation_tag = f"{flag_group}-observation"
+        records: list[BroadcastRecord] = [
+            await context.broadcast_tx(
+                label=f"parallel set-flag attempt {attempt}",
+                wallet=writer_wallets[0],
+                rpc_index=0,
+                contract=contract_name,
+                function="set_flag",
+                kwargs={"group": flag_group, "value": 7},
+                stamps=PARALLEL_PROBE_TX_STAMPS,
+                expected_success=True,
+            ),
+            await context.broadcast_tx(
+                label=f"parallel observe-flag attempt {attempt}",
+                wallet=writer_wallets[1],
+                rpc_index=0,
+                contract=contract_name,
+                function="observe_flag",
+                kwargs={"group": flag_group, "tag": observation_tag},
+                stamps=PARALLEL_PROBE_TX_STAMPS,
+                expected_success=True,
+            ),
+        ]
+        for index in range(2, parallel_batch_size):
+            value = 200 + index
+            records.append(
+                await context.broadcast_tx(
+                    label=f"parallel read-tail attempt {attempt} #{index}",
+                    wallet=writer_wallets[index],
+                    rpc_index=0,
+                    contract=contract_name,
+                    function="write_value",
+                    kwargs={
+                        "group": tail_group,
+                        "key": f"tail-{index}",
+                        "value": value,
+                    },
+                    stamps=PARALLEL_PROBE_TX_STAMPS,
+                    expected_success=True,
+                )
+            )
+        await context.resolve_records(
+            records,
+            concurrent=receipt_resolution == "concurrent",
+            max_workers=receipt_workers,
+        )
+        require_all_successful(
+            f"parallel_probe read_after_write attempt {attempt}",
+            records,
+        )
+
+        observed = await context.client(founder, 0).get_state(
+            contract_name,
+            "observations",
+            observation_tag,
+        )
+        set_record, observe_record = records[:2]
+        expected = 7 if record_precedes(set_record, observe_record) else 0
+        if observed != expected:
+            raise WorkloadError(
+                "parallel_probe: unexpected read-after-write observation "
+                f"{observed!r}, expected {expected!r}"
+            )
+
+        return {
+            "attempt": attempt,
+            "records": records,
+            "tag": observation_tag,
+            "observed_observation": observed,
+            "expected_observation": expected,
+            "exercised_conflict_path": (
+                record_precedes(set_record, observe_record)
+                and set_record.height == observe_record.height
+            ),
+        }
+
+    read_after_write_attempts: list[dict[str, Any]] = []
+    read_after_write_result: dict[str, Any] | None = None
+    for attempt in range(1, max_ordering_attempts + 1):
+        attempt_result = await execute_read_after_write_attempt(attempt)
+        read_after_write_attempts.append(
+            {
+                "attempt": attempt_result["attempt"],
+                "tag": attempt_result["tag"],
+                "observed_observation": attempt_result["observed_observation"],
+                "expected_observation": attempt_result["expected_observation"],
+                "exercised_conflict_path": attempt_result[
+                    "exercised_conflict_path"
+                ],
+                "records": summarize_records(attempt_result["records"]),
+            }
+        )
+        if attempt_result["exercised_conflict_path"]:
+            read_after_write_result = attempt_result
+            break
+    if read_after_write_result is None:
+        raise WorkloadError(
+            "parallel_probe: could not obtain canonical writer-before-reader "
+            f"ordering for read_after_write after {max_ordering_attempts} attempts"
+        )
+
+    read_after_write_records = read_after_write_result["records"]
+    read_after_write_tag = read_after_write_result["tag"]
+    read_after_write_observation = read_after_write_result[
+        "observed_observation"
+    ]
+    expected_read_after_write_observation = read_after_write_result[
+        "expected_observation"
+    ]
+
+    async def execute_prefix_scan_attempt(attempt: int) -> dict[str, Any]:
+        group = f"prefix-{suffix}-{attempt}"
+        observation_tag = f"{group}-observation"
+        seed_value = 13
+        snapshot_record = None
+        records: list[BroadcastRecord] = []
+        value_records: list[tuple[BroadcastRecord, int]] = []
+
+        prefix_write_record = await context.broadcast_tx(
+            label=f"parallel prefix-write attempt {attempt}",
+            wallet=writer_wallets[0],
+            rpc_index=0,
+            contract=contract_name,
+            function="write_value",
+            kwargs={"group": group, "key": "seed", "value": seed_value},
+            stamps=PARALLEL_PROBE_TX_STAMPS,
+            expected_success=True,
+        )
+        records.append(prefix_write_record)
+        value_records.append((prefix_write_record, seed_value))
+
+        snapshot_record = await context.broadcast_tx(
+            label=f"parallel prefix-snapshot attempt {attempt}",
+            wallet=writer_wallets[1],
+            rpc_index=0,
+            contract=contract_name,
+            function="snapshot_sum",
+            kwargs={"group": group, "tag": observation_tag},
+            stamps=PARALLEL_PROBE_TX_STAMPS,
+            expected_success=True,
+        )
+        records.append(snapshot_record)
+
+        for index in range(2, parallel_batch_size):
+            value = 300 + index
+            record = await context.broadcast_tx(
+                label=f"parallel prefix-tail attempt {attempt} #{index}",
+                wallet=writer_wallets[index],
+                rpc_index=0,
+                contract=contract_name,
+                function="write_value",
+                kwargs={
+                    "group": group,
+                    "key": f"tail-{index}",
+                    "value": value,
+                },
+                stamps=PARALLEL_PROBE_TX_STAMPS,
+                expected_success=True,
+            )
+            records.append(record)
+            value_records.append((record, value))
+        await context.resolve_records(
+            records,
+            concurrent=receipt_resolution == "concurrent",
+            max_workers=receipt_workers,
+        )
+        require_all_successful(
+            f"parallel_probe prefix_scan attempt {attempt}",
+            records,
+        )
+
+        observed = await context.client(founder, 0).get_state(
+            contract_name,
+            "observations",
+            observation_tag,
+        )
+        expected = sum(
+            value
+            for record, value in value_records
+            if record_precedes(record, snapshot_record)
+        )
+        if observed != expected:
+            raise WorkloadError(
+                "parallel_probe: unexpected prefix-scan observation "
+                f"{observed!r}, expected {expected!r}"
+            )
+
+        return {
+            "attempt": attempt,
+            "records": records,
+            "tag": observation_tag,
+            "group": group,
+            "observed_observation": observed,
+            "expected_observation": expected,
+            "exercised_conflict_path": (
+                record_precedes(prefix_write_record, snapshot_record)
+                and prefix_write_record.height == snapshot_record.height
+            ),
+        }
+
+    prefix_scan_attempts: list[dict[str, Any]] = []
+    prefix_scan_result: dict[str, Any] | None = None
+    for attempt in range(1, max_ordering_attempts + 1):
+        attempt_result = await execute_prefix_scan_attempt(attempt)
+        prefix_scan_attempts.append(
+            {
+                "attempt": attempt_result["attempt"],
+                "tag": attempt_result["tag"],
+                "observed_observation": attempt_result["observed_observation"],
+                "expected_observation": attempt_result["expected_observation"],
+                "exercised_conflict_path": attempt_result[
+                    "exercised_conflict_path"
+                ],
+                "records": summarize_records(attempt_result["records"]),
+            }
+        )
+        if attempt_result["exercised_conflict_path"]:
+            prefix_scan_result = attempt_result
+            break
+    if prefix_scan_result is None:
+        raise WorkloadError(
+            "parallel_probe: could not obtain canonical writer-before-reader "
+            f"ordering for prefix_scan after {max_ordering_attempts} attempts"
+        )
+
+    prefix_scan_records = prefix_scan_result["records"]
+    prefix_scan_tag = prefix_scan_result["tag"]
+    prefix_scan_group = prefix_scan_result["group"]
+    prefix_scan_observation = prefix_scan_result["observed_observation"]
+    expected_prefix_observation = prefix_scan_result["expected_observation"]
+
+    state = await context.compare_state(
+        [
+            {
+                "label": "parallel flag observation",
+                "contract": contract_name,
+                "variable": "observations",
+                "keys": [read_after_write_tag],
+            },
+            {
+                "label": "parallel prefix observation",
+                "contract": contract_name,
+                "variable": "observations",
+                "keys": [prefix_scan_tag],
+            },
+            {
+                "label": "parallel final prefix seed",
+                "contract": contract_name,
+                "variable": "values",
+                "keys": [prefix_scan_group, "seed"],
+            },
+        ]
+    )
+
+    overall_heights = [
+        height
+        for batch in (
+            non_conflicting_records,
+            same_sender_records,
+            read_after_write_records,
+            prefix_scan_records,
+        )
+        for height in (
+            int(record.height) for record in batch if record.height is not None
+        )
+    ]
+
+    return {
+        "scenario": "parallel_probe",
+        "contract_name": contract_name,
+        "parallel_batch_size": parallel_batch_size,
+        "parallel_config": {
+            "enabled": bool(parallel_config.get("enabled")),
+            "workers": int(parallel_config.get("workers", 0) or 0),
+            "min_transactions": configured_min_transactions,
+        },
+        "funding_transactions": len(funding_records),
+        "batches": {
+            "non_conflicting": summarize_records(non_conflicting_records),
+            "same_sender": summarize_records(same_sender_records),
+            "read_after_write": {
+                **summarize_records(read_after_write_records),
+                "tag": read_after_write_tag,
+                "attempt_count": len(read_after_write_attempts),
+                "attempts": read_after_write_attempts,
+                "expected_observation": expected_read_after_write_observation,
+                "observed_observation": read_after_write_observation,
+            },
+            "prefix_scan": {
+                **summarize_records(prefix_scan_records),
+                "tag": prefix_scan_tag,
+                "group": prefix_scan_group,
+                "attempt_count": len(prefix_scan_attempts),
+                "attempts": prefix_scan_attempts,
+                "expected_observation": expected_prefix_observation,
+                "observed_observation": prefix_scan_observation,
+            },
+        },
+        "overall_height_window": {
+            "min_height": min(overall_heights) if overall_heights else None,
+            "max_height": max(overall_heights) if overall_heights else None,
+        },
+        "state": state,
+    }
+
+
 async def run_scenario(
     args: argparse.Namespace,
     context: WorkloadContext,
@@ -1244,6 +1719,13 @@ async def run_scenario(
             receipt_resolution=args.receipt_resolution,
             receipt_workers=args.receipt_workers,
         )
+    if args.scenario == "parallel_probe":
+        return await run_parallel_probe(
+            context,
+            seed=args.seed,
+            receipt_resolution=args.receipt_resolution,
+            receipt_workers=args.receipt_workers,
+        )
     raise WorkloadError(f"unsupported scenario: {args.scenario}")
 
 
@@ -1253,7 +1735,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--scenario",
-        choices=("counter_basic", "dex_mixed"),
+        choices=("counter_basic", "dex_mixed", "parallel_probe"),
         default="counter_basic",
     )
     parser.add_argument(
