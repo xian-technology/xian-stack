@@ -569,6 +569,39 @@ async def query_state_from_all_nodes(
     }
 
 
+async def perf_status_from_all_nodes(
+    session: aiohttp.ClientSession,
+    nodes: list[LocalnetNode],
+) -> dict[str, dict[str, Any]]:
+    payloads = await asyncio.gather(
+        *(fetch_abci_query(session, node.rpc_url, "/perf_status") for node in nodes)
+    )
+    return {
+        node.moniker: payload for node, payload in zip(nodes, payloads, strict=True)
+    }
+
+
+def recent_blocks_in_window(
+    perf_status: dict[str, Any],
+    *,
+    min_height: int | None,
+    max_height: int | None,
+) -> list[dict[str, Any]]:
+    recent_blocks = perf_status.get("recent_blocks") or []
+    blocks = []
+    for block in recent_blocks:
+        try:
+            height = int(block["height"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if min_height is not None and height < min_height:
+            continue
+        if max_height is not None and height > max_height:
+            continue
+        blocks.append(block)
+    return blocks
+
+
 async def wait_for_uniform_node_state(
     session: aiohttp.ClientSession,
     nodes: list[LocalnetNode],
@@ -787,6 +820,7 @@ class E2ERunner:
             "13-state-patch",
             "14-logging",
             "15-shielded-note-token",
+            "16-parallel-execution",
         ]
 
     def _load_resume_json(self, phase_name: str) -> dict[str, Any]:
@@ -1796,6 +1830,69 @@ class E2ERunner:
         if payload is None:
             raise E2EError(f"could not parse workload output for {scenario}")
         return payload
+
+    async def wait_for_parallel_metadata_match(
+        self,
+        session: aiohttp.ClientSession,
+        *,
+        label: str,
+        min_height: int | None,
+        max_height: int | None,
+        predicate,
+        timeout_seconds: float = 30.0,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout_seconds
+        last_window: dict[str, list[dict[str, Any]]] = {}
+
+        while time.monotonic() < deadline:
+            statuses = await perf_status_from_all_nodes(session, self.nodes)
+            matches: dict[str, dict[str, Any]] = {}
+            last_window = {}
+
+            for node in self.nodes:
+                node_status = statuses[node.moniker]
+                window = recent_blocks_in_window(
+                    node_status,
+                    min_height=min_height,
+                    max_height=max_height,
+                )
+                last_window[node.moniker] = [
+                    {
+                        "height": block.get("height"),
+                        "metadata": normalize_value(block.get("metadata", {})),
+                    }
+                    for block in window
+                ]
+                matched_block = next(
+                    (
+                        block
+                        for block in window
+                        if predicate(block.get("metadata") or {})
+                    ),
+                    None,
+                )
+                if matched_block is not None:
+                    matches[node.moniker] = {
+                        "height": int(matched_block["height"]),
+                        "metadata": normalize_value(
+                            matched_block.get("metadata", {})
+                        ),
+                    }
+
+            if len(matches) == len(self.nodes):
+                return {
+                    "label": label,
+                    "min_height": min_height,
+                    "max_height": max_height,
+                    "matches": matches,
+                }
+
+            await asyncio.sleep(0.5)
+
+        raise E2EError(
+            f"{label}: did not observe expected parallel metadata in perf window; "
+            f"last={normalize_value(last_window)}"
+        )
 
     async def burst_phase(self) -> dict[str, Any]:
         payload = await self.run_localnet_workload(
@@ -3216,6 +3313,153 @@ class E2ERunner:
             "bob_recovered_notes": len(recovered_bob),
         }
 
+    async def parallel_execution_phase(
+        self,
+        session: aiohttp.ClientSession,
+    ) -> dict[str, Any]:
+        payload = await self.run_localnet_workload(
+            scenario="parallel_probe",
+            seed_label=f"{self.run_id}:parallel",
+        )
+        scenario_summary = payload["scenario_summary"]
+        parallel_config = normalize_value(
+            self.network.get("parallel_execution", {})
+        )
+        expected_enabled = bool(parallel_config.get("enabled"))
+        expected_workers = int(parallel_config.get("workers", 0) or 0)
+        expected_min_transactions = int(
+            parallel_config.get("min_transactions", 8) or 8
+        )
+        effective_parallel_enabled = expected_enabled and expected_workers > 0
+        overall_window = scenario_summary.get("overall_height_window", {})
+        max_height = overall_window.get("max_height")
+        if max_height is not None:
+            await asyncio.gather(
+                *(
+                    wait_for_height(
+                        session,
+                        node.rpc_url,
+                        int(max_height),
+                        timeout_seconds=min(
+                            self.args.rpc_timeout_seconds,
+                            45.0,
+                        ),
+                    )
+                    for node in self.nodes
+                )
+            )
+
+        perf_statuses = await perf_status_from_all_nodes(session, self.nodes)
+        perf_config = {}
+        for node in self.nodes:
+            status = perf_statuses[node.moniker]
+            node_config = {
+                "parallel_execution_enabled": bool(
+                    status.get("parallel_execution_enabled")
+                ),
+                "parallel_execution_workers": int(
+                    status.get("parallel_execution_workers", 0) or 0
+                ),
+                "parallel_execution_min_transactions": int(
+                    status.get("parallel_execution_min_transactions", 0) or 0
+                ),
+            }
+            perf_config[node.moniker] = node_config
+            if (
+                node_config["parallel_execution_enabled"] != expected_enabled
+                or node_config["parallel_execution_workers"] != expected_workers
+                or node_config["parallel_execution_min_transactions"]
+                != expected_min_transactions
+            ):
+                raise E2EError(
+                    "parallel execution config drift detected on "
+                    f"{node.moniker}: {node_config} != {parallel_config}"
+                )
+
+        if not effective_parallel_enabled:
+            unexpected = {}
+            min_height = overall_window.get("min_height")
+            for node in self.nodes:
+                window = recent_blocks_in_window(
+                    perf_statuses[node.moniker],
+                    min_height=min_height,
+                    max_height=max_height,
+                )
+                matched = [
+                    {
+                        "height": int(block["height"]),
+                        "metadata": normalize_value(
+                            block.get("metadata", {})
+                        ),
+                    }
+                    for block in window
+                    if bool((block.get("metadata") or {}).get("parallel_enabled"))
+                ]
+                if matched:
+                    unexpected[node.moniker] = matched
+            if unexpected:
+                raise E2EError(
+                    "parallel execution metadata appeared while disabled: "
+                    f"{unexpected}"
+                )
+            return {
+                "parallel_config": parallel_config,
+                "perf_config": perf_config,
+                "scenario_summary": scenario_summary,
+                "parallel_metadata": {
+                    "disabled": True,
+                    "reason": "parallel execution not effectively enabled",
+                },
+            }
+
+        batch_expectations = [
+            (
+                "non_conflicting",
+                lambda metadata: bool(metadata.get("parallel_enabled"))
+                and int(metadata.get("parallel_speculative_accepted", 0)) > 0
+                and int(
+                    metadata.get(
+                        "parallel_planned_parallelizable_transactions", 0
+                    )
+                )
+                > 0,
+            ),
+            (
+                "same_sender",
+                lambda metadata: bool(metadata.get("parallel_enabled"))
+                and int(metadata.get("parallel_serial_prefiltered", 0)) > 0,
+            ),
+            (
+                "read_after_write",
+                lambda metadata: bool(metadata.get("parallel_enabled"))
+                and int(metadata.get("parallel_speculative_wave_count", 0)) > 1,
+            ),
+            (
+                "prefix_scan",
+                lambda metadata: bool(metadata.get("parallel_enabled"))
+                and int(metadata.get("parallel_speculative_wave_count", 0)) > 1,
+            ),
+        ]
+
+        metadata_matches = {}
+        for batch_name, predicate in batch_expectations:
+            batch = scenario_summary["batches"][batch_name]
+            metadata_matches[batch_name] = await self.wait_for_parallel_metadata_match(
+                session,
+                label=f"parallel batch {batch_name}",
+                min_height=batch.get("min_height"),
+                max_height=batch.get("max_height"),
+                predicate=predicate,
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 45.0),
+            )
+
+        return {
+            "parallel_config": parallel_config,
+            "perf_config": perf_config,
+            "scenario_summary": scenario_summary,
+            "parallel_metadata": metadata_matches,
+        }
+
     async def finalize_summary(self) -> dict[str, Any]:
         return {
             "ok": all(phase.ok for phase in self.phase_results),
@@ -3269,6 +3513,7 @@ class E2ERunner:
                 ("13-state-patch", lambda: self.state_patch_phase(session)),
                 ("14-logging", lambda: self.logging_phase(session)),
                 ("15-shielded-note-token", lambda: self.shielded_phase(session)),
+                ("16-parallel-execution", lambda: self.parallel_execution_phase(session)),
             ]
             if start_phase != "00-bootstrap":
                 self.load_resume_context()
