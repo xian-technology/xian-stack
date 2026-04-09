@@ -43,6 +43,19 @@ Run the broader layered 5-validator e2e harness:
 make localnet-e2e
 ```
 
+Export or import the standardized BDS recovery snapshot:
+
+```bash
+python3 ./scripts/backend.py bds-snapshot-export
+python3 ./scripts/backend.py bds-snapshot-import
+```
+
+By default the archive lives at:
+
+```bash
+.cometbft/snapshots/xian-bds-snapshot.tar.gz
+```
+
 Plan or apply a coordinated workspace release:
 
 ```bash
@@ -97,6 +110,7 @@ The stable backend interface is `scripts/backend.py`. It covers:
 - `validate`
 - `start`, `stop`, and `status`
 - `endpoints` and `health`
+- `bds-snapshot-export` and `bds-snapshot-import`
 - `smoke` and `smoke-cli`
 - `localnet-*` flows
 

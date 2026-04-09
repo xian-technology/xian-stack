@@ -21,6 +21,9 @@ XIAN_BDS_SPOOL_DIR ?=
 XIAN_BDS_SPOOL_WARN_ENTRIES ?= 256
 XIAN_BDS_SPOOL_WARN_BYTES ?= 536870912
 XIAN_BDS_DISK_FREE_WARN_BYTES ?= 2147483648
+XIAN_BDS_SNAPSHOT_PATH ?= $(XIAN_COMETBFT_HOME)/snapshots/xian-bds-snapshot.tar.gz
+XIAN_BDS_SNAPSHOT_FORCE ?= 0
+XIAN_BDS_SNAPSHOT_CLEAR_SPOOL ?= 0
 XIAN_STACK_DISK_FREE_WARN_BYTES ?= 10737418240
 XIAN_CONTRACTS_DIR ?= ./contracts
 XIAN_COMETBFT_VERSION ?= 0.38.21
@@ -131,6 +134,9 @@ export XIAN_BDS_SPOOL_DIR := $(XIAN_BDS_SPOOL_DIR)
 export XIAN_BDS_SPOOL_WARN_ENTRIES := $(XIAN_BDS_SPOOL_WARN_ENTRIES)
 export XIAN_BDS_SPOOL_WARN_BYTES := $(XIAN_BDS_SPOOL_WARN_BYTES)
 export XIAN_BDS_DISK_FREE_WARN_BYTES := $(XIAN_BDS_DISK_FREE_WARN_BYTES)
+export XIAN_BDS_SNAPSHOT_PATH := $(abspath $(XIAN_BDS_SNAPSHOT_PATH))
+export XIAN_BDS_SNAPSHOT_FORCE := $(XIAN_BDS_SNAPSHOT_FORCE)
+export XIAN_BDS_SNAPSHOT_CLEAR_SPOOL := $(XIAN_BDS_SNAPSHOT_CLEAR_SPOOL)
 export XIAN_STACK_DISK_FREE_WARN_BYTES := $(XIAN_STACK_DISK_FREE_WARN_BYTES)
 export XIAN_CONTRACTS_DIR := $(abspath $(XIAN_CONTRACTS_DIR))
 export XIAN_COMETBFT_VERSION := $(XIAN_COMETBFT_VERSION)
@@ -265,6 +271,7 @@ LOCALNET_E2E_BUILD ?= 1
 LOCALNET_E2E_NODES ?= 5
 LOCALNET_E2E_GENESIS_NETWORK ?= testnet
 LOCALNET_E2E_BDS_NODE_INDEX ?= 0
+XIAN_BDS_SNAPSHOT_CONTAINER_PATH = $(patsubst $(abspath $(XIAN_COMETBFT_HOME))%,/root/.cometbft%,$(abspath $(XIAN_BDS_SNAPSHOT_PATH)))
 LOCALNET_E2E_PORT_OFFSET ?= 1000
 LOCALNET_E2E_SEED ?= xian-localnet-testnet-e2e-v1
 LOCALNET_E2E_LOG_LEVEL ?= INFO
@@ -299,7 +306,7 @@ LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK ?= testnet
 	abci-bds-build abci-bds-up abci-bds-down dev-bds-abci-shell \
 	wipe-bds node-wipe node-wipe-all node-reset \
 	node-stop node-start node-start-bds node-init node-configure node-id \
-	node-status node-status-fidelity \
+	node-status node-status-fidelity bds-postgres-up bds-snapshot-export bds-snapshot-import \
 	storage-report \
 	localnet-init localnet-build localnet-up localnet-down localnet-status \
 	localnet-workload localnet-burst localnet-memwatch localnet-leak-hunt localnet-e2e localnet-validator-governance \
@@ -340,6 +347,8 @@ help:
 	@printf "  %-24s %s\n" "node-start-bds" "Start the node runtime with block-service mode"
 	@printf "  %-24s %s\n" "node-status" "Report integrated runtime state as JSON"
 	@printf "  %-24s %s\n" "node-status-fidelity" "Report split fidelity runtime state as JSON"
+	@printf "  %-24s %s\n" "bds-snapshot-export" "Export a BDS snapshot to XIAN_BDS_SNAPSHOT_PATH"
+	@printf "  %-24s %s\n" "bds-snapshot-import" "Import a BDS snapshot from XIAN_BDS_SNAPSHOT_PATH"
 	@printf "  %-24s %s\n" "storage-report" "Report host-side chain, BDS, and free-disk usage"
 	@printf "  %-24s %s\n" "dev-abci-build/dev-abci-up" "Developer-only ABCI dev stack targets"
 	@printf "  %-24s %s\n" "dev-contracting-build" "Developer-only contracting image build"
@@ -379,6 +388,9 @@ print-env:
 	@printf "XIAN_BDS_SPOOL_WARN_ENTRIES=%s\n" "$(XIAN_BDS_SPOOL_WARN_ENTRIES)"
 	@printf "XIAN_BDS_SPOOL_WARN_BYTES=%s\n" "$(XIAN_BDS_SPOOL_WARN_BYTES)"
 	@printf "XIAN_BDS_DISK_FREE_WARN_BYTES=%s\n" "$(XIAN_BDS_DISK_FREE_WARN_BYTES)"
+	@printf "XIAN_BDS_SNAPSHOT_PATH=%s\n" "$(XIAN_BDS_SNAPSHOT_PATH)"
+	@printf "XIAN_BDS_SNAPSHOT_FORCE=%s\n" "$(XIAN_BDS_SNAPSHOT_FORCE)"
+	@printf "XIAN_BDS_SNAPSHOT_CLEAR_SPOOL=%s\n" "$(XIAN_BDS_SNAPSHOT_CLEAR_SPOOL)"
 	@printf "XIAN_STACK_DISK_FREE_WARN_BYTES=%s\n" "$(XIAN_STACK_DISK_FREE_WARN_BYTES)"
 	@printf "XIAN_CONTRACTS_DIR=%s\n" "$(XIAN_CONTRACTS_DIR)"
 	@printf "XIAN_COMETBFT_VERSION=%s\n" "$(XIAN_COMETBFT_VERSION)"
@@ -472,7 +484,7 @@ smoke-cli:
 	./scripts/smoke-cli.sh
 
 prepare-dirs:
-	mkdir -p "$(XIAN_COMETBFT_HOME)" "$(XIAN_BDS_DATA_DIR)" "$(XIAN_CONTRACTS_DIR)"
+	mkdir -p "$(XIAN_COMETBFT_HOME)" "$(XIAN_BDS_DATA_DIR)" "$(XIAN_CONTRACTS_DIR)" "$(dir $(XIAN_BDS_SNAPSHOT_PATH))"
 
 
 # Dev-only contracting commands
@@ -629,6 +641,27 @@ node-status:
 
 node-status-fidelity:
 	@XIAN_STACK_TOPOLOGY=fidelity ./scripts/node-status.sh
+
+bds-postgres-up: prepare-dirs
+	$(ABCI_BDS_COMPOSE) up -d postgres
+	@until $(ABCI_BDS_COMPOSE) exec -T postgres pg_isready -U "$(XIAN_BDS_USER)" -d "$(XIAN_BDS_DATABASE)" >/dev/null 2>&1; do \
+		sleep 1; \
+	done
+
+bds-snapshot-export: bds-postgres-up
+	@case "$(abspath $(XIAN_BDS_SNAPSHOT_PATH))" in \
+		"$(abspath $(XIAN_COMETBFT_HOME))"/*) ;; \
+		*) echo "ERROR: XIAN_BDS_SNAPSHOT_PATH must live under XIAN_COMETBFT_HOME so the stack container can access it." >&2; exit 1 ;; \
+	esac
+	$(ABCI_BDS_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "xian-bds-snapshot export --output-path $(XIAN_BDS_SNAPSHOT_CONTAINER_PATH) $(if $(filter 1,$(XIAN_BDS_SNAPSHOT_FORCE)),--force,)"
+
+bds-snapshot-import: bds-postgres-up
+	@case "$(abspath $(XIAN_BDS_SNAPSHOT_PATH))" in \
+		"$(abspath $(XIAN_COMETBFT_HOME))"/*) ;; \
+		*) echo "ERROR: XIAN_BDS_SNAPSHOT_PATH must live under XIAN_COMETBFT_HOME so the stack container can access it." >&2; exit 1 ;; \
+	esac
+	@test -f "$(XIAN_BDS_SNAPSHOT_PATH)" || (echo "ERROR: BDS snapshot archive not found at $(XIAN_BDS_SNAPSHOT_PATH)" >&2; exit 1)
+	$(ABCI_BDS_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "xian-bds-snapshot import --input-path $(XIAN_BDS_SNAPSHOT_CONTAINER_PATH) $(if $(filter 1,$(XIAN_BDS_SNAPSHOT_CLEAR_SPOOL)),--clear-spool,)"
 
 storage-report:
 	@python3 ./scripts/storage-report.py

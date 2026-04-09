@@ -42,6 +42,9 @@ DEFAULT_XIAN_METRICS_URL = "http://127.0.0.1:9108/metrics"
 DEFAULT_PROMETHEUS_URL = "http://127.0.0.1:9090"
 DEFAULT_GRAFANA_URL = "http://127.0.0.1:3000"
 DEFAULT_GRAPHQL_URL = "http://127.0.0.1:5000/graphql"
+DEFAULT_BDS_SNAPSHOT_PATH = (
+    STACK_DIR / ".cometbft" / "snapshots" / "xian-bds-snapshot.tar.gz"
+)
 
 
 def display_host(host: str) -> str:
@@ -57,6 +60,30 @@ def resolve_repo_dir(name: str, env_var: str) -> Path:
     if explicit:
         return Path(explicit).expanduser().resolve()
     return (STACK_DIR.parent / name).resolve()
+
+
+def resolve_cometbft_home() -> Path:
+    explicit = os.environ.get("XIAN_COMETBFT_HOME")
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    return (STACK_DIR / ".cometbft").resolve()
+
+
+def resolve_bds_snapshot_path(path: str | None) -> Path:
+    if path:
+        return Path(path).expanduser().resolve()
+    return DEFAULT_BDS_SNAPSHOT_PATH.resolve()
+
+
+def ensure_path_within_cometbft_home(path: Path) -> None:
+    cometbft_home = resolve_cometbft_home()
+    try:
+        path.relative_to(cometbft_home)
+    except ValueError as exc:
+        raise RuntimeError(
+            "BDS snapshot paths must live under XIAN_COMETBFT_HOME so the "
+            "stack container can access them"
+        ) from exc
 
 
 def fetch_json(url: str, *, timeout: float = 10.0) -> dict:
@@ -1199,6 +1226,68 @@ def backend_storage_report() -> dict:
     return payload
 
 
+def backend_bds_snapshot_export(
+    *,
+    output_path: str | None,
+    force: bool,
+) -> dict:
+    resolved_output = resolve_bds_snapshot_path(output_path)
+    ensure_path_within_cometbft_home(resolved_output)
+    env = {
+        **os.environ.copy(),
+        "XIAN_BDS_SNAPSHOT_PATH": str(resolved_output),
+        "XIAN_BDS_SNAPSHOT_FORCE": "1" if force else "0",
+    }
+    result = run_make_target(
+        "bds-snapshot-export",
+        capture_output=True,
+        env=env,
+    )
+    payload = {
+        "stack_dir": str(STACK_DIR),
+        "target": "bds-snapshot-export",
+        "ok": True,
+        "output_path": str(resolved_output),
+        "force": force,
+    }
+    if result.stdout:
+        payload["stdout"] = result.stdout
+    if result.stderr:
+        payload["stderr"] = result.stderr
+    return payload
+
+
+def backend_bds_snapshot_import(
+    *,
+    input_path: str | None,
+    clear_spool: bool,
+) -> dict:
+    resolved_input = resolve_bds_snapshot_path(input_path)
+    ensure_path_within_cometbft_home(resolved_input)
+    env = {
+        **os.environ.copy(),
+        "XIAN_BDS_SNAPSHOT_PATH": str(resolved_input),
+        "XIAN_BDS_SNAPSHOT_CLEAR_SPOOL": "1" if clear_spool else "0",
+    }
+    result = run_make_target(
+        "bds-snapshot-import",
+        capture_output=True,
+        env=env,
+    )
+    payload = {
+        "stack_dir": str(STACK_DIR),
+        "target": "bds-snapshot-import",
+        "ok": True,
+        "input_path": str(resolved_input),
+        "clear_spool": clear_spool,
+    }
+    if result.stdout:
+        payload["stdout"] = result.stdout
+    if result.stderr:
+        payload["stderr"] = result.stderr
+    return payload
+
+
 def backend_localnet_init(
     *,
     nodes: int,
@@ -1608,6 +1697,34 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("smoke-cli")
     subparsers.add_parser("storage-report")
 
+    bds_snapshot_export = subparsers.add_parser("bds-snapshot-export")
+    bds_snapshot_export.add_argument(
+        "--output-path",
+        help=(
+            "Host path under XIAN_COMETBFT_HOME for the exported BDS snapshot "
+            f"(default: {DEFAULT_BDS_SNAPSHOT_PATH})"
+        ),
+    )
+    bds_snapshot_export.add_argument(
+        "--force",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+
+    bds_snapshot_import = subparsers.add_parser("bds-snapshot-import")
+    bds_snapshot_import.add_argument(
+        "--input-path",
+        help=(
+            "Host path under XIAN_COMETBFT_HOME for the BDS snapshot archive "
+            f"(default: {DEFAULT_BDS_SNAPSHOT_PATH})"
+        ),
+    )
+    bds_snapshot_import.add_argument(
+        "--clear-spool",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+
     localnet_init = subparsers.add_parser("localnet-init")
     localnet_init.add_argument(
         "--nodes",
@@ -1958,6 +2075,16 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_make_result("smoke-cli")
     elif args.command == "storage-report":
         payload = backend_storage_report()
+    elif args.command == "bds-snapshot-export":
+        payload = backend_bds_snapshot_export(
+            output_path=args.output_path,
+            force=args.force,
+        )
+    elif args.command == "bds-snapshot-import":
+        payload = backend_bds_snapshot_import(
+            input_path=args.input_path,
+            clear_spool=args.clear_spool,
+        )
     elif args.command == "localnet-init":
         payload = backend_localnet_init(
             nodes=args.nodes,
