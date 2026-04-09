@@ -241,6 +241,12 @@ define maybe_pull_fidelity
 	fi
 endef
 
+define maybe_build_postgraphile
+	@if [ "$(XIAN_NODE_IMAGE_MODE)" = "registry" ]; then \
+		$(1) build postgraphile; \
+	fi
+endef
+
 LOCALNET_NODES ?= 4
 LOCALNET_BUILD_SERVICE ?= $(if $(filter integrated,$(XIAN_LOCALNET_TOPOLOGY)),node-0,node-0-abci)
 LOCALNET_MEMWATCH_MINUTES ?= 10
@@ -576,6 +582,7 @@ abci-bds-build: prepare-dirs
 
 abci-bds-up: prepare-dirs
 	$(call maybe_pull_integrated,$(ABCI_BDS_COMPOSE),abci)
+	$(call maybe_build_postgraphile,$(ABCI_BDS_COMPOSE))
 	$(ABCI_BDS_COMPOSE) up -d $(NODE_UP_BUILD_FLAG)
 
 abci-bds-down:
@@ -605,6 +612,7 @@ node-start:
 
 node-start-bds:
 	$(call maybe_pull_integrated,$(ABCI_BDS_COMPOSE),abci)
+	$(call maybe_build_postgraphile,$(ABCI_BDS_COMPOSE))
 	$(ABCI_BDS_COMPOSE) up -d $(NODE_UP_BUILD_FLAG)
 
 node-init:

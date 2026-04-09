@@ -3546,19 +3546,12 @@ class E2ERunner:
             if bob_wallet.available_balance() != 14:
                 raise E2EError("shielded relay change balance drifted")
 
-            relay_execution = await founder_client.call(
-                token_name,
-                "get_relay_execution",
-                {"execution_id": 0},
-            )
             relay_indexed_tx = await founder_client.get_indexed_tx(
                 relay_receipt["tx_hash"]
             )
             relay_events = await founder_client.get_events_for_tx(
                 relay_receipt["tx_hash"]
             )
-            if relay_execution is None:
-                raise E2EError("shielded relay execution record missing")
             if relay_indexed_tx is None:
                 raise E2EError("shielded relay indexed transaction missing")
             if relay_indexed_tx.sender != relayer.public_key:
@@ -3568,11 +3561,16 @@ class E2ERunner:
                 raise E2EError(
                     "shielded relay tx leaked public account addresses"
                 )
-            if not any(
-                event.event == "ShieldedRelayTransfer"
-                and event.signer == relayer.public_key
-                for event in relay_events
-            ):
+            relay_event = next(
+                (
+                    event
+                    for event in relay_events
+                    if event.event == "ShieldedRelayTransfer"
+                    and event.signer == relayer.public_key
+                ),
+                None,
+            )
+            if relay_event is None:
                 raise E2EError("shielded relay event stream drifted")
 
         async with self.client(alice, 1, session) as alice_client, self.client(
@@ -3986,7 +3984,47 @@ class E2ERunner:
                     "sender": relay_indexed_tx.sender,
                     "function": relay_indexed_tx.function,
                     "relayer_fee": relay_proof.relayer_fee,
-                    "execution": relay_execution,
+                    "execution": {
+                        "execution_id": relay_event.data_indexed.get(
+                            "execution_id"
+                        )
+                        if relay_event.data_indexed
+                        else None,
+                        "relayer": relay_event.data_indexed.get("relayer")
+                        if relay_event.data_indexed
+                        else None,
+                        "relay_binding": relay_event.data.get("relay_binding")
+                        if relay_event.data
+                        else None,
+                        "execution_tag": relay_event.data.get("execution_tag")
+                        if relay_event.data
+                        else None,
+                        "nullifier_digest": relay_event.data.get(
+                            "nullifier_digest"
+                        )
+                        if relay_event.data
+                        else None,
+                        "old_root": relay_event.data.get("old_root")
+                        if relay_event.data
+                        else None,
+                        "new_root": relay_event.data_indexed.get("new_root")
+                        if relay_event.data_indexed
+                        else None,
+                        "nullifier_count": relay_event.data.get(
+                            "nullifier_count"
+                        )
+                        if relay_event.data
+                        else None,
+                        "output_count": relay_event.data.get("output_count")
+                        if relay_event.data
+                        else None,
+                        "fee": relay_event.data.get("fee")
+                        if relay_event.data
+                        else None,
+                        "expires_at": relay_event.data.get("expires_at")
+                        if relay_event.data
+                        else None,
+                    },
                     "event_count": len(relay_events),
                 }
             ),
