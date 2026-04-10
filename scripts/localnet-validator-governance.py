@@ -28,9 +28,9 @@ NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 OUTPUT_ROOT = STACK_DIR / ".artifacts" / "localnet-validator-governance"
 XIAN_ABCI_SRC = ROOT_DIR / "xian-abci" / "src"
 
-DEFAULT_TRANSFER_STAMPS = 2_000
-DEFAULT_TX_STAMPS = 200_000
-GOVERNANCE_TX_STAMPS = 2_000_000
+DEFAULT_TRANSFER_CHI = 2_000
+DEFAULT_TX_CHI = 200_000
+GOVERNANCE_TX_CHI = 2_000_000
 DEFAULT_LOCALNET_NODES = 5
 DEFAULT_GENESIS_NETWORK = "testnet"
 STATE_PATCH_DELAY_BLOCKS = 8
@@ -424,8 +424,8 @@ def normalize_receipt(submission, *, label: str) -> dict[str, Any]:
         "message": message,
         "tx_hash": submission.tx_hash,
         "nonce": submission.nonce,
-        "stamps_supplied": submission.stamps_supplied,
-        "stamps_used": None if execution is None else execution.get("stamps_used"),
+        "chi_supplied": submission.chi_supplied,
+        "chi_used": None if execution is None else execution.get("chi_used"),
         "state_write_count": len(state),
         "event_count": len(events),
         "events": events,
@@ -591,7 +591,7 @@ class ValidatorGovernanceRunner:
                 submission = await client.send(
                     amount=amount,
                     to_address=wallet.public_key,
-                    stamps=DEFAULT_TRANSFER_STAMPS,
+                    chi=DEFAULT_TRANSFER_CHI,
                     wait_for_tx=True,
                 )
                 receipts.append(
@@ -647,13 +647,13 @@ class ValidatorGovernanceRunner:
         kwargs: dict[str, Any],
         *,
         label: str,
-        stamps: int = DEFAULT_TX_STAMPS,
+        chi: int = DEFAULT_TX_CHI,
     ) -> dict[str, Any]:
         submission = await client.send_tx(
             contract,
             function,
             kwargs,
-            stamps=stamps,
+            chi=chi,
             wait_for_tx=True,
         )
         return ensure_positive_submission(submission, label=label)
@@ -726,7 +726,7 @@ class ValidatorGovernanceRunner:
                 "summary": summary,
             },
             label=f"{label_prefix}-propose",
-            stamps=GOVERNANCE_TX_STAMPS,
+            chi=GOVERNANCE_TX_CHI,
         )
         proposal_id = coerce_int(await proposer.get_state("governance", "proposal_count"))
         proposal_pending = await proposer.call(
@@ -758,7 +758,7 @@ class ValidatorGovernanceRunner:
                     "vote",
                     {"proposal_id": proposal_id, "support": True},
                     label=f"{label_prefix}-vote-{index}-{name}",
-                    stamps=GOVERNANCE_TX_STAMPS,
+                    chi=GOVERNANCE_TX_CHI,
                 )
             )
             current_proposal = await proposer.call(
@@ -799,7 +799,7 @@ class ValidatorGovernanceRunner:
             "propose_vote",
             {"type_of_vote": type_of_vote, "arg": arg},
             label=f"{label_prefix}-propose",
-            stamps=GOVERNANCE_TX_STAMPS,
+            chi=GOVERNANCE_TX_CHI,
         )
         proposal_id = coerce_int(await proposer.get_state("masternodes", "total_votes"))
         proposal_pending = await proposer.get_state("masternodes", "votes", proposal_id)
@@ -823,7 +823,7 @@ class ValidatorGovernanceRunner:
                     "vote",
                     {"proposal_id": proposal_id, "vote": "yes"},
                     label=f"{label_prefix}-vote-{index}-{name}",
-                    stamps=GOVERNANCE_TX_STAMPS,
+                    chi=GOVERNANCE_TX_CHI,
                 )
             )
             current_vote = await proposer.get_state("masternodes", "votes", proposal_id)
@@ -1189,7 +1189,7 @@ def get_status():
             deploy_submission = await node0.submit_contract(
                 name=probe_contract,
                 code=probe_code,
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
                 wait_for_tx=True,
             )
             deploy_receipt = ensure_positive_submission(
@@ -1307,7 +1307,7 @@ def get_status():
                     "uri": bundle_payload["uri"],
                     "emergency": False,
                 },
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
                 wait_for_tx=True,
             )
             proposal_receipt = ensure_positive_submission(
@@ -1325,7 +1325,7 @@ def get_status():
                     "governance",
                     "vote",
                     {"proposal_id": proposal_id, "support": True},
-                    stamps=GOVERNANCE_TX_STAMPS,
+                    chi=GOVERNANCE_TX_CHI,
                     wait_for_tx=True,
                 )
                 vote_receipts.append(
@@ -1503,7 +1503,7 @@ def get_status():
                     "network_endpoint": "localnet://node-3-return",
                 },
                 label="manual-reregister",
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
             )
             update_registration_receipt = await self.submit_tx(
                 node3,
@@ -1515,7 +1515,7 @@ def get_status():
                     "network_endpoint": "localnet://node-3-return-updated",
                 },
                 label="manual-update-registration",
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
             )
             validator_pending = await node0.call(
                 "masternodes",
@@ -1716,7 +1716,7 @@ def get_status():
                     "reward_key": "delegator-reward-key",
                 },
                 label="delegate-to-node3",
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
             )
             delegation = await node0.call(
                 "masternodes",
@@ -1752,7 +1752,7 @@ def get_status():
                 "rebalance",
                 {},
                 label="auto-rebalance-after-delegation",
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
             )
             active_after_rebalance = await node0.call(
                 "masternodes",
@@ -1884,7 +1884,7 @@ def get_status():
                 "undelegate",
                 {"validator": self.nodes[3].account_public_key, "amount": 100},
                 label="undelegate-from-node3",
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
             )
             pending_unbond_ids = await node0.call(
                 "masternodes",
@@ -1920,7 +1920,7 @@ def get_status():
                 "claim_unbond",
                 {"unbond_id": pending_unbond_id},
                 label="claim-pending-unbond",
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
             )
             pending_unbond_after_claim = await node0.call(
                 "masternodes",
@@ -2071,7 +2071,7 @@ def get_status():
                     "network_endpoint": "localnet://node-1-hybrid",
                 },
                 label="hybrid-register",
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
             )
             approve_bond = await self.submit_tx(
                 node1,
@@ -2094,7 +2094,7 @@ def get_status():
                 "rebalance",
                 {},
                 label="hybrid-rebalance-before-approval",
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
             )
             active_before_approval = await node0.call(
                 "masternodes",
@@ -2304,7 +2304,7 @@ def get_status():
                 "announce_leave",
                 {},
                 label="announce-leave-node3",
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
             )
             validator_after_announce = await self.wait_for_validator_record(
                 node0,
@@ -2318,7 +2318,7 @@ def get_status():
                 "masternodes",
                 "leave",
                 {},
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
                 wait_for_tx=True,
             )
             immediate_leave_failure = ensure_failed_submission(
@@ -2332,7 +2332,7 @@ def get_status():
                 "rebalance",
                 {},
                 label="rebalance-after-announce-leave",
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
             )
             active_after_rebalance = await self.wait_for_active_validators(
                 node0,

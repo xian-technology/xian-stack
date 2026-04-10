@@ -27,8 +27,8 @@ class FakeSubmission:
     tx_hash: str | None = "ABC123"
     mode: str = "checktx"
     nonce: int = 7
-    stamps_supplied: int = 100
-    stamps_estimated: int | None = 80
+    chi_supplied: int = 100
+    chi_estimated: int | None = 80
     message: object = None
     response: dict | None = None
     receipt: object = None

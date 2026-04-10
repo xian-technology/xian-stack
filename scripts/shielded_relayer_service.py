@@ -281,8 +281,8 @@ class ShieldedRelayerServiceConfig:
     wait_for_tx: bool = True
     timeout_seconds: float = 30.0
     poll_interval_seconds: float = 0.25
-    stamp_margin: float = 0.10
-    min_stamp_headroom: int = 10
+    chi_margin: float = 0.10
+    min_chi_headroom: int = 10
     metrics_enabled: bool = True
     log_requests: bool = True
     rate_limit_requests_per_minute: int = 120
@@ -321,8 +321,8 @@ class ShieldedRelayerService:
                 wait_for_tx=config.wait_for_tx,
                 timeout_seconds=config.timeout_seconds,
                 poll_interval_seconds=config.poll_interval_seconds,
-                stamp_margin=config.stamp_margin,
-                min_stamp_headroom=config.min_stamp_headroom,
+                chi_margin=config.chi_margin,
+                min_chi_headroom=config.min_chi_headroom,
             )
             xian_client = XianAsync(
                 config.node_url,
@@ -846,8 +846,8 @@ class ShieldedRelayerService:
                 wait_for_tx=self.config.wait_for_tx,
                 timeout_seconds=self.config.timeout_seconds,
                 poll_interval_seconds=self.config.poll_interval_seconds,
-                stamp_margin=self.config.stamp_margin,
-                min_stamp_headroom=self.config.min_stamp_headroom,
+                chi_margin=self.config.chi_margin,
+                min_chi_headroom=self.config.min_chi_headroom,
             )
             job["chain_id"] = chain_id
             job["submission"] = asdict(submission)
@@ -1284,12 +1284,12 @@ def load_config_from_env() -> ShieldedRelayerServiceConfig:
             "XIAN_SHIELDED_RELAYER_POLL_INTERVAL_SECONDS",
             0.25,
         ),
-        stamp_margin=_env_float(
-            "XIAN_SHIELDED_RELAYER_STAMP_MARGIN",
+        chi_margin=_env_float(
+            "XIAN_SHIELDED_RELAYER_CHI_MARGIN",
             0.10,
         ),
-        min_stamp_headroom=_env_int(
-            "XIAN_SHIELDED_RELAYER_MIN_STAMP_HEADROOM",
+        min_chi_headroom=_env_int(
+            "XIAN_SHIELDED_RELAYER_MIN_CHI_HEADROOM",
             10,
         ),
         rate_limit_requests_per_minute=_env_int(

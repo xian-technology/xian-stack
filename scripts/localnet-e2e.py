@@ -38,21 +38,21 @@ XIAN_ABCI_SRC = ROOT_DIR / "xian-abci" / "src"
 RUST_TRACER_MODE = "native_instruction_v1"
 DEFAULT_LOCALNET_NODES = 5
 DEFAULT_GENESIS_NETWORK = "testnet"
-DEFAULT_TX_STAMPS = 15_000
-DEFAULT_TRANSFER_STAMPS = 2_000
-GOVERNANCE_TX_STAMPS = 200_000
+DEFAULT_TX_CHI = 15_000
+DEFAULT_TRANSFER_CHI = 2_000
+GOVERNANCE_TX_CHI = 200_000
 STATE_PATCH_DELAY_BLOCKS = 8
 STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS = 8
 SIMULATOR_BURST_REQUESTS = 128
 WEBSOCKET_TIMEOUT_SECONDS = 20.0
 LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
 LOCALNET_POSTGRES_CONTAINER = "xian-localnet-postgres"
-CONTRACT_ORCHESTRATION_TX_STAMPS = {
+CONTRACT_ORCHESTRATION_TX_CHI = {
     "deploy_contract": 180_000,
     "deploy_family": 100_000,
     "dynamic_call": 50_000,
 }
-SHIELDED_TX_STAMPS = {
+SHIELDED_TX_CHI = {
     "deposit": 8_000_000,
     "transfer": 10_000_000,
     "withdraw": 8_000_000,
@@ -713,8 +713,8 @@ def normalize_receipt(submission, *, label: str) -> dict[str, Any]:
         "message": message,
         "tx_hash": submission.tx_hash,
         "nonce": submission.nonce,
-        "stamps_supplied": submission.stamps_supplied,
-        "stamps_used": None if execution is None else execution.get("stamps_used"),
+        "chi_supplied": submission.chi_supplied,
+        "chi_used": None if execution is None else execution.get("chi_used"),
         "state_write_count": len(state),
         "event_count": len(events),
         "events": events,
@@ -972,13 +972,13 @@ class E2ERunner:
         kwargs: dict[str, Any],
         *,
         label: str,
-        stamps: int = DEFAULT_TX_STAMPS,
+        chi: int = DEFAULT_TX_CHI,
     ) -> dict[str, Any]:
         submission = await client.send_tx(
             contract,
             function,
             kwargs,
-            stamps=stamps,
+            chi=chi,
             wait_for_tx=True,
         )
         return ensure_positive_submission(submission, label=label)
@@ -1039,7 +1039,7 @@ class E2ERunner:
             proposal_function,
             proposal_kwargs,
             label=f"{label_prefix}-propose",
-            stamps=GOVERNANCE_TX_STAMPS,
+            chi=GOVERNANCE_TX_CHI,
         )
         proposal_id = int(await proposer.get_state("governance", "proposal_count"))
         proposal_pending = await proposer.call(
@@ -1061,7 +1061,7 @@ class E2ERunner:
                 "vote",
                 {"proposal_id": proposal_id, "support": True},
                 label=f"{label_prefix}-vote-{index}-{name}",
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
             )
             for index, (name, voter) in enumerate(voters, start=1)
         ]
@@ -1104,7 +1104,7 @@ class E2ERunner:
             "propose_vote",
             {"type_of_vote": type_of_vote, "arg": arg},
             label=f"{label_prefix}-propose",
-            stamps=GOVERNANCE_TX_STAMPS,
+            chi=GOVERNANCE_TX_CHI,
         )
         proposal_id = int(await proposer.get_state("masternodes", "total_votes"))
         proposal_pending = await proposer.get_state("masternodes", "votes", proposal_id)
@@ -1122,7 +1122,7 @@ class E2ERunner:
                 "vote",
                 {"proposal_id": proposal_id, "vote": "yes"},
                 label=f"{label_prefix}-vote-{index}-{name}",
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
             )
             for index, (name, voter) in enumerate(voters, start=1)
         ]
@@ -1288,7 +1288,7 @@ class E2ERunner:
                 submission = await client.send(
                     amount=amount,
                     to_address=wallet.public_key,
-                    stamps=DEFAULT_TRANSFER_STAMPS,
+                    chi=DEFAULT_TRANSFER_CHI,
                     mode="commit",
                     wait_for_tx=True,
                 )
@@ -1330,13 +1330,13 @@ class E2ERunner:
             conflict_submission = await client.submit_contract(
                 name=conflict_contract,
                 code=read_text(WORKLOADS_DIR / "e2e" / "conflict_guard.py"),
-                stamps=120_000,
+                chi=120_000,
                 wait_for_tx=True,
             )
             patch_submission = await client.submit_contract(
                 name=patch_contract,
                 code=read_text(WORKLOADS_DIR / "e2e" / "patch_target.py"),
-                stamps=90_000,
+                chi=90_000,
                 wait_for_tx=True,
             )
             conflict_receipt = ensure_positive_submission(
@@ -1432,7 +1432,7 @@ class E2ERunner:
                 submission = await client.submit_contract(
                     name=name,
                     code=code,
-                    stamps=CONTRACT_ORCHESTRATION_TX_STAMPS["deploy_contract"],
+                    chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
                     mode="commit",
                 )
                 deployments.append(
@@ -1455,7 +1455,7 @@ class E2ERunner:
                     factory_name,
                     "deploy_family",
                     {"prefix": family_prefix},
-                    stamps=CONTRACT_ORCHESTRATION_TX_STAMPS["deploy_family"],
+                    chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_family"],
                     mode="commit",
                 )
                 family_receipt = ensure_positive_submission(
@@ -1520,7 +1520,7 @@ class E2ERunner:
                     "account": operator.public_key,
                     "amount": 3,
                 },
-                stamps=CONTRACT_ORCHESTRATION_TX_STAMPS["dynamic_call"],
+                chi=CONTRACT_ORCHESTRATION_TX_CHI["dynamic_call"],
                 mode="commit",
             )
             touch_receipt = ensure_positive_submission(
@@ -1535,7 +1535,7 @@ class E2ERunner:
                     "target_contract": alpha_name,
                     "function_name": "internal_secret",
                 },
-                stamps=CONTRACT_ORCHESTRATION_TX_STAMPS["dynamic_call"],
+                chi=CONTRACT_ORCHESTRATION_TX_CHI["dynamic_call"],
                 mode="commit",
             )
             private_receipt = normalize_receipt(
@@ -1552,7 +1552,7 @@ class E2ERunner:
                 factory_name,
                 "deploy_family_with_failure",
                 {"prefix": failed_prefix},
-                stamps=CONTRACT_ORCHESTRATION_TX_STAMPS["deploy_family"],
+                chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_family"],
                 mode="commit",
             )
             failed_receipt = normalize_receipt(
@@ -1632,7 +1632,7 @@ class E2ERunner:
                     "currency",
                     "approve",
                     {"amount": direct_allowance, "to": spender.public_key},
-                    stamps=DEFAULT_TX_STAMPS,
+                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="currency-direct-approve",
@@ -1656,7 +1656,7 @@ class E2ERunner:
                         "to": recipient.public_key,
                         "main_account": operator.public_key,
                     },
-                    stamps=DEFAULT_TRANSFER_STAMPS,
+                    chi=DEFAULT_TRANSFER_CHI,
                     wait_for_tx=True,
                 ),
                 label="currency-direct-transfer-from",
@@ -1694,7 +1694,7 @@ class E2ERunner:
                         "deadline": permit_deadline,
                         "signature": permit_signature,
                     },
-                    stamps=DEFAULT_TX_STAMPS,
+                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="currency-permit-approve",
@@ -1718,7 +1718,7 @@ class E2ERunner:
                         "to": permit_recipient.public_key,
                         "main_account": operator.public_key,
                     },
-                    stamps=DEFAULT_TRANSFER_STAMPS,
+                    chi=DEFAULT_TRANSFER_CHI,
                     wait_for_tx=True,
                 ),
                 label="currency-permit-transfer-from",
@@ -1798,7 +1798,7 @@ class E2ERunner:
                     submission = await client.send(
                         amount=1,
                         to_address=recipient,
-                        stamps=DEFAULT_TRANSFER_STAMPS,
+                        chi=DEFAULT_TRANSFER_CHI,
                         wait_for_tx=True,
                     )
                     tx_records.append(
@@ -1959,7 +1959,7 @@ class E2ERunner:
                     conflict_contract,
                     "claim",
                     {"slot": slot, "amount": 1},
-                    stamps=DEFAULT_TX_STAMPS,
+                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=False,
                 )
                 receipt = normalize_receipt(submission, label=label)
@@ -1978,7 +1978,7 @@ class E2ERunner:
                     receipt["finalized"] = True
                     receipt["success"] = finalized.success
                     receipt["message"] = finalized.message
-                    receipt["stamps_used"] = execution.get("stamps_used")
+                    receipt["chi_used"] = execution.get("chi_used")
                     receipt["events"] = execution.get("events", []) or []
                     receipt["event_count"] = len(receipt["events"])
                     receipt["state_write_count"] = len(
@@ -2003,7 +2003,7 @@ class E2ERunner:
                 conflict_contract,
                 "claim",
                 {"slot": "", "amount": -1},
-                stamps=DEFAULT_TX_STAMPS,
+                chi=DEFAULT_TX_CHI,
                 wait_for_tx=True,
             )
             invalid_result = normalize_receipt(invalid, label="invalid-claim")
@@ -2177,7 +2177,7 @@ class E2ERunner:
                     self.contracts["conflict"],
                     "claim",
                     {"slot": slot, "amount": 1},
-                    stamps=DEFAULT_TX_STAMPS,
+                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 )
                 receipt = ensure_positive_submission(
@@ -2401,7 +2401,7 @@ class E2ERunner:
                         {
                             "node": node.moniker,
                             "status": result.get("status"),
-                            "stamps_used": result.get("stamps_used"),
+                            "chi_used": result.get("chi_used"),
                             "result": normalize_value(result.get("result")),
                         }
                     )
@@ -2410,7 +2410,7 @@ class E2ERunner:
                 json.dumps(
                     {
                         "status": item["status"],
-                        "stamps_used": item["stamps_used"],
+                        "chi_used": item["chi_used"],
                         "result": item["result"],
                     },
                     sort_keys=True,
@@ -2501,7 +2501,7 @@ class E2ERunner:
                 self.contracts["conflict"],
                 "claim",
                 {"slot": slot, "amount": 1},
-                stamps=DEFAULT_TX_STAMPS,
+                chi=DEFAULT_TX_CHI,
                 wait_for_tx=True,
             )
             trigger_receipt = ensure_positive_submission(
@@ -2604,7 +2604,7 @@ class E2ERunner:
                 "currency",
                 "approve",
                 {"amount": registration_fee, "to": "masternodes"},
-                stamps=DEFAULT_TX_STAMPS,
+                chi=DEFAULT_TX_CHI,
                 wait_for_tx=True,
             )
             approval_receipt = ensure_positive_submission(
@@ -2620,7 +2620,7 @@ class E2ERunner:
                     "moniker": "node-3-return",
                     "network_endpoint": "localnet://node-3",
                 },
-                stamps=GOVERNANCE_TX_STAMPS,
+                chi=GOVERNANCE_TX_CHI,
                 wait_for_tx=True,
             )
             ensure_positive_submission(register_submission, label="re-register-node3")
@@ -2889,7 +2889,7 @@ class E2ERunner:
             rejected_submission = await client.send(
                 amount=1,
                 to_address=self.founder_wallet.public_key,
-                stamps=DEFAULT_TRANSFER_STAMPS,
+                chi=DEFAULT_TRANSFER_CHI,
                 wait_for_tx=True,
             )
             if rejected_submission.accepted:
@@ -2900,7 +2900,7 @@ class E2ERunner:
             debug_submission = await client.send(
                 amount=1,
                 to_address=self.founder_wallet.public_key,
-                stamps=DEFAULT_TRANSFER_STAMPS,
+                chi=DEFAULT_TRANSFER_CHI,
                 wait_for_tx=True,
             )
             debug_receipt = ensure_positive_submission(debug_submission, label="debug-log-trigger")
@@ -2917,7 +2917,7 @@ class E2ERunner:
             trace_submission = await client.send(
                 amount=1,
                 to_address=self.founder_wallet.public_key,
-                stamps=DEFAULT_TRANSFER_STAMPS,
+                chi=DEFAULT_TRANSFER_CHI,
                 wait_for_tx=True,
             )
             trace_receipt = ensure_positive_submission(trace_submission, label="trace-log-trigger")
@@ -3049,7 +3049,7 @@ class E2ERunner:
                 funding = await client.send(
                     amount=delta,
                     to_address=wallet.public_key,
-                    stamps=DEFAULT_TRANSFER_STAMPS,
+                    chi=DEFAULT_TRANSFER_CHI,
                     wait_for_tx=True,
                 )
                 ensure_positive_submission(
@@ -3082,7 +3082,7 @@ class E2ERunner:
                         "operator_address": founder.public_key,
                         "root_window_size": 32,
                     },
-                    stamps=25_000_000,
+                    chi=25_000_000,
                     wait_for_tx=True,
                 )
                 ensure_positive_submission(
@@ -3110,7 +3110,7 @@ class E2ERunner:
                     token_name,
                     "mint_public",
                     {"amount": mint_amount, "to": alice.public_key},
-                    stamps=500_000,
+                    chi=500_000,
                     wait_for_tx=True,
                 )
                 ensure_positive_submission(
@@ -3254,7 +3254,7 @@ class E2ERunner:
                         token_name,
                         "configure_vk",
                         {"action": action, "vk_id": vk_id},
-                        stamps=500_000,
+                        chi=500_000,
                         wait_for_tx=True,
                     )
                     ensure_positive_submission(
@@ -3361,7 +3361,7 @@ class E2ERunner:
                     "proof_hex": deposit.proof_hex,
                     "output_payloads": deposit_payloads,
                 },
-                stamps=SHIELDED_TX_STAMPS["deposit"],
+                chi=SHIELDED_TX_CHI["deposit"],
                 wait_for_tx=True,
             )
             deposit_receipt = ensure_positive_submission(
@@ -3452,7 +3452,7 @@ class E2ERunner:
                     "proof_hex": transfer.proof_hex,
                     "output_payloads": transfer_payloads,
                 },
-                stamps=SHIELDED_TX_STAMPS["transfer"],
+                chi=SHIELDED_TX_CHI["transfer"],
                 wait_for_tx=True,
             )
             transfer_receipt = ensure_positive_submission(
@@ -3512,7 +3512,7 @@ class E2ERunner:
                     "relayer_fee": relay_proof.relayer_fee,
                     "output_payloads": relay_plan.output_payloads,
                 },
-                stamps=SHIELDED_TX_STAMPS["transfer"],
+                chi=SHIELDED_TX_CHI["transfer"],
                 wait_for_tx=True,
             )
             relay_receipt = ensure_positive_submission(
@@ -3609,7 +3609,7 @@ class E2ERunner:
                     "proof_hex": withdraw.proof_hex,
                     "output_payloads": withdraw_payloads,
                 },
-                stamps=SHIELDED_TX_STAMPS["withdraw"],
+                chi=SHIELDED_TX_CHI["withdraw"],
                 wait_for_tx=True,
             )
             withdraw_receipt = ensure_positive_submission(
@@ -3692,7 +3692,7 @@ class E2ERunner:
                     "proof_hex": withdraw.proof_hex,
                     "output_payloads": withdraw_payloads,
                 },
-                stamps=SHIELDED_TX_STAMPS["withdraw"],
+                chi=SHIELDED_TX_CHI["withdraw"],
                 wait_for_tx=True,
             )
             replay_receipt = ensure_failed_submission(
@@ -3724,7 +3724,7 @@ class E2ERunner:
                     "proof_hex": exact_withdraw.proof_hex,
                     "output_payloads": exact_withdraw_plan.output_payloads,
                 },
-                stamps=SHIELDED_TX_STAMPS["withdraw"],
+                chi=SHIELDED_TX_CHI["withdraw"],
                 wait_for_tx=True,
             )
             exact_withdraw_receipt = ensure_positive_submission(
@@ -3798,7 +3798,7 @@ class E2ERunner:
                     "proof_hex": recent_root_deposit.proof_hex,
                     "output_payloads": recent_root_deposit_payloads,
                 },
-                stamps=SHIELDED_TX_STAMPS["deposit"],
+                chi=SHIELDED_TX_CHI["deposit"],
                 wait_for_tx=True,
             )
             recent_root_deposit_receipt = ensure_positive_submission(

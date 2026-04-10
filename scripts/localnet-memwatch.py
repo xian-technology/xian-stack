@@ -108,11 +108,11 @@ def main():
         try:
             r = secrets.randbelow(3)
             if r == 0:
-                xian.send(amount=1, to_address=secrets.token_hex(32), stamps=100)
+                xian.send(amount=1, to_address=secrets.token_hex(32), chi=100)
             elif r == 1:
-                xian.send_tx(contract="con_counter", function="increment", kwargs={}, stamps=100)
+                xian.send_tx(contract="con_counter", function="increment", kwargs={}, chi=100)
             else:
-                xian.send_tx(contract="con_counter", function="add", kwargs={"amount": tx_count % 100}, stamps=100)
+                xian.send_tx(contract="con_counter", function="add", kwargs={"amount": tx_count % 100}, chi=100)
             tx_count += 1
         except Exception:
             errors += 1

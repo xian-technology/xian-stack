@@ -31,15 +31,15 @@ from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian_async import XianAsync  # noqa: E402
 
 
-COUNTER_DEPLOY_STAMPS = 75_000
-COUNTER_TX_STAMPS = 1_500
-TOKEN_DEPLOY_STAMPS = 150_000
-PAIR_DEPLOY_STAMPS = 300_000
-DEX_DEPLOY_STAMPS = 200_000
-TOKEN_TX_STAMPS = 7_500
-DEX_TX_STAMPS = 60_000
-PARALLEL_PROBE_DEPLOY_STAMPS = 90_000
-PARALLEL_PROBE_TX_STAMPS = 2_000
+COUNTER_DEPLOY_CHI = 75_000
+COUNTER_TX_CHI = 1_500
+TOKEN_DEPLOY_CHI = 150_000
+PAIR_DEPLOY_CHI = 300_000
+DEX_DEPLOY_CHI = 200_000
+TOKEN_TX_CHI = 7_500
+DEX_TX_CHI = 60_000
+PARALLEL_PROBE_DEPLOY_CHI = 90_000
+PARALLEL_PROBE_TX_CHI = 2_000
 RECEIPT_TIMEOUT_SECONDS = 45.0
 
 
@@ -69,7 +69,7 @@ class BroadcastRecord:
     final_message: str | None = None
     height: int | None = None
     tx_index: int | None = None
-    stamps_used: int | None = None
+    chi_used: int | None = None
     events: list[dict[str, Any]] | None = None
 
 
@@ -178,7 +178,7 @@ class WorkloadContext:
         contract: str,
         function: str,
         kwargs: dict[str, Any],
-        stamps: int,
+        chi: int,
         expected_success: bool,
         expected_message: str | None = None,
     ) -> BroadcastRecord:
@@ -188,7 +188,7 @@ class WorkloadContext:
             contract=contract,
             function=function,
             kwargs=kwargs,
-            stamps=stamps,
+            chi=chi,
             nonce=await self.next_nonce(wallet, submission_index),
             chain_id=self.chain_id,
             mode="checktx",
@@ -263,7 +263,7 @@ class WorkloadContext:
         record.tx_index = receipt["tx_index"]
         record.final_success = receipt["success"]
         record.final_message = receipt["result"]
-        record.stamps_used = receipt["stamps_used"]
+        record.chi_used = receipt["chi_used"]
         record.events = receipt["events"]
         self._assert_record(record)
 
@@ -440,7 +440,7 @@ async def wait_for_tx_receipt(
                     "success": receipt.success,
                     "result": receipt.message,
                     "events": receipt.execution.get("events", []),
-                    "stamps_used": receipt.execution.get("stamps_used"),
+                    "chi_used": receipt.execution.get("chi_used"),
                 }
             return {
                 "height": int(result["height"]),
@@ -448,7 +448,7 @@ async def wait_for_tx_receipt(
                 "success": receipt.success,
                 "result": receipt.message,
                 "events": [],
-                "stamps_used": None,
+                "chi_used": None,
             }
         except Exception as exc:  # noqa: PERF203
             last_error = exc
@@ -608,7 +608,7 @@ async def broadcast_funding_record(
             contract="currency",
             function="transfer",
             kwargs={"amount": gas_amount, "to": wallet.public_key},
-            stamps=TOKEN_TX_STAMPS,
+            chi=TOKEN_TX_CHI,
             expected_success=True,
         ),
         await broadcast_and_confirm(
@@ -619,7 +619,7 @@ async def broadcast_funding_record(
             contract=token_a,
             function="transfer",
             kwargs={"amount": token_amount, "to": wallet.public_key},
-            stamps=TOKEN_TX_STAMPS,
+            chi=TOKEN_TX_CHI,
             expected_success=True,
         ),
         await broadcast_and_confirm(
@@ -630,7 +630,7 @@ async def broadcast_funding_record(
             contract=token_b,
             function="transfer",
             kwargs={"amount": token_amount, "to": wallet.public_key},
-            stamps=TOKEN_TX_STAMPS,
+            chi=TOKEN_TX_CHI,
             expected_success=True,
         ),
     ]
@@ -652,7 +652,7 @@ async def broadcast_approval_record(
         contract=token_name,
         function="approve",
         kwargs={"amount": 1_000_000.0, "to": dex_contract},
-        stamps=TOKEN_TX_STAMPS,
+        chi=TOKEN_TX_CHI,
         expected_success=True,
     )
 
@@ -679,7 +679,7 @@ async def run_counter_basic(
         contract="submission",
         function="submit_contract",
         kwargs={"name": contract_name, "code": contract_code},
-        stamps=COUNTER_DEPLOY_STAMPS,
+        chi=COUNTER_DEPLOY_CHI,
         expected_success=True,
     )
     await context.resolve_records([deploy_record])
@@ -696,7 +696,7 @@ async def run_counter_basic(
                 contract="currency",
                 function="transfer",
                 kwargs={"amount": 5_000.0, "to": wallet.public_key},
-                stamps=COUNTER_TX_STAMPS,
+                chi=COUNTER_TX_CHI,
                 expected_success=True,
             )
         )
@@ -717,7 +717,7 @@ async def run_counter_basic(
                     contract="currency",
                     function="transfer",
                     kwargs={"amount": 1.0, "to": recipient},
-                    stamps=COUNTER_TX_STAMPS,
+                    chi=COUNTER_TX_CHI,
                     expected_success=True,
                 )
             )
@@ -731,7 +731,7 @@ async def run_counter_basic(
                     contract=contract_name,
                     function="increment",
                     kwargs={},
-                    stamps=COUNTER_TX_STAMPS,
+                    chi=COUNTER_TX_CHI,
                     expected_success=True,
                 )
             )
@@ -746,7 +746,7 @@ async def run_counter_basic(
                     contract=contract_name,
                     function="add",
                     kwargs={"amount": amount},
-                    stamps=COUNTER_TX_STAMPS,
+                    chi=COUNTER_TX_CHI,
                     expected_success=True,
                 )
             )
@@ -845,7 +845,7 @@ async def run_dex_mixed(
                     "symbol": "WTA",
                 },
             },
-            stamps=TOKEN_DEPLOY_STAMPS,
+            chi=TOKEN_DEPLOY_CHI,
             expected_success=True,
         ),
         await broadcast_and_confirm(
@@ -865,7 +865,7 @@ async def run_dex_mixed(
                     "symbol": "WTB",
                 },
             },
-            stamps=TOKEN_DEPLOY_STAMPS,
+            chi=TOKEN_DEPLOY_CHI,
             expected_success=True,
         ),
         await broadcast_and_confirm(
@@ -876,7 +876,7 @@ async def run_dex_mixed(
             contract="submission",
             function="submit_contract",
             kwargs={"name": pairs_contract, "code": pairs_code},
-            stamps=PAIR_DEPLOY_STAMPS,
+            chi=PAIR_DEPLOY_CHI,
             expected_success=True,
         ),
         await broadcast_and_confirm(
@@ -887,7 +887,7 @@ async def run_dex_mixed(
             contract="submission",
             function="submit_contract",
             kwargs={"name": dex_contract, "code": dex_code},
-            stamps=DEX_DEPLOY_STAMPS,
+            chi=DEX_DEPLOY_CHI,
             expected_success=True,
         ),
     ]
@@ -947,7 +947,7 @@ async def run_dex_mixed(
             "to": founder.public_key,
             "deadline": deadline_value(seconds_from_now=300),
         },
-        stamps=DEX_TX_STAMPS,
+        chi=DEX_TX_CHI,
         expected_success=True,
     )
     await context.resolve_records([initial_liquidity])
@@ -971,7 +971,7 @@ async def run_dex_mixed(
         contract=pairs_contract,
         function="liqApprove",
         kwargs={"pair": pair_id, "amount": 10_000.0, "to": dex_contract},
-        stamps=DEX_TX_STAMPS,
+        chi=DEX_TX_CHI,
         expected_success=True,
     )
 
@@ -1005,7 +1005,7 @@ async def run_dex_mixed(
                     "to": trader_a.public_key,
                     "deadline": deadline_value(seconds_from_now=300),
                 },
-                stamps=DEX_TX_STAMPS,
+                chi=DEX_TX_CHI,
                 expected_success=True,
             ),
             await context.broadcast_tx(
@@ -1022,7 +1022,7 @@ async def run_dex_mixed(
                     "to": trader_b.public_key,
                     "deadline": deadline_value(seconds_from_now=300),
                 },
-                stamps=DEX_TX_STAMPS,
+                chi=DEX_TX_CHI,
                 expected_success=True,
             ),
             await context.broadcast_tx(
@@ -1039,7 +1039,7 @@ async def run_dex_mixed(
                     "to": trader_c.public_key,
                     "deadline": deadline_value(seconds_from_now=-5),
                 },
-                stamps=DEX_TX_STAMPS,
+                chi=DEX_TX_CHI,
                 expected_success=False,
                 expected_message="EXPIRED",
             ),
@@ -1057,7 +1057,7 @@ async def run_dex_mixed(
                     "to": founder.public_key,
                     "deadline": deadline_value(seconds_from_now=300),
                 },
-                stamps=DEX_TX_STAMPS,
+                chi=DEX_TX_CHI,
                 expected_success=False,
                 expected_message="INSUFFICIENT_OUTPUT_AMOUNT",
             ),
@@ -1084,7 +1084,7 @@ async def run_dex_mixed(
                 "to": unapproved_trader.public_key,
                 "deadline": deadline_value(seconds_from_now=300),
             },
-            stamps=DEX_TX_STAMPS,
+            chi=DEX_TX_CHI,
             expected_success=False,
             expected_message="approved",
         )
@@ -1104,7 +1104,7 @@ async def run_dex_mixed(
                 "to": approved_traders[0].public_key,
                 "deadline": deadline_value(seconds_from_now=300),
             },
-            stamps=DEX_TX_STAMPS,
+            chi=DEX_TX_CHI,
             expected_success=False,
             expected_message="INSUFFICIENT_LIQUIDITY",
         )
@@ -1125,7 +1125,7 @@ async def run_dex_mixed(
                 "to": founder.public_key,
                 "deadline": deadline_value(seconds_from_now=300),
             },
-            stamps=DEX_TX_STAMPS,
+            chi=DEX_TX_CHI,
             expected_success=True,
         )
     )
@@ -1308,7 +1308,7 @@ async def run_parallel_probe(
         contract="submission",
         function="submit_contract",
         kwargs={"name": contract_name, "code": contract_code},
-        stamps=PARALLEL_PROBE_DEPLOY_STAMPS,
+        chi=PARALLEL_PROBE_DEPLOY_CHI,
         expected_success=True,
     )
     await context.resolve_records([deploy_record])
@@ -1325,7 +1325,7 @@ async def run_parallel_probe(
                 contract="currency",
                 function="transfer",
                 kwargs={"amount": 5_000.0, "to": wallet.public_key},
-                stamps=PARALLEL_PROBE_TX_STAMPS,
+                chi=PARALLEL_PROBE_TX_CHI,
                 expected_success=True,
             )
         )
@@ -1350,7 +1350,7 @@ async def run_parallel_probe(
                     "key": f"unique-{index}",
                     "value": value,
                 },
-                stamps=PARALLEL_PROBE_TX_STAMPS,
+                chi=PARALLEL_PROBE_TX_CHI,
                 expected_success=True,
             )
         )
@@ -1377,7 +1377,7 @@ async def run_parallel_probe(
                     "key": f"same-{index}",
                     "value": value,
                 },
-                stamps=PARALLEL_PROBE_TX_STAMPS,
+                chi=PARALLEL_PROBE_TX_CHI,
                 expected_success=True,
             )
         )
@@ -1402,7 +1402,7 @@ async def run_parallel_probe(
                 contract=contract_name,
                 function="set_flag",
                 kwargs={"group": flag_group, "value": 7},
-                stamps=PARALLEL_PROBE_TX_STAMPS,
+                chi=PARALLEL_PROBE_TX_CHI,
                 expected_success=True,
             ),
             await context.broadcast_tx(
@@ -1412,7 +1412,7 @@ async def run_parallel_probe(
                 contract=contract_name,
                 function="observe_flag",
                 kwargs={"group": flag_group, "tag": observation_tag},
-                stamps=PARALLEL_PROBE_TX_STAMPS,
+                chi=PARALLEL_PROBE_TX_CHI,
                 expected_success=True,
             ),
         ]
@@ -1430,7 +1430,7 @@ async def run_parallel_probe(
                         "key": f"tail-{index}",
                         "value": value,
                     },
-                    stamps=PARALLEL_PROBE_TX_STAMPS,
+                    chi=PARALLEL_PROBE_TX_CHI,
                     expected_success=True,
                 )
             )
@@ -1518,7 +1518,7 @@ async def run_parallel_probe(
             contract=contract_name,
             function="write_value",
             kwargs={"group": group, "key": "seed", "value": seed_value},
-            stamps=PARALLEL_PROBE_TX_STAMPS,
+            chi=PARALLEL_PROBE_TX_CHI,
             expected_success=True,
         )
         records.append(prefix_write_record)
@@ -1531,7 +1531,7 @@ async def run_parallel_probe(
             contract=contract_name,
             function="snapshot_sum",
             kwargs={"group": group, "tag": observation_tag},
-            stamps=PARALLEL_PROBE_TX_STAMPS,
+            chi=PARALLEL_PROBE_TX_CHI,
             expected_success=True,
         )
         records.append(snapshot_record)
@@ -1549,7 +1549,7 @@ async def run_parallel_probe(
                     "key": f"tail-{index}",
                     "value": value,
                 },
-                stamps=PARALLEL_PROBE_TX_STAMPS,
+                chi=PARALLEL_PROBE_TX_CHI,
                 expected_success=True,
             )
             records.append(record)

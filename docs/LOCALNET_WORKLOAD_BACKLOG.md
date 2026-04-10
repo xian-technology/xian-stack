@@ -49,7 +49,7 @@ Each scenario should:
 - `streaming_payments`
   - time-based flows, balance operations, and intentional settlement failures
 - `adversarial_metering`
-  - stamp exhaustion
+  - chi exhaustion
   - oversized return values
   - contracts designed to trigger conflict-heavy or high-iteration paths
 
