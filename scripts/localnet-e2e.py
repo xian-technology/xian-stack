@@ -72,6 +72,9 @@ try:  # noqa: SIM105
         ShieldedKeyBundle,
         ShieldedNote,
         ShieldedNoteProver,
+        ShieldedRelayTransferProver,
+        ShieldedRelayTransferWallet,
+        note_records_from_transactions,
         ShieldedOutput,
         ShieldedTransferRequest,
         ShieldedWallet,
@@ -79,6 +82,7 @@ try:  # noqa: SIM105
         output_payload_hashes,
         recover_encrypted_notes,
         scan_notes,
+        shielded_relay_registry_manifest,
         shielded_registry_manifest,
         tree_state,
     )
@@ -2983,15 +2987,61 @@ class E2ERunner:
         founder = self.founder_wallet
         alice = derive_wallet(self.seed, "shielded-alice")
         bob = derive_wallet(self.seed, "shielded-bob")
+        relayer = derive_wallet(self.seed, "shielded-relayer")
 
         registry_name = "zk_registry"
-        token_name = f"con_private_e2e_{short_hash(self.run_id)}"
+        base_token_name = f"con_private_e2e_{short_hash(self.run_id)}"
+        token_name = base_token_name
         shielded_wallet_balance_target = 1_000_000
         vk_registration_proposals: list[dict[str, Any]] = []
         vk_infos: dict[str, dict[str, Any]] = {}
         vk_bindings: dict[str, dict[str, Any]] = {}
+
+        async def indexed_note_records(
+            client: XianAsync,
+            *,
+            minimum_count: int,
+            timeout_seconds: float = 60.0,
+        ) -> list[dict[str, Any]]:
+            deadline = time.monotonic() + timeout_seconds
+            latest_records = []
+            while True:
+                txs = []
+                offset = 0
+                while True:
+                    page = await client.list_txs_by_contract(
+                        token_name,
+                        limit=100,
+                        offset=offset,
+                    )
+                    if not page:
+                        break
+                    txs.extend(page)
+                    if len(page) < 100:
+                        break
+                    offset += len(page)
+
+                latest_records = note_records_from_transactions(txs)
+                if len(latest_records) >= minimum_count:
+                    return latest_records
+                if time.monotonic() >= deadline:
+                    return latest_records
+                await asyncio.sleep(0.5)
+
+        def normalize_note_records(records) -> list[dict[str, Any]]:
+            return [
+                {
+                    "index": record.index,
+                    "commitment": record.commitment,
+                    "payload": record.payload,
+                    "payload_hash": record.payload_hash,
+                    "created_at": record.created_at,
+                }
+                for record in records
+            ]
+
         async with self.client(founder, 0, session) as client:
-            for wallet in (alice, bob):
+            for wallet in (alice, bob, relayer):
                 current_balance = await client.get_balance(wallet.public_key)
                 delta = shielded_wallet_balance_target - int(current_balance)
                 if delta <= 0:
@@ -3012,6 +3062,11 @@ class E2ERunner:
                     f"expected system zk_registry owner to be governance, got {registry_owner!r}"
                 )
             token_source = await client.get_contract(token_name)
+            token_suffix = 1
+            while token_source is not None:
+                token_name = f"{base_token_name}_{token_suffix}"
+                token_source = await client.get_contract(token_name)
+                token_suffix += 1
             if token_source is None:
                 token_submission = await client.submit_contract(
                     name=token_name,
@@ -3035,8 +3090,15 @@ class E2ERunner:
                     label="deploy-shielded-token",
                 )
             prover = ShieldedNoteProver.build_insecure_dev_bundle()
+            relay_prover = ShieldedRelayTransferProver.build_insecure_dev_bundle()
             registry_manifest = shielded_registry_manifest(prover)
+            relay_registry_manifest = shielded_relay_registry_manifest(relay_prover)
             proof_config = await client.call(token_name, "get_proof_config", {})
+            relay_proof_config = await client.call(
+                token_name,
+                "get_relay_proof_config",
+                {},
+            )
             alice_public_balance = await client.call(
                 token_name,
                 "balance_of",
@@ -3067,6 +3129,10 @@ class E2ERunner:
             )
         if proof_config["circuit_family"] != "shielded_note_v3":
             raise E2EError("shielded token circuit family drifted")
+        if relay_proof_config["circuit_family"] != "shielded_command_v4":
+            raise E2EError("shielded relay circuit family drifted")
+        if relay_proof_config["statement_version"] != "4":
+            raise E2EError("shielded relay statement version drifted")
         if initial_tree_state["root"] != zero_root or initial_tree_state["note_count"] != 0:
             raise E2EError("shielded token did not start from the zero root")
 
@@ -3086,13 +3152,19 @@ class E2ERunner:
                 entry["action"]: entry
                 for entry in registry_manifest["registry_entries"]
             }
-            for action in ("deposit", "transfer", "withdraw"):
-                vk = prover.bundle[action]
+            registry_entries.update(
+                {
+                    entry["action"]: entry
+                    for entry in relay_registry_manifest["registry_entries"]
+                }
+            )
+            for action in ("deposit", "transfer", "withdraw", "relay_transfer"):
                 vk_entry = registry_entries[action]
+                vk_id = vk_entry["vk_id"]
                 vk_info = await node0.call(
                     registry_name,
                     "get_vk_info",
-                    {"vk_id": vk["vk_id"]},
+                    {"vk_id": vk_id},
                 )
                 if vk_info is None:
                     vk_vote = await self.approve_governance_proposal(
@@ -3108,7 +3180,7 @@ class E2ERunner:
                             "target_contract": registry_name,
                             "target_function": "register_vk",
                             "kwargs": {
-                                "vk_id": vk["vk_id"],
+                                "vk_id": vk_id,
                                 "vk_hex": vk_entry["vk_hex"],
                                 "circuit_name": vk_entry["circuit_name"],
                                 "version": vk_entry["version"],
@@ -3142,34 +3214,34 @@ class E2ERunner:
                     vk_info = await node0.call(
                         registry_name,
                         "get_vk_info",
-                        {"vk_id": vk["vk_id"]},
+                        {"vk_id": vk_id},
                     )
                 if vk_info is None:
-                    raise E2EError(f"vk {vk['vk_id']} was not registered")
+                    raise E2EError(f"vk {vk_id} was not registered")
                 vk_infos[action] = normalize_value(vk_info)
                 if vk_info.get("circuit_family") != vk_entry["circuit_family"]:
                     raise E2EError(
-                        f"shielded vk {vk['vk_id']} circuit family drifted"
+                        f"shielded vk {vk_id} circuit family drifted"
                     )
                 if vk_info.get("statement_version") != vk_entry["statement_version"]:
                     raise E2EError(
-                        f"shielded vk {vk['vk_id']} statement version drifted"
+                        f"shielded vk {vk_id} statement version drifted"
                     )
                 if vk_info.get("tree_depth") != vk_entry["tree_depth"]:
                     raise E2EError(
-                        f"shielded vk {vk['vk_id']} tree depth drifted"
+                        f"shielded vk {vk_id} tree depth drifted"
                     )
                 if vk_info.get("leaf_capacity") != vk_entry["leaf_capacity"]:
                     raise E2EError(
-                        f"shielded vk {vk['vk_id']} leaf capacity drifted"
+                        f"shielded vk {vk_id} leaf capacity drifted"
                     )
                 if vk_info.get("max_inputs") != vk_entry["max_inputs"]:
                     raise E2EError(
-                        f"shielded vk {vk['vk_id']} max_inputs drifted"
+                        f"shielded vk {vk_id} max_inputs drifted"
                     )
                 if vk_info.get("max_outputs") != vk_entry["max_outputs"]:
                     raise E2EError(
-                        f"shielded vk {vk['vk_id']} max_outputs drifted"
+                        f"shielded vk {vk_id} max_outputs drifted"
                     )
 
                 binding = await node0.call(
@@ -3177,11 +3249,11 @@ class E2ERunner:
                     "get_vk_binding",
                     {"action": action},
                 )
-                if binding is None or binding.get("vk_id") != vk["vk_id"]:
+                if binding is None or binding.get("vk_id") != vk_id:
                     bind_submission = await node0.send_tx(
                         token_name,
                         "configure_vk",
-                        {"action": action, "vk_id": vk["vk_id"]},
+                        {"action": action, "vk_id": vk_id},
                         stamps=500_000,
                         wait_for_tx=True,
                     )
@@ -3204,12 +3276,12 @@ class E2ERunner:
 
         alice_keys = ShieldedKeyBundle.generate()
         bob_keys = ShieldedKeyBundle.generate()
-        alice_wallet = ShieldedWallet.from_parts(
+        alice_wallet = ShieldedRelayTransferWallet.from_parts(
             asset_id=asset_id,
             owner_secret=alice_keys.owner_secret,
             viewing_private_key=alice_keys.viewing_private_key,
         )
-        bob_wallet = ShieldedWallet.from_parts(
+        bob_wallet = ShieldedRelayTransferWallet.from_parts(
             asset_id=asset_id,
             owner_secret=bob_keys.owner_secret,
             viewing_private_key=bob_keys.viewing_private_key,
@@ -3256,8 +3328,8 @@ class E2ERunner:
         )
 
         async with self.client(alice, 1, session) as alice_client, self.client(
-            founder, 0, session
-        ) as founder_client:
+            relayer, 3, session
+        ) as relayer_client, self.client(founder, 0, session) as founder_client:
             deposit_payloads = [
                 alice_note_1.to_output().encrypt_for(
                     asset_id=asset_id,
@@ -3297,16 +3369,19 @@ class E2ERunner:
                 label="shielded-deposit",
             )
 
-            records_after_deposit = await founder_client.call(
-                token_name,
-                "list_note_records",
-                {"start": 0, "limit": 8},
+            records_after_deposit = await indexed_note_records(
+                founder_client,
+                minimum_count=2,
             )
-            if len(records_after_deposit) != 2:
-                raise E2EError("shielded deposit did not create two note records")
-            if records_after_deposit[0]["payload"] != deposit_payloads[0]:
+            if len(records_after_deposit) < 2:
+                raise E2EError(
+                    "shielded deposit did not create two note records "
+                    f"(saw {len(records_after_deposit)})"
+                )
+            deposit_records = records_after_deposit[-2:]
+            if deposit_records[0].payload != deposit_payloads[0]:
                 raise E2EError("shielded deposit did not persist the first payload")
-            if records_after_deposit[1]["payload"] != deposit_payloads[1]:
+            if deposit_records[1].payload != deposit_payloads[1]:
                 raise E2EError("shielded deposit did not persist the second payload")
             alice_sync_after_deposit = alice_wallet.sync_records(records_after_deposit)
             if len(alice_sync_after_deposit.discovered_notes) != 2:
@@ -3323,8 +3398,8 @@ class E2ERunner:
                 raise E2EError("shielded wallet seed export/import drifted")
             recovered_alice = recover_encrypted_notes(
                 asset_id=asset_id,
-                commitments=[record["commitment"] for record in records_after_deposit],
-                payloads=[record["payload"] for record in records_after_deposit],
+                commitments=[record.commitment for record in records_after_deposit],
+                payloads=[record.payload for record in records_after_deposit],
                 owner_secret=alice_keys.owner_secret,
                 viewing_private_key=alice_keys.viewing_private_key,
             )
@@ -3385,15 +3460,14 @@ class E2ERunner:
                 label="shielded-transfer",
             )
 
-            records_after_transfer = await founder_client.call(
-                token_name,
-                "list_note_records",
-                {"start": 0, "limit": 12},
+            records_after_transfer = await indexed_note_records(
+                founder_client,
+                minimum_count=4,
             )
             recovered_bob = recover_encrypted_notes(
                 asset_id=asset_id,
-                commitments=[record["commitment"] for record in records_after_transfer],
-                payloads=[record["payload"] for record in records_after_transfer],
+                commitments=[record.commitment for record in records_after_transfer],
+                payloads=[record.payload for record in records_after_transfer],
                 owner_secret=bob_keys.owner_secret,
                 viewing_private_key=bob_keys.viewing_private_key,
             )
@@ -3419,6 +3493,85 @@ class E2ERunner:
                 commitments=deposit.output_commitments + transfer.output_commitments,
                 notes=[alice_change],
             )
+            relay_plan = bob_wallet.build_relay_transfer(
+                recipient=alice_wallet.recipient,
+                amount=9,
+                relayer=relayer.public_key,
+                chain_id=self.network["chain_id"],
+                fee=2,
+            )
+            relay_proof = relay_prover.prove_relay_transfer(relay_plan.request)
+            relay_submission = await relayer_client.send_tx(
+                token_name,
+                "relay_transfer_shielded",
+                {
+                    "old_root": relay_proof.old_root,
+                    "input_nullifiers": relay_proof.input_nullifiers,
+                    "output_commitments": relay_proof.output_commitments,
+                    "proof_hex": relay_proof.proof_hex,
+                    "relayer_fee": relay_proof.relayer_fee,
+                    "output_payloads": relay_plan.output_payloads,
+                },
+                stamps=SHIELDED_TX_STAMPS["transfer"],
+                wait_for_tx=True,
+            )
+            relay_receipt = ensure_positive_submission(
+                relay_submission,
+                label="shielded-relay-transfer",
+            )
+
+            records_after_relay = await indexed_note_records(
+                founder_client,
+                minimum_count=6,
+            )
+            alice_sync_after_relay = alice_wallet.sync_records(records_after_relay)
+            bob_sync_after_relay = bob_wallet.sync_records(records_after_relay)
+            if len(alice_sync_after_relay.discovered_notes) != 1:
+                raise E2EError(
+                    "shielded wallet did not discover Alice's relayed note"
+                )
+            if len(bob_sync_after_relay.discovered_notes) != 1:
+                raise E2EError(
+                    "shielded wallet did not discover Bob's relay change note"
+                )
+            bob_spent_after_relay = bob_wallet.apply_spent_nullifiers(
+                relay_proof.input_nullifiers
+            )
+            if len(bob_spent_after_relay) != 1:
+                raise E2EError(
+                    "shielded wallet did not mark the relay transfer input spent"
+                )
+            if alice_wallet.available_balance() != 54:
+                raise E2EError("shielded relay recipient balance drifted")
+            if bob_wallet.available_balance() != 14:
+                raise E2EError("shielded relay change balance drifted")
+
+            relay_indexed_tx = await founder_client.get_indexed_tx(
+                relay_receipt["tx_hash"]
+            )
+            relay_events = await founder_client.get_events_for_tx(
+                relay_receipt["tx_hash"]
+            )
+            if relay_indexed_tx is None:
+                raise E2EError("shielded relay indexed transaction missing")
+            if relay_indexed_tx.sender != relayer.public_key:
+                raise E2EError("shielded relay tx sender drifted from relayer")
+            relay_raw_json = json.dumps(relay_indexed_tx.raw, sort_keys=True)
+            if alice.public_key in relay_raw_json or bob.public_key in relay_raw_json:
+                raise E2EError(
+                    "shielded relay tx leaked public account addresses"
+                )
+            relay_event = next(
+                (
+                    event
+                    for event in relay_events
+                    if event.event == "ShieldedRelayTransfer"
+                    and event.signer == relayer.public_key
+                ),
+                None,
+            )
+            if relay_event is None:
+                raise E2EError("shielded relay event stream drifted")
 
         async with self.client(alice, 1, session) as alice_client, self.client(
             founder, 0, session
@@ -3463,13 +3616,15 @@ class E2ERunner:
                 withdraw_submission,
                 label="shielded-withdraw",
             )
-            records_after_withdraw = await founder_client.call(
-                token_name,
-                "list_note_records",
-                {"start": 0, "limit": 16},
+            records_after_withdraw = await indexed_note_records(
+                founder_client,
+                minimum_count=7,
             )
-            if len(records_after_withdraw) != 5:
-                raise E2EError("shielded withdraw did not leave the expected note count")
+            if len(records_after_withdraw) < 7:
+                raise E2EError(
+                    "shielded withdraw did not leave the expected note count "
+                    f"(saw {len(records_after_withdraw)})"
+                )
             alice_sync_after_withdraw = alice_wallet.sync_records(records_after_withdraw)
             if len(alice_sync_after_withdraw.discovered_notes) != 1:
                 raise E2EError(
@@ -3482,7 +3637,7 @@ class E2ERunner:
                 raise E2EError(
                     "shielded wallet did not mark the withdraw input as spent"
                 )
-            if alice_wallet.available_balance() != 25:
+            if alice_wallet.available_balance() != 34:
                 raise E2EError("shielded wallet withdraw balance drifted")
             alice_public = await founder_client.call(
                 token_name,
@@ -3493,6 +3648,11 @@ class E2ERunner:
                 token_name,
                 "balance_of",
                 {"account": bob.public_key},
+            )
+            relayer_public = await founder_client.call(
+                token_name,
+                "balance_of",
+                {"account": relayer.public_key},
             )
             supply_state = await founder_client.call(token_name, "get_supply_state", {})
             current_root_after_withdraw = await founder_client.call(
@@ -3509,6 +3669,11 @@ class E2ERunner:
                 token_name,
                 "is_nullifier_spent",
                 {"nullifier": transfer.input_nullifiers[0]},
+            )
+            relay_nullifier_spent = await founder_client.call(
+                token_name,
+                "is_nullifier_spent",
+                {"nullifier": relay_proof.input_nullifiers[0]},
             )
             withdraw_nullifier_spent = await founder_client.call(
                 token_name,
@@ -3577,7 +3742,7 @@ class E2ERunner:
                 raise E2EError(
                     "shielded wallet did not mark the exact withdraw input as spent"
                 )
-            if alice_wallet.available_balance() != 0:
+            if alice_wallet.available_balance() != 9:
                 raise E2EError("shielded wallet exact withdraw balance drifted")
             alice_public_after_exact = await founder_client.call(
                 token_name,
@@ -3640,10 +3805,9 @@ class E2ERunner:
                 recent_root_deposit_submission,
                 label="shielded-recent-root-deposit",
             )
-            records_after_recent_root = await founder_client.call(
-                token_name,
-                "list_note_records",
-                {"start": 0, "limit": 16},
+            records_after_recent_root = await indexed_note_records(
+                founder_client,
+                minimum_count=8,
             )
             alice_sync_after_recent_root = alice_wallet.sync_records(
                 records_after_recent_root
@@ -3652,10 +3816,10 @@ class E2ERunner:
                 raise E2EError(
                     "shielded wallet did not discover the recent-root deposit note"
                 )
-            if alice_wallet.available_balance() != 5:
+            if alice_wallet.available_balance() != 14:
                 raise E2EError("shielded wallet recent-root balance drifted")
             alice_wallet_restored = ShieldedWallet.from_json(alice_wallet.to_json())
-            if alice_wallet_restored.available_balance() != 5:
+            if alice_wallet_restored.available_balance() != 14:
                 raise E2EError("shielded wallet restore drifted after recent-root deposit")
             bob_wallet.sync_records(records_after_recent_root)
 
@@ -3668,6 +3832,11 @@ class E2ERunner:
                 token_name,
                 "balance_of",
                 {"account": bob.public_key},
+            )
+            relayer_public = await founder_client.call(
+                token_name,
+                "balance_of",
+                {"account": relayer.public_key},
             )
             supply_state = await founder_client.call(
                 token_name,
@@ -3698,7 +3867,11 @@ class E2ERunner:
             raise E2EError("shielded note scan did not find the deposit notes")
         if len(discovered_after_transfer) != 1:
             raise E2EError("shielded note scan did not find the change note")
-        if transfer_nullifier_spent is not True or withdraw_nullifier_spent is not True:
+        if (
+            transfer_nullifier_spent is not True
+            or relay_nullifier_spent is not True
+            or withdraw_nullifier_spent is not True
+        ):
             raise E2EError("shielded nullifier spend tracking drifted")
         if alice_public != 50:
             raise E2EError(
@@ -3708,18 +3881,22 @@ class E2ERunner:
             raise E2EError(
                 f"shielded Bob public balance drifted: {bob_public!r}"
             )
+        if relayer_public != 2:
+            raise E2EError(
+                f"shielded relayer public balance drifted: {relayer_public!r}"
+            )
         expected_supply_state = {
             "total_supply": 100,
-            "public_supply": 70,
-            "shielded_supply": 30,
+            "public_supply": 72,
+            "shielded_supply": 28,
         }
         if normalize_value(supply_state) != expected_supply_state:
             raise E2EError(
                 f"shielded supply state drifted: {supply_state!r}"
             )
-        if alice_wallet.available_balance() != 5 or bob_wallet.available_balance() != 25:
+        if alice_wallet.available_balance() != 14 or bob_wallet.available_balance() != 14:
             raise E2EError("shielded wallet final balances drifted")
-        if final_note_count != 6:
+        if final_note_count != 8:
             raise E2EError(f"shielded note count drifted: {final_note_count!r}")
         if final_tree_state["root"] != final_root:
             raise E2EError("shielded final tree-state root drifted")
@@ -3731,24 +3908,28 @@ class E2ERunner:
             "registry": registry_name,
             "registry_owner": registry_owner,
             "proof_config": normalize_value(proof_config),
+            "relay_proof_config": normalize_value(relay_proof_config),
             "initial_tree_state": normalize_value(initial_tree_state),
             "vk_infos": vk_infos,
             "vk_bindings": vk_bindings,
             "vk_registration_proposals": vk_registration_proposals,
             "deposit_receipt": deposit_receipt,
             "transfer_receipt": transfer_receipt,
+            "relay_receipt": relay_receipt,
             "withdraw_receipt": withdraw_receipt,
             "replay_receipt": replay_receipt,
             "exact_withdraw_receipt": exact_withdraw_receipt,
             "recent_root_deposit_receipt": recent_root_deposit_receipt,
             "alice_public_balance": alice_public,
             "bob_public_balance": bob_public,
+            "relayer_public_balance": relayer_public,
             "supply_state": normalize_value(supply_state),
             "alice_recovered_notes": len(recovered_alice),
             "bob_recovered_notes": len(recovered_bob),
             "note_counts": {
                 "after_deposit": len(records_after_deposit),
                 "after_transfer": len(records_after_transfer),
+                "after_relay": len(records_after_relay),
                 "after_withdraw": len(records_after_withdraw),
                 "final": final_note_count,
             },
@@ -3768,6 +3949,9 @@ class E2ERunner:
                 "alice_discovered_after_transfer": len(
                     alice_sync_after_transfer.discovered_notes
                 ),
+                "alice_discovered_after_relay": len(
+                    alice_sync_after_relay.discovered_notes
+                ),
                 "alice_discovered_after_withdraw": len(
                     alice_sync_after_withdraw.discovered_notes
                 ),
@@ -3777,25 +3961,88 @@ class E2ERunner:
                 "bob_discovered_after_transfer": len(
                     bob_sync_after_transfer.discovered_notes
                 ),
+                "bob_discovered_after_relay": len(
+                    bob_sync_after_relay.discovered_notes
+                ),
                 "exact_withdraw_output_count": len(
                     exact_withdraw.output_commitments
                 ),
             },
             "nullifier_checks": {
                 "transfer_input_count": len(transfer.input_nullifiers),
+                "relay_input_count": len(relay_proof.input_nullifiers),
                 "withdraw_input_count": len(withdraw.input_nullifiers),
                 "exact_withdraw_input_count": len(
                     exact_withdraw.input_nullifiers
                 ),
                 "transfer_nullifier_spent": transfer_nullifier_spent,
+                "relay_nullifier_spent": relay_nullifier_spent,
                 "withdraw_nullifier_spent": withdraw_nullifier_spent,
             },
+            "relay_checks": normalize_value(
+                {
+                    "sender": relay_indexed_tx.sender,
+                    "function": relay_indexed_tx.function,
+                    "relayer_fee": relay_proof.relayer_fee,
+                    "execution": {
+                        "execution_id": relay_event.data_indexed.get(
+                            "execution_id"
+                        )
+                        if relay_event.data_indexed
+                        else None,
+                        "relayer": relay_event.data_indexed.get("relayer")
+                        if relay_event.data_indexed
+                        else None,
+                        "relay_binding": relay_event.data.get("relay_binding")
+                        if relay_event.data
+                        else None,
+                        "execution_tag": relay_event.data.get("execution_tag")
+                        if relay_event.data
+                        else None,
+                        "nullifier_digest": relay_event.data.get(
+                            "nullifier_digest"
+                        )
+                        if relay_event.data
+                        else None,
+                        "old_root": relay_event.data.get("old_root")
+                        if relay_event.data
+                        else None,
+                        "new_root": relay_event.data_indexed.get("new_root")
+                        if relay_event.data_indexed
+                        else None,
+                        "nullifier_count": relay_event.data.get(
+                            "nullifier_count"
+                        )
+                        if relay_event.data
+                        else None,
+                        "output_count": relay_event.data.get("output_count")
+                        if relay_event.data
+                        else None,
+                        "fee": relay_event.data.get("fee")
+                        if relay_event.data
+                        else None,
+                        "expires_at": relay_event.data.get("expires_at")
+                        if relay_event.data
+                        else None,
+                    },
+                    "event_count": len(relay_events),
+                }
+            ),
             "records_sample": normalize_value(
                 {
-                    "after_deposit": records_after_deposit,
-                    "after_transfer_tail": records_after_transfer[-2:],
-                    "after_withdraw_tail": records_after_withdraw[-2:],
-                    "after_recent_root_tail": records_after_recent_root[-2:],
+                    "after_deposit": normalize_note_records(records_after_deposit),
+                    "after_transfer_tail": normalize_note_records(
+                        records_after_transfer[-2:]
+                    ),
+                    "after_relay_tail": normalize_note_records(
+                        records_after_relay[-2:]
+                    ),
+                    "after_withdraw_tail": normalize_note_records(
+                        records_after_withdraw[-2:]
+                    ),
+                    "after_recent_root_tail": normalize_note_records(
+                        records_after_recent_root[-2:]
+                    ),
                 }
             ),
             "tree_state_after_withdraw": normalize_value(tree_state_after_withdraw),

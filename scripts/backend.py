@@ -21,6 +21,14 @@ from intentkit_backend import (
     start_intentkit_runtime,
     stop_intentkit_runtime,
 )
+from shielded_relayer_backend import (
+    DEFAULT_SHIELDED_RELAYER_HOST,
+    DEFAULT_SHIELDED_RELAYER_PORT,
+    get_shielded_relayer_status,
+    shielded_relayer_endpoints,
+    start_shielded_relayer_runtime,
+    stop_shielded_relayer_runtime,
+)
 
 STACK_DIR = Path(__file__).resolve().parent.parent
 LOCALNET_NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
@@ -42,6 +50,12 @@ DEFAULT_XIAN_METRICS_URL = "http://127.0.0.1:9108/metrics"
 DEFAULT_PROMETHEUS_URL = "http://127.0.0.1:9090"
 DEFAULT_GRAFANA_URL = "http://127.0.0.1:3000"
 DEFAULT_GRAPHQL_URL = "http://127.0.0.1:5000/graphql"
+DEFAULT_SHIELDED_RELAYER_URL = (
+    f"http://{DEFAULT_SHIELDED_RELAYER_HOST}:{DEFAULT_SHIELDED_RELAYER_PORT}"
+)
+DEFAULT_BDS_SNAPSHOT_PATH = (
+    STACK_DIR / ".cometbft" / "snapshots" / "xian-bds-snapshot.tar.gz"
+)
 
 
 def display_host(host: str) -> str:
@@ -57,6 +71,30 @@ def resolve_repo_dir(name: str, env_var: str) -> Path:
     if explicit:
         return Path(explicit).expanduser().resolve()
     return (STACK_DIR.parent / name).resolve()
+
+
+def resolve_cometbft_home() -> Path:
+    explicit = os.environ.get("XIAN_COMETBFT_HOME")
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    return (STACK_DIR / ".cometbft").resolve()
+
+
+def resolve_bds_snapshot_path(path: str | None) -> Path:
+    if path:
+        return Path(path).expanduser().resolve()
+    return DEFAULT_BDS_SNAPSHOT_PATH.resolve()
+
+
+def ensure_path_within_cometbft_home(path: Path) -> None:
+    cometbft_home = resolve_cometbft_home()
+    try:
+        path.relative_to(cometbft_home)
+    except ValueError as exc:
+        raise RuntimeError(
+            "BDS snapshot paths must live under XIAN_COMETBFT_HOME so the "
+            "stack container can access them"
+        ) from exc
 
 
 def fetch_json(url: str, *, timeout: float = 10.0) -> dict:
@@ -402,6 +440,9 @@ def runtime_env(
     intentkit_host: str,
     intentkit_port: int,
     intentkit_api_port: int,
+    shielded_relayer_enabled: bool,
+    shielded_relayer_host: str,
+    shielded_relayer_port: int,
 ) -> dict[str, str]:
     env = os.environ.copy()
     env["XIAN_NODE_IMAGE_MODE"] = node_image_mode
@@ -430,6 +471,14 @@ def runtime_env(
     env["XIAN_INTENTKIT_PORT"] = str(intentkit_port)
     env["XIAN_INTENTKIT_API_PORT"] = str(intentkit_api_port)
     env["XIAN_INTENTKIT_S3_PORT"] = env.get("XIAN_INTENTKIT_S3_PORT", "39000")
+    env["XIAN_SHIELDED_RELAYER_ENABLED"] = (
+        "1" if shielded_relayer_enabled else "0"
+    )
+    env["XIAN_SHIELDED_RELAYER_HOST"] = shielded_relayer_host
+    env["XIAN_SHIELDED_RELAYER_PUBLIC_HOST"] = display_host(
+        shielded_relayer_host
+    )
+    env["XIAN_SHIELDED_RELAYER_PORT"] = str(shielded_relayer_port)
     return env
 
 
@@ -550,6 +599,9 @@ def backend_start(
     intentkit_host: str,
     intentkit_port: int,
     intentkit_api_port: int,
+    shielded_relayer_enabled: bool,
+    shielded_relayer_host: str,
+    shielded_relayer_port: int,
     wait_for_health: bool,
     rpc_timeout_seconds: float,
     rpc_url: str,
@@ -572,7 +624,11 @@ def backend_start(
         intentkit_host=intentkit_host,
         intentkit_port=intentkit_port,
         intentkit_api_port=intentkit_api_port,
+        shielded_relayer_enabled=shielded_relayer_enabled,
+        shielded_relayer_host=shielded_relayer_host,
+        shielded_relayer_port=shielded_relayer_port,
     )
+    env["XIAN_SHIELDED_RELAYER_NODE_URL"] = rpc_base_url(rpc_url)
 
     run_make_target(node_target, env=env)
     if monitoring_enabled:
@@ -595,6 +651,7 @@ def backend_start(
         "dashboard_enabled": dashboard_enabled,
         "monitoring_enabled": monitoring_enabled,
         "intentkit_enabled": intentkit_enabled,
+        "shielded_relayer_enabled": shielded_relayer_enabled,
         "rpc_checked": wait_for_health,
     }
     if dashboard_enabled:
@@ -606,8 +663,13 @@ def backend_start(
         result["monitoring_target"] = monitoring_target
         result["prometheus_url"] = "http://127.0.0.1:9090"
         result["grafana_url"] = "http://127.0.0.1:3000"
+    if shielded_relayer_enabled:
+        result["shielded_relayer_url"] = (
+            f"http://{display_host(shielded_relayer_host)}:"
+            f"{shielded_relayer_port}"
+        )
     rpc_status = None
-    if wait_for_health or intentkit_enabled:
+    if wait_for_health or intentkit_enabled or shielded_relayer_enabled:
         rpc_status = wait_for_rpc_ready(
             rpc_url=rpc_url,
             timeout_seconds=rpc_timeout_seconds,
@@ -629,6 +691,14 @@ def backend_start(
             )
         )
         result["intentkit_status"] = start_intentkit_runtime(env=env)
+    if shielded_relayer_enabled:
+        if rpc_status is None:
+            raise RuntimeError("shielded relayer requires RPC readiness")
+        result["shielded_relayer_status"] = start_shielded_relayer_runtime(
+            bind_host=shielded_relayer_host,
+            port=shielded_relayer_port,
+            env=env,
+        )
     return result
 
 
@@ -647,6 +717,9 @@ def backend_stop(
     intentkit_host: str,
     intentkit_port: int,
     intentkit_api_port: int,
+    shielded_relayer_enabled: bool,
+    shielded_relayer_host: str,
+    shielded_relayer_port: int,
 ) -> dict:
     container_target = "abci-bds-down" if service_node else "abci-down"
     dashboard_target = "dashboard-bds-down" if service_node else "dashboard-down"
@@ -665,10 +738,20 @@ def backend_stop(
         intentkit_host=intentkit_host,
         intentkit_port=intentkit_port,
         intentkit_api_port=intentkit_api_port,
+        shielded_relayer_enabled=shielded_relayer_enabled,
+        shielded_relayer_host=shielded_relayer_host,
+        shielded_relayer_port=shielded_relayer_port,
     )
     intentkit_result = None
     if intentkit_enabled:
         intentkit_result = stop_intentkit_runtime(env=env)
+    shielded_relayer_result = None
+    if shielded_relayer_enabled:
+        shielded_relayer_result = stop_shielded_relayer_runtime(
+            bind_host=shielded_relayer_host,
+            port=shielded_relayer_port,
+            env=env,
+        )
     if dashboard_enabled:
         run_make_target(dashboard_target, env=env)
     if monitoring_enabled:
@@ -684,9 +767,11 @@ def backend_stop(
         "dashboard_enabled": dashboard_enabled,
         "monitoring_enabled": monitoring_enabled,
         "intentkit_enabled": intentkit_enabled,
+        "shielded_relayer_enabled": shielded_relayer_enabled,
         "dashboard_target": dashboard_target if dashboard_enabled else None,
         "monitoring_target": monitoring_target if monitoring_enabled else None,
         "intentkit_status": intentkit_result,
+        "shielded_relayer_status": shielded_relayer_result,
     }
 
 
@@ -705,6 +790,9 @@ def backend_status(
     intentkit_host: str,
     intentkit_port: int,
     intentkit_api_port: int,
+    shielded_relayer_enabled: bool,
+    shielded_relayer_host: str,
+    shielded_relayer_port: int,
 ) -> dict:
     env = runtime_env(
         node_image_mode=node_image_mode,
@@ -718,6 +806,9 @@ def backend_status(
         intentkit_host=intentkit_host,
         intentkit_port=intentkit_port,
         intentkit_api_port=intentkit_api_port,
+        shielded_relayer_enabled=shielded_relayer_enabled,
+        shielded_relayer_host=shielded_relayer_host,
+        shielded_relayer_port=shielded_relayer_port,
     )
     env["XIAN_SERVICE_NODE"] = "1" if service_node else "0"
     result = run_make_target("node-status", capture_output=True, env=env)
@@ -725,6 +816,7 @@ def backend_status(
     payload["dashboard_enabled"] = dashboard_enabled
     payload["monitoring_enabled"] = monitoring_enabled
     payload["intentkit_enabled"] = intentkit_enabled
+    payload["shielded_relayer_enabled"] = shielded_relayer_enabled
     payload["node_image_mode"] = node_image_mode
     payload["node_integrated_image"] = node_integrated_image
     payload["node_split_image"] = node_split_image
@@ -742,6 +834,9 @@ def backend_status(
         intentkit_host=intentkit_host,
         intentkit_port=intentkit_port,
         intentkit_api_port=intentkit_api_port,
+        shielded_relayer_enabled=shielded_relayer_enabled,
+        shielded_relayer_host=shielded_relayer_host,
+        shielded_relayer_port=shielded_relayer_port,
     )["endpoints"]
     payload["endpoints"] = endpoints
     if dashboard_enabled:
@@ -845,6 +940,35 @@ def backend_status(
         ) as exc:
             payload["intentkit_api_reachable"] = False
             payload["intentkit_api_error"] = str(exc)
+    if shielded_relayer_enabled:
+        payload["shielded_relayer_url"] = str(
+            endpoints.get("shielded_relayer", DEFAULT_SHIELDED_RELAYER_URL)
+        )
+        payload["shielded_relayer_status"] = get_shielded_relayer_status(
+            bind_host=shielded_relayer_host,
+            port=shielded_relayer_port,
+            env=env,
+        )
+        payload["shielded_relayer_running"] = bool(
+            payload["shielded_relayer_status"].get(
+                "shielded_relayer_running"
+            )
+        )
+        try:
+            payload["shielded_relayer_info"] = fetch_json(
+                str(endpoints["shielded_relayer_info"]),
+                timeout=2.0,
+            )
+            payload["shielded_relayer_reachable"] = True
+        except (
+            OSError,
+            URLError,
+            TimeoutError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
+            payload["shielded_relayer_reachable"] = False
+            payload["shielded_relayer_error"] = str(exc)
     return payload
 
 
@@ -863,6 +987,9 @@ def backend_endpoints(
     intentkit_host: str,
     intentkit_port: int,
     intentkit_api_port: int,
+    shielded_relayer_enabled: bool,
+    shielded_relayer_host: str,
+    shielded_relayer_port: int,
 ) -> dict:
     endpoints = {
         "rpc": DEFAULT_RPC_BASE_URL,
@@ -900,6 +1027,13 @@ def backend_endpoints(
                 api_port=intentkit_api_port,
             )
         )
+    if shielded_relayer_enabled:
+        endpoints.update(
+            shielded_relayer_endpoints(
+                bind_host=shielded_relayer_host,
+                port=shielded_relayer_port,
+            )
+        )
     endpoints.update(
         _discover_runtime_endpoints(
             service_node=service_node,
@@ -925,6 +1059,7 @@ def backend_endpoints(
         "dashboard_enabled": dashboard_enabled,
         "monitoring_enabled": monitoring_enabled,
         "intentkit_enabled": intentkit_enabled,
+        "shielded_relayer_enabled": shielded_relayer_enabled,
         "intentkit_network_id": intentkit_network_id,
         "endpoints": endpoints,
     }
@@ -945,6 +1080,9 @@ def backend_health(
     intentkit_host: str,
     intentkit_port: int,
     intentkit_api_port: int,
+    shielded_relayer_enabled: bool,
+    shielded_relayer_host: str,
+    shielded_relayer_port: int,
     rpc_url: str,
     check_disk: bool,
 ) -> dict:
@@ -962,6 +1100,9 @@ def backend_health(
         intentkit_host=intentkit_host,
         intentkit_port=intentkit_port,
         intentkit_api_port=intentkit_api_port,
+        shielded_relayer_enabled=shielded_relayer_enabled,
+        shielded_relayer_host=shielded_relayer_host,
+        shielded_relayer_port=shielded_relayer_port,
     )
     endpoints = status["endpoints"]
 
@@ -1140,6 +1281,15 @@ def backend_health(
                 "error": status.get("grafana_error"),
             },
         }
+    if shielded_relayer_enabled:
+        checks["shielded_relayer"] = {
+            "ok": bool(status.get("shielded_relayer_running"))
+            and bool(status.get("shielded_relayer_reachable")),
+            "detail": {
+                "url": endpoints.get("shielded_relayer"),
+                "error": status.get("shielded_relayer_error"),
+            },
+        }
 
     storage = None
     if check_disk:
@@ -1169,6 +1319,7 @@ def backend_health(
         "monitoring_enabled": monitoring_enabled,
         "intentkit_enabled": intentkit_enabled,
         "intentkit_network_id": intentkit_network_id,
+        "shielded_relayer_enabled": shielded_relayer_enabled,
         "state": state,
         "checks": checks,
         "endpoints": endpoints,
@@ -1196,6 +1347,68 @@ def backend_storage_report() -> dict:
     result = run_make_target("storage-report", capture_output=True)
     payload = json.loads(result.stdout)
     payload["target"] = "storage-report"
+    return payload
+
+
+def backend_bds_snapshot_export(
+    *,
+    output_path: str | None,
+    force: bool,
+) -> dict:
+    resolved_output = resolve_bds_snapshot_path(output_path)
+    ensure_path_within_cometbft_home(resolved_output)
+    env = {
+        **os.environ.copy(),
+        "XIAN_BDS_SNAPSHOT_PATH": str(resolved_output),
+        "XIAN_BDS_SNAPSHOT_FORCE": "1" if force else "0",
+    }
+    result = run_make_target(
+        "bds-snapshot-export",
+        capture_output=True,
+        env=env,
+    )
+    payload = {
+        "stack_dir": str(STACK_DIR),
+        "target": "bds-snapshot-export",
+        "ok": True,
+        "output_path": str(resolved_output),
+        "force": force,
+    }
+    if result.stdout:
+        payload["stdout"] = result.stdout
+    if result.stderr:
+        payload["stderr"] = result.stderr
+    return payload
+
+
+def backend_bds_snapshot_import(
+    *,
+    input_path: str | None,
+    clear_spool: bool,
+) -> dict:
+    resolved_input = resolve_bds_snapshot_path(input_path)
+    ensure_path_within_cometbft_home(resolved_input)
+    env = {
+        **os.environ.copy(),
+        "XIAN_BDS_SNAPSHOT_PATH": str(resolved_input),
+        "XIAN_BDS_SNAPSHOT_CLEAR_SPOOL": "1" if clear_spool else "0",
+    }
+    result = run_make_target(
+        "bds-snapshot-import",
+        capture_output=True,
+        env=env,
+    )
+    payload = {
+        "stack_dir": str(STACK_DIR),
+        "target": "bds-snapshot-import",
+        "ok": True,
+        "input_path": str(resolved_input),
+        "clear_spool": clear_spool,
+    }
+    if result.stdout:
+        payload["stdout"] = result.stdout
+    if result.stderr:
+        payload["stderr"] = result.stderr
     return payload
 
 
@@ -1434,6 +1647,23 @@ def add_intentkit_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_shielded_relayer_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--shielded-relayer",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--shielded-relayer-host",
+        default=DEFAULT_SHIELDED_RELAYER_HOST,
+    )
+    parser.add_argument(
+        "--shielded-relayer-port",
+        type=int,
+        default=DEFAULT_SHIELDED_RELAYER_PORT,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Stable machine-readable backend control surface for xian-stack"
@@ -1467,6 +1697,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_node_image_args(start)
     add_intentkit_args(start)
+    add_shielded_relayer_args(start)
     start.add_argument(
         "--wait-for-health",
         action=argparse.BooleanOptionalAction,
@@ -1509,6 +1740,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_node_image_args(stop)
     add_intentkit_args(stop)
+    add_shielded_relayer_args(stop)
 
     status = subparsers.add_parser("status")
     status.add_argument(
@@ -1537,6 +1769,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_node_image_args(status)
     add_intentkit_args(status)
+    add_shielded_relayer_args(status)
 
     endpoints = subparsers.add_parser("endpoints")
     endpoints.add_argument(
@@ -1565,6 +1798,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_node_image_args(endpoints)
     add_intentkit_args(endpoints)
+    add_shielded_relayer_args(endpoints)
 
     health = subparsers.add_parser("health")
     health.add_argument(
@@ -1593,6 +1827,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_node_image_args(health)
     add_intentkit_args(health)
+    add_shielded_relayer_args(health)
     health.add_argument(
         "--rpc-url",
         default=f"{DEFAULT_RPC_BASE_URL}/status",
@@ -1607,6 +1842,34 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("smoke")
     subparsers.add_parser("smoke-cli")
     subparsers.add_parser("storage-report")
+
+    bds_snapshot_export = subparsers.add_parser("bds-snapshot-export")
+    bds_snapshot_export.add_argument(
+        "--output-path",
+        help=(
+            "Host path under XIAN_COMETBFT_HOME for the exported BDS snapshot "
+            f"(default: {DEFAULT_BDS_SNAPSHOT_PATH})"
+        ),
+    )
+    bds_snapshot_export.add_argument(
+        "--force",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+
+    bds_snapshot_import = subparsers.add_parser("bds-snapshot-import")
+    bds_snapshot_import.add_argument(
+        "--input-path",
+        help=(
+            "Host path under XIAN_COMETBFT_HOME for the BDS snapshot archive "
+            f"(default: {DEFAULT_BDS_SNAPSHOT_PATH})"
+        ),
+    )
+    bds_snapshot_import.add_argument(
+        "--clear-spool",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
 
     localnet_init = subparsers.add_parser("localnet-init")
     localnet_init.add_argument(
@@ -1880,6 +2143,9 @@ def main(argv: list[str] | None = None) -> int:
             intentkit_host=args.intentkit_host,
             intentkit_port=args.intentkit_port,
             intentkit_api_port=args.intentkit_api_port,
+            shielded_relayer_enabled=args.shielded_relayer,
+            shielded_relayer_host=args.shielded_relayer_host,
+            shielded_relayer_port=args.shielded_relayer_port,
             wait_for_health=args.wait_for_health,
             rpc_timeout_seconds=args.rpc_timeout_seconds,
             rpc_url=args.rpc_url,
@@ -1899,6 +2165,9 @@ def main(argv: list[str] | None = None) -> int:
             intentkit_host=args.intentkit_host,
             intentkit_port=args.intentkit_port,
             intentkit_api_port=args.intentkit_api_port,
+            shielded_relayer_enabled=args.shielded_relayer,
+            shielded_relayer_host=args.shielded_relayer_host,
+            shielded_relayer_port=args.shielded_relayer_port,
         )
     elif args.command == "status":
         payload = backend_status(
@@ -1915,6 +2184,9 @@ def main(argv: list[str] | None = None) -> int:
             intentkit_host=args.intentkit_host,
             intentkit_port=args.intentkit_port,
             intentkit_api_port=args.intentkit_api_port,
+            shielded_relayer_enabled=args.shielded_relayer,
+            shielded_relayer_host=args.shielded_relayer_host,
+            shielded_relayer_port=args.shielded_relayer_port,
         )
     elif args.command == "endpoints":
         payload = backend_endpoints(
@@ -1931,6 +2203,9 @@ def main(argv: list[str] | None = None) -> int:
             intentkit_host=args.intentkit_host,
             intentkit_port=args.intentkit_port,
             intentkit_api_port=args.intentkit_api_port,
+            shielded_relayer_enabled=args.shielded_relayer,
+            shielded_relayer_host=args.shielded_relayer_host,
+            shielded_relayer_port=args.shielded_relayer_port,
         )
     elif args.command == "health":
         payload = backend_health(
@@ -1947,6 +2222,9 @@ def main(argv: list[str] | None = None) -> int:
             intentkit_host=args.intentkit_host,
             intentkit_port=args.intentkit_port,
             intentkit_api_port=args.intentkit_api_port,
+            shielded_relayer_enabled=args.shielded_relayer,
+            shielded_relayer_host=args.shielded_relayer_host,
+            shielded_relayer_port=args.shielded_relayer_port,
             rpc_url=args.rpc_url,
             check_disk=args.check_disk,
         )
@@ -1958,6 +2236,16 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_make_result("smoke-cli")
     elif args.command == "storage-report":
         payload = backend_storage_report()
+    elif args.command == "bds-snapshot-export":
+        payload = backend_bds_snapshot_export(
+            output_path=args.output_path,
+            force=args.force,
+        )
+    elif args.command == "bds-snapshot-import":
+        payload = backend_bds_snapshot_import(
+            input_path=args.input_path,
+            clear_spool=args.clear_spool,
+        )
     elif args.command == "localnet-init":
         payload = backend_localnet_init(
             nodes=args.nodes,

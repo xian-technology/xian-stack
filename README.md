@@ -23,6 +23,48 @@ python3 ./scripts/backend.py health --no-service-node --dashboard --monitoring
 python3 ./scripts/backend.py stop --no-service-node --dashboard --monitoring
 ```
 
+Run the optional shielded relayer sidecar against the local node:
+
+```bash
+export XIAN_SHIELDED_RELAYER_PRIVATE_KEY=<relayer-ed25519-private-key>
+python3 ./scripts/backend.py start --no-service-node --shielded-relayer
+python3 ./scripts/backend.py status --no-service-node --shielded-relayer
+python3 ./scripts/backend.py endpoints --no-service-node --shielded-relayer
+python3 ./scripts/backend.py health --no-service-node --shielded-relayer
+python3 ./scripts/backend.py stop --no-service-node --shielded-relayer
+```
+
+Optional relayer policy is configured through environment variables:
+
+```bash
+XIAN_SHIELDED_RELAYER_AUTH_TOKEN=<bearer-token>
+XIAN_SHIELDED_RELAYER_PUBLIC_INFO=1
+XIAN_SHIELDED_RELAYER_PUBLIC_QUOTE=0
+XIAN_SHIELDED_RELAYER_PUBLIC_JOB_LOOKUP=0
+XIAN_SHIELDED_RELAYER_ALLOWED_NOTE_CONTRACTS=con_shielded_note_token
+XIAN_SHIELDED_RELAYER_ALLOWED_COMMAND_CONTRACTS=con_shielded_commands
+XIAN_SHIELDED_RELAYER_ALLOWED_COMMAND_TARGETS=currency,con_token_factory
+XIAN_SHIELDED_RELAYER_MIN_NOTE_RELAYER_FEE=0
+XIAN_SHIELDED_RELAYER_MIN_COMMAND_RELAYER_FEE=0
+XIAN_SHIELDED_RELAYER_DEFAULT_EXPIRY_SECONDS=300
+XIAN_SHIELDED_RELAYER_MAX_EXPIRY_SECONDS=1800
+XIAN_SHIELDED_RELAYER_METRICS_ENABLED=1
+XIAN_SHIELDED_RELAYER_METRICS_PUBLIC=0
+XIAN_SHIELDED_RELAYER_RATE_LIMIT_REQUESTS_PER_MINUTE=120
+XIAN_SHIELDED_RELAYER_RATE_LIMIT_BURST=30
+XIAN_SHIELDED_RELAYER_RATE_LIMIT_TRUST_PROXY=0
+XIAN_SHIELDED_RELAYER_JOB_HISTORY_LIMIT=256
+XIAN_SHIELDED_RELAYER_JOB_HISTORY_TTL_SECONDS=86400
+XIAN_SHIELDED_RELAYER_LOG_REQUESTS=1
+```
+
+The relayer defaults to `127.0.0.1`. If you bind it to a non-loopback host,
+you must also set `XIAN_SHIELDED_RELAYER_AUTH_TOKEN`.
+
+When enabled, the relayer also exposes a Prometheus-style metrics endpoint at
+`/metrics`. The backend endpoint catalog includes that URL as
+`shielded_relayer_metrics`.
+
 Run a localnet workload:
 
 ```bash
@@ -41,6 +83,19 @@ Run the broader layered 5-validator e2e harness:
 
 ```bash
 make localnet-e2e
+```
+
+Export or import the standardized BDS recovery snapshot:
+
+```bash
+python3 ./scripts/backend.py bds-snapshot-export
+python3 ./scripts/backend.py bds-snapshot-import
+```
+
+By default the archive lives at:
+
+```bash
+.cometbft/snapshots/xian-bds-snapshot.tar.gz
 ```
 
 Plan or apply a coordinated workspace release:
@@ -64,6 +119,9 @@ path against the same 5-validator `testnet`-shaped network.
   to enable without becoming required to understand the core node.
 - `xian-intentkit` can be attached as another optional stack-managed service
   without copying its compose topology into this repo.
+- The shielded relayer is another optional stack-managed service. It exposes a
+  proof-bound private-submission HTTP surface without changing the node runtime
+  itself.
 - Localnet and smoke flows matter as product safety nets, not just as internal
   convenience scripts.
 
@@ -83,6 +141,8 @@ path against the same 5-validator `testnet`-shaped network.
 - expose a stable machine-facing backend command surface through
   `scripts/backend.py`
 - start optional dashboard, BDS, Prometheus, and Grafana layers
+- start an optional stack-managed shielded relayer for proof-bound private
+  submission
 - attach a stack-managed `xian-intentkit` deployment while keeping its repo and
   compose files independent
 - run smoke checks and CLI-driven smoke flows
@@ -97,6 +157,7 @@ The stable backend interface is `scripts/backend.py`. It covers:
 - `validate`
 - `start`, `stop`, and `status`
 - `endpoints` and `health`
+- `bds-snapshot-export` and `bds-snapshot-import`
 - `smoke` and `smoke-cli`
 - `localnet-*` flows
 
