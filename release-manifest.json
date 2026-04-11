@@ -3,24 +3,24 @@
   "components": {
     "xian-abci": {
       "repository": "xian-technology/xian-abci",
-      "ref": "b2b96a432ced14b86bd0ee12bf867623ce653eb6"
+      "ref": "544439faf49ce4f74ebcc4c352a32ac9d4fc18d6"
     },
     "xian-configs": {
       "repository": "xian-technology/xian-configs",
-      "ref": "29f208984cbe70d9b39215caef1fe93871a26194"
+      "ref": "8a6aa5601a883fbba11e5f9dc97632e37353ce6b"
     },
     "xian-contracting": {
       "repository": "xian-technology/xian-contracting",
-      "ref": "8c883fcfce1c7eb8fc8a0421c08fd80fc5a85669"
+      "ref": "f12b634d2a8643ebebf3886f5cc27d4b9c921ef7"
     },
     "xian-py": {
       "repository": "xian-technology/xian-py",
-      "ref": "f2144695357b9c6583052ada1ba776eac09a6ceb"
+      "ref": "21e8e941cdb8ce47ad2a8dbe28f11d23065fadf4"
     }
   },
   "build": {
     "python_image": "python:3.14-bookworm",
-    "cometbft_version": "0.38.21",
+    "cometbft_version": "0.38.22",
     "s6_overlay_version": "3.2.1.0"
   },
   "images": {
