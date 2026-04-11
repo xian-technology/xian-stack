@@ -704,6 +704,35 @@ class ValidatorGovernanceRunner:
             f"last={last_vote}"
         )
 
+    async def wait_for_members_vote_progress(
+        self,
+        client: XianAsync,
+        proposal_id: int,
+        *,
+        previous_vote: dict[str, Any],
+        timeout_seconds: float = 5.0,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout_seconds
+        last_vote = previous_vote
+        previous_status = previous_vote.get("status")
+        previous_yes = coerce_int(previous_vote.get("yes", 0) or 0)
+        previous_no = coerce_int(previous_vote.get("no", 0) or 0)
+        previous_voters = tuple(previous_vote.get("voters") or [])
+
+        while time.monotonic() < deadline:
+            proposal = await client.get_state("masternodes", "votes", proposal_id)
+            last_vote = proposal
+            if (
+                proposal.get("status") != previous_status
+                or coerce_int(proposal.get("yes", 0) or 0) != previous_yes
+                or coerce_int(proposal.get("no", 0) or 0) != previous_no
+                or tuple(proposal.get("voters") or []) != previous_voters
+            ):
+                return proposal
+            await asyncio.sleep(0.25)
+
+        return last_vote
+
     async def approve_governance_contract_call(
         self,
         proposer: XianAsync,
@@ -826,7 +855,11 @@ class ValidatorGovernanceRunner:
                     chi=GOVERNANCE_TX_CHI,
                 )
             )
-            current_vote = await proposer.get_state("masternodes", "votes", proposal_id)
+            current_vote = await self.wait_for_members_vote_progress(
+                proposer,
+                proposal_id,
+                previous_vote=current_vote,
+            )
             if current_vote["status"] == "approved":
                 proposal_final = current_vote
                 break
@@ -1985,7 +2018,10 @@ def get_status():
         }
 
     async def hybrid_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
-        node0_wallet, node1_wallet, node2_wallet, node3_wallet = self.validator_wallets
+        node0_wallet = self.validator_wallets[0]
+        node1_wallet = self.validator_wallets[1]
+        node2_wallet = self.validator_wallets[2]
+        node3_wallet = self.validator_wallets[3]
         node1_key = self.nodes[1].account_public_key
 
         async with self.client(node0_wallet, 0, session) as node0, self.client(

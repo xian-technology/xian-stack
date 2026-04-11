@@ -497,6 +497,7 @@ def run_python_script(
     *args: str,
     capture_output: bool = False,
     uv_project: Path | None = None,
+    uv_with: list[Path] | None = None,
     uv_python: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, str(script_path), *args]
@@ -507,6 +508,9 @@ def run_python_script(
             "--project",
             str(uv_project),
         ]
+        if uv_with is not None:
+            for dependency in uv_with:
+                cmd.extend(["--with", str(dependency)])
         if uv_python is not None:
             cmd.extend(["--python", uv_python])
         cmd.extend(["python3", str(script_path), *args])
@@ -1501,6 +1505,7 @@ def backend_localnet_diagnostic(
     duration_minutes: int | None = None,
     script_args: list[str] | None = None,
     uv_project: Path | None = None,
+    uv_with: list[Path] | None = None,
 ) -> dict:
     args: list[str] = []
     if duration_minutes is not None:
@@ -1513,6 +1518,7 @@ def backend_localnet_diagnostic(
             *args,
             capture_output=True,
             uv_project=uv_project or resolve_repo_dir("xian-py", "XIAN_PY_DIR"),
+            uv_with=uv_with,
             uv_python=STACK_UV_PYTHON,
         )
     except subprocess.CalledProcessError as exc:
@@ -2308,6 +2314,7 @@ def main(argv: list[str] | None = None) -> int:
                 "--build" if args.build else "--no-build",
             ],
             uv_project=resolve_repo_dir("xian-abci", "XIAN_ABCI_DIR"),
+            uv_with=[resolve_repo_dir("xian-py", "XIAN_PY_DIR")],
         )
     elif args.command == "localnet-burst":
         payload = backend_localnet_diagnostic(
