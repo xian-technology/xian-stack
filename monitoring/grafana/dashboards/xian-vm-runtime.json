@@ -42,11 +42,11 @@
       },
       "targets": [
         {
-          "expr": "xian_current_block_height",
+          "expr": "count(xian_node_info{execution_mode=\"xian_vm_v1\"})",
           "refId": "A"
         }
       ],
-      "title": "Current Block Height",
+      "title": "VM Nodes",
       "type": "stat"
     },
     {
@@ -83,11 +83,11 @@
       },
       "targets": [
         {
-          "expr": "xian_bds_metric{field=\"height_lag\"}",
+          "expr": "count(xian_node_info{execution_mode=\"xian_vm_v1\",execution_authority=\"native\"})",
           "refId": "A"
         }
       ],
-      "title": "BDS Height Lag",
+      "title": "Native Authority Nodes",
       "type": "stat"
     },
     {
@@ -97,7 +97,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "bytes"
+          "unit": "none"
         },
         "overrides": []
       },
@@ -124,93 +124,11 @@
       },
       "targets": [
         {
-          "expr": "xian_bds_metric{field=\"spool_total_bytes\"}",
-          "refId": "A"
-        }
-      ],
-      "title": "BDS Spool Bytes",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "grafana"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ms"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 6,
-        "x": 18,
-        "y": 0
-      },
-      "id": 4,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value"
-      },
-      "targets": [
-        {
-          "expr": "xian_perf_global_metric{metric=\"finalize_block\",stat=\"avg_ms\"}",
-          "refId": "A"
-        }
-      ],
-      "title": "Finalize Avg",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "grafana"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 12,
-        "x": 0,
-        "y": 5
-      },
-      "id": 7,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value"
-      },
-      "targets": [
-        {
           "expr": "sum(xian_vm_shadow_metric{field=\"comparisons_total\"})",
           "refId": "A"
         }
       ],
-      "title": "VM Shadow Comparisons",
+      "title": "Shadow Comparisons Total",
       "type": "stat"
     },
     {
@@ -239,11 +157,11 @@
       },
       "gridPos": {
         "h": 5,
-        "w": 12,
-        "x": 12,
-        "y": 5
+        "w": 6,
+        "x": 18,
+        "y": 0
       },
-      "id": 8,
+      "id": 4,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
@@ -264,7 +182,7 @@
           "refId": "A"
         }
       ],
-      "title": "VM Shadow Mismatches",
+      "title": "Shadow Mismatches Total",
       "type": "stat"
     },
     {
@@ -274,7 +192,171 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms"
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 5
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "count(xian_node_info{execution_mode=\"xian_vm_v1\",execution_shadow=\"true\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Shadow Enabled Nodes",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafana"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 5
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "max(xian_vm_shadow_metric{field=\"last_comparison_age_seconds\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Max Comparison Age",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafana"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 5
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(xian_vm_shadow_stage_metric{stage=\"execute_tx_native_authoritative\",field=\"comparisons_total\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Execute Comparisons",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafana"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 5
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(xian_vm_shadow_stage_metric{stage=\"simulate_tx_native_authoritative\",field=\"comparisons_total\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Simulate Comparisons",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafana"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
         },
         "overrides": []
       },
@@ -284,15 +366,15 @@
         "x": 0,
         "y": 10
       },
-      "id": 5,
+      "id": 9,
       "targets": [
         {
-          "expr": "xian_perf_global_metric{stat=\"avg_ms\",metric=~\"tx_execute|tx_process_total|finalize_block\"}",
-          "legendFormat": "{{metric}}",
+          "expr": "sum by (instance, stage) (xian_vm_shadow_stage_metric{field=\"comparisons_total\"})",
+          "legendFormat": "{{instance}} {{stage}}",
           "refId": "A"
         }
       ],
-      "title": "Execution Averages",
+      "title": "Comparisons By Node And Stage",
       "type": "timeseries"
     },
     {
@@ -312,15 +394,71 @@
         "x": 12,
         "y": 10
       },
-      "id": 6,
+      "id": 10,
       "targets": [
         {
-          "expr": "xian_bds_metric{field=~\"queue_depth|spool_pending_count|height_lag\"}",
-          "legendFormat": "{{field}}",
+          "expr": "sum by (instance, stage) (xian_vm_shadow_stage_metric{field=\"mismatches_total\"})",
+          "legendFormat": "{{instance}} {{stage}}",
           "refId": "A"
         }
       ],
-      "title": "BDS Queue and Lag",
+      "title": "Mismatches By Node And Stage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafana"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "id": 11,
+      "targets": [
+        {
+          "expr": "xian_vm_shadow_metric{field=\"last_comparison_age_seconds\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Comparison Age By Node",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafana"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "id": 12,
+      "targets": [
+        {
+          "expr": "xian_vm_shadow_metric{field=\"recent_mismatch_count\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent Mismatch Count By Node",
       "type": "timeseries"
     }
   ],
@@ -328,7 +466,8 @@
   "schemaVersion": 39,
   "style": "dark",
   "tags": [
-    "xian"
+    "xian",
+    "vm"
   ],
   "templating": {
     "list": []
@@ -337,10 +476,8 @@
     "from": "now-15m",
     "to": "now"
   },
-  "timepicker": {},
   "timezone": "browser",
-  "title": "Xian Overview",
-  "uid": "xian-overview",
-  "version": 1,
-  "weekStart": ""
+  "title": "Xian VM Runtime",
+  "uid": "xian-vm-runtime",
+  "version": 1
 }

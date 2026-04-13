@@ -105,6 +105,10 @@ the CometBFT metrics endpoint, so the VM rollout report reads the native/shadow
 observability data from the app-side `9108` exporter rather than the `26660`
 CometBFT metrics port.
 
+When the monitoring stack is enabled, Grafana now also provisions a dedicated
+`Xian VM Runtime` dashboard plus VM summary panels on the existing overview and
+preset dashboards.
+
 Export or import the standardized BDS recovery snapshot:
 
 ```bash
