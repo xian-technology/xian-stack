@@ -120,6 +120,11 @@ def write_node_config(
     genesis: dict,
     *,
     tracer_mode: str,
+    execution_mode: str,
+    execution_bytecode_version: str,
+    execution_gas_schedule: str,
+    execution_authority: str,
+    execution_shadow_tracer_mode: str,
     service_node: bool,
     bds_enabled: bool,
     parallel_execution_enabled: bool,
@@ -145,6 +150,11 @@ def write_node_config(
         allow_cors=True,
         prometheus=True,
         tracer_mode=tracer_mode,
+        execution_mode=execution_mode,
+        execution_bytecode_version=execution_bytecode_version,
+        execution_gas_schedule=execution_gas_schedule,
+        execution_authority=execution_authority,
+        execution_shadow_tracer_mode=execution_shadow_tracer_mode,
         metrics_enabled=True,
         metrics_host="0.0.0.0",
         metrics_port=9108,
@@ -234,6 +244,21 @@ def main():
         "XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED", False
     )
     tracer_mode = env_str("XIAN_LOCALNET_TRACER_MODE", "python_line_v1")
+    execution_mode = env_str("XIAN_LOCALNET_EXECUTION_MODE", "").strip()
+    execution_bytecode_version = env_str(
+        "XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION", ""
+    ).strip()
+    execution_gas_schedule = env_str(
+        "XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE", ""
+    ).strip()
+    execution_authority = env_str(
+        "XIAN_LOCALNET_EXECUTION_AUTHORITY", ""
+    ).strip()
+    execution_shadow_tracer_mode = env_str(
+        "XIAN_LOCALNET_EXECUTION_SHADOW_TRACER_MODE", ""
+    ).strip()
+    if execution_mode == "xian_vm_v1" and execution_shadow_tracer_mode:
+        tracer_mode = execution_shadow_tracer_mode
     port_offset = env_int("XIAN_LOCALNET_PORT_OFFSET", 0)
     BASE_P2P_PORT = 26656 + port_offset
     BASE_RPC_PORT = 26657 + port_offset
@@ -310,6 +335,11 @@ def main():
             args.chain_id,
             genesis,
             tracer_mode=tracer_mode,
+            execution_mode=execution_mode,
+            execution_bytecode_version=execution_bytecode_version,
+            execution_gas_schedule=execution_gas_schedule,
+            execution_authority=execution_authority,
+            execution_shadow_tracer_mode=execution_shadow_tracer_mode,
             service_node=bds_enabled and node["index"] == bds_node_index,
             bds_enabled=bds_enabled and node["index"] == bds_node_index,
             parallel_execution_enabled=parallel_execution_enabled,
@@ -344,6 +374,13 @@ def main():
         "chain_id": args.chain_id,
         "genesis_network": args.genesis_network,
         "topology": args.topology,
+        "execution": {
+            "mode": execution_mode or tracer_mode,
+            "bytecode_version": execution_bytecode_version,
+            "gas_schedule": execution_gas_schedule,
+            "authority": execution_authority,
+            "shadow_tracer_mode": execution_shadow_tracer_mode,
+        },
         "nodes": [
             {
                 "moniker": n["moniker"],

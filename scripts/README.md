@@ -18,6 +18,9 @@ tooling behind `xian-stack`.
   that exercises the live stack phase by phase, including direct and
   permit-authorized `currency.approvals` flows, and writes artifacts under
   `.artifacts/localnet-e2e/<run-id>/`
+- `make localnet-vm-e2e`: wrapper around `localnet-e2e.py` that boots the same
+  5-validator integrated stack with `xian_vm_v1` in native-authority mode and
+  Python shadow comparison enabled
 - `localnet-validator-governance.py`: focused validator/delegation/governance
   exercise against a real 5-validator testnet-shaped localnet, including real
   duplicate-vote evidence injection, governance state-patch activation, and

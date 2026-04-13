@@ -95,6 +95,11 @@ XIAN_DOCKER_POSTGRAPHILE_NOFILE_HARD ?= 65536
 XIAN_LOCALNET_TOPOLOGY ?= integrated
 XIAN_LOCALNET_GENESIS_NETWORK ?= local
 XIAN_LOCALNET_TRACER_MODE ?= $(XIAN_TRACER_MODE)
+XIAN_LOCALNET_EXECUTION_MODE ?=
+XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION ?=
+XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE ?=
+XIAN_LOCALNET_EXECUTION_AUTHORITY ?=
+XIAN_LOCALNET_EXECUTION_SHADOW_TRACER_MODE ?=
 XIAN_LOCALNET_NODE_MEMORY_LIMIT ?= 1536m
 XIAN_LOCALNET_NODE_MEMORY_RESERVATION ?= 1024m
 XIAN_LOCALNET_NODE_MEMORY_SWAP ?= 1536m
@@ -207,6 +212,11 @@ export XIAN_DOCKER_POSTGRAPHILE_NOFILE_SOFT := $(XIAN_DOCKER_POSTGRAPHILE_NOFILE
 export XIAN_DOCKER_POSTGRAPHILE_NOFILE_HARD := $(XIAN_DOCKER_POSTGRAPHILE_NOFILE_HARD)
 export XIAN_LOCALNET_TOPOLOGY := $(XIAN_LOCALNET_TOPOLOGY)
 export XIAN_LOCALNET_TRACER_MODE := $(XIAN_LOCALNET_TRACER_MODE)
+export XIAN_LOCALNET_EXECUTION_MODE := $(XIAN_LOCALNET_EXECUTION_MODE)
+export XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION := $(XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION)
+export XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE := $(XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE)
+export XIAN_LOCALNET_EXECUTION_AUTHORITY := $(XIAN_LOCALNET_EXECUTION_AUTHORITY)
+export XIAN_LOCALNET_EXECUTION_SHADOW_TRACER_MODE := $(XIAN_LOCALNET_EXECUTION_SHADOW_TRACER_MODE)
 export XIAN_LOCALNET_NODE_MEMORY_LIMIT := $(XIAN_LOCALNET_NODE_MEMORY_LIMIT)
 export XIAN_LOCALNET_NODE_MEMORY_RESERVATION := $(XIAN_LOCALNET_NODE_MEMORY_RESERVATION)
 export XIAN_LOCALNET_NODE_MEMORY_SWAP := $(XIAN_LOCALNET_NODE_MEMORY_SWAP)
@@ -286,6 +296,11 @@ LOCALNET_E2E_DEX_ROUNDS ?= 8
 LOCALNET_E2E_PARALLEL_EXECUTION_ENABLED ?= 1
 LOCALNET_E2E_PARALLEL_EXECUTION_WORKERS ?= 4
 LOCALNET_E2E_PARALLEL_EXECUTION_MIN_TRANSACTIONS ?= 8
+LOCALNET_VM_E2E_EXECUTION_MODE ?= xian_vm_v1
+LOCALNET_VM_E2E_BYTECODE_VERSION ?= xvm-1
+LOCALNET_VM_E2E_GAS_SCHEDULE ?= xvm-gas-1
+LOCALNET_VM_E2E_AUTHORITY ?= native
+LOCALNET_VM_E2E_SHADOW_TRACER_MODE ?= native_instruction_v1
 LOCALNET_VALIDATOR_GOVERNANCE_BOOTSTRAP ?= 1
 LOCALNET_VALIDATOR_GOVERNANCE_BUILD ?= 0
 LOCALNET_VALIDATOR_GOVERNANCE_NODES ?= 5
@@ -309,7 +324,7 @@ LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK ?= testnet
 	node-status node-status-fidelity bds-postgres-up bds-snapshot-export bds-snapshot-import \
 	storage-report \
 	localnet-init localnet-build localnet-up localnet-down localnet-status \
-	localnet-workload localnet-burst localnet-memwatch localnet-leak-hunt localnet-e2e localnet-validator-governance \
+	localnet-workload localnet-burst localnet-memwatch localnet-leak-hunt localnet-e2e localnet-vm-e2e localnet-validator-governance \
 	localnet-clean localnet-logs localnet-shell
 
 help:
@@ -363,6 +378,7 @@ help:
 	@printf "  %-24s %s\n" "localnet-memwatch" "Sample container memory during localnet tx load"
 	@printf "  %-24s %s\n" "localnet-leak-hunt" "Split localnet memory growth by process"
 	@printf "  %-24s %s\n" "localnet-e2e" "Run the full layered 5-validator testnet-shaped localnet end-to-end program"
+	@printf "  %-24s %s\n" "localnet-vm-e2e" "Run the localnet e2e program with xian_vm_v1 native authority"
 	@printf "  %-24s %s\n" "localnet-validator-governance" "Run the 5-validator testnet-shaped governance/state-patch exercise"
 	@printf "  %-24s %s\n" "localnet-logs" "Tail logs from all nodes"
 	@printf "  %-24s %s\n" "localnet-shell" "Open a shell in node-0"
@@ -732,6 +748,11 @@ localnet-e2e:
 		--port-offset $(LOCALNET_E2E_PORT_OFFSET) \
 		--seed "$(LOCALNET_E2E_SEED)" \
 		--log-level "$(LOCALNET_E2E_LOG_LEVEL)" \
+		--execution-mode "$(XIAN_LOCALNET_EXECUTION_MODE)" \
+		--execution-bytecode-version "$(XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION)" \
+		--execution-gas-schedule "$(XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE)" \
+		--execution-authority "$(XIAN_LOCALNET_EXECUTION_AUTHORITY)" \
+		--execution-shadow-tracer-mode "$(XIAN_LOCALNET_EXECUTION_SHADOW_TRACER_MODE)" \
 		--rpc-timeout-seconds $(LOCALNET_E2E_RPC_TIMEOUT_SECONDS) \
 		--state-sample-nodes $(LOCALNET_E2E_STATE_SAMPLE_NODES) \
 		--app-hash-window $(LOCALNET_E2E_APP_HASH_WINDOW) \
@@ -740,6 +761,14 @@ localnet-e2e:
 		--periodic-interval-seconds $(LOCALNET_E2E_PERIODIC_INTERVAL_SECONDS) \
 		--burst-counter-ops $(LOCALNET_E2E_BURST_COUNTER_OPS) \
 		--dex-rounds $(LOCALNET_E2E_DEX_ROUNDS)
+
+localnet-vm-e2e:
+	XIAN_LOCALNET_EXECUTION_MODE="$(LOCALNET_VM_E2E_EXECUTION_MODE)" \
+	XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION="$(LOCALNET_VM_E2E_BYTECODE_VERSION)" \
+	XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE="$(LOCALNET_VM_E2E_GAS_SCHEDULE)" \
+	XIAN_LOCALNET_EXECUTION_AUTHORITY="$(LOCALNET_VM_E2E_AUTHORITY)" \
+	XIAN_LOCALNET_EXECUTION_SHADOW_TRACER_MODE="$(LOCALNET_VM_E2E_SHADOW_TRACER_MODE)" \
+	$(MAKE) localnet-e2e
 
 localnet-validator-governance:
 	uv run --project "$(XIAN_ABCI_DIR)" --with "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-validator-governance.py \

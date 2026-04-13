@@ -34,7 +34,9 @@ CONTRACTS_DIR = ROOT_DIR / "xian-contracts" / "contracts"
 XIAN_ZK_PYTHON_DIR = (
     ROOT_DIR / "xian-contracting" / "packages" / "xian-zk" / "python"
 )
+XIAN_CONTRACTING_SRC = ROOT_DIR / "xian-contracting" / "src"
 XIAN_ABCI_SRC = ROOT_DIR / "xian-abci" / "src"
+ORCHESTRATION_TEMPLATE_MODULE = "__ORCH_TEMPLATE__"
 RUST_TRACER_MODE = "native_instruction_v1"
 DEFAULT_LOCALNET_NODES = 5
 DEFAULT_GENESIS_NETWORK = "testnet"
@@ -44,6 +46,7 @@ GOVERNANCE_TX_CHI = 200_000
 STATE_PATCH_DELAY_BLOCKS = 8
 STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS = 8
 SIMULATOR_BURST_REQUESTS = 128
+DEFAULT_SIMULATOR_BURST_CONCURRENCY = 32
 WEBSOCKET_TIMEOUT_SECONDS = 20.0
 LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
 LOCALNET_POSTGRES_CONTAINER = "xian-localnet-postgres"
@@ -59,9 +62,12 @@ SHIELDED_TX_CHI = {
 }
 CURRENT_UV_PYTHON = f"{sys.version_info.major}.{sys.version_info.minor}"
 
-sys.path.append(str(XIAN_ZK_PYTHON_DIR))
-sys.path.append(str(XIAN_ABCI_SRC))
+sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
+sys.path.insert(0, str(XIAN_ZK_PYTHON_DIR))
+sys.path.insert(0, str(XIAN_ABCI_SRC))
 
+from contracting.compilation.artifacts import build_contract_artifacts  # noqa: E402
+from xian_py.config import RetryPolicy, XianClientConfig  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian_async import XianAsync  # noqa: E402
 from xian_py.exception import SimulationError, TxTimeoutError  # noqa: E402
@@ -143,6 +149,53 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+@functools.lru_cache(maxsize=128)
+def build_deployment_artifacts(module_name: str, source: str) -> dict[str, Any]:
+    return build_contract_artifacts(module_name=module_name, source=source)
+
+
+@functools.lru_cache(maxsize=8)
+def render_orchestration_factory_source() -> str:
+    factory_template = read_text(WORKLOADS_DIR / "e2e" / "orchestration_factory.py")
+    child_source = read_text(WORKLOADS_DIR / "e2e" / "orchestration_child.py")
+    child_artifacts = build_contract_artifacts(
+        module_name=ORCHESTRATION_TEMPLATE_MODULE,
+        source=child_source,
+    )
+    replacements = {
+        "__ORCH_CHILD_SOURCE_JSON__": json.dumps(child_artifacts["source"]),
+        "__ORCH_CHILD_RUNTIME_TEMPLATE_JSON__": json.dumps(
+            child_artifacts["runtime_code"]
+        ),
+        "__ORCH_CHILD_VM_IR_TEMPLATE_JSON__": json.dumps(
+            child_artifacts["vm_ir_json"]
+        ),
+        "__ORCH_CHILD_ARTIFACT_FORMAT_JSON__": json.dumps(
+            child_artifacts["format"]
+        ),
+        "__ORCH_CHILD_VM_PROFILE_JSON__": json.dumps(
+            child_artifacts["vm_profile"]
+        ),
+        "__ORCH_CHILD_SOURCE_SHA256_JSON__": json.dumps(
+            child_artifacts["hashes"]["source_sha256"]
+        ),
+    }
+    rendered = factory_template
+    for token, value in replacements.items():
+        rendered = rendered.replace(token, value)
+    unresolved = sorted(
+        token
+        for token in set(re.findall(r"__ORCH_[A-Z0-9_]+__", rendered))
+        if token != ORCHESTRATION_TEMPLATE_MODULE
+    )
+    if unresolved:
+        raise E2EError(
+            "unresolved orchestration factory placeholders: "
+            + ", ".join(unresolved)
+        )
+    return rendered
+
+
 def load_network() -> dict[str, Any]:
     if not NETWORK_PATH.exists():
         raise E2EError(
@@ -191,6 +244,15 @@ def make_localnet_env(args: argparse.Namespace) -> dict[str, str]:
     env = os.environ.copy()
     env.update(load_stack_env())
     env["XIAN_LOCALNET_TRACER_MODE"] = RUST_TRACER_MODE
+    env["XIAN_LOCALNET_EXECUTION_MODE"] = args.execution_mode
+    env["XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION"] = (
+        args.execution_bytecode_version
+    )
+    env["XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE"] = args.execution_gas_schedule
+    env["XIAN_LOCALNET_EXECUTION_AUTHORITY"] = args.execution_authority
+    env["XIAN_LOCALNET_EXECUTION_SHADOW_TRACER_MODE"] = (
+        args.execution_shadow_tracer_mode
+    )
     env["XIAN_LOCALNET_GENESIS_NETWORK"] = args.genesis_network
     env["XIAN_LOCALNET_ENABLE_BDS"] = "1"
     env["XIAN_LOCALNET_BDS_NODE_INDEX"] = str(args.bds_node_index)
@@ -827,6 +889,39 @@ class E2ERunner:
         self.sample_tx_hash: str | None = None
         self.sample_event_tx_hash: str | None = None
 
+    @property
+    def execution_mode(self) -> str:
+        if self.network is not None:
+            execution = self.network.get("execution", {})
+            mode = execution.get("mode")
+            if isinstance(mode, str) and mode:
+                return mode
+        return str(self.args.execution_mode or "")
+
+    def contract_submission_kwargs(
+        self,
+        *,
+        name: str,
+        code: str,
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"code": code}
+        if self.execution_mode == "xian_vm_v1":
+            kwargs["deployment_artifacts"] = build_deployment_artifacts(name, code)
+        return kwargs
+
+    @functools.lru_cache(maxsize=1)
+    def load_test_client_config(self) -> XianClientConfig:
+        return XianClientConfig(
+            retry=RetryPolicy(
+                max_attempts=6,
+                initial_delay_seconds=0.25,
+                max_delay_seconds=4.0,
+                backoff_multiplier=2.0,
+                retry_transport_errors=True,
+                retry_rpc_errors=True,
+            )
+        )
+
     @staticmethod
     def phase_names() -> list[str]:
         return [
@@ -1264,6 +1359,8 @@ class E2ERunner:
         wallet: Wallet | None,
         node_index: int,
         session: aiohttp.ClientSession,
+        *,
+        config: XianClientConfig | None = None,
     ) -> XianAsync:
         if wallet is None:
             raise E2EError("wallet is required")
@@ -1271,6 +1368,7 @@ class E2ERunner:
             node_url=self.nodes[node_index].rpc_url,
             chain_id=self.network["chain_id"],
             wallet=wallet,
+            config=config,
             session=session,
         )
 
@@ -1329,13 +1427,19 @@ class E2ERunner:
         async with self.client(founder, 0, session) as client:
             conflict_submission = await client.submit_contract(
                 name=conflict_contract,
-                code=read_text(WORKLOADS_DIR / "e2e" / "conflict_guard.py"),
+                **self.contract_submission_kwargs(
+                    name=conflict_contract,
+                    code=read_text(WORKLOADS_DIR / "e2e" / "conflict_guard.py"),
+                ),
                 chi=120_000,
                 wait_for_tx=True,
             )
             patch_submission = await client.submit_contract(
                 name=patch_contract,
-                code=read_text(WORKLOADS_DIR / "e2e" / "patch_target.py"),
+                **self.contract_submission_kwargs(
+                    name=patch_contract,
+                    code=read_text(WORKLOADS_DIR / "e2e" / "patch_target.py"),
+                ),
                 chi=90_000,
                 wait_for_tx=True,
             )
@@ -1395,7 +1499,7 @@ class E2ERunner:
         failed_good_name = failed_prefix + "_good"
         failed_bad_name = failed_prefix + "_bad"
 
-        factory_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_factory.py")
+        factory_code = render_orchestration_factory_source()
         router_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_router.py")
         mid_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_mid.py")
         root_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_root.py")
@@ -1431,7 +1535,7 @@ class E2ERunner:
                     continue
                 submission = await client.submit_contract(
                     name=name,
-                    code=code,
+                    **self.contract_submission_kwargs(name=name, code=code),
                     chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
                     mode="commit",
                 )
@@ -1478,11 +1582,11 @@ class E2ERunner:
                 raise E2EError("factory-deployed child contracts were not persisted")
             if family_info["first"] != alpha_name or family_info["second"] != beta_name:
                 raise E2EError("factory returned unexpected child contract names")
-            if alpha_construct["caller"] != factory_name or beta_construct["caller"] != factory_name:
+            if alpha_construct[0] != factory_name or beta_construct[0] != factory_name:
                 raise E2EError("child constructor caller did not resolve to the factory contract")
-            if alpha_construct["signer"] != operator.public_key:
+            if alpha_construct[1] != operator.public_key:
                 raise E2EError("child constructor signer drifted from the external caller")
-            if alpha_construct["submission_name"] != alpha_name:
+            if alpha_construct[2] != alpha_name:
                 raise E2EError("child constructor submission_name did not match the child contract")
             if (
                 alpha_developer != factory_name
@@ -1528,46 +1632,6 @@ class E2ERunner:
                 label="orchestration-dynamic-touch",
             )
             alpha_touch_total = await client.call(alpha_name, "get_touch_total", {})
-            private_submission = await client.send_tx(
-                router_name,
-                "private_probe",
-                {
-                    "target_contract": alpha_name,
-                    "function_name": "internal_secret",
-                },
-                chi=CONTRACT_ORCHESTRATION_TX_CHI["dynamic_call"],
-                mode="commit",
-            )
-            private_receipt = normalize_receipt(
-                private_submission,
-                label="orchestration-private-probe",
-            )
-            if (
-                private_receipt["accepted"] is not False
-                and private_receipt["success"] is not False
-            ):
-                raise E2EError("private dynamic probe unexpectedly succeeded")
-
-            failed_submission = await client.send_tx(
-                factory_name,
-                "deploy_family_with_failure",
-                {"prefix": failed_prefix},
-                chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_family"],
-                mode="commit",
-            )
-            failed_receipt = normalize_receipt(
-                failed_submission,
-                label="orchestration-failed-family",
-            )
-            if (
-                failed_receipt["accepted"] is not False
-                and failed_receipt["success"] is not False
-            ):
-                raise E2EError("factory batch failure probe unexpectedly succeeded")
-            failed_good_source = await client.get_contract_code(failed_good_name)
-            failed_bad_source = await client.get_contract_code(failed_bad_name)
-            if failed_good_source is not None or failed_bad_source is not None:
-                raise E2EError("failed batch deployment left child contracts behind")
 
         async with self.client(operator, 3, session) as client:
             chain_preview = await client.call(
@@ -1743,6 +1807,48 @@ class E2ERunner:
                 label="permit transfer recipient balance",
                 timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
             )
+
+        async with self.client(operator, 4, session) as client:
+            private_submission = await client.send_tx(
+                router_name,
+                "private_probe",
+                {
+                    "target_contract": alpha_name,
+                    "function_name": "internal_secret",
+                },
+                chi=CONTRACT_ORCHESTRATION_TX_CHI["dynamic_call"],
+                mode="commit",
+            )
+            private_receipt = normalize_receipt(
+                private_submission,
+                label="orchestration-private-probe",
+            )
+            if (
+                private_receipt["accepted"] is not False
+                and private_receipt["success"] is not False
+            ):
+                raise E2EError("private dynamic probe unexpectedly succeeded")
+
+            failed_submission = await client.send_tx(
+                factory_name,
+                "deploy_family_with_failure",
+                {"prefix": failed_prefix},
+                chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_family"],
+                mode="commit",
+            )
+            failed_receipt = normalize_receipt(
+                failed_submission,
+                label="orchestration-failed-family",
+            )
+            if (
+                failed_receipt["accepted"] is not False
+                and failed_receipt["success"] is not False
+            ):
+                raise E2EError("factory batch failure probe unexpectedly succeeded")
+            failed_good_source = await client.get_contract_code(failed_good_name)
+            failed_bad_source = await client.get_contract_code(failed_bad_name)
+            if failed_good_source is not None or failed_bad_source is not None:
+                raise E2EError("failed batch deployment left child contracts behind")
 
         return {
             "contracts": normalize_value(self.contracts),
@@ -2062,30 +2168,38 @@ class E2ERunner:
                 0,
             ]
         }
+        semaphore = asyncio.Semaphore(self.args.simulator_burst_concurrency)
+        load_test_config = self.load_test_client_config()
 
         async def one_simulation(index: int) -> dict[str, Any]:
             node_index = index % len(self.nodes)
-            async with self.client(sim_wallet, node_index, session) as client:
-                started = time.monotonic()
-                result = await client.simulate(
-                    dex_contract,
-                    "swapExactTokenForToken",
-                    {
-                        "amountIn": 5.0 + index,
-                        "amountOutMin": 1.0,
-                        "pair": pair_id,
-                        "src": token_a,
-                        "to": sim_wallet.public_key,
-                        "deadline": deadline,
-                    },
-                )
-                elapsed = time.monotonic() - started
-                return {
-                    "node": self.nodes[node_index].moniker,
-                    "elapsed_ms": round(elapsed * 1000, 2),
-                    "status": result.get("status"),
-                    "result": normalize_value(result.get("result")),
-                }
+            async with semaphore:
+                async with self.client(
+                    sim_wallet,
+                    node_index,
+                    session,
+                    config=load_test_config,
+                ) as client:
+                    started = time.monotonic()
+                    result = await client.simulate(
+                        dex_contract,
+                        "swapExactTokenForToken",
+                        {
+                            "amountIn": 5.0 + index,
+                            "amountOutMin": 1.0,
+                            "pair": pair_id,
+                            "src": token_a,
+                            "to": sim_wallet.public_key,
+                            "deadline": deadline,
+                        },
+                    )
+                    elapsed = time.monotonic() - started
+                    return {
+                        "node": self.nodes[node_index].moniker,
+                        "elapsed_ms": round(elapsed * 1000, 2),
+                        "status": result.get("status"),
+                        "result": normalize_value(result.get("result")),
+                    }
 
         baseline = await asyncio.gather(
             *(one_simulation(index) for index in range(len(self.nodes)))
@@ -2097,10 +2211,30 @@ class E2ERunner:
             raise E2EError("baseline simulator checks failed before burst load")
 
         started = time.monotonic()
-        responses = await asyncio.gather(
-            *(one_simulation(index) for index in range(SIMULATOR_BURST_REQUESTS))
+        raw_responses = await asyncio.gather(
+            *(one_simulation(index) for index in range(SIMULATOR_BURST_REQUESTS)),
+            return_exceptions=True,
         )
         elapsed = time.monotonic() - started
+        responses = []
+        transport_failures = []
+        for index, item in enumerate(raw_responses):
+            if isinstance(item, Exception):
+                transport_failures.append(
+                    {
+                        "request": index,
+                        "node": self.nodes[index % len(self.nodes)].moniker,
+                        "error_type": item.__class__.__name__,
+                        "error": str(item),
+                    }
+                )
+                continue
+            responses.append(item)
+        if transport_failures:
+            raise E2EError(
+                "simulator burst encountered transport failures after retries: "
+                + json.dumps(transport_failures[:5], sort_keys=True)
+            )
         failures = [
             item for item in responses if item["status"] not in (None, 0)
         ]
@@ -2135,6 +2269,7 @@ class E2ERunner:
             "approx_qps": round(len(responses) / elapsed, 3),
             "success_count": len(successes),
             "failure_count": len(failures),
+            "transport_failure_count": len(transport_failures),
             "baseline_sample": baseline[:4],
             "failure_sample": failures[:8],
             "success_sample": successes[:8],
@@ -3056,6 +3191,10 @@ class E2ERunner:
                     funding,
                     label=f"shielded-topup-{wallet.public_key[:12]}",
                 )
+            # The shielded deployment is large enough that we want a fresh nonce
+            # from chain state instead of carrying the local reservation window
+            # across the funding sequence.
+            await client.refresh_nonce()
             registry_owner = await client.call(registry_name, "owner", {})
             if registry_owner != "governance":
                 raise E2EError(
@@ -3070,11 +3209,14 @@ class E2ERunner:
             if token_source is None:
                 token_submission = await client.submit_contract(
                     name=token_name,
-                    code=read_text(
-                        CONTRACTS_DIR
-                        / "shielded-note-token"
-                        / "src"
-                        / "con_shielded_note_token.py"
+                    **self.contract_submission_kwargs(
+                        name=token_name,
+                        code=read_text(
+                            CONTRACTS_DIR
+                            / "shielded-note-token"
+                            / "src"
+                            / "con_shielded_note_token.py"
+                        ),
                     ),
                     args={
                         "token_name": "Local Private USD",
@@ -3102,7 +3244,7 @@ class E2ERunner:
             alice_public_balance = await client.call(
                 token_name,
                 "balance_of",
-                {"account": alice.public_key},
+                {"address": alice.public_key},
             )
             mint_amount = max(100 - int(alice_public_balance or 0), 0)
             if mint_amount > 0:
@@ -3642,17 +3784,17 @@ class E2ERunner:
             alice_public = await founder_client.call(
                 token_name,
                 "balance_of",
-                {"account": alice.public_key},
+                {"address": alice.public_key},
             )
             bob_public = await founder_client.call(
                 token_name,
                 "balance_of",
-                {"account": bob.public_key},
+                {"address": bob.public_key},
             )
             relayer_public = await founder_client.call(
                 token_name,
                 "balance_of",
-                {"account": relayer.public_key},
+                {"address": relayer.public_key},
             )
             supply_state = await founder_client.call(token_name, "get_supply_state", {})
             current_root_after_withdraw = await founder_client.call(
@@ -3747,7 +3889,7 @@ class E2ERunner:
             alice_public_after_exact = await founder_client.call(
                 token_name,
                 "balance_of",
-                {"account": alice.public_key},
+                {"address": alice.public_key},
             )
             current_root_before_recent = await founder_client.call(
                 token_name,
@@ -3826,17 +3968,17 @@ class E2ERunner:
             alice_public = await founder_client.call(
                 token_name,
                 "balance_of",
-                {"account": alice.public_key},
+                {"address": alice.public_key},
             )
             bob_public = await founder_client.call(
                 token_name,
                 "balance_of",
-                {"account": bob.public_key},
+                {"address": bob.public_key},
             )
             relayer_public = await founder_client.call(
                 token_name,
                 "balance_of",
-                {"account": relayer.public_key},
+                {"address": relayer.public_key},
             )
             supply_state = await founder_client.call(
                 token_name,
@@ -4280,6 +4422,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port-offset", type=int, default=1000)
     parser.add_argument("--seed", default="xian-localnet-testnet-e2e-v1")
     parser.add_argument("--log-level", default="INFO")
+    parser.add_argument("--execution-mode", default="")
+    parser.add_argument("--execution-bytecode-version", default="")
+    parser.add_argument("--execution-gas-schedule", default="")
+    parser.add_argument("--execution-authority", default="")
+    parser.add_argument("--execution-shadow-tracer-mode", default="")
     parser.add_argument("--rpc-timeout-seconds", type=float, default=180.0)
     parser.add_argument("--state-sample-nodes", type=int, default=DEFAULT_LOCALNET_NODES)
     parser.add_argument("--app-hash-window", type=int, default=DEFAULT_LOCALNET_NODES)
@@ -4288,6 +4435,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--periodic-interval-seconds", type=float, default=0.35)
     parser.add_argument("--burst-counter-ops", type=int, default=260)
     parser.add_argument("--dex-rounds", type=int, default=8)
+    parser.add_argument(
+        "--simulator-burst-concurrency",
+        type=int,
+        default=DEFAULT_SIMULATOR_BURST_CONCURRENCY,
+    )
     parser.add_argument(
         "--start-phase",
         default="00-bootstrap",

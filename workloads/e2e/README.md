@@ -5,6 +5,9 @@ multi-phase localnet end-to-end runner.
 
 - `conflict_guard.py`: deterministic conflict and failure surface
 - `orchestration_factory.py`: deploys multiple child contracts from a contract
+  using templated artifact bundles rendered by `localnet-e2e.py`
+- `orchestration_child.py`: canonical child contract source for the
+  orchestration deployment flow
 - `orchestration_router.py`: dynamic contract and function dispatch helper
 - `orchestration_mid.py`: mid-hop contract for caller/signer chain checks
 - `orchestration_root.py`: root-hop contract for nested ctx semantics

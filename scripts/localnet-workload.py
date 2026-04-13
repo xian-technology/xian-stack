@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import asyncio
 import argparse
+import functools
 import hashlib
 import json
 import random
 import subprocess
+import sys
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -22,8 +24,14 @@ from xian_runtime_types.decimal import ContractingDecimal
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent
+ROOT_DIR = STACK_DIR.parent
 WORKLOADS_DIR = STACK_DIR / "workloads"
 NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
+XIAN_CONTRACTING_SRC = ROOT_DIR / "xian-contracting" / "src"
+
+sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
+
+from contracting.compilation.artifacts import build_contract_artifacts  # noqa: E402
 
 from xian_py import transaction as tr  # noqa: E402
 from xian_py.models import TransactionSubmission  # noqa: E402
@@ -106,6 +114,26 @@ class WorkloadContext:
         self.round_robin_submission = round_robin_submission
         self._next_nonce: dict[str, int] = {}
         self._session: aiohttp.ClientSession | None = None
+
+    @property
+    def execution_mode(self) -> str:
+        execution = self.network.get("execution", {})
+        mode = execution.get("mode")
+        return str(mode or self.network.get("tracer_mode") or "python_line_v1")
+
+    def contract_submission_kwargs(
+        self,
+        *,
+        name: str,
+        code: str,
+        constructor_args: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"name": name, "code": code}
+        if constructor_args is not None:
+            kwargs["constructor_args"] = constructor_args
+        if self.execution_mode == "xian_vm_v1":
+            kwargs["deployment_artifacts"] = build_deployment_artifacts(name, code)
+        return kwargs
 
     async def __aenter__(self) -> WorkloadContext:
         connector = aiohttp.TCPConnector(limit=256, ttl_dns_cache=300)
@@ -382,6 +410,11 @@ def load_network() -> dict[str, Any]:
 
 def read_fixture(path: str) -> str:
     return (WORKLOADS_DIR / path).read_text(encoding="utf-8")
+
+
+@functools.lru_cache(maxsize=128)
+def build_deployment_artifacts(module_name: str, source: str) -> dict[str, Any]:
+    return build_contract_artifacts(module_name=module_name, source=source)
 
 
 def derive_wallet(seed: str, label: str) -> Wallet:
@@ -678,7 +711,10 @@ async def run_counter_basic(
         rpc_index=0,
         contract="submission",
         function="submit_contract",
-        kwargs={"name": contract_name, "code": contract_code},
+        kwargs=context.contract_submission_kwargs(
+            name=contract_name,
+            code=contract_code,
+        ),
         chi=COUNTER_DEPLOY_CHI,
         expected_success=True,
     )
@@ -835,16 +871,16 @@ async def run_dex_mixed(
             rpc_index=0,
             contract="submission",
             function="submit_contract",
-            kwargs={
-                "name": token_a,
-                "code": token_code,
-                "constructor_args": {
+            kwargs=context.contract_submission_kwargs(
+                name=token_a,
+                code=token_code,
+                constructor_args={
                     "owner": founder.public_key,
                     "supply": 5_000_000.0,
                     "name": "Workload Token A",
                     "symbol": "WTA",
                 },
-            },
+            ),
             chi=TOKEN_DEPLOY_CHI,
             expected_success=True,
         ),
@@ -855,16 +891,16 @@ async def run_dex_mixed(
             rpc_index=1,
             contract="submission",
             function="submit_contract",
-            kwargs={
-                "name": token_b,
-                "code": token_code,
-                "constructor_args": {
+            kwargs=context.contract_submission_kwargs(
+                name=token_b,
+                code=token_code,
+                constructor_args={
                     "owner": founder.public_key,
                     "supply": 5_000_000.0,
                     "name": "Workload Token B",
                     "symbol": "WTB",
                 },
-            },
+            ),
             chi=TOKEN_DEPLOY_CHI,
             expected_success=True,
         ),
@@ -875,7 +911,10 @@ async def run_dex_mixed(
             rpc_index=2,
             contract="submission",
             function="submit_contract",
-            kwargs={"name": pairs_contract, "code": pairs_code},
+            kwargs=context.contract_submission_kwargs(
+                name=pairs_contract,
+                code=pairs_code,
+            ),
             chi=PAIR_DEPLOY_CHI,
             expected_success=True,
         ),
@@ -886,7 +925,10 @@ async def run_dex_mixed(
             rpc_index=3,
             contract="submission",
             function="submit_contract",
-            kwargs={"name": dex_contract, "code": dex_code},
+            kwargs=context.contract_submission_kwargs(
+                name=dex_contract,
+                code=dex_code,
+            ),
             chi=DEX_DEPLOY_CHI,
             expected_success=True,
         ),
@@ -1307,7 +1349,10 @@ async def run_parallel_probe(
         rpc_index=0,
         contract="submission",
         function="submit_contract",
-        kwargs={"name": contract_name, "code": contract_code},
+        kwargs=context.contract_submission_kwargs(
+            name=contract_name,
+            code=contract_code,
+        ),
         chi=PARALLEL_PROBE_DEPLOY_CHI,
         expected_success=True,
     )
