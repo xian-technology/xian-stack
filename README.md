@@ -106,8 +106,10 @@ observability data from the app-side `9108` exporter rather than the `26660`
 CometBFT metrics port.
 
 When the monitoring stack is enabled, Grafana now also provisions a dedicated
-`Xian VM Runtime` dashboard plus VM summary panels on the existing overview and
-preset dashboards.
+`Xian VM Runtime` dashboard, a dedicated `Xian BDS Recovery` dashboard, and VM
+summary panels on the existing overview and preset dashboards. Example
+Alertmanager routing is included under `monitoring/alertmanager/` for the VM
+mismatch and BDS recovery alerts.
 
 Export or import the standardized BDS recovery snapshot:
 

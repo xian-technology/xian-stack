@@ -1,0 +1,48 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: xian-default
+  group_by: ["alertname", "preset", "instance"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: xian-vm-critical
+      matchers:
+        - alertname="XianVmShadowMismatchDetected"
+    - receiver: xian-infra-critical
+      matchers:
+        - severity="critical"
+    - receiver: xian-bds-recovery
+      matchers:
+        - alertname=~"XianBds.*"
+    - receiver: xian-ops-warning
+      matchers:
+        - severity="warning"
+
+receivers:
+  - name: xian-default
+  - name: xian-vm-critical
+    webhook_configs:
+      - url: http://127.0.0.1:9000/vm-critical
+        send_resolved: true
+  - name: xian-infra-critical
+    webhook_configs:
+      - url: http://127.0.0.1:9000/infra-critical
+        send_resolved: true
+  - name: xian-bds-recovery
+    webhook_configs:
+      - url: http://127.0.0.1:9000/bds-recovery
+        send_resolved: true
+  - name: xian-ops-warning
+    webhook_configs:
+      - url: http://127.0.0.1:9000/ops-warning
+        send_resolved: true
+
+inhibit_rules:
+  - source_matchers:
+      - alertname="XianAbciTargetDown"
+    target_matchers:
+      - alertname=~"XianBds.*|XianNodeInfoMissing|XianVmShadowMismatchDetected"
+    equal: ["instance", "preset"]
