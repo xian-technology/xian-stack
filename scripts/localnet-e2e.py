@@ -3056,6 +3056,10 @@ class E2ERunner:
                     funding,
                     label=f"shielded-topup-{wallet.public_key[:12]}",
                 )
+            # The shielded deployment is large enough that we want a fresh nonce
+            # from chain state instead of carrying the local reservation window
+            # across the funding sequence.
+            await client.refresh_nonce()
             registry_owner = await client.call(registry_name, "owner", {})
             if registry_owner != "governance":
                 raise E2EError(
@@ -3102,7 +3106,7 @@ class E2ERunner:
             alice_public_balance = await client.call(
                 token_name,
                 "balance_of",
-                {"account": alice.public_key},
+                {"address": alice.public_key},
             )
             mint_amount = max(100 - int(alice_public_balance or 0), 0)
             if mint_amount > 0:
@@ -3642,17 +3646,17 @@ class E2ERunner:
             alice_public = await founder_client.call(
                 token_name,
                 "balance_of",
-                {"account": alice.public_key},
+                {"address": alice.public_key},
             )
             bob_public = await founder_client.call(
                 token_name,
                 "balance_of",
-                {"account": bob.public_key},
+                {"address": bob.public_key},
             )
             relayer_public = await founder_client.call(
                 token_name,
                 "balance_of",
-                {"account": relayer.public_key},
+                {"address": relayer.public_key},
             )
             supply_state = await founder_client.call(token_name, "get_supply_state", {})
             current_root_after_withdraw = await founder_client.call(
@@ -3747,7 +3751,7 @@ class E2ERunner:
             alice_public_after_exact = await founder_client.call(
                 token_name,
                 "balance_of",
-                {"account": alice.public_key},
+                {"address": alice.public_key},
             )
             current_root_before_recent = await founder_client.call(
                 token_name,
@@ -3826,17 +3830,17 @@ class E2ERunner:
             alice_public = await founder_client.call(
                 token_name,
                 "balance_of",
-                {"account": alice.public_key},
+                {"address": alice.public_key},
             )
             bob_public = await founder_client.call(
                 token_name,
                 "balance_of",
-                {"account": bob.public_key},
+                {"address": bob.public_key},
             )
             relayer_public = await founder_client.call(
                 token_name,
                 "balance_of",
-                {"account": relayer.public_key},
+                {"address": relayer.public_key},
             )
             supply_state = await founder_client.call(
                 token_name,
