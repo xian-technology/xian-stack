@@ -38,6 +38,7 @@ CONFIGS_DIR = STACK_DIR.parent / "xian-configs"
 BASE_P2P_PORT = 26656
 BASE_RPC_PORT = 26657
 BASE_METRICS_PORT = 26660
+BASE_XIAN_METRICS_PORT = 9108
 PORT_STRIDE = 100  # node-0: 266xx, node-1: 267xx, node-2: 268xx, ...
 NODE_IMAGE_INTEGRATED = "xian-node-integrated:local"
 NODE_IMAGE_SPLIT = "xian-node-split:local"
@@ -193,7 +194,7 @@ def write_node_config(
 
 
 def main():
-    global BASE_P2P_PORT, BASE_RPC_PORT, BASE_METRICS_PORT
+    global BASE_P2P_PORT, BASE_RPC_PORT, BASE_METRICS_PORT, BASE_XIAN_METRICS_PORT
     parser = argparse.ArgumentParser(description="Initialize a local N-node network")
     parser.add_argument(
         "--nodes", "-n", type=int, default=4,
@@ -263,6 +264,7 @@ def main():
     BASE_P2P_PORT = 26656 + port_offset
     BASE_RPC_PORT = 26657 + port_offset
     BASE_METRICS_PORT = 26660 + port_offset
+    BASE_XIAN_METRICS_PORT = 9108 + port_offset
     bds_enabled = env_bool("XIAN_LOCALNET_ENABLE_BDS", False)
     bds_node_index = env_int("XIAN_LOCALNET_BDS_NODE_INDEX", 0)
     if bds_enabled and not 0 <= bds_node_index < args.nodes:
@@ -388,6 +390,9 @@ def main():
                 "host_rpc_port": BASE_RPC_PORT + n["index"] * PORT_STRIDE,
                 "host_p2p_port": BASE_P2P_PORT + n["index"] * PORT_STRIDE,
                 "host_metrics_port": BASE_METRICS_PORT + n["index"] * PORT_STRIDE,
+                "host_xian_metrics_port": (
+                    BASE_XIAN_METRICS_PORT + n["index"] * PORT_STRIDE
+                ),
                 "abci_container": (
                     f"xian-{n['moniker']}"
                     if args.topology == "integrated"
@@ -497,6 +502,7 @@ def write_compose_file(
         host_p2p = BASE_P2P_PORT + idx * PORT_STRIDE
         host_rpc = BASE_RPC_PORT + idx * PORT_STRIDE
         host_metrics = BASE_METRICS_PORT + idx * PORT_STRIDE
+        host_xian_metrics = BASE_XIAN_METRICS_PORT + idx * PORT_STRIDE
         if topology == "integrated":
             services[moniker] = {
                 "image": NODE_IMAGE_INTEGRATED,
@@ -530,6 +536,7 @@ def write_compose_file(
                     f"{host_p2p}:26656",
                     f"{host_rpc}:26657",
                     f"{host_metrics}:26660",
+                    f"{host_xian_metrics}:9108",
                 ],
                 "networks": ["localnet"],
             }
@@ -569,6 +576,9 @@ def write_compose_file(
                     "XIAN_PERF_RECENT_BLOCKS": str(profiling_recent_blocks),
                 },
                 "command": ["xian-abci"],
+                "ports": [
+                    f"{host_xian_metrics}:9108",
+                ],
                 "networks": ["localnet"],
             }
             if bds_enabled and idx == bds_node_index:

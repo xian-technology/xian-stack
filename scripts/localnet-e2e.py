@@ -22,6 +22,7 @@ from typing import Any
 
 import aiohttp
 from governance_vote_helpers import cast_votes_until_status, wait_for_status
+from localnet_vm_rollout import collect_localnet_vm_rollout_report
 from state_convergence_helpers import wait_for_uniform_state
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -888,6 +889,7 @@ class E2ERunner:
         self.service_node: LocalnetNode | None = None
         self.sample_tx_hash: str | None = None
         self.sample_event_tx_hash: str | None = None
+        self.vm_rollout_report: dict[str, Any] | None = None
 
     @property
     def execution_mode(self) -> str:
@@ -4340,7 +4342,7 @@ class E2ERunner:
         }
 
     async def finalize_summary(self) -> dict[str, Any]:
-        return {
+        summary = {
             "ok": all(phase.ok for phase in self.phase_results),
             "run_id": self.run_id,
             "output_dir": str(self.output_dir),
@@ -4356,6 +4358,9 @@ class E2ERunner:
                 for phase in self.phase_results
             ],
         }
+        if self.vm_rollout_report is not None:
+            summary["vm_rollout"] = self.vm_rollout_report
+        return summary
 
     async def run(self) -> int:
         start_phase = self.args.start_phase
@@ -4400,6 +4405,33 @@ class E2ERunner:
             for phase_name, fn in phase_sequence[start_index:]:
                 await self.run_phase(phase_name, fn)
 
+        if self.execution_mode == "xian_vm_v1" and self.network is not None:
+            self.vm_rollout_report = await asyncio.to_thread(
+                collect_localnet_vm_rollout_report,
+                self.network,
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
+                max_shadow_mismatches=self.args.vm_max_shadow_mismatches,
+            )
+            (self.output_dir / "vm_rollout.json").write_text(
+                json.dumps(self.vm_rollout_report, indent=2, sort_keys=True)
+                + "\n",
+                encoding="utf-8",
+            )
+            if not self.vm_rollout_report["ok"]:
+                raise E2EError(
+                    "vm rollout report failed checks: "
+                    + json.dumps(
+                        {
+                            "checks": self.vm_rollout_report["checks"],
+                            "errors": self.vm_rollout_report["errors"],
+                            "nodes_with_mismatches": self.vm_rollout_report[
+                                "nodes_with_mismatches"
+                            ],
+                        },
+                        sort_keys=True,
+                    )
+                )
+
         summary = await self.finalize_summary()
         (self.output_dir / "summary.json").write_text(
             json.dumps(summary, indent=2, sort_keys=True) + "\n",
@@ -4427,6 +4459,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--execution-gas-schedule", default="")
     parser.add_argument("--execution-authority", default="")
     parser.add_argument("--execution-shadow-tracer-mode", default="")
+    parser.add_argument("--vm-max-shadow-mismatches", type=int, default=0)
     parser.add_argument("--rpc-timeout-seconds", type=float, default=180.0)
     parser.add_argument("--state-sample-nodes", type=int, default=DEFAULT_LOCALNET_NODES)
     parser.add_argument("--app-hash-window", type=int, default=DEFAULT_LOCALNET_NODES)

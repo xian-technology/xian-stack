@@ -92,6 +92,19 @@ Python shadow comparison enabled:
 make localnet-vm-e2e
 ```
 
+Inspect the current VM rollout posture and mismatch counters across the running
+localnet:
+
+```bash
+make localnet-vm-report
+python3 ./scripts/backend.py localnet-vm-report
+```
+
+The localnet generator now exposes the Xian app metrics endpoint separately from
+the CometBFT metrics endpoint, so the VM rollout report reads the native/shadow
+observability data from the app-side `9108` exporter rather than the `26660`
+CometBFT metrics port.
+
 Export or import the standardized BDS recovery snapshot:
 
 ```bash

@@ -296,6 +296,7 @@ LOCALNET_E2E_DEX_ROUNDS ?= 8
 LOCALNET_E2E_PARALLEL_EXECUTION_ENABLED ?= 1
 LOCALNET_E2E_PARALLEL_EXECUTION_WORKERS ?= 4
 LOCALNET_E2E_PARALLEL_EXECUTION_MIN_TRANSACTIONS ?= 8
+LOCALNET_VM_REPORT_MAX_SHADOW_MISMATCHES ?= 0
 LOCALNET_VM_E2E_EXECUTION_MODE ?= xian_vm_v1
 LOCALNET_VM_E2E_BYTECODE_VERSION ?= xvm-1
 LOCALNET_VM_E2E_GAS_SCHEDULE ?= xvm-gas-1
@@ -324,7 +325,7 @@ LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK ?= testnet
 	node-status node-status-fidelity bds-postgres-up bds-snapshot-export bds-snapshot-import \
 	storage-report \
 	localnet-init localnet-build localnet-up localnet-down localnet-status \
-	localnet-workload localnet-burst localnet-memwatch localnet-leak-hunt localnet-e2e localnet-vm-e2e localnet-validator-governance \
+	localnet-workload localnet-burst localnet-memwatch localnet-leak-hunt localnet-e2e localnet-vm-report localnet-vm-e2e localnet-validator-governance \
 	localnet-clean localnet-logs localnet-shell
 
 help:
@@ -378,6 +379,7 @@ help:
 	@printf "  %-24s %s\n" "localnet-memwatch" "Sample container memory during localnet tx load"
 	@printf "  %-24s %s\n" "localnet-leak-hunt" "Split localnet memory growth by process"
 	@printf "  %-24s %s\n" "localnet-e2e" "Run the full layered 5-validator testnet-shaped localnet end-to-end program"
+	@printf "  %-24s %s\n" "localnet-vm-report" "Collect the current VM rollout and mismatch report from localnet nodes"
 	@printf "  %-24s %s\n" "localnet-vm-e2e" "Run the localnet e2e program with xian_vm_v1 native authority"
 	@printf "  %-24s %s\n" "localnet-validator-governance" "Run the 5-validator testnet-shaped governance/state-patch exercise"
 	@printf "  %-24s %s\n" "localnet-logs" "Tail logs from all nodes"
@@ -760,7 +762,13 @@ localnet-e2e:
 		--periodic-rounds $(LOCALNET_E2E_PERIODIC_ROUNDS) \
 		--periodic-interval-seconds $(LOCALNET_E2E_PERIODIC_INTERVAL_SECONDS) \
 		--burst-counter-ops $(LOCALNET_E2E_BURST_COUNTER_OPS) \
-		--dex-rounds $(LOCALNET_E2E_DEX_ROUNDS)
+		--dex-rounds $(LOCALNET_E2E_DEX_ROUNDS) \
+		--vm-max-shadow-mismatches $(LOCALNET_VM_REPORT_MAX_SHADOW_MISMATCHES)
+
+localnet-vm-report:
+	python3 ./scripts/localnet_vm_rollout.py \
+		--timeout-seconds 5 \
+		--max-shadow-mismatches $(LOCALNET_VM_REPORT_MAX_SHADOW_MISMATCHES)
 
 localnet-vm-e2e:
 	XIAN_LOCALNET_EXECUTION_MODE="$(LOCALNET_VM_E2E_EXECUTION_MODE)" \
