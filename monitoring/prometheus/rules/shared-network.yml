@@ -10,6 +10,15 @@ groups:
         annotations:
           summary: Xian ABCI metrics target is down
           description: The Xian ABCI metrics endpoint has been unreachable for more than two minutes.
+      - alert: XianNodeInfoMissing
+        expr: absent(xian_node_info)
+        for: 2m
+        labels:
+          severity: critical
+          preset: shared_network
+        annotations:
+          summary: Xian node info metric is missing
+          description: The Xian app metrics exporter is reachable, but xian_node_info has not been observed for more than two minutes.
       - alert: XianCometBftTargetDown
         expr: up{job="xian_cometbft"} == 0
         for: 2m
@@ -46,3 +55,30 @@ groups:
         annotations:
           summary: The node is reporting active BDS alerts
           description: One or more BDS alerts have remained active for at least five minutes.
+      - alert: XianBdsMetricsRefreshFailed
+        expr: xian_bds_metric{field="refresh_success"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          preset: shared_network
+        annotations:
+          summary: BDS status refresh is failing
+          description: The node has not refreshed its BDS monitoring snapshot successfully for at least five minutes.
+      - alert: XianBdsRecoveryStalled
+        expr: (xian_bds_metric{field="catching_up"} > 0) and on (job, instance) (delta(xian_bds_metric{field="indexed_height"}[15m]) < 1)
+        for: 10m
+        labels:
+          severity: warning
+          preset: shared_network
+        annotations:
+          summary: BDS catch-up appears stalled
+          description: BDS is still reporting catch-up activity, but indexed height has not advanced over the last fifteen minutes.
+      - alert: XianVmShadowMismatchDetected
+        expr: sum(xian_vm_shadow_metric{field="mismatches_total"}) > 0
+        for: 1m
+        labels:
+          severity: critical
+          preset: shared_network
+        annotations:
+          summary: Xian VM native/shadow mismatch detected
+          description: One or more native-vs-shadow mismatches have been recorded and remained present for at least one minute.

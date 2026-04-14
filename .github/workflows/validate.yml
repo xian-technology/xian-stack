@@ -48,6 +48,19 @@ jobs:
           repository: xian-technology/xian-cli
           path: xian-cli
 
+      - name: Use matching dependency branches when available
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+          for repo in xian-abci xian-contracting xian-py xian-configs xian-cli; do
+            REMOTE="https://github.com/xian-technology/${repo}"
+            if git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
+              git -C "$repo" fetch --depth=1 origin "$BRANCH"
+              git -C "$repo" checkout -B "$BRANCH" FETCH_HEAD
+            fi
+          done
+
       - name: Set up Python 3.14
         uses: actions/setup-python@v6
         with:
@@ -100,6 +113,19 @@ jobs:
         with:
           repository: xian-technology/xian-cli
           path: xian-cli
+
+      - name: Use matching dependency branches when available
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+          for repo in xian-abci xian-contracting xian-py xian-configs xian-cli; do
+            REMOTE="https://github.com/xian-technology/${repo}"
+            if git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
+              git -C "$repo" fetch --depth=1 origin "$BRANCH"
+              git -C "$repo" checkout -B "$BRANCH" FETCH_HEAD
+            fi
+          done
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v6

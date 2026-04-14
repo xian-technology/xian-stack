@@ -25,6 +25,9 @@ from xian.genesis_builder import (  # noqa: E402
     build_local_network_genesis,
 )
 from xian.node_setup import (  # noqa: E402
+    DEFAULT_PARALLEL_EXECUTION_ENABLED,
+    DEFAULT_PARALLEL_EXECUTION_MIN_TRANSACTIONS,
+    DEFAULT_PARALLEL_EXECUTION_WORKERS,
     build_node_key,
     generate_validator_material,
     materialize_cometbft_home,
@@ -38,6 +41,7 @@ CONFIGS_DIR = STACK_DIR.parent / "xian-configs"
 BASE_P2P_PORT = 26656
 BASE_RPC_PORT = 26657
 BASE_METRICS_PORT = 26660
+BASE_XIAN_METRICS_PORT = 9108
 PORT_STRIDE = 100  # node-0: 266xx, node-1: 267xx, node-2: 268xx, ...
 NODE_IMAGE_INTEGRATED = "xian-node-integrated:local"
 NODE_IMAGE_SPLIT = "xian-node-split:local"
@@ -63,6 +67,27 @@ def env_str(name: str, default: str) -> str:
     if raw is None or not raw.strip():
         return default
     return raw.strip()
+
+
+def env_optional_str(name: str) -> str | None:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    return raw.strip()
+
+
+def env_optional_bool(name: str) -> bool | None:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_optional_int(name: str) -> int | None:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    return int(raw)
 
 
 def node_build_config(target: str) -> dict:
@@ -120,6 +145,23 @@ def write_node_config(
     genesis: dict,
     *,
     tracer_mode: str,
+    execution_mode: str,
+    execution_bytecode_version: str,
+    execution_gas_schedule: str,
+    execution_authority: str,
+    execution_shadow_tracer_mode: str,
+    block_policy_mode: str,
+    block_policy_interval: str,
+    consensus_timeout_propose: str | None,
+    consensus_timeout_propose_delta: str | None,
+    consensus_timeout_prevote: str | None,
+    consensus_timeout_prevote_delta: str | None,
+    consensus_timeout_precommit: str | None,
+    consensus_timeout_precommit_delta: str | None,
+    consensus_timeout_commit: str | None,
+    consensus_skip_timeout_commit: bool | None,
+    mempool_size: int | None,
+    mempool_cache_size: int | None,
     service_node: bool,
     bds_enabled: bool,
     parallel_execution_enabled: bool,
@@ -145,6 +187,13 @@ def write_node_config(
         allow_cors=True,
         prometheus=True,
         tracer_mode=tracer_mode,
+        execution_mode=execution_mode,
+        execution_bytecode_version=execution_bytecode_version,
+        execution_gas_schedule=execution_gas_schedule,
+        execution_authority=execution_authority,
+        execution_shadow_tracer_mode=execution_shadow_tracer_mode,
+        block_policy_mode=block_policy_mode,
+        block_policy_interval=block_policy_interval,
         metrics_enabled=True,
         metrics_host="0.0.0.0",
         metrics_port=9108,
@@ -170,8 +219,34 @@ def write_node_config(
     config["p2p"]["addr_book_strict"] = False
     config["p2p"]["allow_duplicate_ip"] = True
     config["rpc"]["laddr"] = "tcp://0.0.0.0:26657"
-    config["consensus"]["create_empty_blocks"] = True
-    config["consensus"]["create_empty_blocks_interval"] = "5s"
+    if consensus_timeout_propose is not None:
+        config["consensus"]["timeout_propose"] = consensus_timeout_propose
+    if consensus_timeout_propose_delta is not None:
+        config["consensus"][
+            "timeout_propose_delta"
+        ] = consensus_timeout_propose_delta
+    if consensus_timeout_prevote is not None:
+        config["consensus"]["timeout_prevote"] = consensus_timeout_prevote
+    if consensus_timeout_prevote_delta is not None:
+        config["consensus"][
+            "timeout_prevote_delta"
+        ] = consensus_timeout_prevote_delta
+    if consensus_timeout_precommit is not None:
+        config["consensus"]["timeout_precommit"] = consensus_timeout_precommit
+    if consensus_timeout_precommit_delta is not None:
+        config["consensus"][
+            "timeout_precommit_delta"
+        ] = consensus_timeout_precommit_delta
+    if consensus_timeout_commit is not None:
+        config["consensus"]["timeout_commit"] = consensus_timeout_commit
+    if consensus_skip_timeout_commit is not None:
+        config["consensus"][
+            "skip_timeout_commit"
+        ] = consensus_skip_timeout_commit
+    if mempool_size is not None:
+        config["mempool"]["size"] = mempool_size
+    if mempool_cache_size is not None:
+        config["mempool"]["cache_size"] = mempool_cache_size
 
     materialize_cometbft_home(
         home=home,
@@ -183,7 +258,7 @@ def write_node_config(
 
 
 def main():
-    global BASE_P2P_PORT, BASE_RPC_PORT, BASE_METRICS_PORT
+    global BASE_P2P_PORT, BASE_RPC_PORT, BASE_METRICS_PORT, BASE_XIAN_METRICS_PORT
     parser = argparse.ArgumentParser(description="Initialize a local N-node network")
     parser.add_argument(
         "--nodes", "-n", type=int, default=4,
@@ -231,13 +306,30 @@ def main():
         f"(chain_id={args.chain_id}, genesis_network={args.genesis_network})"
     )
     parallel_execution_enabled = env_bool(
-        "XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED", False
+        "XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED",
+        DEFAULT_PARALLEL_EXECUTION_ENABLED,
     )
     tracer_mode = env_str("XIAN_LOCALNET_TRACER_MODE", "python_line_v1")
+    execution_mode = env_str("XIAN_LOCALNET_EXECUTION_MODE", "").strip()
+    execution_bytecode_version = env_str(
+        "XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION", ""
+    ).strip()
+    execution_gas_schedule = env_str(
+        "XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE", ""
+    ).strip()
+    execution_authority = env_str(
+        "XIAN_LOCALNET_EXECUTION_AUTHORITY", ""
+    ).strip()
+    execution_shadow_tracer_mode = env_str(
+        "XIAN_LOCALNET_EXECUTION_SHADOW_TRACER_MODE", ""
+    ).strip()
+    if execution_mode == "xian_vm_v1" and execution_shadow_tracer_mode:
+        tracer_mode = execution_shadow_tracer_mode
     port_offset = env_int("XIAN_LOCALNET_PORT_OFFSET", 0)
     BASE_P2P_PORT = 26656 + port_offset
     BASE_RPC_PORT = 26657 + port_offset
     BASE_METRICS_PORT = 26660 + port_offset
+    BASE_XIAN_METRICS_PORT = 9108 + port_offset
     bds_enabled = env_bool("XIAN_LOCALNET_ENABLE_BDS", False)
     bds_node_index = env_int("XIAN_LOCALNET_BDS_NODE_INDEX", 0)
     if bds_enabled and not 0 <= bds_node_index < args.nodes:
@@ -247,10 +339,12 @@ def main():
         )
         sys.exit(1)
     parallel_execution_workers = env_int(
-        "XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS", 0
+        "XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS",
+        DEFAULT_PARALLEL_EXECUTION_WORKERS,
     )
     parallel_execution_min_transactions = env_int(
-        "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS", 8
+        "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS",
+        DEFAULT_PARALLEL_EXECUTION_MIN_TRANSACTIONS,
     )
     transaction_trace_logging = env_bool(
         "XIAN_LOCALNET_TRANSACTION_TRACE_LOGGING", False
@@ -271,6 +365,68 @@ def main():
         "XIAN_LOCALNET_PROFILE_RECENT_BLOCKS",
         env_int("XIAN_PERF_RECENT_BLOCKS", 32),
     )
+    localnet_profile = env_str("XIAN_LOCALNET_PROFILE", "default")
+    if localnet_profile not in {"default", "throughput"}:
+        print(
+            "ERROR: XIAN_LOCALNET_PROFILE must be one of: default, throughput",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    block_policy_mode = env_optional_str("XIAN_LOCALNET_BLOCK_POLICY_MODE")
+    block_policy_interval = env_optional_str("XIAN_LOCALNET_BLOCK_POLICY_INTERVAL")
+    consensus_timeout_propose = env_optional_str(
+        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE"
+    )
+    consensus_timeout_propose_delta = env_optional_str(
+        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE_DELTA"
+    )
+    consensus_timeout_prevote = env_optional_str(
+        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PREVOTE"
+    )
+    consensus_timeout_prevote_delta = env_optional_str(
+        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PREVOTE_DELTA"
+    )
+    consensus_timeout_precommit = env_optional_str(
+        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PRECOMMIT"
+    )
+    consensus_timeout_precommit_delta = env_optional_str(
+        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PRECOMMIT_DELTA"
+    )
+    consensus_timeout_commit = env_optional_str(
+        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_COMMIT"
+    )
+    consensus_skip_timeout_commit = env_optional_bool(
+        "XIAN_LOCALNET_SKIP_TIMEOUT_COMMIT"
+    )
+    mempool_size = env_optional_int("XIAN_LOCALNET_MEMPOOL_SIZE")
+    mempool_cache_size = env_optional_int("XIAN_LOCALNET_MEMPOOL_CACHE_SIZE")
+
+    if localnet_profile == "throughput":
+        block_policy_mode = block_policy_mode or "on_demand"
+        block_policy_interval = block_policy_interval or "0s"
+        consensus_timeout_propose = consensus_timeout_propose or "500ms"
+        consensus_timeout_propose_delta = (
+            consensus_timeout_propose_delta or "100ms"
+        )
+        consensus_timeout_prevote = consensus_timeout_prevote or "200ms"
+        consensus_timeout_prevote_delta = (
+            consensus_timeout_prevote_delta or "50ms"
+        )
+        consensus_timeout_precommit = consensus_timeout_precommit or "200ms"
+        consensus_timeout_precommit_delta = (
+            consensus_timeout_precommit_delta or "50ms"
+        )
+        consensus_timeout_commit = consensus_timeout_commit or "200ms"
+        if consensus_skip_timeout_commit is None:
+            consensus_skip_timeout_commit = True
+        if mempool_size is None:
+            mempool_size = 50_000
+        if mempool_cache_size is None:
+            mempool_cache_size = 100_000
+    else:
+        block_policy_mode = block_policy_mode or "periodic"
+        block_policy_interval = block_policy_interval or "5s"
 
     # 1. Generate key material for all nodes
     nodes = [generate_node_material(i) for i in range(args.nodes)]
@@ -310,6 +466,25 @@ def main():
             args.chain_id,
             genesis,
             tracer_mode=tracer_mode,
+            execution_mode=execution_mode,
+            execution_bytecode_version=execution_bytecode_version,
+            execution_gas_schedule=execution_gas_schedule,
+            execution_authority=execution_authority,
+            execution_shadow_tracer_mode=execution_shadow_tracer_mode,
+            block_policy_mode=block_policy_mode,
+            block_policy_interval=block_policy_interval,
+            consensus_timeout_propose=consensus_timeout_propose,
+            consensus_timeout_propose_delta=consensus_timeout_propose_delta,
+            consensus_timeout_prevote=consensus_timeout_prevote,
+            consensus_timeout_prevote_delta=consensus_timeout_prevote_delta,
+            consensus_timeout_precommit=consensus_timeout_precommit,
+            consensus_timeout_precommit_delta=(
+                consensus_timeout_precommit_delta
+            ),
+            consensus_timeout_commit=consensus_timeout_commit,
+            consensus_skip_timeout_commit=consensus_skip_timeout_commit,
+            mempool_size=mempool_size,
+            mempool_cache_size=mempool_cache_size,
             service_node=bds_enabled and node["index"] == bds_node_index,
             bds_enabled=bds_enabled and node["index"] == bds_node_index,
             parallel_execution_enabled=parallel_execution_enabled,
@@ -344,6 +519,13 @@ def main():
         "chain_id": args.chain_id,
         "genesis_network": args.genesis_network,
         "topology": args.topology,
+        "execution": {
+            "mode": execution_mode or tracer_mode,
+            "bytecode_version": execution_bytecode_version,
+            "gas_schedule": execution_gas_schedule,
+            "authority": execution_authority,
+            "shadow_tracer_mode": execution_shadow_tracer_mode,
+        },
         "nodes": [
             {
                 "moniker": n["moniker"],
@@ -351,6 +533,9 @@ def main():
                 "host_rpc_port": BASE_RPC_PORT + n["index"] * PORT_STRIDE,
                 "host_p2p_port": BASE_P2P_PORT + n["index"] * PORT_STRIDE,
                 "host_metrics_port": BASE_METRICS_PORT + n["index"] * PORT_STRIDE,
+                "host_xian_metrics_port": (
+                    BASE_XIAN_METRICS_PORT + n["index"] * PORT_STRIDE
+                ),
                 "abci_container": (
                     f"xian-{n['moniker']}"
                     if args.topology == "integrated"
@@ -374,6 +559,23 @@ def main():
         "profiling": {
             "enabled": profiling_enabled,
             "recent_blocks": profiling_recent_blocks,
+        },
+        "localnet_profile": localnet_profile,
+        "consensus": {
+            "block_policy_mode": block_policy_mode,
+            "block_policy_interval": block_policy_interval,
+            "timeout_propose": consensus_timeout_propose,
+            "timeout_propose_delta": consensus_timeout_propose_delta,
+            "timeout_prevote": consensus_timeout_prevote,
+            "timeout_prevote_delta": consensus_timeout_prevote_delta,
+            "timeout_precommit": consensus_timeout_precommit,
+            "timeout_precommit_delta": consensus_timeout_precommit_delta,
+            "timeout_commit": consensus_timeout_commit,
+            "skip_timeout_commit": consensus_skip_timeout_commit,
+        },
+        "mempool": {
+            "size": mempool_size,
+            "cache_size": mempool_cache_size,
         },
         "tracer_mode": tracer_mode,
         "port_offset": port_offset,
@@ -460,6 +662,7 @@ def write_compose_file(
         host_p2p = BASE_P2P_PORT + idx * PORT_STRIDE
         host_rpc = BASE_RPC_PORT + idx * PORT_STRIDE
         host_metrics = BASE_METRICS_PORT + idx * PORT_STRIDE
+        host_xian_metrics = BASE_XIAN_METRICS_PORT + idx * PORT_STRIDE
         if topology == "integrated":
             services[moniker] = {
                 "image": NODE_IMAGE_INTEGRATED,
@@ -493,6 +696,7 @@ def write_compose_file(
                     f"{host_p2p}:26656",
                     f"{host_rpc}:26657",
                     f"{host_metrics}:26660",
+                    f"{host_xian_metrics}:9108",
                 ],
                 "networks": ["localnet"],
             }
@@ -532,6 +736,9 @@ def write_compose_file(
                     "XIAN_PERF_RECENT_BLOCKS": str(profiling_recent_blocks),
                 },
                 "command": ["xian-abci"],
+                "ports": [
+                    f"{host_xian_metrics}:9108",
+                ],
                 "networks": ["localnet"],
             }
             if bds_enabled and idx == bds_node_index:

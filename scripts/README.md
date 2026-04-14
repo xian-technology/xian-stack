@@ -14,10 +14,20 @@ tooling behind `xian-stack`.
   validator keys, preset-backed genesis selection, native tracer selection, and
   optional BDS wiring
 - `localnet-workload.py`: deterministic workload execution against the localnet
+- `localnet-tps-bench.py`: repeatable throughput sweeps for a running localnet;
+  it writes benchmark artifacts under `.artifacts/tps-bench/` and reports both
+  committed chain throughput and end-to-end client workload throughput
 - `localnet-e2e.py`: the layered 5-validator testnet-shaped end-to-end program
   that exercises the live stack phase by phase, including direct and
   permit-authorized `currency.approvals` flows, and writes artifacts under
   `.artifacts/localnet-e2e/<run-id>/`
+- `localnet_vm_rollout.py`: collects execution-mode, shadow comparison, and
+  mismatch counters from a running localnet and emits a rollout report as JSON;
+  it reads the Xian app metrics exporter, not the CometBFT metrics endpoint
+- `make localnet-vm-e2e`: wrapper around `localnet-e2e.py` that boots the same
+  5-validator integrated stack with `xian_vm_v1` in native-authority mode; it
+  also enforces the VM rollout mismatch
+  budget through the generated `vm_rollout.json` artifact
 - `localnet-validator-governance.py`: focused validator/delegation/governance
   exercise against a real 5-validator testnet-shaped localnet, including real
   duplicate-vote evidence injection, governance state-patch activation, and
@@ -43,3 +53,9 @@ tooling behind `xian-stack`.
 - The validator/governance runner should be executed through `uv` with the
   `xian-abci` project and local `xian-py` package available, preferably through
   `make localnet-validator-governance`.
+- `make localnet-vm-report` is the quick operator/debugging path for checking
+  whether all localnet nodes agree on VM rollout settings and whether any
+  native/shadow mismatches have been observed.
+- `make localnet-vm-tps-bench` is the benchmark wrapper for a tuned 5-node
+  native-VM localnet. Prefer `committed_workload_tps` over client-side
+  `workload_tps` when reporting chain throughput.

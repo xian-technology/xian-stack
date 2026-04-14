@@ -35,6 +35,7 @@ LOCALNET_NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 LOCALNET_INIT_SCRIPT = STACK_DIR / "scripts" / "localnet-init.py"
 LOCALNET_WORKLOAD_SCRIPT = STACK_DIR / "scripts" / "localnet-workload.py"
 LOCALNET_E2E_SCRIPT = STACK_DIR / "scripts" / "localnet-e2e.py"
+LOCALNET_VM_ROLLOUT_SCRIPT = STACK_DIR / "scripts" / "localnet_vm_rollout.py"
 LOCALNET_VALIDATOR_GOVERNANCE_SCRIPT = (
     STACK_DIR / "scripts" / "localnet-validator-governance.py"
 )
@@ -541,6 +542,7 @@ def localnet_node_status(node: dict, *, timeout: float) -> dict:
         "rpc_port": node["host_rpc_port"],
         "p2p_port": node["host_p2p_port"],
         "metrics_port": node["host_metrics_port"],
+        "xian_metrics_port": node.get("host_xian_metrics_port"),
         "up": False,
         "height": None,
         "peers": None,
@@ -1561,6 +1563,7 @@ def backend_localnet_e2e(
     periodic_interval_seconds: float,
     burst_counter_ops: int,
     dex_rounds: int,
+    vm_max_shadow_mismatches: int,
     start_phase: str,
     resume_dir: str | None,
 ) -> dict:
@@ -1595,6 +1598,8 @@ def backend_localnet_e2e(
         str(burst_counter_ops),
         "--dex-rounds",
         str(dex_rounds),
+        "--vm-max-shadow-mismatches",
+        str(vm_max_shadow_mismatches),
         "--start-phase",
         start_phase,
         "--bootstrap" if bootstrap else "--no-bootstrap",
@@ -1623,6 +1628,36 @@ def backend_localnet_e2e(
 
     if not isinstance(payload, dict):
         raise RuntimeError("localnet-e2e returned a non-object summary")
+    return payload
+
+
+def backend_localnet_vm_report(
+    *,
+    timeout_seconds: float,
+    max_shadow_mismatches: int,
+) -> dict:
+    try:
+        result = run_python_script(
+            LOCALNET_VM_ROLLOUT_SCRIPT,
+            "--timeout-seconds",
+            str(timeout_seconds),
+            "--max-shadow-mismatches",
+            str(max_shadow_mismatches),
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise RuntimeError(f"localnet-vm-report failed: {detail}") from exc
+
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "localnet-vm-report did not return a JSON report"
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("localnet-vm-report returned a non-object report")
     return payload
 
 
@@ -1919,6 +1954,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=2.0,
     )
 
+    localnet_vm_report = subparsers.add_parser("localnet-vm-report")
+    localnet_vm_report.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=5.0,
+    )
+    localnet_vm_report.add_argument(
+        "--max-shadow-mismatches",
+        type=int,
+        default=0,
+    )
+
     localnet_workload = subparsers.add_parser("localnet-workload")
     localnet_workload.add_argument(
         "--scenario",
@@ -2117,6 +2164,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=8,
     )
     localnet_e2e.add_argument(
+        "--vm-max-shadow-mismatches",
+        type=int,
+        default=0,
+    )
+    localnet_e2e.add_argument(
         "--start-phase",
         default="00-bootstrap",
     )
@@ -2272,6 +2324,11 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_make_result("localnet-clean")
     elif args.command == "localnet-status":
         payload = backend_localnet_status(timeout_seconds=args.timeout_seconds)
+    elif args.command == "localnet-vm-report":
+        payload = backend_localnet_vm_report(
+            timeout_seconds=args.timeout_seconds,
+            max_shadow_mismatches=args.max_shadow_mismatches,
+        )
     elif args.command == "localnet-workload":
         payload = backend_localnet_diagnostic(
             script_path=LOCALNET_WORKLOAD_SCRIPT,
@@ -2359,6 +2416,7 @@ def main(argv: list[str] | None = None) -> int:
             periodic_interval_seconds=args.periodic_interval_seconds,
             burst_counter_ops=args.burst_counter_ops,
             dex_rounds=args.dex_rounds,
+            vm_max_shadow_mismatches=args.vm_max_shadow_mismatches,
             start_phase=args.start_phase,
             resume_dir=args.resume_dir,
         )

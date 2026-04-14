@@ -42,11 +42,11 @@
       },
       "targets": [
         {
-          "expr": "xian_current_block_height",
+          "expr": "sum(xian_bds_metric{field=\"enabled\"})",
           "refId": "A"
         }
       ],
-      "title": "Current Block Height",
+      "title": "BDS Enabled Nodes",
       "type": "stat"
     },
     {
@@ -83,11 +83,11 @@
       },
       "targets": [
         {
-          "expr": "xian_bds_metric{field=\"height_lag\"}",
+          "expr": "sum(xian_bds_metric{field=\"catching_up\"})",
           "refId": "A"
         }
       ],
-      "title": "BDS Height Lag",
+      "title": "Nodes Catching Up",
       "type": "stat"
     },
     {
@@ -97,7 +97,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "bytes"
+          "unit": "none"
         },
         "overrides": []
       },
@@ -124,11 +124,11 @@
       },
       "targets": [
         {
-          "expr": "xian_bds_metric{field=\"spool_total_bytes\"}",
+          "expr": "max(xian_bds_metric{field=\"height_lag\"})",
           "refId": "A"
         }
       ],
-      "title": "BDS Spool Bytes",
+      "title": "Max Height Lag",
       "type": "stat"
     },
     {
@@ -138,7 +138,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms"
+          "unit": "bytes"
         },
         "overrides": []
       },
@@ -165,11 +165,11 @@
       },
       "targets": [
         {
-          "expr": "xian_perf_global_metric{metric=\"finalize_block\",stat=\"avg_ms\"}",
+          "expr": "sum(xian_bds_metric{field=\"spool_total_bytes\"})",
           "refId": "A"
         }
       ],
-      "title": "Finalize Avg",
+      "title": "Spool Bytes",
       "type": "stat"
     },
     {
@@ -185,11 +185,11 @@
       },
       "gridPos": {
         "h": 5,
-        "w": 12,
+        "w": 6,
         "x": 0,
         "y": 5
       },
-      "id": 7,
+      "id": 5,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
@@ -206,11 +206,52 @@
       },
       "targets": [
         {
-          "expr": "sum(xian_vm_shadow_metric{field=\"comparisons_total\"})",
+          "expr": "sum(xian_bds_metric{field=\"spool_pending_count\"})",
           "refId": "A"
         }
       ],
-      "title": "VM Shadow Comparisons",
+      "title": "Pending Spool Files",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafana"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 5
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "max(xian_bds_metric{field=\"refresh_age_seconds\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Status Refresh Age",
       "type": "stat"
     },
     {
@@ -239,8 +280,62 @@
       },
       "gridPos": {
         "h": 5,
-        "w": 12,
+        "w": 6,
         "x": 12,
+        "y": 5
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(xian_bds_metric{field=\"alert_count\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Active BDS Alerts",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafana"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
         "y": 5
       },
       "id": 8,
@@ -260,11 +355,11 @@
       },
       "targets": [
         {
-          "expr": "sum(xian_vm_shadow_metric{field=\"mismatches_total\"})",
+          "expr": "sum(xian_bds_metric{field=\"last_enqueue_error_present\"})",
           "refId": "A"
         }
       ],
-      "title": "VM Shadow Mismatches",
+      "title": "Nodes With Enqueue Errors",
       "type": "stat"
     },
     {
@@ -274,7 +369,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms"
+          "unit": "none"
         },
         "overrides": []
       },
@@ -284,15 +379,15 @@
         "x": 0,
         "y": 10
       },
-      "id": 5,
+      "id": 9,
       "targets": [
         {
-          "expr": "xian_perf_global_metric{stat=\"avg_ms\",metric=~\"tx_execute|tx_process_total|finalize_block\"}",
-          "legendFormat": "{{metric}}",
+          "expr": "xian_bds_metric{field=~\"current_block_height|indexed_height\"}",
+          "legendFormat": "{{instance}} {{field}}",
           "refId": "A"
         }
       ],
-      "title": "Execution Averages",
+      "title": "Indexed Height vs Current Height",
       "type": "timeseries"
     },
     {
@@ -312,15 +407,99 @@
         "x": 12,
         "y": 10
       },
-      "id": 6,
+      "id": 10,
       "targets": [
         {
           "expr": "xian_bds_metric{field=~\"queue_depth|spool_pending_count|height_lag\"}",
-          "legendFormat": "{{field}}",
+          "legendFormat": "{{instance}} {{field}}",
           "refId": "A"
         }
       ],
-      "title": "BDS Queue and Lag",
+      "title": "Queue, Spool, and Lag",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafana"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "id": 11,
+      "targets": [
+        {
+          "expr": "xian_bds_metric{field=~\"catching_up|catchup_running|worker_running|refresh_success|db_ok\"}",
+          "legendFormat": "{{instance}} {{field}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Recovery State",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafana"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "id": 12,
+      "targets": [
+        {
+          "expr": "xian_bds_metric{field=~\"spool_total_bytes|storage_free_bytes\"}",
+          "legendFormat": "{{instance}} {{field}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Spool and Free Disk",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafana"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "id": 13,
+      "targets": [
+        {
+          "expr": "sum by (kind, severity) (xian_bds_alert)",
+          "legendFormat": "{{severity}} {{kind}}",
+          "refId": "A"
+        }
+      ],
+      "title": "BDS Alert Kinds",
       "type": "timeseries"
     }
   ],
@@ -334,13 +513,13 @@
     "list": []
   },
   "time": {
-    "from": "now-15m",
+    "from": "now-30m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Xian Overview",
-  "uid": "xian-overview",
+  "title": "Xian BDS Recovery",
+  "uid": "xian-bds-recovery",
   "version": 1,
   "weekStart": ""
 }
