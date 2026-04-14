@@ -22,8 +22,8 @@ tooling behind `xian-stack`.
   mismatch counters from a running localnet and emits a rollout report as JSON;
   it reads the Xian app metrics exporter, not the CometBFT metrics endpoint
 - `make localnet-vm-e2e`: wrapper around `localnet-e2e.py` that boots the same
-  5-validator integrated stack with `xian_vm_v1` in native-authority mode and
-  Python shadow comparison enabled; it also enforces the VM rollout mismatch
+  5-validator integrated stack with `xian_vm_v1` in native-authority mode; it
+  also enforces the VM rollout mismatch
   budget through the generated `vm_rollout.json` artifact
 - `localnet-validator-governance.py`: focused validator/delegation/governance
   exercise against a real 5-validator testnet-shaped localnet, including real

@@ -6,7 +6,6 @@ last_failure_prefix = Variable()
 
 CHILD_TEMPLATE_MODULE = "__ORCH_TEMPLATE__"
 CHILD_SOURCE = __ORCH_CHILD_SOURCE_JSON__
-CHILD_RUNTIME_TEMPLATE = __ORCH_CHILD_RUNTIME_TEMPLATE_JSON__
 CHILD_VM_IR_TEMPLATE = __ORCH_CHILD_VM_IR_TEMPLATE_JSON__
 CHILD_ARTIFACT_FORMAT = __ORCH_CHILD_ARTIFACT_FORMAT_JSON__
 CHILD_VM_PROFILE = __ORCH_CHILD_VM_PROFILE_JSON__
@@ -18,21 +17,17 @@ def materialize_child_artifact_value(value: str, contract_name: str):
 
 
 def build_named_deployment_artifacts(contract_name: str):
-    runtime_template = CHILD_RUNTIME_TEMPLATE
     vm_ir_template = CHILD_VM_IR_TEMPLATE
-    runtime_code = materialize_child_artifact_value(runtime_template, contract_name)
     vm_ir_json = materialize_child_artifact_value(vm_ir_template, contract_name)
     return {
         "format": CHILD_ARTIFACT_FORMAT,
         "module_name": contract_name,
         "vm_profile": CHILD_VM_PROFILE,
         "source": CHILD_SOURCE,
-        "runtime_code": runtime_code,
         "vm_ir_json": vm_ir_json,
         "hashes": {
             "input_source_sha256": hashlib.sha256(CHILD_SOURCE),
             "source_sha256": CHILD_SOURCE_SHA256,
-            "runtime_code_sha256": hashlib.sha256(runtime_code),
             "vm_ir_sha256": hashlib.sha256(vm_ir_json),
         },
     }

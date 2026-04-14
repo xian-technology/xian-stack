@@ -165,9 +165,6 @@ def render_orchestration_factory_source() -> str:
     )
     replacements = {
         "__ORCH_CHILD_SOURCE_JSON__": json.dumps(child_artifacts["source"]),
-        "__ORCH_CHILD_RUNTIME_TEMPLATE_JSON__": json.dumps(
-            child_artifacts["runtime_code"]
-        ),
         "__ORCH_CHILD_VM_IR_TEMPLATE_JSON__": json.dumps(
             child_artifacts["vm_ir_json"]
         ),
@@ -1548,8 +1545,8 @@ class E2ERunner:
                     )
                 )
 
-            alpha_existing = await client.get_contract_code(alpha_name)
-            beta_existing = await client.get_contract_code(beta_name)
+            alpha_existing = await client.get_contract(alpha_name)
+            beta_existing = await client.get_contract(beta_name)
             if alpha_existing is not None and beta_existing is not None:
                 family_receipt = {
                     "accepted": True,
@@ -1575,8 +1572,8 @@ class E2ERunner:
             )
             alpha_construct = await client.call(alpha_name, "get_construct_meta", {})
             beta_construct = await client.call(beta_name, "get_construct_meta", {})
-            alpha_source = await client.get_contract_code(alpha_name)
-            beta_source = await client.get_contract_code(beta_name)
+            alpha_source = await client.get_contract(alpha_name)
+            beta_source = await client.get_contract(beta_name)
             alpha_developer = await client.get_state(alpha_name, "__developer__")
             alpha_deployer = await client.get_state(alpha_name, "__deployer__")
             alpha_initiator = await client.get_state(alpha_name, "__initiator__")
@@ -4401,6 +4398,11 @@ class E2ERunner:
             ]
             if start_phase != "00-bootstrap":
                 self.load_resume_context()
+                await wait_for_localnet_ready(
+                    session,
+                    self.nodes,
+                    timeout_seconds=self.args.rpc_timeout_seconds,
+                )
             start_index = valid_phase_names.index(start_phase)
             for phase_name, fn in phase_sequence[start_index:]:
                 await self.run_phase(phase_name, fn)

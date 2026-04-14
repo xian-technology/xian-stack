@@ -85,8 +85,7 @@ Run the broader layered 5-validator e2e harness:
 make localnet-e2e
 ```
 
-Run the same layered harness with `xian_vm_v1` in native-authority mode and
-Python shadow comparison enabled:
+Run the same layered harness with `xian_vm_v1` in native-authority mode:
 
 ```bash
 make localnet-vm-e2e
