@@ -14,6 +14,9 @@ tooling behind `xian-stack`.
   validator keys, preset-backed genesis selection, native tracer selection, and
   optional BDS wiring
 - `localnet-workload.py`: deterministic workload execution against the localnet
+- `localnet-tps-bench.py`: repeatable throughput sweeps for a running localnet;
+  it writes benchmark artifacts under `.artifacts/tps-bench/` and reports both
+  committed chain throughput and end-to-end client workload throughput
 - `localnet-e2e.py`: the layered 5-validator testnet-shaped end-to-end program
   that exercises the live stack phase by phase, including direct and
   permit-authorized `currency.approvals` flows, and writes artifacts under
@@ -53,3 +56,6 @@ tooling behind `xian-stack`.
 - `make localnet-vm-report` is the quick operator/debugging path for checking
   whether all localnet nodes agree on VM rollout settings and whether any
   native/shadow mismatches have been observed.
+- `make localnet-vm-tps-bench` is the benchmark wrapper for a tuned 5-node
+  native-VM localnet. Prefer `committed_workload_tps` over client-side
+  `workload_tps` when reporting chain throughput.

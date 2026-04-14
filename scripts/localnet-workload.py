@@ -9,6 +9,7 @@ import functools
 import hashlib
 import json
 import random
+import statistics
 import subprocess
 import sys
 import time
@@ -34,6 +35,7 @@ sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
 from contracting.compilation.artifacts import build_contract_artifacts  # noqa: E402
 
 from xian_py import transaction as tr  # noqa: E402
+from xian_py.exception import TransportError  # noqa: E402
 from xian_py.models import TransactionSubmission  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian_async import XianAsync  # noqa: E402
@@ -48,6 +50,9 @@ TOKEN_TX_CHI = 7_500
 DEX_TX_CHI = 60_000
 PARALLEL_PROBE_DEPLOY_CHI = 90_000
 PARALLEL_PROBE_TX_CHI = 2_000
+THROUGHPUT_TRANSFER_TX_CHI = 1_500
+THROUGHPUT_CONTRACT_DEPLOY_CHI = 120_000
+THROUGHPUT_CONTRACT_TX_CHI = 6_000
 RECEIPT_TIMEOUT_SECONDS = 45.0
 
 
@@ -113,6 +118,7 @@ class WorkloadContext:
         self.submit_node_index = submit_node_index % len(self.nodes)
         self.round_robin_submission = round_robin_submission
         self._next_nonce: dict[str, int] = {}
+        self._nonce_lock = asyncio.Lock()
         self._session: aiohttp.ClientSession | None = None
 
     @property
@@ -148,6 +154,25 @@ class WorkloadContext:
         if self._session is not None:
             await self._session.close()
         self._session = None
+
+    async def _retry_read(
+        self,
+        operation,
+        *,
+        max_attempts: int = 5,
+        initial_delay_seconds: float = 0.1,
+        max_delay_seconds: float = 1.0,
+    ):
+        delay = max(initial_delay_seconds, 0.0)
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return await operation()
+            except TransportError:
+                if attempt >= max_attempts:
+                    raise
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                delay = min(max(delay * 2, delay), max_delay_seconds)
 
     @property
     def session(self) -> aiohttp.ClientSession:
@@ -186,16 +211,30 @@ class WorkloadContext:
         return self.submit_node_index
 
     async def next_nonce(self, wallet: Wallet, rpc_index: int) -> int:
+        return (await self.reserve_nonces(wallet, rpc_index, count=1))[0]
+
+    async def reserve_nonces(
+        self,
+        wallet: Wallet,
+        rpc_index: int,
+        *,
+        count: int,
+    ) -> list[int]:
+        if count <= 0:
+            raise WorkloadError("nonce reservation count must be positive")
         public_key = wallet.public_key
-        if public_key not in self._next_nonce:
-            self._next_nonce[public_key] = await tr.get_nonce_async(
-                self.nodes[rpc_index % len(self.nodes)].rpc_url,
-                public_key,
-                session=self.session,
-            )
-        nonce = self._next_nonce[public_key]
-        self._next_nonce[public_key] += 1
-        return nonce
+        async with self._nonce_lock:
+            if public_key not in self._next_nonce:
+                self._next_nonce[public_key] = await self._retry_read(
+                    lambda: tr.get_nonce_async(
+                        self.nodes[rpc_index % len(self.nodes)].rpc_url,
+                        public_key,
+                        session=self.session,
+                    )
+                )
+            start_nonce = self._next_nonce[public_key]
+            self._next_nonce[public_key] += count
+        return list(range(start_nonce, start_nonce + count))
 
     async def broadcast_tx(
         self,
@@ -209,6 +248,8 @@ class WorkloadContext:
         chi: int,
         expected_success: bool,
         expected_message: str | None = None,
+        mode: str = "checktx",
+        nonce: int | None = None,
     ) -> BroadcastRecord:
         submission_index = self.submission_index(rpc_index)
         client = self.client(wallet, submission_index)
@@ -217,9 +258,13 @@ class WorkloadContext:
             function=function,
             kwargs=kwargs,
             chi=chi,
-            nonce=await self.next_nonce(wallet, submission_index),
+            nonce=(
+                nonce
+                if nonce is not None
+                else await self.next_nonce(wallet, submission_index)
+            ),
             chain_id=self.chain_id,
-            mode="checktx",
+            mode=mode,
             wait_for_tx=False,
         )
         return BroadcastRecord(
@@ -267,7 +312,10 @@ class WorkloadContext:
         *,
         timeout_seconds: float,
     ) -> None:
-        if not record.response.submitted or record.response.accepted is False:
+        if not record.response.submitted or (
+            record.response.accepted is False
+            and not self._is_duplicate_tx_message(record.response.message)
+        ):
             record.final_success = False
             record.final_message = record.response.message
             self._assert_record(record)
@@ -276,14 +324,26 @@ class WorkloadContext:
         if not record.tx_hash:
             raise WorkloadError(f"{record.label}: missing tx hash")
 
-        client = XianAsync(
-            node_url=record.rpc_url,
-            chain_id=self.chain_id,
-            wallet=self.founder_wallet,
-            session=self.session,
-        )
+        ordered_nodes = [
+            node
+            for node in self.nodes
+            if node.rpc_url == record.rpc_url
+        ] + [
+            node
+            for node in self.nodes
+            if node.rpc_url != record.rpc_url
+        ]
+        clients = [
+            XianAsync(
+                node_url=node.rpc_url,
+                chain_id=self.chain_id,
+                wallet=self.founder_wallet,
+                session=self.session,
+            )
+            for node in ordered_nodes
+        ]
         receipt = await wait_for_tx_receipt(
-            client=client,
+            clients=clients,
             tx_hash=record.tx_hash,
             timeout_seconds=timeout_seconds,
         )
@@ -310,6 +370,16 @@ class WorkloadContext:
                 f"{record.label}: expected message containing "
                 f"{record.expected_message!r}, got {record.final_message!r}"
             )
+
+    @staticmethod
+    def _is_duplicate_tx_message(message: Any) -> bool:
+        if not isinstance(message, str):
+            return False
+        normalized = message.lower()
+        return (
+            "tx already exists in cache" in normalized
+            or "tx already exists in mempool" in normalized
+        )
 
     async def compare_state(
         self,
@@ -437,6 +507,18 @@ def deadline_value(*, seconds_from_now: int) -> dict[str, list[int]]:
     }
 
 
+def parse_rfc3339_utc(value: str) -> datetime:
+    normalized = value.strip()
+    tz_suffix = "+00:00" if normalized.endswith("Z") else ""
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1]
+    if "." in normalized:
+        head, fractional = normalized.split(".", 1)
+        digits = "".join(char for char in fractional if char.isdigit())
+        normalized = f"{head}.{digits[:6].ljust(6, '0')}"
+    return datetime.fromisoformat(f"{normalized}{tz_suffix}")
+
+
 async def fetch_json(
     session: aiohttp.ClientSession,
     url: str,
@@ -449,43 +531,52 @@ async def fetch_json(
 
 async def wait_for_tx_receipt(
     *,
-    client: XianAsync,
+    clients: list[XianAsync],
     tx_hash: str,
     timeout_seconds: float,
 ) -> dict[str, Any]:
+    if not clients:
+        raise WorkloadError("receipt lookup requires at least one client")
     deadline = time.monotonic() + timeout_seconds
     last_error: Exception | None = None
+    client_index = 0
 
     while time.monotonic() < deadline:
-        try:
-            receipt = await client.wait_for_tx(
-                tx_hash,
-                timeout_seconds=min(5.0, max(0.5, deadline - time.monotonic())),
-                poll_interval_seconds=0.5,
-            )
-            result = receipt.raw.get("result")
-            if not isinstance(result, dict):
-                raise WorkloadError(f"tx {tx_hash} returned no result")
-            if isinstance(receipt.execution, dict):
+        for offset in range(len(clients)):
+            client = clients[(client_index + offset) % len(clients)]
+            try:
+                receipt = await client.wait_for_tx(
+                    tx_hash,
+                    timeout_seconds=min(
+                        1.5,
+                        max(0.5, deadline - time.monotonic()),
+                    ),
+                    poll_interval_seconds=0.25,
+                )
+                result = receipt.raw.get("result")
+                if not isinstance(result, dict):
+                    raise WorkloadError(f"tx {tx_hash} returned no result")
+                if isinstance(receipt.execution, dict):
+                    return {
+                        "height": int(result["height"]),
+                        "tx_index": int(result["index"]),
+                        "success": receipt.success,
+                        "result": receipt.message,
+                        "events": receipt.execution.get("events", []),
+                        "chi_used": receipt.execution.get("chi_used"),
+                    }
                 return {
                     "height": int(result["height"]),
                     "tx_index": int(result["index"]),
                     "success": receipt.success,
                     "result": receipt.message,
-                    "events": receipt.execution.get("events", []),
-                    "chi_used": receipt.execution.get("chi_used"),
+                    "events": [],
+                    "chi_used": None,
                 }
-            return {
-                "height": int(result["height"]),
-                "tx_index": int(result["index"]),
-                "success": receipt.success,
-                "result": receipt.message,
-                "events": [],
-                "chi_used": None,
-            }
-        except Exception as exc:  # noqa: PERF203
-            last_error = exc
-            await asyncio.sleep(0.5)
+            except Exception as exc:  # noqa: PERF203
+                last_error = exc
+        client_index = (client_index + 1) % len(clients)
+        await asyncio.sleep(0.5)
 
     raise WorkloadError(f"timed out waiting for tx {tx_hash}") from last_error
 
@@ -576,6 +667,35 @@ def require_all_successful(
         raise WorkloadError(f"{label}: workload transactions failed: {failures}")
 
 
+def require_all_admitted(
+    label: str,
+    records: list[BroadcastRecord],
+) -> None:
+    failed_records = [
+        record
+        for record in records
+        if (
+            not record.response.submitted
+            or (
+                record.response.accepted is False
+                and not WorkloadContext._is_duplicate_tx_message(
+                    record.response.message
+                )
+            )
+        )
+    ]
+    failures = [record.label for record in failed_records]
+    if failures:
+        reasons = Counter(
+            str(record.response.message or "unknown")
+            for record in failed_records
+        )
+        raise WorkloadError(
+            f"{label}: broadcast admission failed: {failures}; "
+            f"reasons={dict(reasons)}"
+        )
+
+
 def summarize_records(records: list[BroadcastRecord]) -> dict[str, Any]:
     heights = [
         int(record.height)
@@ -598,6 +718,236 @@ def summarize_records(records: list[BroadcastRecord]) -> dict[str, Any]:
     }
 
 
+async def latest_block_height(context: WorkloadContext) -> int:
+    payload = await fetch_json(
+        context.session,
+        f"{context.nodes[0].rpc_url}/status",
+        timeout=5.0,
+    )
+    return int(payload["result"]["sync_info"]["latest_block_height"])
+
+
+async def summarize_committed_window_for_range(
+    context: WorkloadContext,
+    *,
+    start_height: int,
+    end_height: int,
+    workload_transactions: int,
+    fallback_elapsed_seconds: float,
+) -> dict[str, Any]:
+    if end_height <= start_height:
+        return {}
+
+    blocks = []
+    previous_time: datetime | None = None
+    first_time: datetime | None = None
+    last_time: datetime | None = None
+    per_block_tps: list[float] = []
+    chain_transactions = 0
+
+    for height in range(start_height + 1, end_height + 1):
+        payload = await tr.get_block_async(
+            context.nodes[0].rpc_url,
+            height,
+            session=context.session,
+        )
+        block = payload["result"]["block"]
+        tx_count = len(block["data"].get("txs") or [])
+        chain_transactions += tx_count
+        block_time = parse_rfc3339_utc(block["header"]["time"])
+        if first_time is None:
+            first_time = block_time
+        last_time = block_time
+        instant_tps = None
+        if previous_time is not None:
+            delta_seconds = (block_time - previous_time).total_seconds()
+            if delta_seconds > 0:
+                instant_tps = tx_count / delta_seconds
+                per_block_tps.append(instant_tps)
+        previous_time = block_time
+        blocks.append(
+            {
+                "height": height,
+                "tx_count": tx_count,
+                "time": block["header"]["time"],
+                "instant_tps": (
+                    round(instant_tps, 3) if instant_tps is not None else None
+                ),
+            }
+        )
+
+    window_seconds = (
+        (last_time - first_time).total_seconds()
+        if first_time is not None
+        and last_time is not None
+        and last_time > first_time
+        else fallback_elapsed_seconds
+    )
+    if window_seconds <= 0:
+        window_seconds = fallback_elapsed_seconds
+
+    return {
+        "min_height": start_height + 1,
+        "max_height": end_height,
+        "block_count": len(blocks),
+        "chain_transactions": chain_transactions,
+        "workload_transactions": workload_transactions,
+        "window_seconds": round(window_seconds, 3),
+        "committed_workload_tps": round(
+            workload_transactions / window_seconds, 3
+        ),
+        "committed_chain_tps": round(chain_transactions / window_seconds, 3),
+        "peak_block_tps": (
+            round(max(per_block_tps), 3) if per_block_tps else None
+        ),
+        "median_block_tps": (
+            round(statistics.median(per_block_tps), 3)
+            if per_block_tps
+            else None
+        ),
+        "blocks": blocks,
+    }
+
+
+async def wait_for_query_predicate(
+    context: WorkloadContext,
+    queries: list[dict[str, Any]],
+    *,
+    timeout_seconds: float,
+    predicate,
+    poll_interval_seconds: float = 0.5,
+) -> None:
+    if not queries:
+        return
+
+    poll_client = XianAsync(
+        node_url=context.sample_nodes[0].rpc_url,
+        chain_id=context.chain_id,
+        wallet=context.founder_wallet,
+        session=context.session,
+    )
+    deadline = time.monotonic() + timeout_seconds
+    last_snapshot: dict[str, Any] = {}
+
+    while time.monotonic() < deadline:
+        all_ok = True
+        for query in queries:
+            value = normalize_value(
+                await context._retry_read(
+                    lambda query=query: poll_client.get_state(
+                        query["contract"],
+                        query["variable"],
+                        *(str(key) for key in query.get("keys", [])),
+                    ),
+                    max_attempts=3,
+                    initial_delay_seconds=0.05,
+                    max_delay_seconds=0.5,
+                )
+            )
+            last_snapshot[query["label"]] = value
+            if not predicate(query, value):
+                all_ok = False
+        if all_ok:
+            return
+        await asyncio.sleep(poll_interval_seconds)
+
+    raise WorkloadError(
+        "state predicate did not converge before timeout: "
+        f"{last_snapshot}"
+    )
+
+
+async def wait_for_contract_visibility(
+    context: WorkloadContext,
+    contract_name: str,
+    *,
+    timeout_seconds: float,
+    poll_interval_seconds: float = 0.5,
+) -> None:
+    clients = [
+        XianAsync(
+            node_url=node.rpc_url,
+            chain_id=context.chain_id,
+            wallet=context.founder_wallet,
+            session=context.session,
+        )
+        for node in context.sample_nodes
+    ]
+    deadline = time.monotonic() + timeout_seconds
+    last_snapshot: dict[str, bool] = {}
+
+    while time.monotonic() < deadline:
+        all_visible = True
+        for node, client in zip(context.sample_nodes, clients, strict=True):
+            source = await context._retry_read(
+                lambda client=client: client.get_contract(contract_name),
+                max_attempts=3,
+                initial_delay_seconds=0.05,
+                max_delay_seconds=0.5,
+            )
+            visible = isinstance(source, str) and bool(source)
+            last_snapshot[node.moniker] = visible
+            if not visible:
+                all_visible = False
+        if all_visible:
+            return
+        await asyncio.sleep(poll_interval_seconds)
+
+    raise WorkloadError(
+        f"contract {contract_name!r} did not become visible before timeout: "
+        f"{last_snapshot}"
+    )
+
+
+async def wait_for_mempool_drain(
+    context: WorkloadContext,
+    *,
+    timeout_seconds: float,
+    stable_polls: int = 3,
+    poll_interval_seconds: float = 0.5,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    last_counts: dict[str, int] = {}
+    consecutive_clean_polls = 0
+
+    async def fetch_unconfirmed_count(node: LocalnetNode) -> int:
+        payload = await fetch_json(
+            context.session,
+            f"{node.rpc_url}/num_unconfirmed_txs",
+            timeout=5.0,
+        )
+        result = payload.get("result", {})
+        value = result.get("n_txs")
+        if value is None:
+            value = result.get("total", 0)
+        return int(value or 0)
+
+    while time.monotonic() < deadline:
+        all_clean = True
+        for node in context.nodes:
+            count = await context._retry_read(
+                lambda node=node: fetch_unconfirmed_count(node),
+                max_attempts=3,
+                initial_delay_seconds=0.05,
+                max_delay_seconds=0.5,
+            )
+            last_counts[node.moniker] = count
+            if count != 0:
+                all_clean = False
+        if all_clean:
+            consecutive_clean_polls += 1
+            if consecutive_clean_polls >= stable_polls:
+                return
+        else:
+            consecutive_clean_polls = 0
+        await asyncio.sleep(poll_interval_seconds)
+
+    raise WorkloadError(
+        "mempool did not drain before timeout: "
+        f"{last_counts}"
+    )
+
+
 def canonical_record_position(record: BroadcastRecord) -> tuple[int, int]:
     if record.height is None or record.tx_index is None:
         raise WorkloadError(
@@ -618,6 +968,167 @@ async def broadcast_and_confirm(
     await context.resolve_records([record])
     require_successful(record)
     return record
+
+
+def distribute_operation_counts(total: int, lanes: int) -> list[int]:
+    if total <= 0:
+        raise WorkloadError("operation count must be positive")
+    if lanes <= 0:
+        raise WorkloadError("lane count must be positive")
+    counts = [total // lanes] * lanes
+    for index in range(total % lanes):
+        counts[index] += 1
+    return counts
+
+
+async def fund_wallets(
+    context: WorkloadContext,
+    *,
+    seed_wallet: Wallet,
+    worker_wallets: list[Wallet],
+    amount: float,
+    chi: int,
+    label_prefix: str,
+) -> list[BroadcastRecord]:
+    records: list[BroadcastRecord] = []
+    seed_rpc_index = context.submit_node_index
+    for index, wallet in enumerate(worker_wallets):
+        records.append(
+            await broadcast_and_confirm(
+                context,
+                label=f"{label_prefix} #{index}",
+                wallet=seed_wallet,
+                rpc_index=seed_rpc_index,
+                contract="currency",
+                function="transfer",
+                kwargs={"amount": amount, "to": wallet.public_key},
+                chi=chi,
+                expected_success=True,
+            )
+        )
+    return records
+
+
+async def broadcast_plans(
+    context: WorkloadContext,
+    plans: list[dict[str, Any]],
+    *,
+    submit_workers: int,
+) -> list[BroadcastRecord]:
+    if not plans:
+        return []
+
+    worker_count = max(1, min(submit_workers, len(plans)))
+    semaphore = asyncio.Semaphore(worker_count)
+    records: list[BroadcastRecord | None] = [None] * len(plans)
+    plan_lanes: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+
+    for index, plan in enumerate(plans):
+        wallet = plan.get("wallet")
+        if isinstance(wallet, Wallet):
+            lane_key = wallet.public_key
+        else:
+            lane_key = f"plan-{index}"
+        plan_lanes.setdefault(lane_key, []).append((index, plan))
+
+    for lane_entries in plan_lanes.values():
+        lane_entries.sort(
+            key=lambda item: (
+                item[1].get("nonce") is None,
+                int(item[1].get("nonce") or 0),
+                item[0],
+            )
+        )
+
+    async def broadcast_one(index: int, plan: dict[str, Any]) -> None:
+        async with semaphore:
+            records[index] = await context.broadcast_tx(**plan)
+
+    async def broadcast_lane(
+        lane_entries: list[tuple[int, dict[str, Any]]],
+    ) -> None:
+        for index, plan in lane_entries:
+            await broadcast_one(index, plan)
+
+    await asyncio.gather(
+        *(broadcast_lane(lane_entries) for lane_entries in plan_lanes.values())
+    )
+    return [record for record in records if record is not None]
+
+
+async def summarize_committed_window(
+    context: WorkloadContext,
+    records: list[BroadcastRecord],
+    *,
+    fallback_elapsed_seconds: float,
+) -> dict[str, Any]:
+    heights = sorted(
+        {
+            int(record.height)
+            for record in records
+            if record.height is not None
+        }
+    )
+    if not heights:
+        return {}
+
+    blocks = []
+    previous_time: datetime | None = None
+    per_block_tps: list[float] = []
+    for height in range(heights[0], heights[-1] + 1):
+        payload = await tr.get_block_async(
+            context.nodes[0].rpc_url,
+            height,
+            session=context.session,
+        )
+        block = payload["result"]["block"]
+        tx_count = len(block["data"].get("txs") or [])
+        block_time = parse_rfc3339_utc(block["header"]["time"])
+        instant_tps = None
+        if previous_time is not None:
+            delta_seconds = (block_time - previous_time).total_seconds()
+            if delta_seconds > 0:
+                instant_tps = tx_count / delta_seconds
+                per_block_tps.append(instant_tps)
+        blocks.append(
+            {
+                "height": height,
+                "tx_count": tx_count,
+                "time": block["header"]["time"],
+                "instant_tps": (
+                    round(instant_tps, 3) if instant_tps is not None else None
+                ),
+            }
+        )
+        previous_time = block_time
+
+    first_time = parse_rfc3339_utc(blocks[0]["time"])
+    last_time = parse_rfc3339_utc(blocks[-1]["time"])
+    window_seconds = (last_time - first_time).total_seconds()
+    if window_seconds <= 0:
+        window_seconds = fallback_elapsed_seconds
+
+    chain_transactions = sum(block["tx_count"] for block in blocks)
+    workload_transactions = len(records)
+    return {
+        "min_height": heights[0],
+        "max_height": heights[-1],
+        "block_count": len(blocks),
+        "chain_transactions": chain_transactions,
+        "workload_transactions": workload_transactions,
+        "window_seconds": round(window_seconds, 3),
+        "committed_workload_tps": round(
+            workload_transactions / window_seconds, 3
+        ),
+        "committed_chain_tps": round(chain_transactions / window_seconds, 3),
+        "peak_block_tps": round(max(per_block_tps), 3)
+        if per_block_tps
+        else None,
+        "median_block_tps": round(statistics.median(per_block_tps), 3)
+        if per_block_tps
+        else None,
+        "blocks": blocks,
+    }
 
 
 async def broadcast_funding_record(
@@ -1744,6 +2255,323 @@ async def run_parallel_probe(
     }
 
 
+async def run_transfer_fanout(
+    context: WorkloadContext,
+    *,
+    seed: str,
+    operations: int,
+    wallet_count: int,
+    submit_workers: int,
+    receipt_workers: int,
+    receipt_timeout_seconds: float,
+    broadcast_mode: str,
+) -> dict[str, Any]:
+    sender_wallets = [
+        derive_wallet(seed, f"transfer-fanout-sender-{index}")
+        for index in range(wallet_count)
+    ]
+    recipient_wallets = [
+        derive_wallet(seed, f"transfer-fanout-recipient-{index}")
+        for index in range(wallet_count)
+    ]
+    counts = distribute_operation_counts(operations, wallet_count)
+    funding_amount = float(max(5_000, max(counts) * 4 + 1_000))
+    funding_records = await fund_wallets(
+        context,
+        seed_wallet=context.founder_wallet,
+        worker_wallets=sender_wallets,
+        amount=funding_amount,
+        chi=THROUGHPUT_TRANSFER_TX_CHI,
+        label_prefix="fund throughput sender",
+    )
+
+    plans: list[dict[str, Any]] = []
+    for index, sender_wallet in enumerate(sender_wallets):
+        count = counts[index]
+        if count == 0:
+            continue
+        submission_index = context.submission_index(index)
+        nonces = await context.reserve_nonces(
+            sender_wallet,
+            submission_index,
+            count=count,
+        )
+        recipient = recipient_wallets[index].public_key
+        for local_index, nonce in enumerate(nonces):
+            plans.append(
+                {
+                    "label": f"fanout transfer #{len(plans)}",
+                    "wallet": sender_wallet,
+                    "rpc_index": index,
+                    "contract": "currency",
+                    "function": "transfer",
+                    "kwargs": {"amount": 1.0, "to": recipient},
+                    "chi": THROUGHPUT_TRANSFER_TX_CHI,
+                    "expected_success": True,
+                    "mode": broadcast_mode,
+                    "nonce": nonce,
+                }
+            )
+
+    random.Random(f"{seed}:transfer-fanout").shuffle(plans)
+    start_height = await latest_block_height(context)
+    started_at = time.monotonic()
+    records = await broadcast_plans(
+        context,
+        plans,
+        submit_workers=submit_workers,
+    )
+    require_all_admitted("transfer_fanout", records)
+    elapsed = time.monotonic() - started_at
+    sample_indices = sorted(
+        {
+            0,
+            len(recipient_wallets) // 2,
+            len(recipient_wallets) - 1,
+        }
+    )
+    verification_queries = [
+        {
+            "label": f"recipient balance {index}",
+            "contract": "currency",
+            "variable": "balances",
+            "keys": [recipient_wallets[index].public_key],
+        }
+        for index in sample_indices
+        if counts[index] > 0
+    ]
+    expected_balances = {
+        f"recipient balance {index}": counts[index]
+        for index in sample_indices
+        if counts[index] > 0
+    }
+    await wait_for_query_predicate(
+        context,
+        verification_queries,
+        timeout_seconds=receipt_timeout_seconds,
+        predicate=lambda query, value: (
+            coerce_numeric(value) == expected_balances[query["label"]]
+        ),
+    )
+    await wait_for_mempool_drain(
+        context,
+        timeout_seconds=receipt_timeout_seconds,
+    )
+    end_height = await latest_block_height(context)
+    queries = [
+        {
+            "label": f"recipient balance {index}",
+            "contract": "currency",
+            "variable": "balances",
+            "keys": [recipient_wallets[index].public_key],
+        }
+        for index in sample_indices
+        if counts[index] > 0
+    ]
+    state = await context.compare_state(queries) if queries else {"ok": True}
+    for query in state.get("queries", []):
+        index = int(str(query["label"]).rsplit(" ", 1)[-1])
+        sample_value = query["values"][context.sample_nodes[0].moniker]
+        if coerce_numeric(sample_value) != counts[index]:
+            raise WorkloadError(
+                "transfer_fanout: recipient balance mismatch for "
+                f"wallet {index}: expected {counts[index]}, got {sample_value}"
+            )
+
+    return {
+        "scenario": "transfer_fanout",
+        "wallet_count": wallet_count,
+        "submit_workers": submit_workers,
+        "broadcast_mode": broadcast_mode,
+        "funding_amount": funding_amount,
+        "funding_transactions": len(funding_records),
+        "transaction_count": len(records),
+        "successful_transactions": len(records),
+        "failed_transactions": 0,
+        "elapsed_workload_seconds": round(elapsed, 3),
+        "committed_window": await summarize_committed_window_for_range(
+            context,
+            start_height=start_height,
+            end_height=end_height,
+            workload_transactions=len(records),
+            fallback_elapsed_seconds=elapsed,
+        ),
+        "state": state,
+    }
+
+
+async def run_contract_heavy(
+    context: WorkloadContext,
+    *,
+    seed: str,
+    operations: int,
+    wallet_count: int,
+    submit_workers: int,
+    receipt_workers: int,
+    receipt_timeout_seconds: float,
+    broadcast_mode: str,
+    rounds: int,
+) -> dict[str, Any]:
+    suffix = hashlib.sha256(
+        f"{seed}:contract-heavy".encode("utf-8")
+    ).hexdigest()[:8]
+    contract_name = f"con_hash_stress_{suffix}"
+    contract_code = read_fixture("throughput/con_hash_stress.py")
+    deploy_record = await context.broadcast_tx(
+        label=f"deploy {contract_name}",
+        wallet=context.founder_wallet,
+        rpc_index=0,
+        contract="submission",
+        function="submit_contract",
+        kwargs=context.contract_submission_kwargs(
+            name=contract_name,
+            code=contract_code,
+        ),
+        chi=THROUGHPUT_CONTRACT_DEPLOY_CHI,
+        expected_success=True,
+        mode="checktx",
+    )
+    require_all_admitted("contract_heavy deploy", [deploy_record])
+    await wait_for_contract_visibility(
+        context,
+        contract_name,
+        timeout_seconds=receipt_timeout_seconds,
+    )
+
+    worker_wallets = [
+        derive_wallet(seed, f"contract-heavy-worker-{index}")
+        for index in range(wallet_count)
+    ]
+    counts = distribute_operation_counts(operations, wallet_count)
+    funding_amount = float(max(5_000, max(counts) * 2 + 1_000))
+    funding_records = await fund_wallets(
+        context,
+        seed_wallet=context.founder_wallet,
+        worker_wallets=worker_wallets,
+        amount=funding_amount,
+        chi=THROUGHPUT_TRANSFER_TX_CHI,
+        label_prefix="fund heavy worker",
+    )
+
+    sample_slots: dict[int, str] = {}
+    final_slots: dict[int, str] = {}
+    plans: list[dict[str, Any]] = []
+    for index, worker_wallet in enumerate(worker_wallets):
+        count = counts[index]
+        if count == 0:
+            continue
+        submission_index = context.submission_index(index)
+        nonces = await context.reserve_nonces(
+            worker_wallet,
+            submission_index,
+            count=count,
+        )
+        for local_index, nonce in enumerate(nonces):
+            slot = f"{worker_wallet.public_key}-{local_index}"
+            if index not in sample_slots:
+                sample_slots[index] = slot
+            final_slots[index] = slot
+            plans.append(
+                {
+                    "label": f"contract heavy #{len(plans)}",
+                    "wallet": worker_wallet,
+                    "rpc_index": index,
+                    "contract": contract_name,
+                    "function": "crunch",
+                    "kwargs": {
+                        "slot": slot,
+                        "payload": f"{seed}-{slot}",
+                        "rounds": rounds,
+                    },
+                    "chi": THROUGHPUT_CONTRACT_TX_CHI,
+                    "expected_success": True,
+                    "mode": broadcast_mode,
+                    "nonce": nonce,
+                }
+            )
+
+    random.Random(f"{seed}:contract-heavy").shuffle(plans)
+    start_height = await latest_block_height(context)
+    started_at = time.monotonic()
+    records = await broadcast_plans(
+        context,
+        plans,
+        submit_workers=submit_workers,
+    )
+    require_all_admitted("contract_heavy", records)
+    elapsed = time.monotonic() - started_at
+    sample_indices = sorted(
+        {
+            0,
+            len(worker_wallets) // 2,
+            len(worker_wallets) - 1,
+        }
+    )
+    verification_queries = [
+        {
+            "label": f"contract final slot {index}",
+            "contract": contract_name,
+            "variable": "results",
+            "keys": [final_slots[index]],
+        }
+        for index in sample_indices
+        if index in final_slots
+    ]
+    await wait_for_query_predicate(
+        context,
+        verification_queries,
+        timeout_seconds=receipt_timeout_seconds,
+        predicate=lambda _query, value: isinstance(value, str) and bool(value),
+    )
+    await wait_for_mempool_drain(
+        context,
+        timeout_seconds=receipt_timeout_seconds,
+    )
+    end_height = await latest_block_height(context)
+    queries = [
+        {
+            "label": f"contract slot {index}",
+            "contract": contract_name,
+            "variable": "results",
+            "keys": [sample_slots[index]],
+        }
+        for index in sample_indices
+        if index in sample_slots
+    ]
+    state = await context.compare_state(queries) if queries else {"ok": True}
+    for query in state.get("queries", []):
+        sample_value = query["values"][context.sample_nodes[0].moniker]
+        if not isinstance(sample_value, str) or not sample_value:
+            raise WorkloadError(
+                "contract_heavy: expected a non-empty digest result for "
+                f"{query['label']}, got {sample_value!r}"
+            )
+
+    return {
+        "scenario": "contract_heavy",
+        "contract_name": contract_name,
+        "wallet_count": wallet_count,
+        "submit_workers": submit_workers,
+        "broadcast_mode": broadcast_mode,
+        "rounds": rounds,
+        "funding_amount": funding_amount,
+        "deploy_transaction_hash": deploy_record.tx_hash,
+        "funding_transactions": len(funding_records),
+        "transaction_count": len(records),
+        "successful_transactions": len(records),
+        "failed_transactions": 0,
+        "elapsed_workload_seconds": round(elapsed, 3),
+        "committed_window": await summarize_committed_window_for_range(
+            context,
+            start_height=start_height,
+            end_height=end_height,
+            workload_transactions=len(records),
+            fallback_elapsed_seconds=elapsed,
+        ),
+        "state": state,
+    }
+
+
 async def run_scenario(
     args: argparse.Namespace,
     context: WorkloadContext,
@@ -1771,6 +2599,29 @@ async def run_scenario(
             receipt_resolution=args.receipt_resolution,
             receipt_workers=args.receipt_workers,
         )
+    if args.scenario == "transfer_fanout":
+        return await run_transfer_fanout(
+            context,
+            seed=args.seed,
+            operations=args.throughput_ops,
+            wallet_count=args.wallet_count,
+            submit_workers=args.submit_workers,
+            receipt_workers=args.receipt_workers,
+            receipt_timeout_seconds=args.receipt_timeout_seconds,
+            broadcast_mode=args.broadcast_mode,
+        )
+    if args.scenario == "contract_heavy":
+        return await run_contract_heavy(
+            context,
+            seed=args.seed,
+            operations=args.throughput_ops,
+            wallet_count=args.wallet_count,
+            submit_workers=args.submit_workers,
+            receipt_workers=args.receipt_workers,
+            receipt_timeout_seconds=args.receipt_timeout_seconds,
+            broadcast_mode=args.broadcast_mode,
+            rounds=args.heavy_rounds,
+        )
     raise WorkloadError(f"unsupported scenario: {args.scenario}")
 
 
@@ -1780,7 +2631,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--scenario",
-        choices=("counter_basic", "dex_mixed", "parallel_probe"),
+        choices=(
+            "counter_basic",
+            "dex_mixed",
+            "parallel_probe",
+            "transfer_fanout",
+            "contract_heavy",
+        ),
         default="counter_basic",
     )
     parser.add_argument(
@@ -1799,6 +2656,45 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=6,
         help="Number of swap/failure rounds to run for dex_mixed",
+    )
+    parser.add_argument(
+        "--throughput-ops",
+        type=int,
+        default=12000,
+        help="Number of transactions to broadcast for throughput scenarios",
+    )
+    parser.add_argument(
+        "--wallet-count",
+        type=int,
+        default=64,
+        help="Number of sender wallets to use for throughput scenarios",
+    )
+    parser.add_argument(
+        "--submit-workers",
+        type=int,
+        default=128,
+        help="Maximum concurrent broadcast workers for throughput scenarios",
+    )
+    parser.add_argument(
+        "--broadcast-mode",
+        choices=("async", "checktx"),
+        default="checktx",
+        help=(
+            "Broadcast mode to use for throughput scenarios "
+            "(default: checktx; async is best-effort stress mode)"
+        ),
+    )
+    parser.add_argument(
+        "--receipt-timeout-seconds",
+        type=float,
+        default=RECEIPT_TIMEOUT_SECONDS,
+        help="Receipt timeout to use when resolving workload transactions",
+    )
+    parser.add_argument(
+        "--heavy-rounds",
+        type=int,
+        default=64,
+        help="Digest loop count for contract_heavy throughput scenario",
     )
     parser.add_argument(
         "--state-sample-nodes",

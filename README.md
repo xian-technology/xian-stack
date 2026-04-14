@@ -91,6 +91,37 @@ Run the same layered harness with `xian_vm_v1` in native-authority mode:
 make localnet-vm-e2e
 ```
 
+Run the tuned VM throughput sweep on a fresh 5-node localnet:
+
+```bash
+make localnet-vm-tps-bench
+```
+
+Run the benchmark directly against an already-running localnet:
+
+```bash
+uv run --project ../xian-py --python 3.14 python3 ./scripts/localnet-tps-bench.py \
+  --scenario both \
+  --ops 4000 8000 12000 \
+  --wallet-count 64 \
+  --submit-workers 128 \
+  --receipt-timeout-seconds 120 \
+  --broadcast-mode checktx
+```
+
+The benchmark writes JSON artifacts under `.artifacts/tps-bench/`. The most
+useful throughput numbers are:
+
+- `committed_workload_tps`: workload transactions divided by the committed
+  block window
+- `committed_chain_tps`: all committed transactions in that same block window
+- `workload_tps`: end-to-end client-side workload submission rate
+- `peak_block_tps`: highest instantaneous per-block rate inside the committed
+  window
+
+Use `committed_workload_tps` as the main chain-throughput figure. `workload_tps`
+is still useful for spotting client-side admission or confirmation bottlenecks.
+
 Inspect the current VM rollout posture and mismatch counters across the running
 localnet:
 

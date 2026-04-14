@@ -66,6 +66,27 @@ def env_str(name: str, default: str) -> str:
     return raw.strip()
 
 
+def env_optional_str(name: str) -> str | None:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    return raw.strip()
+
+
+def env_optional_bool(name: str) -> bool | None:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_optional_int(name: str) -> int | None:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    return int(raw)
+
+
 def node_build_config(target: str) -> dict:
     return {
         "context": ".",
@@ -126,6 +147,18 @@ def write_node_config(
     execution_gas_schedule: str,
     execution_authority: str,
     execution_shadow_tracer_mode: str,
+    block_policy_mode: str,
+    block_policy_interval: str,
+    consensus_timeout_propose: str | None,
+    consensus_timeout_propose_delta: str | None,
+    consensus_timeout_prevote: str | None,
+    consensus_timeout_prevote_delta: str | None,
+    consensus_timeout_precommit: str | None,
+    consensus_timeout_precommit_delta: str | None,
+    consensus_timeout_commit: str | None,
+    consensus_skip_timeout_commit: bool | None,
+    mempool_size: int | None,
+    mempool_cache_size: int | None,
     service_node: bool,
     bds_enabled: bool,
     parallel_execution_enabled: bool,
@@ -156,6 +189,8 @@ def write_node_config(
         execution_gas_schedule=execution_gas_schedule,
         execution_authority=execution_authority,
         execution_shadow_tracer_mode=execution_shadow_tracer_mode,
+        block_policy_mode=block_policy_mode,
+        block_policy_interval=block_policy_interval,
         metrics_enabled=True,
         metrics_host="0.0.0.0",
         metrics_port=9108,
@@ -181,8 +216,34 @@ def write_node_config(
     config["p2p"]["addr_book_strict"] = False
     config["p2p"]["allow_duplicate_ip"] = True
     config["rpc"]["laddr"] = "tcp://0.0.0.0:26657"
-    config["consensus"]["create_empty_blocks"] = True
-    config["consensus"]["create_empty_blocks_interval"] = "5s"
+    if consensus_timeout_propose is not None:
+        config["consensus"]["timeout_propose"] = consensus_timeout_propose
+    if consensus_timeout_propose_delta is not None:
+        config["consensus"][
+            "timeout_propose_delta"
+        ] = consensus_timeout_propose_delta
+    if consensus_timeout_prevote is not None:
+        config["consensus"]["timeout_prevote"] = consensus_timeout_prevote
+    if consensus_timeout_prevote_delta is not None:
+        config["consensus"][
+            "timeout_prevote_delta"
+        ] = consensus_timeout_prevote_delta
+    if consensus_timeout_precommit is not None:
+        config["consensus"]["timeout_precommit"] = consensus_timeout_precommit
+    if consensus_timeout_precommit_delta is not None:
+        config["consensus"][
+            "timeout_precommit_delta"
+        ] = consensus_timeout_precommit_delta
+    if consensus_timeout_commit is not None:
+        config["consensus"]["timeout_commit"] = consensus_timeout_commit
+    if consensus_skip_timeout_commit is not None:
+        config["consensus"][
+            "skip_timeout_commit"
+        ] = consensus_skip_timeout_commit
+    if mempool_size is not None:
+        config["mempool"]["size"] = mempool_size
+    if mempool_cache_size is not None:
+        config["mempool"]["cache_size"] = mempool_cache_size
 
     materialize_cometbft_home(
         home=home,
@@ -298,6 +359,68 @@ def main():
         "XIAN_LOCALNET_PROFILE_RECENT_BLOCKS",
         env_int("XIAN_PERF_RECENT_BLOCKS", 32),
     )
+    localnet_profile = env_str("XIAN_LOCALNET_PROFILE", "default")
+    if localnet_profile not in {"default", "throughput"}:
+        print(
+            "ERROR: XIAN_LOCALNET_PROFILE must be one of: default, throughput",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    block_policy_mode = env_optional_str("XIAN_LOCALNET_BLOCK_POLICY_MODE")
+    block_policy_interval = env_optional_str("XIAN_LOCALNET_BLOCK_POLICY_INTERVAL")
+    consensus_timeout_propose = env_optional_str(
+        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE"
+    )
+    consensus_timeout_propose_delta = env_optional_str(
+        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE_DELTA"
+    )
+    consensus_timeout_prevote = env_optional_str(
+        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PREVOTE"
+    )
+    consensus_timeout_prevote_delta = env_optional_str(
+        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PREVOTE_DELTA"
+    )
+    consensus_timeout_precommit = env_optional_str(
+        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PRECOMMIT"
+    )
+    consensus_timeout_precommit_delta = env_optional_str(
+        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PRECOMMIT_DELTA"
+    )
+    consensus_timeout_commit = env_optional_str(
+        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_COMMIT"
+    )
+    consensus_skip_timeout_commit = env_optional_bool(
+        "XIAN_LOCALNET_SKIP_TIMEOUT_COMMIT"
+    )
+    mempool_size = env_optional_int("XIAN_LOCALNET_MEMPOOL_SIZE")
+    mempool_cache_size = env_optional_int("XIAN_LOCALNET_MEMPOOL_CACHE_SIZE")
+
+    if localnet_profile == "throughput":
+        block_policy_mode = block_policy_mode or "on_demand"
+        block_policy_interval = block_policy_interval or "0s"
+        consensus_timeout_propose = consensus_timeout_propose or "500ms"
+        consensus_timeout_propose_delta = (
+            consensus_timeout_propose_delta or "100ms"
+        )
+        consensus_timeout_prevote = consensus_timeout_prevote or "200ms"
+        consensus_timeout_prevote_delta = (
+            consensus_timeout_prevote_delta or "50ms"
+        )
+        consensus_timeout_precommit = consensus_timeout_precommit or "200ms"
+        consensus_timeout_precommit_delta = (
+            consensus_timeout_precommit_delta or "50ms"
+        )
+        consensus_timeout_commit = consensus_timeout_commit or "200ms"
+        if consensus_skip_timeout_commit is None:
+            consensus_skip_timeout_commit = True
+        if mempool_size is None:
+            mempool_size = 50_000
+        if mempool_cache_size is None:
+            mempool_cache_size = 100_000
+    else:
+        block_policy_mode = block_policy_mode or "periodic"
+        block_policy_interval = block_policy_interval or "5s"
 
     # 1. Generate key material for all nodes
     nodes = [generate_node_material(i) for i in range(args.nodes)]
@@ -342,6 +465,20 @@ def main():
             execution_gas_schedule=execution_gas_schedule,
             execution_authority=execution_authority,
             execution_shadow_tracer_mode=execution_shadow_tracer_mode,
+            block_policy_mode=block_policy_mode,
+            block_policy_interval=block_policy_interval,
+            consensus_timeout_propose=consensus_timeout_propose,
+            consensus_timeout_propose_delta=consensus_timeout_propose_delta,
+            consensus_timeout_prevote=consensus_timeout_prevote,
+            consensus_timeout_prevote_delta=consensus_timeout_prevote_delta,
+            consensus_timeout_precommit=consensus_timeout_precommit,
+            consensus_timeout_precommit_delta=(
+                consensus_timeout_precommit_delta
+            ),
+            consensus_timeout_commit=consensus_timeout_commit,
+            consensus_skip_timeout_commit=consensus_skip_timeout_commit,
+            mempool_size=mempool_size,
+            mempool_cache_size=mempool_cache_size,
             service_node=bds_enabled and node["index"] == bds_node_index,
             bds_enabled=bds_enabled and node["index"] == bds_node_index,
             parallel_execution_enabled=parallel_execution_enabled,
@@ -416,6 +553,23 @@ def main():
         "profiling": {
             "enabled": profiling_enabled,
             "recent_blocks": profiling_recent_blocks,
+        },
+        "localnet_profile": localnet_profile,
+        "consensus": {
+            "block_policy_mode": block_policy_mode,
+            "block_policy_interval": block_policy_interval,
+            "timeout_propose": consensus_timeout_propose,
+            "timeout_propose_delta": consensus_timeout_propose_delta,
+            "timeout_prevote": consensus_timeout_prevote,
+            "timeout_prevote_delta": consensus_timeout_prevote_delta,
+            "timeout_precommit": consensus_timeout_precommit,
+            "timeout_precommit_delta": consensus_timeout_precommit_delta,
+            "timeout_commit": consensus_timeout_commit,
+            "skip_timeout_commit": consensus_skip_timeout_commit,
+        },
+        "mempool": {
+            "size": mempool_size,
+            "cache_size": mempool_cache_size,
         },
         "tracer_mode": tracer_mode,
         "port_offset": port_offset,
