@@ -25,6 +25,9 @@ from xian.genesis_builder import (  # noqa: E402
     build_local_network_genesis,
 )
 from xian.node_setup import (  # noqa: E402
+    DEFAULT_PARALLEL_EXECUTION_ENABLED,
+    DEFAULT_PARALLEL_EXECUTION_MIN_TRANSACTIONS,
+    DEFAULT_PARALLEL_EXECUTION_WORKERS,
     build_node_key,
     generate_validator_material,
     materialize_cometbft_home,
@@ -303,7 +306,8 @@ def main():
         f"(chain_id={args.chain_id}, genesis_network={args.genesis_network})"
     )
     parallel_execution_enabled = env_bool(
-        "XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED", False
+        "XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED",
+        DEFAULT_PARALLEL_EXECUTION_ENABLED,
     )
     tracer_mode = env_str("XIAN_LOCALNET_TRACER_MODE", "python_line_v1")
     execution_mode = env_str("XIAN_LOCALNET_EXECUTION_MODE", "").strip()
@@ -335,10 +339,12 @@ def main():
         )
         sys.exit(1)
     parallel_execution_workers = env_int(
-        "XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS", 0
+        "XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS",
+        DEFAULT_PARALLEL_EXECUTION_WORKERS,
     )
     parallel_execution_min_transactions = env_int(
-        "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS", 8
+        "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS",
+        DEFAULT_PARALLEL_EXECUTION_MIN_TRANSACTIONS,
     )
     transaction_trace_logging = env_bool(
         "XIAN_LOCALNET_TRANSACTION_TRACE_LOGGING", False

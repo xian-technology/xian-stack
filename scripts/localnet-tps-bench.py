@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import statistics
 import subprocess
 import sys
 import time
@@ -19,6 +20,28 @@ WORKLOAD_SCRIPT = SCRIPT_DIR / "localnet-workload.py"
 NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 ARTIFACTS_DIR = STACK_DIR / ".artifacts" / "tps-bench"
 DEFAULT_PYTHON = "3.14"
+PERF_GLOBAL_METRICS = (
+    "finalize_block",
+    "finalize_parallel",
+    "finalize_execute",
+    "finalize_result_assembly",
+    "finalize_commit_prepare",
+    "finalize_bds_enqueue",
+    "tx_process_total",
+    "tx_execute",
+    "tx_process_output",
+)
+PERF_BLOCK_METRICS = (
+    "finalize_decode",
+    "finalize_parallel",
+    "finalize_execute",
+    "finalize_result_assembly",
+    "finalize_evidence",
+    "finalize_epoch_rebalance",
+    "finalize_rewards",
+    "finalize_commit_prepare",
+    "finalize_bds_enqueue",
+)
 
 
 class BenchmarkError(RuntimeError):
@@ -36,6 +59,149 @@ def load_network() -> dict[str, Any]:
 def default_output_path() -> Path:
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return ARTIFACTS_DIR / f"vm-tps-bench-{timestamp}.json"
+
+
+def _median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return round(float(statistics.median(values)), 3)
+
+
+def load_perf_payloads(network: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    payloads = {}
+    for node in network.get("nodes", []):
+        perf_path = (
+            STACK_DIR
+            / ".localnet"
+            / str(node["moniker"])
+            / ".cometbft"
+            / "xian-perf.json"
+        )
+        if not perf_path.exists():
+            continue
+        payloads[str(node["moniker"])] = json.loads(
+            perf_path.read_text(encoding="utf-8")
+        )
+    return payloads
+
+
+def summarize_perf_payloads(
+    node_payloads: dict[str, dict[str, Any]],
+    *,
+    recent_block_limit: int = 8,
+) -> dict[str, Any]:
+    if not node_payloads:
+        return {"nodes": {}, "aggregate_global_metrics": {}, "aggregate_recent_blocks": []}
+
+    nodes: dict[str, Any] = {}
+    aggregate_global: dict[str, Any] = {}
+    reference_payload = next(iter(node_payloads.values()))
+    reference_blocks = [
+        block
+        for block in reference_payload.get("recent_blocks", [])
+        if int(block.get("tx_count", 0)) > 0
+    ]
+    if recent_block_limit > 0:
+        reference_blocks = reference_blocks[-recent_block_limit:]
+
+    for node_name, payload in sorted(node_payloads.items()):
+        global_metrics = payload.get("global_metrics", {})
+        recent_blocks = [
+            block
+            for block in payload.get("recent_blocks", [])
+            if int(block.get("tx_count", 0)) > 0
+        ]
+        if recent_block_limit > 0:
+            recent_blocks = recent_blocks[-recent_block_limit:]
+        nodes[node_name] = {
+            "global_metrics": {
+                metric_name: global_metrics.get(metric_name)
+                for metric_name in PERF_GLOBAL_METRICS
+                if global_metrics.get(metric_name) is not None
+            },
+            "recent_nonempty_block_count": len(recent_blocks),
+            "latest_nonempty_block": (
+                {
+                    "height": recent_blocks[-1]["height"],
+                    "tx_count": recent_blocks[-1]["tx_count"],
+                    "duration_ms": recent_blocks[-1]["duration_ms"],
+                    "metadata": recent_blocks[-1].get("metadata", {}),
+                    "metrics": {
+                        metric_name: recent_blocks[-1]
+                        .get("metrics", {})
+                        .get(metric_name)
+                        for metric_name in PERF_BLOCK_METRICS
+                        if recent_blocks[-1]
+                        .get("metrics", {})
+                        .get(metric_name)
+                        is not None
+                    },
+                }
+                if recent_blocks
+                else None
+            ),
+        }
+
+    for metric_name in PERF_GLOBAL_METRICS:
+        samples = []
+        for payload in node_payloads.values():
+            stat = payload.get("global_metrics", {}).get(metric_name)
+            if not stat or stat.get("avg_ms") is None:
+                continue
+            samples.append(float(stat["avg_ms"]))
+        if not samples:
+            continue
+        aggregate_global[metric_name] = {
+            "node_count": len(samples),
+            "median_avg_ms": _median(samples),
+            "max_avg_ms": round(max(samples), 3),
+            "min_avg_ms": round(min(samples), 3),
+        }
+
+    aggregate_recent_blocks = []
+    for reference_block in reference_blocks:
+        height = int(reference_block["height"])
+        aggregate_recent_blocks.append(
+            {
+                "height": height,
+                "median_tx_count": _median(
+                    [
+                        float(block["tx_count"])
+                        for payload in node_payloads.values()
+                        for block in payload.get("recent_blocks", [])
+                        if int(block.get("height", -1)) == height
+                    ]
+                ),
+                "median_duration_ms": _median(
+                    [
+                        float(block["duration_ms"])
+                        for payload in node_payloads.values()
+                        for block in payload.get("recent_blocks", [])
+                        if int(block.get("height", -1)) == height
+                    ]
+                ),
+                "median_metrics_ms": {
+                    metric_name: _median(
+                        [
+                            float(metric["total_ms"])
+                            for payload in node_payloads.values()
+                            for block in payload.get("recent_blocks", [])
+                            if int(block.get("height", -1)) == height
+                            for metric in [block.get("metrics", {}).get(metric_name)]
+                            if metric is not None
+                            and metric.get("total_ms") is not None
+                        ]
+                    )
+                    for metric_name in PERF_BLOCK_METRICS
+                },
+            }
+        )
+
+    return {
+        "nodes": nodes,
+        "aggregate_global_metrics": aggregate_global,
+        "aggregate_recent_blocks": aggregate_recent_blocks,
+    }
 
 
 def parse_json_payload(stdout: str) -> dict[str, Any]:
@@ -223,6 +389,7 @@ def main(argv: list[str] | None = None) -> int:
         },
         "runs": runs,
         "best_by_scenario": best_by_scenario,
+        "perf_summary": summarize_perf_payloads(load_perf_payloads(network)),
     }
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
     args.output_path.write_text(

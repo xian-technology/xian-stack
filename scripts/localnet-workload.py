@@ -148,6 +148,7 @@ class WorkloadContext:
             timeout=timeout,
             connector=connector,
         )
+        await self.wait_for_nodes_ready()
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -195,6 +196,47 @@ class WorkloadContext:
             if raw_index not in indices:
                 indices.append(raw_index)
         return [self.nodes[index] for index in indices]
+
+    async def wait_for_nodes_ready(
+        self,
+        *,
+        timeout_seconds: float = 45.0,
+    ) -> None:
+        deadline = time.monotonic() + timeout_seconds
+        last_error: Exception | None = None
+
+        while time.monotonic() < deadline:
+            ready_count = 0
+            for index, node in enumerate(self.nodes):
+                try:
+                    payload = await fetch_json(
+                        self.session,
+                        f"{node.rpc_url}/status",
+                        timeout=2.0,
+                    )
+                    latest_height = int(
+                        payload["result"]["sync_info"][
+                            "latest_block_height"
+                        ]
+                    )
+                    if latest_height < 1:
+                        raise WorkloadError(
+                            f"{node.moniker} has not produced a block yet"
+                        )
+                    await self.client(
+                        self.founder_wallet, index
+                    ).refresh_nonce()
+                    ready_count += 1
+                except Exception as exc:  # noqa: PERF203
+                    last_error = exc
+                    break
+
+            if ready_count == len(self.nodes):
+                return
+
+            await asyncio.sleep(1.0)
+
+        raise WorkloadError("localnet nodes did not become ready") from last_error
 
     def client(self, wallet: Wallet, rpc_index: int) -> XianAsync:
         node = self.nodes[rpc_index % len(self.nodes)]
