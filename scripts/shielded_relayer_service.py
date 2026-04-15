@@ -281,8 +281,8 @@ class ShieldedRelayerServiceConfig:
     wait_for_tx: bool = True
     timeout_seconds: float = 30.0
     poll_interval_seconds: float = 0.25
-    chi_margin: float = 0.10
-    min_chi_headroom: int = 10
+    chi_margin: float = 1.0
+    min_chi_headroom: int = 1500
     metrics_enabled: bool = True
     log_requests: bool = True
     rate_limit_requests_per_minute: int = 120
@@ -836,6 +836,18 @@ class ShieldedRelayerService:
         if job["status"] != "pending":
             return job
 
+        chi_margin = self.config.chi_margin
+        min_chi_headroom = self.config.min_chi_headroom
+        if kind == "shielded_note_relay_transfer":
+            # Shielded note relay calls are consistently more expensive than
+            # the raw simulation estimate. Keep a deterministic safety floor so
+            # the relayer favors delivery reliability over tight chi sizing.
+            chi_margin = max(chi_margin, 1.0)
+            min_chi_headroom = max(min_chi_headroom, 5000)
+        elif kind == "shielded_command":
+            chi_margin = max(chi_margin, 1.0)
+            min_chi_headroom = max(min_chi_headroom, 3000)
+
         try:
             chain_id = await self.ensure_chain_id()
             submission = await self._xian.send_tx(
@@ -846,8 +858,8 @@ class ShieldedRelayerService:
                 wait_for_tx=self.config.wait_for_tx,
                 timeout_seconds=self.config.timeout_seconds,
                 poll_interval_seconds=self.config.poll_interval_seconds,
-                chi_margin=self.config.chi_margin,
-                min_chi_headroom=self.config.min_chi_headroom,
+                chi_margin=chi_margin,
+                min_chi_headroom=min_chi_headroom,
             )
             job["chain_id"] = chain_id
             job["submission"] = asdict(submission)
@@ -1286,11 +1298,11 @@ def load_config_from_env() -> ShieldedRelayerServiceConfig:
         ),
         chi_margin=_env_float(
             "XIAN_SHIELDED_RELAYER_CHI_MARGIN",
-            0.10,
+            1.0,
         ),
         min_chi_headroom=_env_int(
             "XIAN_SHIELDED_RELAYER_MIN_CHI_HEADROOM",
-            10,
+            1500,
         ),
         rate_limit_requests_per_minute=_env_int(
             "XIAN_SHIELDED_RELAYER_RATE_LIMIT_REQUESTS_PER_MINUTE",

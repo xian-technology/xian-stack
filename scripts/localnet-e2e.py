@@ -23,6 +23,13 @@ from typing import Any
 import aiohttp
 from governance_vote_helpers import cast_votes_until_status, wait_for_status
 from localnet_vm_rollout import collect_localnet_vm_rollout_report
+from shielded_relayer_backend import (
+    DEFAULT_SHIELDED_RELAYER_HOST,
+    DEFAULT_SHIELDED_RELAYER_PORT,
+    shielded_relayer_endpoints,
+    start_shielded_relayer_runtime,
+    stop_shielded_relayer_runtime,
+)
 from state_convergence_helpers import wait_for_uniform_state
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -69,9 +76,11 @@ sys.path.insert(0, str(XIAN_ABCI_SRC))
 
 from contracting.compilation.artifacts import build_contract_artifacts  # noqa: E402
 from xian_py.config import RetryPolicy, XianClientConfig  # noqa: E402
+import xian_py.transaction as tr  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian_async import XianAsync  # noqa: E402
-from xian_py.exception import SimulationError, TxTimeoutError  # noqa: E402
+from xian_py.exception import SimulationError, TransportError, TxTimeoutError  # noqa: E402
+from xian_py.shielded_relayer import ShieldedRelayerAsyncClient  # noqa: E402
 
 try:  # noqa: SIM105
     from xian_zk import (  # noqa: E402
@@ -434,8 +443,12 @@ async def wait_for_height(
 ) -> int:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        payload = await fetch_json(session, f"{rpc_url}/status", timeout=5.0)
-        height = int(payload["result"]["sync_info"]["latest_block_height"])
+        try:
+            payload = await fetch_json(session, f"{rpc_url}/status", timeout=5.0)
+            height = int(payload["result"]["sync_info"]["latest_block_height"])
+        except Exception:  # noqa: BLE001
+            await asyncio.sleep(0.5)
+            continue
         if height >= target_height:
             return height
         await asyncio.sleep(0.5)
@@ -1245,6 +1258,59 @@ class E2ERunner:
         run_make("localnet-down", env=env)
         run_make("localnet-up", env=env)
 
+    @staticmethod
+    def node_container_names(node: LocalnetNode) -> list[str]:
+        ordered = [node.abci_container, node.cometbft_container]
+        unique: list[str] = []
+        for name in ordered:
+            if name and name not in unique:
+                unique.append(name)
+        return unique
+
+    async def stop_node_runtime(self, node: LocalnetNode) -> dict[str, Any]:
+        container_names = self.node_container_names(node)
+        if not container_names:
+            raise E2EError(f"node {node.moniker} has no containers to stop")
+        run_cmd(["docker", "stop", *container_names], cwd=STACK_DIR)
+        states: dict[str, str] = {}
+        for container_name in container_names:
+            states[container_name] = await wait_for_container_state(
+                container_name,
+                expected_states={"exited"},
+                timeout_seconds=30.0,
+            )
+        return {"containers": container_names, "states": states}
+
+    async def start_node_runtime(
+        self,
+        session: aiohttp.ClientSession,
+        node: LocalnetNode,
+        *,
+        target_height: int | None = None,
+    ) -> dict[str, Any]:
+        container_names = self.node_container_names(node)
+        if not container_names:
+            raise E2EError(f"node {node.moniker} has no containers to start")
+        run_cmd(["docker", "start", *container_names], cwd=STACK_DIR)
+        states: dict[str, str] = {}
+        for container_name in container_names:
+            states[container_name] = await wait_for_container_state(
+                container_name,
+                expected_states={"running", "healthy"},
+                timeout_seconds=45.0,
+            )
+        ready_height = await wait_for_height(
+            session,
+            node.rpc_url,
+            max(target_height or 1, 1),
+            timeout_seconds=90.0,
+        )
+        return {
+            "containers": container_names,
+            "states": states,
+            "ready_height": ready_height,
+        }
+
     async def bootstrap(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         env = make_localnet_env(self.args)
         outputs: dict[str, Any] = {
@@ -1476,14 +1542,29 @@ class E2ERunner:
         permit_spender = derive_wallet(
             self.seed, "contract-orchestration-permit-spender"
         )
+        invalid_permit_spender = derive_wallet(
+            self.seed, "contract-orchestration-invalid-permit-spender"
+        )
         recipient = derive_wallet(self.seed, "contract-orchestration-recipient")
         permit_recipient = derive_wallet(
             self.seed, "contract-orchestration-permit-recipient"
         )
+        duplicate_sender = derive_wallet(
+            self.seed, "contract-orchestration-duplicate-sender"
+        )
+        duplicate_recipient = derive_wallet(
+            self.seed, "contract-orchestration-duplicate-recipient"
+        )
         await self.fund_wallets(
             session,
-            [operator, spender, permit_spender],
-            amount=15_000,
+            [
+                operator,
+                spender,
+                permit_spender,
+                invalid_permit_spender,
+                duplicate_sender,
+            ],
+            amount=20_000,
         )
 
         suffix = short_hash(f"{self.run_id}:orchestration")
@@ -1497,6 +1578,7 @@ class E2ERunner:
         beta_name = family_prefix + "_beta"
         failed_good_name = failed_prefix + "_good"
         failed_bad_name = failed_prefix + "_bad"
+        bad_artifact_name = f"con_orch_bad_artifact_{suffix}"
 
         factory_code = render_orchestration_factory_source()
         router_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_router.py")
@@ -1522,8 +1604,8 @@ class E2ERunner:
                 (mid_name, mid_code),
                 (root_name, root_code),
             ):
-                existing_code = await client.get_contract_code(name)
-                if existing_code is not None:
+                existing_contract = await client.get_contract(name)
+                if existing_contract is not None:
                     deployments.append(
                         {
                             "accepted": True,
@@ -1613,6 +1695,44 @@ class E2ERunner:
                 },
             )
 
+            if self.execution_mode == "xian_vm_v1":
+                tampered_source = read_text(WORKLOADS_DIR / "e2e" / "patch_target.py")
+                tampered_artifacts = build_deployment_artifacts(
+                    bad_artifact_name,
+                    tampered_source,
+                )
+                tampered_ir = json.loads(tampered_artifacts["vm_ir_json"])
+                tampered_ir["module_name"] = f"{bad_artifact_name}_tampered"
+                tampered_artifacts["vm_ir_json"] = json.dumps(
+                    tampered_ir,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                tampered_artifacts["hashes"]["vm_ir_sha256"] = hashlib.sha256(
+                    tampered_artifacts["vm_ir_json"].encode("utf-8")
+                ).hexdigest()
+                artifact_failure_receipt = ensure_failed_submission(
+                    await client.submit_contract(
+                        name=bad_artifact_name,
+                        deployment_artifacts=tampered_artifacts,
+                        chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
+                        wait_for_tx=True,
+                    ),
+                    label="orchestration-invalid-artifacts",
+                )
+                bad_artifact_source = await client.get_contract(bad_artifact_name)
+                bad_artifact_absent = bad_artifact_source is None
+                if not bad_artifact_absent:
+                    raise E2EError(
+                        "tampered deployment_artifacts unexpectedly persisted a contract"
+                    )
+            else:
+                artifact_failure_receipt = {
+                    "skipped": True,
+                    "reason": "tampered deployment_artifacts are only enforced in xian_vm_v1",
+                }
+                bad_artifact_absent = True
+
         async with self.client(operator, 2, session) as client:
             touch_submission = await client.send_tx(
                 router_name,
@@ -1689,7 +1809,9 @@ class E2ERunner:
             spender, 1, session
         ) as spender_client, self.client(
             permit_spender, 2, session
-        ) as permit_spender_client:
+        ) as permit_spender_client, self.client(
+            invalid_permit_spender, 3, session
+        ) as invalid_permit_client:
             direct_approve_receipt = ensure_positive_submission(
                 await owner_client.send_tx(
                     "currency",
@@ -1807,6 +1929,253 @@ class E2ERunner:
                 timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
             )
 
+            expired_deadline = (
+                datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=5)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            expired_signature = operator.sign_msg(
+                construct_token_permit_message(
+                    token_contract="currency",
+                    owner=operator.public_key,
+                    spender=invalid_permit_spender.public_key,
+                    value=77,
+                    deadline=expired_deadline,
+                    authorizer_contract="permit_authorizer",
+                    chain_id=self.network["chain_id"],
+                )
+            )
+            expired_permit_receipt = ensure_failed_submission(
+                await invalid_permit_client.send_tx(
+                    "permit_authorizer",
+                    "permit",
+                    {
+                        "token_contract": "currency",
+                        "owner": operator.public_key,
+                        "spender": invalid_permit_spender.public_key,
+                        "value": 77,
+                        "deadline": expired_deadline,
+                        "signature": expired_signature,
+                    },
+                    chi=DEFAULT_TX_CHI,
+                    wait_for_tx=True,
+                ),
+                label="currency-permit-expired",
+                expected_message_fragment="Permit has expired.",
+            )
+            expired_allowance_state = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract="currency",
+                variable="approvals",
+                keys=[operator.public_key, invalid_permit_spender.public_key],
+                expected=None,
+                label="expired permit allowance remains zero",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+
+            invalid_signature_deadline = (
+                datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=10)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            wrong_signature = operator.sign_msg(
+                construct_token_permit_message(
+                    token_contract="currency",
+                    owner=operator.public_key,
+                    spender=permit_spender.public_key,
+                    value=88,
+                    deadline=invalid_signature_deadline,
+                    authorizer_contract="permit_authorizer",
+                    chain_id=self.network["chain_id"],
+                )
+            )
+            invalid_signature_receipt = ensure_failed_submission(
+                await invalid_permit_client.send_tx(
+                    "permit_authorizer",
+                    "permit",
+                    {
+                        "token_contract": "currency",
+                        "owner": operator.public_key,
+                        "spender": invalid_permit_spender.public_key,
+                        "value": 88,
+                        "deadline": invalid_signature_deadline,
+                        "signature": wrong_signature,
+                    },
+                    chi=DEFAULT_TX_CHI,
+                    wait_for_tx=True,
+                ),
+                label="currency-permit-invalid-signature",
+                expected_message_fragment="Invalid signature.",
+            )
+            invalid_signature_allowance_state = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract="currency",
+                variable="approvals",
+                keys=[operator.public_key, invalid_permit_spender.public_key],
+                expected=None,
+                label="invalid signature allowance remains zero",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+
+            replay_permit_receipt = ensure_failed_submission(
+                await permit_spender_client.send_tx(
+                    "permit_authorizer",
+                    "permit",
+                    {
+                        "token_contract": "currency",
+                        "owner": operator.public_key,
+                        "spender": permit_spender.public_key,
+                        "value": permit_allowance,
+                        "deadline": permit_deadline,
+                        "signature": permit_signature,
+                    },
+                    chi=DEFAULT_TX_CHI,
+                    wait_for_tx=True,
+                ),
+                label="currency-permit-replay",
+                expected_message_fragment="Permit can only be used once.",
+            )
+            replay_allowance_state = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract="currency",
+                variable="approvals",
+                keys=[operator.public_key, permit_spender.public_key],
+                expected=permit_allowance - permit_spend,
+                label="replayed permit allowance unchanged",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+
+        duplicate_sender_balance_before = await fetch_abci_query(
+            session,
+            self.nodes[0].rpc_url,
+            f"/get/currency.balances:{duplicate_sender.public_key}",
+        )
+        duplicate_recipient_balance_before = await fetch_abci_query(
+            session,
+            self.nodes[0].rpc_url,
+            f"/get/currency.balances:{duplicate_recipient.public_key}",
+        )
+        duplicate_amount = 17
+        duplicate_nonce_before = await tr.get_nonce_async(
+            self.nodes[0].rpc_url,
+            duplicate_sender.public_key,
+            session=session,
+        )
+        duplicate_payload = {
+            "chain_id": self.network["chain_id"],
+            "contract": "currency",
+            "function": "transfer",
+            "kwargs": {"amount": duplicate_amount, "to": duplicate_recipient.public_key},
+            "nonce": duplicate_nonce_before,
+            "sender": duplicate_sender.public_key,
+            "chi_supplied": DEFAULT_TRANSFER_CHI,
+        }
+        duplicate_tx = tr.create_tx(duplicate_payload, duplicate_sender)
+        duplicate_tx_hash = hashlib.sha256(
+            json.dumps(duplicate_tx).encode("utf-8")
+        ).hexdigest().upper()
+
+        def summarize_duplicate_broadcast(
+            response: dict[str, Any],
+            *,
+            node: LocalnetNode,
+        ) -> dict[str, Any]:
+            result = response.get("result")
+            error = response.get("error")
+            tx_hash = None
+            code = None
+            log = None
+            if isinstance(result, dict):
+                tx_hash = result.get("hash")
+                code = result.get("code")
+                log = result.get("log")
+            if log is None and isinstance(error, dict):
+                log = error.get("data") or error.get("message")
+            duplicate_marker = isinstance(log, str) and (
+                "tx already exists in cache" in log.lower()
+                or "tx already exists in mempool" in log.lower()
+            )
+            return {
+                "node": node.moniker,
+                "hash": tx_hash,
+                "code": code,
+                "log": log,
+                "duplicate_marker": duplicate_marker,
+                "raw": response,
+            }
+
+        duplicate_first_response = summarize_duplicate_broadcast(
+            await tr.broadcast_tx_wait_async(
+                self.nodes[0].rpc_url,
+                duplicate_tx,
+                session=session,
+            ),
+            node=self.nodes[0],
+        )
+        await asyncio.sleep(0.35)
+        duplicate_second_response = summarize_duplicate_broadcast(
+            await tr.broadcast_tx_wait_async(
+                self.nodes[1].rpc_url,
+                duplicate_tx,
+                session=session,
+            ),
+            node=self.nodes[1],
+        )
+        async with self.client(duplicate_sender, 4, session) as duplicate_client:
+            duplicate_receipt = normalize_value(
+                (
+                    await duplicate_client.wait_for_tx(
+                        duplicate_tx_hash,
+                        timeout_seconds=15.0,
+                        poll_interval_seconds=0.25,
+                    )
+                ).raw
+            )
+        if duplicate_receipt.get("success") is not True:
+            raise E2EError("duplicate submission tx did not finalize successfully")
+
+        duplicate_recipient_expected = Decimal(
+            str(duplicate_recipient_balance_before or 0)
+        ) + Decimal(str(duplicate_amount))
+        duplicate_recipient_balance_after = await wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract="currency",
+            variable="balances",
+            keys=[duplicate_recipient.public_key],
+            expected=duplicate_recipient_expected,
+            label="duplicate recipient balance changed once",
+            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+        )
+        duplicate_sender_balances = await query_state_from_all_nodes(
+            session,
+            self.nodes,
+            contract="currency",
+            variable="balances",
+            keys=[duplicate_sender.public_key],
+        )
+        sender_balance_variants = {
+            json.dumps(normalize_value(value), sort_keys=True)
+            for value in duplicate_sender_balances.values()
+        }
+        if len(sender_balance_variants) != 1:
+            raise E2EError("duplicate sender balance diverged across validators")
+        duplicate_sender_balance_after = next(iter(duplicate_sender_balances.values()))
+        if Decimal(str(duplicate_sender_balance_after)) >= Decimal(
+            str(duplicate_sender_balance_before or 0)
+        ):
+            raise E2EError(
+                "duplicate submission did not reduce the sender balance at all"
+            )
+        duplicate_nonce_after = await tr.get_nonce_async(
+            self.nodes[2].rpc_url,
+            duplicate_sender.public_key,
+            session=session,
+        )
+        if duplicate_nonce_after != duplicate_nonce_before + 1:
+            raise E2EError(
+                "duplicate submission advanced the sender nonce by more than one"
+            )
+
         async with self.client(operator, 4, session) as client:
             private_submission = await client.send_tx(
                 router_name,
@@ -1871,6 +2240,10 @@ class E2ERunner:
                 failed_good_name: failed_good_source is None,
                 failed_bad_name: failed_bad_source is None,
             },
+            "artifact_validation_path": {
+                "invalid_artifact_receipt": artifact_failure_receipt,
+                "tampered_contract_absent": bad_artifact_absent,
+            },
             "chain_preview": normalize_value(chain_preview),
             "currency_allowance_path": {
                 "direct_approve_receipt": direct_approve_receipt,
@@ -1883,6 +2256,22 @@ class E2ERunner:
                 "permit_transfer_receipt": permit_transfer_receipt,
                 "permit_remaining_allowance": permit_remaining_allowance,
                 "permit_recipient_balance": permit_recipient_balance,
+                "expired_permit_receipt": expired_permit_receipt,
+                "expired_allowance_state": expired_allowance_state,
+                "invalid_signature_receipt": invalid_signature_receipt,
+                "invalid_signature_allowance_state": invalid_signature_allowance_state,
+                "replay_permit_receipt": replay_permit_receipt,
+                "replay_allowance_state": replay_allowance_state,
+            },
+            "duplicate_submission_path": {
+                "tx_hash": duplicate_tx_hash,
+                "nonce_before": duplicate_nonce_before,
+                "nonce_after": duplicate_nonce_after,
+                "first_broadcast": normalize_value(duplicate_first_response),
+                "second_broadcast": normalize_value(duplicate_second_response),
+                "receipt": duplicate_receipt,
+                "sender_balance_after": duplicate_sender_balance_after,
+                "recipient_balance_after": duplicate_recipient_balance_after,
             },
         }
 
@@ -2280,6 +2669,112 @@ class E2ERunner:
         if service is None:
             raise E2EError("service node not available for BDS catch-up phase")
 
+        async def post_graphql(
+            *,
+            json_body: dict[str, Any] | None = None,
+            raw_body: str | None = None,
+        ) -> dict[str, Any]:
+            request_kwargs: dict[str, Any] = {"timeout": 5.0}
+            if json_body is not None:
+                request_kwargs["json"] = json_body
+            else:
+                request_kwargs["data"] = raw_body or ""
+                request_kwargs["headers"] = {
+                    "Content-Type": "application/json",
+                }
+            async with session.post(
+                f"{service.rpc_url}/graphql",
+                **request_kwargs,
+            ) as response:
+                body = await response.text()
+            return {
+                "status": response.status,
+                "body": body[:200],
+            }
+
+        async def bds_query_pressure(
+            client: XianAsync,
+            *,
+            rounds: int,
+        ) -> dict[str, Any]:
+            stats: dict[str, dict[str, Any]] = {}
+
+            async def record(name: str, coro_factory) -> None:
+                bucket = stats.setdefault(
+                    name,
+                    {"success": 0, "failure": 0, "samples": []},
+                )
+                try:
+                    result = await coro_factory()
+                except Exception as exc:  # noqa: BLE001
+                    bucket["failure"] += 1
+                    if len(bucket["samples"]) < 3:
+                        bucket["samples"].append(
+                            {"ok": False, "error": str(exc)}
+                        )
+                    return
+
+                bucket["success"] += 1
+                if len(bucket["samples"]) < 3:
+                    if isinstance(result, list):
+                        sample_result = [
+                            normalize_value(getattr(item, "raw", item))
+                            for item in result[:3]
+                        ]
+                    else:
+                        sample_result = normalize_value(
+                            getattr(result, "raw", result)
+                        )
+                    bucket["samples"].append(
+                        {"ok": True, "result": sample_result}
+                    )
+
+            invalid_tx_hash = "0" * 64
+            for _ in range(rounds):
+                await asyncio.gather(
+                    record(
+                        "list_blocks",
+                        lambda: client.list_blocks(limit=3, offset=0),
+                    ),
+                    record(
+                        "list_events",
+                        lambda: client.list_events(
+                            self.contracts["conflict"],
+                            "Claimed",
+                            limit=3,
+                        ),
+                    ),
+                    record(
+                        "state_history",
+                        lambda: client.get_state_history(
+                            f"{self.contracts['conflict']}.counter",
+                            limit=3,
+                            offset=0,
+                        ),
+                    ),
+                    record(
+                        "events_for_unknown_tx",
+                        lambda: client.get_events_for_tx(invalid_tx_hash),
+                    ),
+                    record(
+                        "state_for_unknown_tx",
+                        lambda: client.get_state_for_tx(invalid_tx_hash),
+                    ),
+                    record(
+                        "malformed_graphql_query",
+                        lambda: post_graphql(
+                            json_body={"query": "query { broken("}
+                        ),
+                    ),
+                    record(
+                        "invalid_graphql_json",
+                        lambda: post_graphql(raw_body="{not-json"),
+                    ),
+                )
+                await asyncio.sleep(0.2)
+
+            return stats
+
         env = make_localnet_env(self.args)
         current_height = await latest_height(session, service.rpc_url)
         catchup_wallets = [
@@ -2324,11 +2819,20 @@ class E2ERunner:
         catchup_height = await latest_height(session, service.rpc_url)
 
         async with self.client(self.founder_wallet, service.index, session) as client:
+            outage_pressure_task = asyncio.create_task(
+                bds_query_pressure(client, rounds=12)
+            )
             lagged_status = await wait_for_bds_backlog(
                 client,
                 target_height=catchup_height,
                 timeout_seconds=30.0,
             )
+            outage_pressure = await outage_pressure_task
+            for name in ("list_blocks", "list_events", "state_history"):
+                if outage_pressure.get(name, {}).get("failure", 0) == 0:
+                    raise E2EError(
+                        f"BDS outage pressure did not surface a failure for {name}"
+                    )
 
         run_localnet_compose("start", LOCALNET_POSTGRES_SERVICE, env=env)
         healthy_state = await wait_for_container_state(
@@ -2338,11 +2842,20 @@ class E2ERunner:
         )
 
         async with self.client(self.founder_wallet, service.index, session) as client:
+            recovery_pressure_task = asyncio.create_task(
+                bds_query_pressure(client, rounds=40)
+            )
             recovered_status = await wait_for_bds_recovered(
                 client,
                 target_height=catchup_height,
                 timeout_seconds=120.0,
             )
+            recovery_pressure = await recovery_pressure_task
+            for name in ("list_blocks", "list_events", "state_history"):
+                if recovery_pressure.get(name, {}).get("success", 0) == 0:
+                    raise E2EError(
+                        f"BDS recovery pressure never recovered successful {name} reads"
+                    )
             indexed_txs = []
             for record in catchup_records[-3:]:
                 indexed_tx = await client.get_indexed_tx(record["tx_hash"])
@@ -2361,6 +2874,8 @@ class E2ERunner:
             "baseline_status": baseline_status,
             "lagged_status": lagged_status,
             "recovered_status": recovered_status,
+            "outage_query_pressure": normalize_value(outage_pressure),
+            "recovery_query_pressure": normalize_value(recovery_pressure),
             "catchup_height": catchup_height,
             "catchup_tx_hashes": [record["tx_hash"] for record in catchup_records],
             "catchup_receipts": catchup_records,
@@ -2474,42 +2989,57 @@ class E2ERunner:
         if not consensus["ok"]:
             raise E2EError("app hash mismatch detected during determinism phase")
 
-        counter_state = await query_state_from_all_nodes(
-            session,
-            self.nodes,
+        async def wait_for_deterministic_sample(
+            *,
+            contract: str,
+            variable: str,
+            label: str,
+            keys: list[str] | None = None,
+        ) -> dict[str, Any]:
+            try:
+                await wait_for_uniform_state(
+                    fetch_values=lambda: query_state_from_all_nodes(
+                        session,
+                        self.nodes,
+                        contract=contract,
+                        variable=variable,
+                        keys=keys,
+                    ),
+                    fetch_heights=lambda: latest_heights(session, self.nodes),
+                    label=label,
+                    normalize_value=normalize_value,
+                    timeout_seconds=20.0,
+                    poll_interval_seconds=0.5,
+                )
+            except RuntimeError as exc:
+                raise E2EError(str(exc)) from exc
+
+            return await query_state_from_all_nodes(
+                session,
+                self.nodes,
+                contract=contract,
+                variable=variable,
+                keys=keys,
+            )
+
+        counter_state = await wait_for_deterministic_sample(
             contract=conflict_contract,
             variable="counter",
+            label="conflict counter",
         )
-        patch_mode_state = await query_state_from_all_nodes(
-            session,
-            self.nodes,
+        patch_mode_state = await wait_for_deterministic_sample(
             contract=patch_contract,
             variable="mode",
+            label="patch target mode",
         )
         orchestration_touch_state = None
         orchestrated_alpha = self.contracts.get("orchestrated_alpha")
         if orchestrated_alpha:
-            orchestration_touch_state = await query_state_from_all_nodes(
-                session,
-                self.nodes,
+            orchestration_touch_state = await wait_for_deterministic_sample(
                 contract=orchestrated_alpha,
                 variable="touch_total",
+                label="orchestrated alpha touch total",
             )
-
-        unique_state_groups = {
-            "conflict_counter": sorted({json.dumps(value, sort_keys=True) for value in counter_state.values()}),
-            "patch_mode": sorted({json.dumps(value, sort_keys=True) for value in patch_mode_state.values()}),
-        }
-        if orchestration_touch_state is not None:
-            unique_state_groups["orchestrated_alpha_touch_total"] = sorted(
-                {
-                    json.dumps(value, sort_keys=True)
-                    for value in orchestration_touch_state.values()
-                }
-            )
-
-        if any(len(group) != 1 for group in unique_state_groups.values()):
-            raise E2EError("state values diverged across validators")
 
         simulation_results = []
         dex_router = self.contracts.get("dex_router")
@@ -2653,6 +3183,7 @@ class E2ERunner:
             node4_wallet,
         ) = self.validator_wallets
         node3_key = self.nodes[3].account_public_key
+        node4 = self.nodes[4]
         await self.fund_wallets(
             session,
             [node1_wallet, node2_wallet, node3_wallet, node4_wallet],
@@ -2663,14 +3194,14 @@ class E2ERunner:
             node1_wallet, 1, session
         ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
             node3_wallet, 3, session
-        ) as node3, self.client(node4_wallet, 4, session) as node4:
+        ) as node3:
+            node4_stop = await self.stop_node_runtime(node4)
             power_vote = await self.approve_members_vote(
                 node0,
                 [
                     ("node1", node1),
                     ("node2", node2),
                     ("node3", node3),
-                    ("node4", node4),
                 ],
                 type_of_vote="set_member_power",
                 arg={"member": node3_key, "power": 15},
@@ -2692,117 +3223,138 @@ class E2ERunner:
             )
             if power_record["power"] != 15:
                 raise E2EError("validator power change did not apply")
-
-            remove_vote = await self.approve_members_vote(
-                node0,
-                [
-                    ("node1", node1),
-                    ("node2", node2),
-                    ("node3", node3),
-                    ("node4", node4),
-                ],
-                type_of_vote="remove_member",
-                arg=node3_key,
-                label_prefix="remove-member",
+            node4_restart = await self.start_node_runtime(
+                session,
+                node4,
+                target_height=power_wait_height,
             )
-            remove_receipt = remove_vote["proposal_receipt"]
-
-            remove_wait_height = (
-                int(
-                    (
-                        await fetch_json(
-                            session,
-                            f"{self.nodes[0].rpc_url}/status",
-                            timeout=5.0,
-                        )
-                    )["result"]["sync_info"]["latest_block_height"]
+            async with self.client(node4_wallet, 4, session) as restarted_node4:
+                node4_power_record = await restarted_node4.call(
+                    "masternodes",
+                    "get_validator",
+                    {"account": node3_key},
                 )
-                + 2
-            )
-            await wait_for_height(
-                session,
-                self.nodes[0].rpc_url,
-                remove_wait_height,
-                timeout_seconds=30.0,
-            )
-            validators_after_remove = await fetch_json(
-                session,
-                f"{self.nodes[0].rpc_url}/validators",
-                timeout=5.0,
-            )
-            if len(validators_after_remove["result"]["validators"]) != 4:
-                raise E2EError("validator removal did not reduce the validator set to 4")
-
-            registration_fee = await node0.get_state("masternodes", "registration_fee")
-            approval_submission = await node3.send_tx(
-                "currency",
-                "approve",
-                {"amount": registration_fee, "to": "masternodes"},
-                chi=DEFAULT_TX_CHI,
-                wait_for_tx=True,
-            )
-            approval_receipt = ensure_positive_submission(
-                approval_submission,
-                label="re-register-approve-node3",
-            )
-
-            register_submission = await node3.send_tx(
-                "masternodes",
-                "register",
-                {
-                    "requested_validator_power": 12,
-                    "moniker": "node-3-return",
-                    "network_endpoint": "localnet://node-3",
-                },
-                chi=GOVERNANCE_TX_CHI,
-                wait_for_tx=True,
-            )
-            ensure_positive_submission(register_submission, label="re-register-node3")
-            add_vote = await self.approve_members_vote(
-                node0,
-                [
-                    ("node1", node1),
-                    ("node2", node2),
-                    ("node4", node4),
-                ],
-                type_of_vote="add_member",
-                arg=node3_key,
-                label_prefix="add-member",
-            )
-            add_receipt = add_vote["proposal_receipt"]
-
-            readd_wait_height = (
-                int(
-                    (
-                        await fetch_json(
-                            session,
-                            f"{self.nodes[0].rpc_url}/status",
-                            timeout=5.0,
-                        )
-                    )["result"]["sync_info"]["latest_block_height"]
+            if node4_power_record["power"] != 15:
+                raise E2EError(
+                    "restarted validator did not converge to the updated member power"
                 )
-                + 2
-            )
-            await wait_for_height(
-                session,
-                self.nodes[0].rpc_url,
-                readd_wait_height,
-                timeout_seconds=30.0,
-            )
-            validators_after_add = await fetch_json(
-                session,
-                f"{self.nodes[0].rpc_url}/validators",
-                timeout=5.0,
-            )
-            if len(validators_after_add["result"]["validators"]) != 5:
-                raise E2EError("validator add-back did not restore the validator set to 5")
-            validator_record = await node0.call(
-                "masternodes",
-                "get_validator",
-                {"account": node3_key},
-            )
+
+            async with self.client(node4_wallet, 4, session) as node4_client:
+                remove_vote = await self.approve_members_vote(
+                    node0,
+                    [
+                        ("node1", node1),
+                        ("node2", node2),
+                        ("node3", node3),
+                        ("node4", node4_client),
+                    ],
+                    type_of_vote="remove_member",
+                    arg=node3_key,
+                    label_prefix="remove-member",
+                )
+                remove_receipt = remove_vote["proposal_receipt"]
+
+                remove_wait_height = (
+                    int(
+                        (
+                            await fetch_json(
+                                session,
+                                f"{self.nodes[0].rpc_url}/status",
+                                timeout=5.0,
+                            )
+                        )["result"]["sync_info"]["latest_block_height"]
+                    )
+                    + 2
+                )
+                await wait_for_height(
+                    session,
+                    self.nodes[0].rpc_url,
+                    remove_wait_height,
+                    timeout_seconds=30.0,
+                )
+                validators_after_remove = await fetch_json(
+                    session,
+                    f"{self.nodes[0].rpc_url}/validators",
+                    timeout=5.0,
+                )
+                if len(validators_after_remove["result"]["validators"]) != 4:
+                    raise E2EError("validator removal did not reduce the validator set to 4")
+
+                registration_fee = await node0.get_state("masternodes", "registration_fee")
+                approval_submission = await node3.send_tx(
+                    "currency",
+                    "approve",
+                    {"amount": registration_fee, "to": "masternodes"},
+                    chi=DEFAULT_TX_CHI,
+                    wait_for_tx=True,
+                )
+                approval_receipt = ensure_positive_submission(
+                    approval_submission,
+                    label="re-register-approve-node3",
+                )
+
+                register_submission = await node3.send_tx(
+                    "masternodes",
+                    "register",
+                    {
+                        "requested_validator_power": 12,
+                        "moniker": "node-3-return",
+                        "network_endpoint": "localnet://node-3",
+                    },
+                    chi=GOVERNANCE_TX_CHI,
+                    wait_for_tx=True,
+                )
+                ensure_positive_submission(register_submission, label="re-register-node3")
+                add_vote = await self.approve_members_vote(
+                    node0,
+                    [
+                        ("node1", node1),
+                        ("node2", node2),
+                        ("node4", node4_client),
+                    ],
+                    type_of_vote="add_member",
+                    arg=node3_key,
+                    label_prefix="add-member",
+                )
+                add_receipt = add_vote["proposal_receipt"]
+
+                readd_wait_height = (
+                    int(
+                        (
+                            await fetch_json(
+                                session,
+                                f"{self.nodes[0].rpc_url}/status",
+                                timeout=5.0,
+                            )
+                        )["result"]["sync_info"]["latest_block_height"]
+                    )
+                    + 2
+                )
+                await wait_for_height(
+                    session,
+                    self.nodes[0].rpc_url,
+                    readd_wait_height,
+                    timeout_seconds=30.0,
+                )
+                validators_after_add = await fetch_json(
+                    session,
+                    f"{self.nodes[0].rpc_url}/validators",
+                    timeout=5.0,
+                )
+                if len(validators_after_add["result"]["validators"]) != 5:
+                    raise E2EError("validator add-back did not restore the validator set to 5")
+                validator_record = await node0.call(
+                    "masternodes",
+                    "get_validator",
+                    {"account": node3_key},
+                )
 
         return {
+            "node4_outage_during_power_vote": {
+                "stop": normalize_value(node4_stop),
+                "restart": normalize_value(node4_restart),
+                "node4_power_record": normalize_value(node4_power_record),
+            },
             "power_change": power_receipt,
             "power_vote": normalize_value(power_vote),
             "power_record": normalize_value(power_record),
@@ -2904,20 +3456,21 @@ class E2ERunner:
             node3_wallet,
             node4_wallet,
         ) = self.validator_wallets
+        node4 = self.nodes[4]
         proposal_receipt: dict[str, Any] | None = None
         if existing_patch is None:
             async with self.client(node0_wallet, 0, session) as node0, self.client(
                 node1_wallet, 1, session
             ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
                 node3_wallet, 3, session
-            ) as node3, self.client(node4_wallet, 4, session) as node4:
+            ) as node3, self.client(node4_wallet, 4, session) as node4_client:
                 proposal_vote = await self.approve_governance_proposal(
                     node0,
                     [
                         ("node1", node1),
                         ("node2", node2),
                         ("node3", node3),
-                        ("node4", node4),
+                        ("node4", node4_client),
                     ],
                     proposal_function="propose_state_patch",
                     proposal_kwargs={
@@ -2932,6 +3485,10 @@ class E2ERunner:
                     label_prefix="state-patch",
                 )
                 proposal_receipt = proposal_vote["proposal_receipt"]
+        else:
+            proposal_vote = None
+
+        node4_stop = await self.stop_node_runtime(node4)
 
         current_height = int(
             (
@@ -2984,10 +3541,36 @@ class E2ERunner:
                 service.rpc_url,
                 f"/state_patches_for_block/{activation_height}",
             )
+        node4_restart = await self.start_node_runtime(
+            session,
+            node4,
+            target_height=activation_height + 1,
+        )
+        async with self.client(node4_wallet, 4, session) as restarted_node4:
+            restarted_patch_status = await restarted_node4.call(
+                "governance",
+                "get_patch",
+                {"patch_id": patch_id},
+            )
+            restarted_contract_status = await restarted_node4.call(
+                self.contracts["patch_target"],
+                "get_status",
+                {},
+            )
+        if normalize_value(restarted_contract_status) != normalize_value(contract_status):
+            raise E2EError(
+                "restarted validator did not converge to the activated state patch state"
+            )
 
         return {
             "bundle": bundle_payload,
             "existing_patch": normalize_value(existing_patch),
+            "node4_outage_during_activation": {
+                "stop": normalize_value(node4_stop),
+                "restart": normalize_value(node4_restart),
+                "governance_patch": normalize_value(restarted_patch_status),
+                "patch_target_status": normalize_value(restarted_contract_status),
+            },
             "governance_min_patch_delay": governance_min_patch_delay,
             "activation_wait_timeout_seconds": activation_wait_timeout,
             "proposal_receipt": proposal_receipt,
@@ -3119,6 +3702,7 @@ class E2ERunner:
             }
 
         founder = self.founder_wallet
+        service = self.service_node or self.nodes[0]
         alice = derive_wallet(self.seed, "shielded-alice")
         bob = derive_wallet(self.seed, "shielded-bob")
         relayer = derive_wallet(self.seed, "shielded-relayer")
@@ -3467,6 +4051,17 @@ class E2ERunner:
             rho=field_hex(106),
             blind=field_hex(206),
         )
+        relayer_runtime_status: dict[str, Any] | None = None
+        relayer_shutdown_status: dict[str, Any] | None = None
+        relayer_service_info: dict[str, Any] | None = None
+        relayer_quote: dict[str, Any] | None = None
+        relayer_unauth_quote_error: str | None = None
+        relayer_disallowed_quote_error: str | None = None
+        relayer_low_fee_error: str | None = None
+        relayer_job_unauth_error: str | None = None
+        relayer_down_error: str | None = None
+        service_relay_job: dict[str, Any] | None = None
+        service_relay_receipt: dict[str, Any] | None = None
 
         async with self.client(alice, 1, session) as alice_client, self.client(
             relayer, 3, session
@@ -3964,6 +4559,242 @@ class E2ERunner:
                 raise E2EError("shielded wallet restore drifted after recent-root deposit")
             bob_wallet.sync_records(records_after_recent_root)
 
+            service_relay_plan = bob_wallet.build_relay_transfer(
+                recipient=alice_wallet.recipient,
+                amount=4,
+                relayer=relayer.public_key,
+                chain_id=self.network["chain_id"],
+                fee=1,
+            )
+            service_relay_proof = relay_prover.prove_relay_transfer(
+                service_relay_plan.request
+            )
+            relayer_env = make_localnet_env(self.args)
+            relayer_secret = "localnet-shielded-relayer-token"
+            relayer_env.update(
+                {
+                    "XIAN_SHIELDED_RELAYER_PRIVATE_KEY": relayer.private_key,
+                    "XIAN_SHIELDED_RELAYER_NODE_URL": service.rpc_url,
+                    "XIAN_SHIELDED_RELAYER_AUTH_TOKEN": relayer_secret,
+                    "XIAN_SHIELDED_RELAYER_PUBLIC_INFO": "1",
+                    "XIAN_SHIELDED_RELAYER_PUBLIC_QUOTE": "0",
+                    "XIAN_SHIELDED_RELAYER_PUBLIC_JOB_LOOKUP": "0",
+                    "XIAN_SHIELDED_RELAYER_SUBMISSION_MODE": "commit",
+                    "XIAN_SHIELDED_RELAYER_ALLOWED_NOTE_CONTRACTS": token_name,
+                    "XIAN_SHIELDED_RELAYER_MIN_NOTE_RELAYER_FEE": "1",
+                }
+            )
+            relayer_runtime_status = start_shielded_relayer_runtime(
+                bind_host=DEFAULT_SHIELDED_RELAYER_HOST,
+                port=DEFAULT_SHIELDED_RELAYER_PORT,
+                env=relayer_env,
+            )
+            if not relayer_runtime_status.get("shielded_relayer_health_ok"):
+                raise E2EError("shielded relayer runtime did not become healthy")
+            relayer_base_url = shielded_relayer_endpoints(
+                bind_host=DEFAULT_SHIELDED_RELAYER_HOST,
+                port=DEFAULT_SHIELDED_RELAYER_PORT,
+            )["shielded_relayer"]
+            try:
+                async with ShieldedRelayerAsyncClient(
+                    relayer_base_url,
+                    session=session,
+                ) as public_relayer_client, ShieldedRelayerAsyncClient(
+                    relayer_base_url,
+                    auth_token=relayer_secret,
+                    session=session,
+                ) as authed_relayer_client:
+                    relayer_info = await public_relayer_client.get_info()
+                    relayer_service_info = normalize_value(relayer_info.raw)
+                    if relayer_info.raw.get("auth", {}).get("scheme") != "bearer":
+                        raise E2EError("shielded relayer info auth scheme drifted")
+                    if relayer_info.raw.get("auth", {}).get("public_quote") is not False:
+                        raise E2EError("shielded relayer quote unexpectedly became public")
+
+                    try:
+                        await public_relayer_client.get_quote(
+                            kind="shielded_note_relay_transfer",
+                            contract=token_name,
+                            requested_relayer_fee=1,
+                        )
+                    except TransportError as exc:
+                        relayer_unauth_quote_error = str(exc)
+                    else:
+                        raise E2EError(
+                            "shielded relayer accepted an unauthenticated quote request"
+                        )
+                    if "missing or invalid bearer token" not in (
+                        relayer_unauth_quote_error or ""
+                    ):
+                        raise E2EError(
+                            "shielded relayer unauthenticated quote failure drifted"
+                        )
+
+                    try:
+                        await authed_relayer_client.get_quote(
+                            kind="shielded_note_relay_transfer",
+                            contract="currency",
+                            requested_relayer_fee=1,
+                        )
+                    except TransportError as exc:
+                        relayer_disallowed_quote_error = str(exc)
+                    else:
+                        raise E2EError(
+                            "shielded relayer accepted a quote for a disallowed contract"
+                        )
+                    if "not allowed by this relayer policy" not in (
+                        relayer_disallowed_quote_error or ""
+                    ):
+                        raise E2EError(
+                            "shielded relayer allowlist rejection drifted"
+                        )
+
+                    quote = await authed_relayer_client.get_quote(
+                        kind="shielded_note_relay_transfer",
+                        contract=token_name,
+                        requested_relayer_fee=1,
+                    )
+                    relayer_quote = normalize_value(quote.raw)
+                    if quote.relayer_fee != 1:
+                        raise E2EError("shielded relayer quote fee drifted")
+
+                    try:
+                        await authed_relayer_client.submit_shielded_note_relay_transfer(
+                            contract=token_name,
+                            old_root=service_relay_proof.old_root,
+                            input_nullifiers=service_relay_proof.input_nullifiers,
+                            output_commitments=service_relay_proof.output_commitments,
+                            proof_hex=service_relay_proof.proof_hex,
+                            relayer_fee=0,
+                            output_payloads=service_relay_plan.output_payloads,
+                            client_request_id=f"{self.run_id}-low-fee",
+                        )
+                    except TransportError as exc:
+                        relayer_low_fee_error = str(exc)
+                    else:
+                        raise E2EError(
+                            "shielded relayer accepted a below-minimum relay fee"
+                        )
+                    if "minimum note relay fee" not in (relayer_low_fee_error or ""):
+                        raise E2EError("shielded relayer low-fee rejection drifted")
+
+                    submitted_job = await authed_relayer_client.submit_shielded_note_relay_transfer(
+                        contract=token_name,
+                        old_root=service_relay_proof.old_root,
+                        input_nullifiers=service_relay_proof.input_nullifiers,
+                        output_commitments=service_relay_proof.output_commitments,
+                        proof_hex=service_relay_proof.proof_hex,
+                        relayer_fee=service_relay_proof.relayer_fee,
+                        output_payloads=service_relay_plan.output_payloads,
+                        client_request_id=f"{self.run_id}-service-relay",
+                    )
+                    service_relay_job = normalize_value(submitted_job.raw)
+                    if submitted_job.status == "failed":
+                        raise E2EError(
+                            "shielded relayer service relay failed: "
+                            f"{submitted_job.error or submitted_job.raw}"
+                        )
+
+                    fetched_job = await authed_relayer_client.get_job(submitted_job.job_id)
+                    if fetched_job.job_id != submitted_job.job_id:
+                        raise E2EError("shielded relayer job lookup job_id drifted")
+                    if fetched_job.status == "failed":
+                        raise E2EError(
+                            "shielded relayer service persisted a failed relay job: "
+                            f"{fetched_job.error or fetched_job.raw}"
+                        )
+                    if (
+                        submitted_job.tx_hash is not None
+                        and fetched_job.tx_hash != submitted_job.tx_hash
+                    ):
+                        raise E2EError("shielded relayer job lookup tx hash drifted")
+
+                    try:
+                        await public_relayer_client.get_job(submitted_job.job_id)
+                    except TransportError as exc:
+                        relayer_job_unauth_error = str(exc)
+                    else:
+                        raise E2EError(
+                            "shielded relayer allowed unauthenticated job lookup"
+                        )
+                    if "missing or invalid bearer token" not in (
+                        relayer_job_unauth_error or ""
+                    ):
+                        raise E2EError(
+                            "shielded relayer unauthenticated job lookup drifted"
+                        )
+            finally:
+                relayer_shutdown_status = stop_shielded_relayer_runtime(
+                    bind_host=DEFAULT_SHIELDED_RELAYER_HOST,
+                    port=DEFAULT_SHIELDED_RELAYER_PORT,
+                    env=relayer_env,
+                )
+
+            async with ShieldedRelayerAsyncClient(
+                relayer_base_url,
+                session=session,
+            ) as stopped_relayer_client:
+                try:
+                    await stopped_relayer_client.get_info()
+                except TransportError as exc:
+                    relayer_down_error = str(exc)
+                else:
+                    raise E2EError(
+                        "shielded relayer info still responded after the runtime was stopped"
+                    )
+            if not relayer_down_error:
+                raise E2EError("shielded relayer stop check did not produce a transport error")
+
+            records_after_service_relay = await indexed_note_records(
+                founder_client,
+                minimum_count=10,
+            )
+            alice_sync_after_service_relay = alice_wallet.sync_records(
+                records_after_service_relay
+            )
+            bob_sync_after_service_relay = bob_wallet.sync_records(
+                records_after_service_relay
+            )
+            if len(alice_sync_after_service_relay.discovered_notes) != 1:
+                raise E2EError(
+                    "shielded relayer service did not deliver Alice's relayed note"
+                )
+            if len(bob_sync_after_service_relay.discovered_notes) != 1:
+                raise E2EError(
+                    "shielded relayer service did not deliver Bob's relay change note"
+                )
+            bob_spent_after_service_relay = bob_wallet.apply_spent_nullifiers(
+                service_relay_proof.input_nullifiers
+            )
+            if len(bob_spent_after_service_relay) != 1:
+                raise E2EError(
+                    "shielded relayer service did not mark the relay input as spent"
+                )
+            if submitted_job.tx_hash is not None:
+                service_relay_indexed_tx = await founder_client.get_indexed_tx(
+                    submitted_job.tx_hash
+                )
+                if service_relay_indexed_tx is None:
+                    raise E2EError("shielded relayer service tx was not indexed")
+                service_relay_events = await founder_client.get_events_for_tx(
+                    submitted_job.tx_hash
+                )
+                if not any(
+                    event.event == "ShieldedRelayTransfer"
+                    and event.signer == relayer.public_key
+                    for event in service_relay_events
+                ):
+                    raise E2EError("shielded relayer service event stream drifted")
+                service_relay_receipt = normalize_value(
+                    {
+                        "job": fetched_job.raw,
+                        "indexed_tx": service_relay_indexed_tx.raw,
+                        "events": [event.raw for event in service_relay_events],
+                    }
+                )
+            else:
+                service_relay_receipt = normalize_value({"job": fetched_job.raw})
+
             alice_public = await founder_client.call(
                 token_name,
                 "balance_of",
@@ -4022,22 +4853,22 @@ class E2ERunner:
             raise E2EError(
                 f"shielded Bob public balance drifted: {bob_public!r}"
             )
-        if relayer_public != 2:
+        if relayer_public != 3:
             raise E2EError(
                 f"shielded relayer public balance drifted: {relayer_public!r}"
             )
         expected_supply_state = {
             "total_supply": 100,
-            "public_supply": 72,
-            "shielded_supply": 28,
+            "public_supply": 73,
+            "shielded_supply": 27,
         }
         if normalize_value(supply_state) != expected_supply_state:
             raise E2EError(
                 f"shielded supply state drifted: {supply_state!r}"
             )
-        if alice_wallet.available_balance() != 14 or bob_wallet.available_balance() != 14:
+        if alice_wallet.available_balance() != 18 or bob_wallet.available_balance() != 9:
             raise E2EError("shielded wallet final balances drifted")
-        if final_note_count != 8:
+        if final_note_count != 10:
             raise E2EError(f"shielded note count drifted: {final_note_count!r}")
         if final_tree_state["root"] != final_root:
             raise E2EError("shielded final tree-state root drifted")
@@ -4061,6 +4892,17 @@ class E2ERunner:
             "replay_receipt": replay_receipt,
             "exact_withdraw_receipt": exact_withdraw_receipt,
             "recent_root_deposit_receipt": recent_root_deposit_receipt,
+            "relayer_runtime_status": normalize_value(relayer_runtime_status),
+            "relayer_shutdown_status": normalize_value(relayer_shutdown_status),
+            "relayer_service_info": normalize_value(relayer_service_info),
+            "relayer_quote": normalize_value(relayer_quote),
+            "relayer_unauth_quote_error": relayer_unauth_quote_error,
+            "relayer_disallowed_quote_error": relayer_disallowed_quote_error,
+            "relayer_low_fee_error": relayer_low_fee_error,
+            "relayer_job_unauth_error": relayer_job_unauth_error,
+            "relayer_down_error": relayer_down_error,
+            "service_relay_job": normalize_value(service_relay_job),
+            "service_relay_receipt": normalize_value(service_relay_receipt),
             "alice_public_balance": alice_public,
             "bob_public_balance": bob_public,
             "relayer_public_balance": relayer_public,
@@ -4072,6 +4914,7 @@ class E2ERunner:
                 "after_transfer": len(records_after_transfer),
                 "after_relay": len(records_after_relay),
                 "after_withdraw": len(records_after_withdraw),
+                "after_service_relay": len(records_after_service_relay),
                 "final": final_note_count,
             },
             "root_checks": {
@@ -4099,11 +4942,17 @@ class E2ERunner:
                 "alice_discovered_after_recent_root": len(
                     alice_sync_after_recent_root.discovered_notes
                 ),
+                "alice_discovered_after_service_relay": len(
+                    alice_sync_after_service_relay.discovered_notes
+                ),
                 "bob_discovered_after_transfer": len(
                     bob_sync_after_transfer.discovered_notes
                 ),
                 "bob_discovered_after_relay": len(
                     bob_sync_after_relay.discovered_notes
+                ),
+                "bob_discovered_after_service_relay": len(
+                    bob_sync_after_service_relay.discovered_notes
                 ),
                 "exact_withdraw_output_count": len(
                     exact_withdraw.output_commitments
@@ -4119,6 +4968,9 @@ class E2ERunner:
                 "transfer_nullifier_spent": transfer_nullifier_spent,
                 "relay_nullifier_spent": relay_nullifier_spent,
                 "withdraw_nullifier_spent": withdraw_nullifier_spent,
+                "service_relay_input_count": len(
+                    service_relay_proof.input_nullifiers
+                ),
             },
             "relay_checks": normalize_value(
                 {

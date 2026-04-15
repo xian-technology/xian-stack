@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -16,6 +18,7 @@ from shielded_relayer_service import (
     ShieldedRelayerService,
     ShieldedRelayerServiceConfig,
     _validate_config,
+    load_config_from_env,
 )
 
 
@@ -46,7 +49,7 @@ class FakeXianClient:
     def __init__(self) -> None:
         self.wallet = FakeWallet()
         self.chain_id = None
-        self.calls: list[tuple[str, str, dict]] = []
+        self.calls: list[tuple[str, str, dict, dict[str, object]]] = []
 
     async def ensure_chain_id(self) -> None:
         self.chain_id = "xian-local"
@@ -56,9 +59,9 @@ class FakeXianClient:
         contract: str,
         function_name: str,
         kwargs: dict,
-        **_: object,
+        **extra: object,
     ) -> FakeSubmission:
-        self.calls.append((contract, function_name, kwargs))
+        self.calls.append((contract, function_name, kwargs, extra))
         return FakeSubmission()
 
     async def close(self) -> None:
@@ -129,7 +132,7 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("accepted", job["status"])
         self.assertEqual(1, len(client.calls))
-        contract, function_name, kwargs = client.calls[0]
+        contract, function_name, kwargs, _extra = client.calls[0]
         self.assertEqual("con_shielded_commands", contract)
         self.assertEqual("execute_command", function_name)
         self.assertEqual(
@@ -154,6 +157,43 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(job["job_id"], replay["job_id"])
         self.assertEqual(1, len(client.calls))
+
+    async def test_submit_job_forwards_conservative_chi_budgeting(self) -> None:
+        client = FakeXianClient()
+        service = ShieldedRelayerService(
+            ShieldedRelayerServiceConfig(
+                relayer_private_key="1" * 64,
+                chi_margin=1.0,
+                min_chi_headroom=1500,
+                policy=ShieldedRelayerPolicy(
+                    min_note_relayer_fee=1,
+                    allowed_note_contracts=("con_shielded_note_token",),
+                ),
+            ),
+            xian_client=client,
+            now_fn=lambda: datetime(2026, 4, 10, 12, 0, 0),
+        )
+
+        job = await service.submit_shielded_note_transfer(
+            {
+                "contract": "con_shielded_note_token",
+                "old_root": "0xold",
+                "input_nullifiers": ["0xnullifier"],
+                "output_commitments": ["0xcommitment"],
+                "output_payloads": ["0xpayload"],
+                "proof_hex": "0xproof",
+                "relayer_fee": 1,
+            }
+        )
+
+        self.assertEqual("accepted", job["status"])
+        self.assertEqual(1, len(client.calls))
+        contract, function_name, kwargs, extra = client.calls[0]
+        self.assertEqual("con_shielded_note_token", contract)
+        self.assertEqual("relay_transfer_shielded", function_name)
+        self.assertEqual(["0xnullifier"], kwargs["input_nullifiers"])
+        self.assertEqual(1.0, extra["chi_margin"])
+        self.assertEqual(5000, extra["min_chi_headroom"])
 
     async def test_info_surfaces_auth_and_operations_policy(self) -> None:
         service = ShieldedRelayerService(
@@ -321,6 +361,20 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
                     relayer_private_key="1" * 64,
                 )
             )
+
+    def test_load_config_from_env_uses_conservative_default_chi_budgeting(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "XIAN_SHIELDED_RELAYER_PRIVATE_KEY": "1" * 64,
+                "XIAN_SHIELDED_RELAYER_NODE_URL": "http://127.0.0.1:26657",
+            },
+            clear=False,
+        ):
+            config = load_config_from_env()
+
+        self.assertEqual(1.0, config.chi_margin)
+        self.assertEqual(1500, config.min_chi_headroom)
 
 
 if __name__ == "__main__":
