@@ -20,7 +20,7 @@
   },
   "build": {
     "python_image": "python:3.14-bookworm",
-    "cometbft_version": "0.38.22",
+    "cometbft_version": "0.39.1",
     "s6_overlay_version": "3.2.1.0"
   },
   "images": {

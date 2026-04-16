@@ -2,9 +2,9 @@
 
 ARG PYTHON_IMAGE=python:3.14-bookworm
 
-FROM golang:1.22-bookworm AS cometbft-builder
+FROM golang:1.25-bookworm AS cometbft-builder
 
-ARG COMETBFT_VERSION=0.38.22
+ARG COMETBFT_VERSION=0.39.1
 ARG TARGETOS=linux
 ARG TARGETARCH
 
@@ -50,7 +50,7 @@ RUN python -m pip install --upgrade pip wheel maturin \
 
 FROM ${PYTHON_IMAGE} AS node-base
 
-ARG COMETBFT_VERSION=0.38.22
+ARG COMETBFT_VERSION=0.39.1
 ARG TARGETARCH
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

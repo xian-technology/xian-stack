@@ -1258,6 +1258,44 @@ class E2ERunner:
         run_make("localnet-down", env=env)
         run_make("localnet-up", env=env)
 
+    async def restart_localnet_and_wait_ready(
+        self,
+        session: aiohttp.ClientSession,
+        *,
+        timeout_seconds: float | None = None,
+        require_additional_block: bool = True,
+    ) -> list[dict[str, Any]]:
+        self.restart_localnet()
+        statuses = await wait_for_localnet_ready(
+            session,
+            self.nodes,
+            timeout_seconds=(
+                self.args.rpc_timeout_seconds
+                if timeout_seconds is None
+                else timeout_seconds
+            ),
+        )
+        if require_additional_block:
+            target_height = (
+                max(
+                    int(status["result"]["sync_info"]["latest_block_height"])
+                    for status in statuses
+                )
+                + 1
+            )
+            await asyncio.gather(
+                *(
+                    wait_for_height(
+                        session,
+                        node.rpc_url,
+                        target_height,
+                        timeout_seconds=30.0,
+                    )
+                    for node in self.nodes
+                )
+            )
+        return statuses
+
     @staticmethod
     def node_container_names(node: LocalnetNode) -> list[str]:
         ordered = [node.abci_container, node.cometbft_container]
@@ -3442,12 +3480,7 @@ class E2ERunner:
                 json.dumps(bundle_payload, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-        self.restart_localnet()
-        await wait_for_localnet_ready(
-            session,
-            self.nodes,
-            timeout_seconds=self.args.rpc_timeout_seconds,
-        )
+        await self.restart_localnet_and_wait_ready(session)
 
         (
             node0_wallet,
@@ -3464,6 +3497,8 @@ class E2ERunner:
             ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
                 node3_wallet, 3, session
             ) as node3, self.client(node4_wallet, 4, session) as node4_client:
+                for client in (node0, node1, node2, node3, node4_client):
+                    await client.refresh_nonce()
                 proposal_vote = await self.approve_governance_proposal(
                     node0,
                     [
@@ -3592,12 +3627,7 @@ class E2ERunner:
             for node in self.nodes
         }
         update_logging_config(level="DEBUG", trace_logging=False, json_logging=False)
-        self.restart_localnet()
-        await wait_for_localnet_ready(
-            session,
-            self.nodes,
-            timeout_seconds=self.args.rpc_timeout_seconds,
-        )
+        await self.restart_localnet_and_wait_ready(session)
 
         trigger_wallet = derive_wallet(self.seed, "logging-trigger")
         rejected_wallet = derive_wallet(self.seed, "logging-checktx-reject")
@@ -3623,12 +3653,7 @@ class E2ERunner:
             debug_receipt = ensure_positive_submission(debug_submission, label="debug-log-trigger")
 
         update_logging_config(level="TRACE", trace_logging=True, json_logging=False)
-        self.restart_localnet()
-        await wait_for_localnet_ready(
-            session,
-            self.nodes,
-            timeout_seconds=self.args.rpc_timeout_seconds,
-        )
+        await self.restart_localnet_and_wait_ready(session)
 
         async with self.client(trigger_wallet, 0, session) as client:
             trace_submission = await client.send(
@@ -3677,12 +3702,7 @@ class E2ERunner:
             raise E2EError("WARNING logs missing stage=check_tx rejection probe")
 
         update_logging_config(level=self.args.log_level, trace_logging=False, json_logging=False)
-        self.restart_localnet()
-        await wait_for_localnet_ready(
-            session,
-            self.nodes,
-            timeout_seconds=self.args.rpc_timeout_seconds,
-        )
+        await self.restart_localnet_and_wait_ready(session)
 
         return {
             "initial_logs": initial_logs,
