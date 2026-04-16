@@ -15,7 +15,7 @@
     },
     "xian-py": {
       "repository": "xian-technology/xian-py",
-      "ref": "19334e2ebef2a9925a83989a3c1cd6245e854b3d"
+      "ref": "0fd51f43bdebcac5ad87c3650ff280289625c251"
     }
   },
   "build": {
