@@ -232,8 +232,8 @@ def run(
         text=True,
     )
     if result.returncode != 0:
-        stderr = result.stderr.strip()
-        stdout = result.stdout.strip()
+        stderr = result.stderr.strip() if result.stderr else ""
+        stdout = result.stdout.strip() if result.stdout else ""
         detail = stderr or stdout or "command failed"
         raise ReleaseError(f"{cwd.name}: {' '.join(args)} -> {detail}")
     return result.stdout.strip() if capture else ""
@@ -1009,7 +1009,15 @@ def parse_args() -> argparse.Namespace:
         help="Inspect the current local refs without fetching origin first.",
     )
 
-    subparsers.add_parser("apply", help="Create version bumps, tags, and pushes for all planned releases.")
+    apply_parser = subparsers.add_parser(
+        "apply",
+        help="Create version bumps, tags, and pushes for all planned releases.",
+    )
+    apply_parser.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help="Apply using the current local refs without fetching origin first.",
+    )
     return parser.parse_args()
 
 
