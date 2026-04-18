@@ -156,7 +156,7 @@ def build_platform_archive(
         "--build-arg",
         f"S6_OVERLAY_AARCH64_SHA256={build['s6_overlay_aarch64_sha256']}",
         "--output",
-        f"type=oci,dest={archive_path}",
+        f"type=oci,dest={archive_path},rewrite-timestamp=true",
     ]
     for label in labels:
         command.extend(["--label", label])

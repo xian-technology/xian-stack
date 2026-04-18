@@ -157,9 +157,9 @@ jobs:
           file: ./xian-stack/docker/xian-node.Dockerfile
           target: integrated
           platforms: linux/amd64,linux/arm64
-          push: true
           provenance: mode=max
           sbom: true
+          outputs: type=image,push=true,rewrite-timestamp=true
           tags: ${{ steps.meta-integrated.outputs.tags }}
           labels: ${{ steps.meta-integrated.outputs.labels }}
           build-contexts: |
@@ -191,9 +191,9 @@ jobs:
           file: ./xian-stack/docker/xian-node.Dockerfile
           target: split
           platforms: linux/amd64,linux/arm64
-          push: true
           provenance: mode=max
           sbom: true
+          outputs: type=image,push=true,rewrite-timestamp=true
           tags: ${{ steps.meta-split.outputs.tags }}
           labels: ${{ steps.meta-split.outputs.labels }}
           build-contexts: |
