@@ -19,9 +19,15 @@
     }
   },
   "build": {
-    "python_image": "python:3.14-bookworm",
+    "python_image": "python:3.14-bookworm@sha256:4564a2be4617886b3a7ed704c91e31b95efd1f42d5941f5bb5e53efb151edaa3",
+    "go_image": "golang:1.25-bookworm@sha256:29e59af995c51a5bf63d072eca973b918e0e7af4db0e4667aa73f1b8da1a6d8c",
     "cometbft_version": "0.39.1",
-    "s6_overlay_version": "3.2.1.0"
+    "cometbft_source_url": "https://github.com/cometbft/cometbft/archive/refs/tags/v0.39.1.tar.gz",
+    "cometbft_source_sha256": "3349c89ed0c7d076b9fd5bfd88432481c68c69d43593371633ca0fe51327650b",
+    "s6_overlay_version": "3.2.1.0",
+    "s6_overlay_noarch_sha256": "42e038a9a00fc0fef70bf0bc42f625a9c14f8ecdfe77d4ad93281edf717e10c5",
+    "s6_overlay_x86_64_sha256": "8bcbc2cada58426f976b159dcc4e06cbb1454d5f39252b3bb0c778ccf71c9435",
+    "s6_overlay_aarch64_sha256": "c8fd6b1f0380d399422fc986a1e6799f6a287e2cfa24813ad0b6a4fb4fa755cc"
   },
   "images": {
     "integrated": "xian-node",

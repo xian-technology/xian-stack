@@ -15,8 +15,14 @@ REQUIRED_COMPONENTS = (
 )
 REQUIRED_BUILD_FIELDS = (
     "python_image",
+    "go_image",
     "cometbft_version",
+    "cometbft_source_url",
+    "cometbft_source_sha256",
     "s6_overlay_version",
+    "s6_overlay_noarch_sha256",
+    "s6_overlay_x86_64_sha256",
+    "s6_overlay_aarch64_sha256",
 )
 REQUIRED_IMAGE_FIELDS = ("integrated", "split")
 

@@ -161,6 +161,11 @@ python3 ./scripts/release_orchestrator.py plan
 python3 ./scripts/release_orchestrator.py apply
 ```
 
+Release images are now built from digest-pinned base images and checksum-pinned
+external inputs, signed by digest, and accompanied by signed release assets.
+Use [docs/RELEASES.md](./docs/RELEASES.md) for the verification commands and
+the reproducibility checker.
+
 The `localnet-e2e` harness now also validates direct `currency.approve` /
 `transfer_from` behavior and the `permit_authorizer -> approve_from_authorizer`
 path against the same 5-validator `testnet`-shaped network.

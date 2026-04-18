@@ -140,9 +140,9 @@ Their workflows:
 The manifest pins:
 
 - exact Git refs for `xian-abci`, `xian-configs`, `xian-contracting`, and `xian-py`
-- the Python base image
-- the CometBFT version
-- the s6-overlay version
+- digest-pinned Python and Go base images
+- the CometBFT version, source archive URL, and source SHA256
+- the s6-overlay version plus architecture-specific archive SHA256 values
 - the output image names
 
 The image workflow:
@@ -152,9 +152,71 @@ The image workflow:
 3. builds and publishes:
    - `ghcr.io/<owner>/xian-node`
    - `ghcr.io/<owner>/xian-node-split`
-4. attaches the manifest and resolved image digests to the GitHub Release
+4. signs the published images by digest through Sigstore keyless signing
+5. attaches signed release assets to the GitHub Release:
+   - `release-manifest.json`
+   - `image-release.txt`
+   - `image-release.json`
+   - per-asset `.sig` and `.crt` files
+6. rebuilds the release images per platform and compares the observed
+   `linux/amd64` and `linux/arm64` digests with the digests recorded in
+   `image-release.json`
 
 Update the manifest before tagging `xian-stack` so the published image is reproducible from explicit component refs.
+
+### What `image-release.json` Adds
+
+`image-release.json` is the machine-facing release summary. It records:
+
+- the published integrated and split image repositories
+- the top-level multi-arch digest for each image
+- the per-platform image manifest digests used by the reproducibility verifier
+
+That file is intentionally easier for automation to consume than the plain-text
+`image-release.txt` summary.
+
+### Verifying A Published Image
+
+Use Cosign against the immutable digest, not a floating tag:
+
+```bash
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp 'https://github.com/xian-technology/xian-stack/.github/workflows/release.yml@refs/tags/.*' \
+  ghcr.io/xian-technology/xian-node@sha256:<digest>
+
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp 'https://github.com/xian-technology/xian-stack/.github/workflows/release.yml@refs/tags/.*' \
+  ghcr.io/xian-technology/xian-node-split@sha256:<digest>
+```
+
+Use the signed release assets to verify the recorded manifest and digest set:
+
+```bash
+cosign verify-blob \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp 'https://github.com/xian-technology/xian-stack/.github/workflows/release.yml@refs/tags/.*' \
+  --certificate release-manifest.json.crt \
+  --signature release-manifest.json.sig \
+  release-manifest.json
+
+cosign verify-blob \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp 'https://github.com/xian-technology/xian-stack/.github/workflows/release.yml@refs/tags/.*' \
+  --certificate image-release.json.crt \
+  --signature image-release.json.sig \
+  image-release.json
+```
+
+The release verifier is also available as a standalone helper:
+
+```bash
+python3 ./scripts/verify_release_reproducibility.py \
+  --manifest ./release-manifest.json \
+  --image-release ./image-release.json \
+  --workspace-root /path/to/xian
+```
 
 Canonical network manifests in `xian-configs/networks/*/manifest.json` can then
 pin those published images by digest, and `xian-cli network join` will carry
