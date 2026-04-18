@@ -878,5 +878,11 @@ localnet-shell:
 	$(LOCALNET_COMPOSE) exec "$$service" /bin/bash
 
 localnet-clean: localnet-down
+	@if [ "$(FORCE)" != "1" ]; then \
+		echo "localnet-clean will delete .localnet/ and docker-compose-localnet.yml."; \
+		echo "All localnet state (keys, data, logs) will be lost."; \
+		echo "Re-run with FORCE=1 to confirm: make localnet-clean FORCE=1"; \
+		exit 1; \
+	fi
 	rm -rf .localnet
 	rm -f docker-compose-localnet.yml

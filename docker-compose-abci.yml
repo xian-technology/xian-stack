@@ -19,6 +19,20 @@ networks:
 volumes:
   xian-abci-runtime-tmp:
 
+# Shared RPC liveness probe for nodes that expose CometBFT's RPC on 26657.
+# Used as a healthcheck so dependents can wait on service_healthy. Tries
+# curl first (Debian-based images), falls back to wget (Alpine/busybox).
+x-rpc-healthcheck: &x-rpc-healthcheck
+  test:
+    [
+      "CMD-SHELL",
+      "curl -sf http://127.0.0.1:26657/status >/dev/null 2>&1 || wget -qO- http://127.0.0.1:26657/status >/dev/null 2>&1 || exit 1",
+    ]
+  interval: 10s
+  timeout: 5s
+  retries: 30
+  start_period: 60s
+
 services:
   abci:
     profiles: ["integrated"]
@@ -55,6 +69,7 @@ services:
       - "${XIAN_COMETBFT_P2P_HOST}:${XIAN_COMETBFT_P2P_PORT}:26656"
       - "${XIAN_COMETBFT_METRICS_HOST}:${XIAN_COMETBFT_METRICS_PORT}:26660"
       - "${XIAN_APP_METRICS_HOST}:${XIAN_APP_METRICS_PORT}:9108"
+    healthcheck: *x-rpc-healthcheck
 
   dashboard:
     profiles: ["dashboard-integrated"]
@@ -76,7 +91,7 @@ services:
         hard: ${XIAN_DOCKER_DASHBOARD_NOFILE_HARD}
     depends_on:
       abci:
-        condition: service_started
+        condition: service_healthy
     command:
       [
         "xian-dashboard",
@@ -157,6 +172,7 @@ services:
       - "${XIAN_COMETBFT_RPC_HOST}:${XIAN_COMETBFT_RPC_PORT}:26657"
       - "${XIAN_COMETBFT_P2P_HOST}:${XIAN_COMETBFT_P2P_PORT}:26656"
       - "${XIAN_COMETBFT_METRICS_HOST}:${XIAN_COMETBFT_METRICS_PORT}:26660"
+    healthcheck: *x-rpc-healthcheck
 
   dashboard-fidelity:
     profiles: ["dashboard-fidelity"]
@@ -178,7 +194,7 @@ services:
         hard: ${XIAN_DOCKER_DASHBOARD_NOFILE_HARD}
     depends_on:
       cometbft:
-        condition: service_started
+        condition: service_healthy
     command:
       [
         "xian-dashboard",
