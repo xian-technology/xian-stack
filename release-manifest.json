@@ -21,6 +21,11 @@
   "build": {
     "python_image": "python:3.14-bookworm@sha256:4564a2be4617886b3a7ed704c91e31b95efd1f42d5941f5bb5e53efb151edaa3",
     "go_image": "golang:1.25-bookworm@sha256:29e59af995c51a5bf63d072eca973b918e0e7af4db0e4667aa73f1b8da1a6d8c",
+    "rust_image": "rust:1.95-bookworm@sha256:225aa827d55fae9816a0492284592827e794a5247c6c6a961c3b471b344295ec",
+    "source_date_epoch": "1704067200",
+    "pip_version": "26.0.1",
+    "wheel_version": "0.46.3",
+    "maturin_version": "1.13.1",
     "cometbft_version": "0.39.1",
     "cometbft_source_url": "https://github.com/cometbft/cometbft/archive/refs/tags/v0.39.1.tar.gz",
     "cometbft_source_sha256": "3349c89ed0c7d076b9fd5bfd88432481c68c69d43593371633ca0fe51327650b",

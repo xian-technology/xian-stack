@@ -2,6 +2,11 @@
 
 ARG PYTHON_IMAGE=python:3.14-bookworm@sha256:4564a2be4617886b3a7ed704c91e31b95efd1f42d5941f5bb5e53efb151edaa3
 ARG GO_IMAGE=golang:1.25-bookworm@sha256:29e59af995c51a5bf63d072eca973b918e0e7af4db0e4667aa73f1b8da1a6d8c
+ARG RUST_IMAGE=rust:1.95-bookworm@sha256:225aa827d55fae9816a0492284592827e794a5247c6c6a961c3b471b344295ec
+ARG SOURCE_DATE_EPOCH=1704067200
+ARG PIP_VERSION=26.0.1
+ARG WHEEL_VERSION=0.46.3
+ARG MATURIN_VERSION=1.13.1
 
 FROM ${GO_IMAGE} AS cometbft-builder
 
@@ -32,29 +37,45 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -trimpath -buildvcs=false -ldflags="-s -w" \
     -o /out/cometbft ./cmd/cometbft
 
+FROM ${RUST_IMAGE} AS rust-toolchain
+
 FROM ${PYTHON_IMAGE} AS python-wheel-builder
+
+ARG SOURCE_DATE_EPOCH
+ARG PIP_VERSION
+ARG WHEEL_VERSION
+ARG MATURIN_VERSION
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONHASHSEED=0 \
+    SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    curl \
     && rm -rf /var/lib/apt/lists/*
 
-ENV PATH=/root/.cargo/bin:${PATH}
-
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
+ENV CARGO_HOME=/usr/local/cargo \
+    RUSTUP_HOME=/usr/local/rustup \
+    PATH=/usr/local/cargo/bin:${PATH}
 
 WORKDIR /tmp/build
 
+COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
+COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
 COPY --from=xian-py . /tmp/build/xian-py
 COPY --from=xian-contracting . /tmp/build/xian-contracting
 COPY --from=xian-abci . /tmp/build/xian-abci
+COPY docker/python-runtime-requirements.txt /tmp/build/python-runtime-requirements.txt
 
-RUN python -m pip install --upgrade pip wheel maturin \
+RUN python -m pip install --upgrade \
+    pip=="${PIP_VERSION}" \
+    wheel=="${WHEEL_VERSION}" \
+    maturin=="${MATURIN_VERSION}" \
+    && python -m pip download --require-hashes --dest /tmp/wheels \
+    -r /tmp/build/python-runtime-requirements.txt \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-accounts \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-runtime-types \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-native-tracer \
@@ -68,11 +89,14 @@ FROM ${PYTHON_IMAGE} AS node-base
 
 ARG COMETBFT_VERSION=0.39.1
 ARG TARGETARCH
+ARG SOURCE_DATE_EPOCH
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
+    PYTHONHASHSEED=0 \
+    SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} \
     XIAN_CONFIGS_DIR=/opt/xian-configs
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -88,11 +112,21 @@ WORKDIR /opt/xian
 
 COPY --from=xian-configs . /opt/xian-configs
 COPY --from=python-wheel-builder /tmp/wheels /tmp/wheels
+COPY --from=python-wheel-builder /tmp/build/python-runtime-requirements.txt /tmp/python-runtime-requirements.txt
 COPY --from=cometbft-builder /out/cometbft /usr/local/bin/cometbft
 
-RUN python -m pip install \
-    /tmp/wheels/*.whl \
-    && rm -rf /tmp/wheels
+RUN python -m pip install --no-index --find-links /tmp/wheels --require-hashes \
+    -r /tmp/python-runtime-requirements.txt \
+    && python -m pip install --no-index --find-links /tmp/wheels --no-deps \
+    /tmp/wheels/xian_tech_accounts-*.whl \
+    /tmp/wheels/xian_tech_runtime_types-*.whl \
+    /tmp/wheels/xian_tech_native_tracer-*.whl \
+    /tmp/wheels/xian_tech_vm_core-*.whl \
+    /tmp/wheels/xian_tech_zk-*.whl \
+    /tmp/wheels/xian_tech_py-*.whl \
+    /tmp/wheels/xian_tech_contracting-*.whl \
+    /tmp/wheels/xian_tech_abci-*.whl \
+    && rm -rf /tmp/wheels /tmp/python-runtime-requirements.txt
 
 FROM node-base AS split
 

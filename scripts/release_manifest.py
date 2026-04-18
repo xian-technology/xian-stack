@@ -16,6 +16,11 @@ REQUIRED_COMPONENTS = (
 REQUIRED_BUILD_FIELDS = (
     "python_image",
     "go_image",
+    "rust_image",
+    "source_date_epoch",
+    "pip_version",
+    "wheel_version",
+    "maturin_version",
     "cometbft_version",
     "cometbft_source_url",
     "cometbft_source_sha256",

@@ -141,9 +141,25 @@ The manifest pins:
 
 - exact Git refs for `xian-abci`, `xian-configs`, `xian-contracting`, and `xian-py`
 - digest-pinned Python and Go base images
+- a digest-pinned Rust toolchain image for native Python extension builds
+- a fixed `SOURCE_DATE_EPOCH` for deterministic wheel archives and image layers
+- pinned Python build-tool versions for `pip`, `wheel`, and `maturin`
 - the CometBFT version, source archive URL, and source SHA256
 - the s6-overlay version plus architecture-specific archive SHA256 values
 - the output image names
+
+The Python runtime dependency set for the node image is exported from
+`xian-abci/uv.lock` into `docker/python-runtime-requirements.txt`. Regenerate
+that file with:
+
+```bash
+python3 ./scripts/export_python_runtime_requirements.py
+```
+
+The Docker build uses that file with `--require-hashes` and installs external
+runtime wheels offline from the staged wheelhouse. Local Xian wheels are then
+installed with `--no-deps` so the final image does not depend on live resolver
+decisions from PyPI.
 
 The image workflow:
 
