@@ -25,6 +25,11 @@ jobs:
       xian_py_ref: ${{ steps.resolve.outputs.xian_py_ref }}
       python_image: ${{ steps.resolve.outputs.python_image }}
       go_image: ${{ steps.resolve.outputs.go_image }}
+      rust_image: ${{ steps.resolve.outputs.rust_image }}
+      source_date_epoch: ${{ steps.resolve.outputs.source_date_epoch }}
+      pip_version: ${{ steps.resolve.outputs.pip_version }}
+      wheel_version: ${{ steps.resolve.outputs.wheel_version }}
+      maturin_version: ${{ steps.resolve.outputs.maturin_version }}
       cometbft_version: ${{ steps.resolve.outputs.cometbft_version }}
       cometbft_source_url: ${{ steps.resolve.outputs.cometbft_source_url }}
       cometbft_source_sha256: ${{ steps.resolve.outputs.cometbft_source_sha256 }}
@@ -165,6 +170,11 @@ jobs:
           build-args: |
             PYTHON_IMAGE=${{ needs.release-manifest.outputs.python_image }}
             GO_IMAGE=${{ needs.release-manifest.outputs.go_image }}
+            RUST_IMAGE=${{ needs.release-manifest.outputs.rust_image }}
+            SOURCE_DATE_EPOCH=${{ needs.release-manifest.outputs.source_date_epoch }}
+            PIP_VERSION=${{ needs.release-manifest.outputs.pip_version }}
+            WHEEL_VERSION=${{ needs.release-manifest.outputs.wheel_version }}
+            MATURIN_VERSION=${{ needs.release-manifest.outputs.maturin_version }}
             COMETBFT_VERSION=${{ needs.release-manifest.outputs.cometbft_version }}
             COMETBFT_SOURCE_URL=${{ needs.release-manifest.outputs.cometbft_source_url }}
             COMETBFT_SOURCE_SHA256=${{ needs.release-manifest.outputs.cometbft_source_sha256 }}
@@ -194,6 +204,11 @@ jobs:
           build-args: |
             PYTHON_IMAGE=${{ needs.release-manifest.outputs.python_image }}
             GO_IMAGE=${{ needs.release-manifest.outputs.go_image }}
+            RUST_IMAGE=${{ needs.release-manifest.outputs.rust_image }}
+            SOURCE_DATE_EPOCH=${{ needs.release-manifest.outputs.source_date_epoch }}
+            PIP_VERSION=${{ needs.release-manifest.outputs.pip_version }}
+            WHEEL_VERSION=${{ needs.release-manifest.outputs.wheel_version }}
+            MATURIN_VERSION=${{ needs.release-manifest.outputs.maturin_version }}
             COMETBFT_VERSION=${{ needs.release-manifest.outputs.cometbft_version }}
             COMETBFT_SOURCE_URL=${{ needs.release-manifest.outputs.cometbft_source_url }}
             COMETBFT_SOURCE_SHA256=${{ needs.release-manifest.outputs.cometbft_source_sha256 }}
