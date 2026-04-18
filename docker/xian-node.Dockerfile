@@ -106,7 +106,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     wget \
     xz-utils \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+    && rm -f /var/log/apt/* /var/log/dpkg.log /var/log/alternatives.log \
+    && rm -f /var/cache/ldconfig/aux-cache
 
 WORKDIR /opt/xian
 
@@ -146,15 +148,16 @@ RUN case "${TARGETARCH}" in \
         arm64) S6_ARCH="aarch64"; S6_ARCH_SHA256="${S6_OVERLAY_AARCH64_SHA256}" ;; \
         *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
-    && wget -O /tmp/s6-overlay-noarch.tar.xz \
+    && wget --no-hsts -O /tmp/s6-overlay-noarch.tar.xz \
         "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz" \
-    && wget -O /tmp/s6-overlay-${S6_ARCH}.tar.xz \
+    && wget --no-hsts -O /tmp/s6-overlay-${S6_ARCH}.tar.xz \
         "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz" \
     && echo "${S6_OVERLAY_NOARCH_SHA256}  /tmp/s6-overlay-noarch.tar.xz" | sha256sum -c - \
     && echo "${S6_ARCH_SHA256}  /tmp/s6-overlay-${S6_ARCH}.tar.xz" | sha256sum -c - \
     && tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz \
     && tar -C / -Jxpf /tmp/s6-overlay-${S6_ARCH}.tar.xz \
     && rm -f \
+        /root/.wget-hsts \
         /tmp/s6-overlay-noarch.tar.xz \
         /tmp/s6-overlay-${S6_ARCH}.tar.xz
 
