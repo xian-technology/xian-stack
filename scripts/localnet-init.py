@@ -48,6 +48,17 @@ NODE_IMAGE_SPLIT = "xian-node-split:local"
 LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
 
 
+class _YamlAnchoredDict(dict):
+    def __init__(self, anchor: str, payload: dict):
+        super().__init__(payload)
+        self.anchor = anchor
+
+
+class _YamlAlias:
+    def __init__(self, name: str):
+        self.name = name
+
+
 def env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -618,6 +629,19 @@ def write_compose_file(
     services = {}
     integrated_build = node_build_config("integrated")
     split_build = node_build_config("split")
+    integrated_ulimits = {
+        "nofile": {
+            "soft": "${XIAN_LOCALNET_NODE_NOFILE_SOFT}",
+            "hard": "${XIAN_LOCALNET_NODE_NOFILE_HARD}",
+        }
+    }
+    integrated_environment = {
+        "XIAN_CONFIGS_DIR": "/opt/xian-configs",
+        "S6_VERBOSITY": "${XIAN_S6_VERBOSITY}",
+        "XIAN_PERF_ENABLED": "1" if profiling_enabled else "0",
+        "XIAN_PERF_OUTPUT_PATH": "/root/.cometbft/xian-perf.json",
+        "XIAN_PERF_RECENT_BLOCKS": str(profiling_recent_blocks),
+    }
     if bds_enabled:
         services[LOCALNET_POSTGRES_SERVICE] = {
             "image": "postgres:17",
@@ -665,32 +689,15 @@ def write_compose_file(
         host_xian_metrics = BASE_XIAN_METRICS_PORT + idx * PORT_STRIDE
         if topology == "integrated":
             services[moniker] = {
-                "image": NODE_IMAGE_INTEGRATED,
-                "restart": "always",
-                "stop_grace_period": "45s",
+                "<<": _YamlAlias("x-node-service"),
                 "hostname": moniker,
                 "container_name": f"xian-{moniker}",
-                "build": integrated_build,
-                "mem_limit": "${XIAN_LOCALNET_NODE_MEMORY_LIMIT}",
-                "mem_reservation": "${XIAN_LOCALNET_NODE_MEMORY_RESERVATION}",
-                "memswap_limit": "${XIAN_LOCALNET_NODE_MEMORY_SWAP}",
-                "pids_limit": "${XIAN_LOCALNET_NODE_PIDS_LIMIT}",
-                "ulimits": {
-                    "nofile": {
-                        "soft": "${XIAN_LOCALNET_NODE_NOFILE_SOFT}",
-                        "hard": "${XIAN_LOCALNET_NODE_NOFILE_HARD}",
-                    }
-                },
                 "volumes": [
                     f"./.localnet/{moniker}/.cometbft:/root/.cometbft",
                 ],
                 "environment": {
-                    "XIAN_CONFIGS_DIR": "/opt/xian-configs",
-                    "S6_VERBOSITY": "${XIAN_S6_VERBOSITY}",
+                    "<<": _YamlAlias("x-node-environment"),
                     "NODE_INDEX": str(idx),
-                    "XIAN_PERF_ENABLED": "1" if profiling_enabled else "0",
-                    "XIAN_PERF_OUTPUT_PATH": "/root/.cometbft/xian-perf.json",
-                    "XIAN_PERF_RECENT_BLOCKS": str(profiling_recent_blocks),
                 },
                 "ports": [
                     f"{host_p2p}:26656",
@@ -698,7 +705,6 @@ def write_compose_file(
                     f"{host_metrics}:26660",
                     f"{host_xian_metrics}:9108",
                 ],
-                "networks": ["localnet"],
             }
             if bds_enabled and idx == bds_node_index:
                 services[moniker]["depends_on"] = {
@@ -786,8 +792,37 @@ def write_compose_file(
                 "driver": "bridge",
             },
         },
-        "services": services,
     }
+    if topology == "integrated":
+        compose["x-node-build"] = _YamlAnchoredDict(
+            "x-node-build",
+            integrated_build,
+        )
+        compose["x-node-ulimits"] = _YamlAnchoredDict(
+            "x-node-ulimits",
+            integrated_ulimits,
+        )
+        compose["x-node-environment"] = _YamlAnchoredDict(
+            "x-node-environment",
+            integrated_environment,
+        )
+        compose["x-node-service"] = _YamlAnchoredDict(
+            "x-node-service",
+            {
+                "image": NODE_IMAGE_INTEGRATED,
+                "restart": "always",
+                "stop_grace_period": "45s",
+                "build": _YamlAlias("x-node-build"),
+                "mem_limit": "${XIAN_LOCALNET_NODE_MEMORY_LIMIT}",
+                "mem_reservation": "${XIAN_LOCALNET_NODE_MEMORY_RESERVATION}",
+                "memswap_limit": "${XIAN_LOCALNET_NODE_MEMORY_SWAP}",
+                "pids_limit": "${XIAN_LOCALNET_NODE_PIDS_LIMIT}",
+                "ulimits": _YamlAlias("x-node-ulimits"),
+                "environment": _YamlAlias("x-node-environment"),
+                "networks": ["localnet"],
+            },
+        )
+    compose["services"] = services
 
     compose_path = STACK_DIR / "docker-compose-localnet.yml"
     # Write as YAML manually (avoid PyYAML dependency)
@@ -807,8 +842,15 @@ def _compose_to_yaml(compose: dict) -> str:
 def _yaml_write_mapping(lines: list[str], payload: dict, *, indent: int) -> None:
     prefix = " " * indent
     for key, value in payload.items():
-        if isinstance(value, dict):
-            lines.append(f"{prefix}{key}:")
+        if isinstance(value, _YamlAlias):
+            lines.append(f"{prefix}{key}: *{value.name}")
+        elif isinstance(value, dict):
+            anchor = (
+                f" &{value.anchor}"
+                if isinstance(value, _YamlAnchoredDict)
+                else ""
+            )
+            lines.append(f"{prefix}{key}:{anchor}")
             _yaml_write_mapping(lines, value, indent=indent + 2)
         elif isinstance(value, list):
             lines.append(f"{prefix}{key}:")
