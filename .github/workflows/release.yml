@@ -297,8 +297,7 @@ jobs:
         run: |
           for asset in /tmp/release-assets/*; do
             cosign sign-blob --yes \
-              --output-signature "${asset}.sig" \
-              --output-certificate "${asset}.crt" \
+              --bundle "${asset}.sigstore.json" \
               "${asset}"
           done
 

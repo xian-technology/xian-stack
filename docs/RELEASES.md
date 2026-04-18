@@ -157,7 +157,7 @@ The image workflow:
    - `release-manifest.json`
    - `image-release.txt`
    - `image-release.json`
-   - per-asset `.sig` and `.crt` files
+   - per-asset `.sigstore.json` bundle files
 6. rebuilds the release images per platform and compares the observed
    `linux/amd64` and `linux/arm64` digests with the digests recorded in
    `image-release.json`
@@ -197,15 +197,13 @@ Use the signed release assets to verify the recorded manifest and digest set:
 cosign verify-blob \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp 'https://github.com/xian-technology/xian-stack/.github/workflows/release.yml@refs/tags/.*' \
-  --certificate release-manifest.json.crt \
-  --signature release-manifest.json.sig \
+  --bundle release-manifest.json.sigstore.json \
   release-manifest.json
 
 cosign verify-blob \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp 'https://github.com/xian-technology/xian-stack/.github/workflows/release.yml@refs/tags/.*' \
-  --certificate image-release.json.crt \
-  --signature image-release.json.sig \
+  --bundle image-release.json.sigstore.json \
   image-release.json
 ```
 
