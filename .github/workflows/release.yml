@@ -218,18 +218,40 @@ jobs:
             S6_OVERLAY_AARCH64_SHA256=${{ needs.release-manifest.outputs.s6_overlay_aarch64_sha256 }}
 
       - name: Sign integrated image
+        shell: bash
         env:
           COSIGN_EXPERIMENTAL: "1"
+          IMAGE_REF: ghcr.io/${{ steps.registry.outputs.owner }}/${{ needs.release-manifest.outputs.integrated_image_name }}@${{ steps.build-integrated.outputs.digest }}
         run: |
-          cosign sign --yes \
-            "ghcr.io/${{ steps.registry.outputs.owner }}/${{ needs.release-manifest.outputs.integrated_image_name }}@${{ steps.build-integrated.outputs.digest }}"
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if cosign sign --yes "$IMAGE_REF"; then
+              exit 0
+            fi
+            if [[ "$attempt" -eq 5 ]]; then
+              echo "failed to sign $IMAGE_REF after $attempt attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt * 15))
+          done
 
       - name: Sign split image
+        shell: bash
         env:
           COSIGN_EXPERIMENTAL: "1"
+          IMAGE_REF: ghcr.io/${{ steps.registry.outputs.owner }}/${{ needs.release-manifest.outputs.split_image_name }}@${{ steps.build-split.outputs.digest }}
         run: |
-          cosign sign --yes \
-            "ghcr.io/${{ steps.registry.outputs.owner }}/${{ needs.release-manifest.outputs.split_image_name }}@${{ steps.build-split.outputs.digest }}"
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if cosign sign --yes "$IMAGE_REF"; then
+              exit 0
+            fi
+            if [[ "$attempt" -eq 5 ]]; then
+              echo "failed to sign $IMAGE_REF after $attempt attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt * 15))
+          done
 
       - name: Stage release assets
         run: |
