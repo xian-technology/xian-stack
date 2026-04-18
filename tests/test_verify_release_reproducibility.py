@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from verify_release_reproducibility import (
     expected_platform_digests,
+    expected_image_labels,
     oci_manifest_digest,
 )
 
@@ -51,6 +52,31 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
                 info.size = len(encoded)
                 archive.addfile(info, io.BytesIO(encoded))
             self.assertEqual(oci_manifest_digest(archive_path), "sha256:" + "a" * 64)
+
+    def test_expected_image_labels_requires_labels_for_each_target(self) -> None:
+        payload = {
+            "images": {
+                "integrated": {
+                    "labels": [
+                        "org.opencontainers.image.title=Xian Node",
+                        "io.xian.release.manifest-sha=" + "a" * 64,
+                    ]
+                },
+                "split": {
+                    "labels": [
+                        "org.opencontainers.image.title=Xian Node Split Runtime",
+                        "io.xian.release.manifest-sha=" + "b" * 64,
+                    ]
+                },
+            }
+        }
+        resolved = expected_image_labels(payload)
+        self.assertEqual(
+            resolved["integrated"][0], "org.opencontainers.image.title=Xian Node"
+        )
+        self.assertEqual(
+            resolved["split"][1], "io.xian.release.manifest-sha=" + "b" * 64
+        )
 
 
 if __name__ == "__main__":

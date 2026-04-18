@@ -48,6 +48,27 @@ def expected_platform_digests(image_release: dict) -> dict[tuple[str, str], str]
     return expected
 
 
+def expected_image_labels(image_release: dict) -> dict[str, list[str]]:
+    images = image_release.get("images")
+    if not isinstance(images, dict):
+        raise ValueError("image release payload must contain an images object")
+
+    expected: dict[str, list[str]] = {}
+    for target in SUPPORTED_TARGETS:
+        image = images.get(target)
+        if not isinstance(image, dict):
+            raise ValueError(f"image release payload is missing images.{target}")
+        labels = image.get("labels")
+        if not isinstance(labels, list) or not labels:
+            raise ValueError(f"image release payload is missing images.{target}.labels")
+        if not all(isinstance(label, str) and "=" in label for label in labels):
+            raise ValueError(
+                f"image release payload has invalid labels for images.{target}"
+            )
+        expected[target] = labels
+    return expected
+
+
 def oci_manifest_digest(archive_path: Path) -> str:
     with tarfile.open(archive_path, mode="r") as archive:
         index_name = next(
@@ -79,11 +100,13 @@ def build_platform_archive(
     *,
     workspace_root: Path,
     manifest: dict,
+    image_release: dict,
     target: str,
     platform: str,
     archive_path: Path,
 ) -> None:
     build = manifest["build"]
+    labels = expected_image_labels(image_release)[target]
     stack_root = workspace_root / "xian-stack"
     command = [
         "docker",
@@ -135,6 +158,8 @@ def build_platform_archive(
         "--output",
         f"type=oci,dest={archive_path}",
     ]
+    for label in labels:
+        command.extend(["--label", label])
     subprocess.run(command, check=True)
 
 
@@ -154,6 +179,7 @@ def verify_reproducibility(
                 build_platform_archive(
                     workspace_root=workspace_root,
                     manifest=manifest,
+                    image_release=image_release,
                     target=target,
                     platform=platform,
                     archive_path=archive_path,

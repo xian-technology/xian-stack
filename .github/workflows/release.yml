@@ -314,12 +314,17 @@ jobs:
               },
           }
           release_json = {"schema_version": 1, "version": version, "images": {}}
+          image_labels = {
+              "integrated": [label for label in """${{ steps.meta-integrated.outputs.labels }}""".splitlines() if label],
+              "split": [label for label in """${{ steps.meta-split.outputs.labels }}""".splitlines() if label],
+          }
           for name, image in images.items():
               ref = f"{image['repository']}@{image['digest']}"
               release_json["images"][name] = {
                   "repository": image["repository"],
                   "version_ref": f"{image['repository']}:{version}",
                   "digest": image["digest"],
+                  "labels": image_labels[name],
                   "platform_digests": inspect_platform_digests(ref),
               }
           Path("/tmp/release-assets/image-release.json").write_text(
