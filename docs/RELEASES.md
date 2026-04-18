@@ -158,9 +158,9 @@ The image workflow:
    - `image-release.txt`
    - `image-release.json`
    - per-asset `.sigstore.json` bundle files
-6. rebuilds the release images per platform and compares the observed
-   `linux/amd64` and `linux/arm64` digests with the digests recorded in
-   `image-release.json`
+6. runs a post-publish reproducibility audit that rebuilds the release images
+   per platform and compares the observed `linux/amd64` and `linux/arm64`
+   digests with the digests recorded in `image-release.json`
 
 Update the manifest before tagging `xian-stack` so the published image is reproducible from explicit component refs.
 
@@ -215,6 +215,11 @@ python3 ./scripts/verify_release_reproducibility.py \
   --image-release ./image-release.json \
   --workspace-root /path/to/xian
 ```
+
+The reproducibility audit is currently advisory, not a hard release gate. The
+workflow still records the result so drift is visible immediately, but the
+GitHub release is allowed to proceed while the remaining bit-for-bit
+normalization work is still open.
 
 Canonical network manifests in `xian-configs/networks/*/manifest.json` can then
 pin those published images by digest, and `xian-cli network join` will carry

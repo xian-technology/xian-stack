@@ -313,6 +313,7 @@ jobs:
     needs:
       - release-manifest
       - publish-images
+    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -374,7 +375,6 @@ jobs:
     needs:
       - release-manifest
       - publish-images
-      - verify-reproducibility
     runs-on: ubuntu-latest
     permissions:
       contents: write

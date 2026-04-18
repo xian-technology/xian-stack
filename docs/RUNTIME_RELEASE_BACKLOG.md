@@ -28,7 +28,11 @@ integrated-vs-fidelity runtime refactor itself.
 ## Reproducibility
 
 - Done: stack release inputs are now pinned enough for deterministic rebuilds.
-- Done: the release workflow now rebuilds `linux/amd64` and `linux/arm64`
-  images and compares them to the recorded platform digests.
+- Done: the release workflow now runs a post-publish rebuild audit for
+  `linux/amd64` and `linux/arm64` and compares the results to the recorded
+  platform digests.
+- Remaining: normalize the Python/runtime image build far enough that the
+  reproducibility audit can become a hard release gate instead of an advisory
+  release check.
 - Document the exact release inputs and the supported Linux/macOS operator
   paths.
