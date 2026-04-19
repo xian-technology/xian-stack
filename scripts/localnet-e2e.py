@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -58,6 +59,12 @@ DEFAULT_SIMULATOR_BURST_CONCURRENCY = 32
 WEBSOCKET_TIMEOUT_SECONDS = 20.0
 LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
 LOCALNET_POSTGRES_CONTAINER = "xian-localnet-postgres"
+SECONDARY_BDS_POSTGRES_IMAGE = "postgres:17"
+SECONDARY_BDS_POSTGRES_USER = "xian"
+SECONDARY_BDS_POSTGRES_PASSWORD = "xian"
+SECONDARY_BDS_POSTGRES_DATABASE = "xian"
+SECONDARY_BDS_POSTGRES_PORT_BASE = 55432
+SECONDARY_BDS_QUERY_TIMEOUT_SECONDS = 180.0
 CONTRACT_ORCHESTRATION_TX_CHI = {
     "deploy_contract": 180_000,
     "deploy_family": 100_000,
@@ -1349,6 +1356,203 @@ class E2ERunner:
             "ready_height": ready_height,
         }
 
+    def secondary_bds_container_name(self) -> str:
+        return f"xian-localnet-postgres-secondary-{short_hash(self.run_id)}"
+
+    def secondary_bds_host_port(self) -> int:
+        return SECONDARY_BDS_POSTGRES_PORT_BASE + int(self.args.port_offset)
+
+    def secondary_bds_home_dir(self) -> Path:
+        return self.output_dir / "secondary-bds-home"
+
+    def secondary_bds_data_dir(self) -> Path:
+        return self.output_dir / "secondary-bds-postgres"
+
+    def prepare_secondary_bds_home(self, source_node: LocalnetNode) -> Path:
+        source_home = STACK_DIR / ".localnet" / source_node.moniker / ".cometbft"
+        if not source_home.exists():
+            raise E2EError(f"service node home missing at {source_home}")
+
+        secondary_home = self.secondary_bds_home_dir()
+        if secondary_home.exists():
+            shutil.rmtree(secondary_home)
+
+        target_comet_home = secondary_home / ".cometbft"
+        shutil.copytree(source_home / "config", target_comet_home / "config")
+        (target_comet_home / "xian").mkdir(parents=True, exist_ok=True)
+
+        config_path = target_comet_home / "config" / "config.toml"
+        config_text = config_path.read_text(encoding="utf-8")
+        config_text, replacements = re.subn(
+            r'^laddr = "tcp://0\.0\.0\.0:26657"$',
+            f'laddr = "tcp://127.0.0.1:{source_node.rpc_port}"',
+            config_text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if replacements != 1:
+            raise E2EError(
+                f"could not rewrite rpc laddr in {config_path}"
+            )
+        config_path.write_text(config_text, encoding="utf-8")
+        return secondary_home
+
+    async def start_secondary_bds_postgres(self) -> dict[str, Any]:
+        container_name = self.secondary_bds_container_name()
+        host_port = self.secondary_bds_host_port()
+        data_dir = self.secondary_bds_data_dir()
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+        subprocess.run(
+            ["docker", "rm", "-f", container_name],
+            cwd=STACK_DIR,
+            capture_output=True,
+            text=True,
+        )
+        run_cmd(
+            [
+                "docker",
+                "run",
+                "--detach",
+                "--name",
+                container_name,
+                "--health-cmd",
+                (
+                    "pg_isready "
+                    f"-U {SECONDARY_BDS_POSTGRES_USER} "
+                    f"-d {SECONDARY_BDS_POSTGRES_DATABASE}"
+                ),
+                "--health-interval",
+                "1s",
+                "--health-timeout",
+                "5s",
+                "--health-retries",
+                "45",
+                "--publish",
+                f"{host_port}:5432",
+                "--volume",
+                f"{data_dir}:/var/lib/postgresql/data",
+                "--env",
+                f"POSTGRES_USER={SECONDARY_BDS_POSTGRES_USER}",
+                "--env",
+                f"POSTGRES_PASSWORD={SECONDARY_BDS_POSTGRES_PASSWORD}",
+                "--env",
+                f"POSTGRES_DB={SECONDARY_BDS_POSTGRES_DATABASE}",
+                SECONDARY_BDS_POSTGRES_IMAGE,
+            ],
+            cwd=STACK_DIR,
+        )
+        state = await wait_for_container_state(
+            container_name,
+            expected_states={"healthy"},
+            timeout_seconds=45.0,
+        )
+        return {
+            "container_name": container_name,
+            "host_port": host_port,
+            "state": state,
+        }
+
+    async def stop_secondary_bds_postgres(self) -> str:
+        container_name = self.secondary_bds_container_name()
+        run_cmd(["docker", "stop", container_name], cwd=STACK_DIR)
+        return await wait_for_container_state(
+            container_name,
+            expected_states={"exited"},
+            timeout_seconds=30.0,
+        )
+
+    async def restart_secondary_bds_postgres(self) -> str:
+        container_name = self.secondary_bds_container_name()
+        run_cmd(["docker", "start", container_name], cwd=STACK_DIR)
+        return await wait_for_container_state(
+            container_name,
+            expected_states={"healthy"},
+            timeout_seconds=45.0,
+        )
+
+    def cleanup_secondary_bds_postgres(self) -> None:
+        subprocess.run(
+            ["docker", "rm", "-f", self.secondary_bds_container_name()],
+            cwd=STACK_DIR,
+            capture_output=True,
+            text=True,
+        )
+
+    def run_secondary_bds_reindex(
+        self,
+        *,
+        source_node: LocalnetNode,
+        reset: bool,
+    ) -> dict[str, Any]:
+        secondary_home = self.prepare_secondary_bds_home(source_node)
+        host_port = self.secondary_bds_host_port()
+        env = os.environ.copy()
+        env["HOME"] = str(secondary_home)
+        env["XIAN_BDS_DSN"] = (
+            "postgresql://"
+            f"{SECONDARY_BDS_POSTGRES_USER}:"
+            f"{SECONDARY_BDS_POSTGRES_PASSWORD}@"
+            f"127.0.0.1:{host_port}/"
+            f"{SECONDARY_BDS_POSTGRES_DATABASE}"
+        )
+        env["XIAN_BDS_HOST"] = "127.0.0.1"
+        env["XIAN_BDS_PORT"] = str(host_port)
+        env["XIAN_BDS_DATABASE"] = SECONDARY_BDS_POSTGRES_DATABASE
+        env["XIAN_BDS_USER"] = SECONDARY_BDS_POSTGRES_USER
+        env["XIAN_BDS_PASSWORD"] = SECONDARY_BDS_POSTGRES_PASSWORD
+        env["XIAN_BDS_APPLICATION_NAME"] = "xian-bds-secondary"
+        env["XIAN_BDS_SPOOL_DIR"] = str(
+            secondary_home / ".cometbft" / "xian" / "secondary-bds-spool"
+        )
+
+        cmd = [
+            "uv",
+            "run",
+            "--project",
+            str(ROOT_DIR / "xian-abci"),
+            "--python",
+            CURRENT_UV_PYTHON,
+            "xian-bds-reindex",
+            "--rpc-url",
+            source_node.rpc_url,
+        ]
+        if reset:
+            cmd.append("--reset")
+
+        result = run_cmd(cmd, cwd=STACK_DIR, env=env)
+        return {
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+            "secondary_home": str(secondary_home),
+            "host_port": host_port,
+        }
+
+    def query_secondary_bds_scalar(self, sql: str) -> str:
+        deadline = time.monotonic() + SECONDARY_BDS_QUERY_TIMEOUT_SECONDS
+        while True:
+            try:
+                result = run_cmd(
+                    [
+                        "docker",
+                        "exec",
+                        self.secondary_bds_container_name(),
+                        "psql",
+                        "-U",
+                        SECONDARY_BDS_POSTGRES_USER,
+                        "-d",
+                        SECONDARY_BDS_POSTGRES_DATABASE,
+                        "-Atqc",
+                        sql,
+                    ],
+                    cwd=STACK_DIR,
+                )
+                return result.stdout.strip()
+            except E2EError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(1.0)
+
     async def bootstrap(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         env = make_localnet_env(self.args)
         outputs: dict[str, Any] = {
@@ -1524,8 +1728,12 @@ class E2ERunner:
 
         conflict_contract = f"con_e2e_conflict_{short_hash(self.run_id)}"
         patch_contract = f"con_e2e_patch_{short_hash(self.run_id + 'patch')}"
+        allocation_contract = (
+            f"con_e2e_alloc_{short_hash(self.run_id + 'alloc')}"
+        )
         self.contracts["conflict"] = conflict_contract
         self.contracts["patch_target"] = patch_contract
+        self.contracts["allocation_guards"] = allocation_contract
 
         async with self.client(founder, 0, session) as client:
             conflict_submission = await client.submit_contract(
@@ -1546,6 +1754,17 @@ class E2ERunner:
                 chi=90_000,
                 wait_for_tx=True,
             )
+            allocation_submission = await client.submit_contract(
+                name=allocation_contract,
+                **self.contract_submission_kwargs(
+                    name=allocation_contract,
+                    code=read_text(
+                        WORKLOADS_DIR / "e2e" / "allocation_guards.py"
+                    ),
+                ),
+                chi=120_000,
+                wait_for_tx=True,
+            )
             conflict_receipt = ensure_positive_submission(
                 conflict_submission,
                 label=f"deploy {conflict_contract}",
@@ -1554,6 +1773,10 @@ class E2ERunner:
                 patch_submission,
                 label=f"deploy {patch_contract}",
             )
+            allocation_receipt = ensure_positive_submission(
+                allocation_submission,
+                label=f"deploy {allocation_contract}",
+            )
             self.sample_tx_hash = conflict_receipt["tx_hash"]
 
             balance = await client.get_balance(founder.public_key)
@@ -1561,14 +1784,75 @@ class E2ERunner:
             counter_state = await client.get_state(conflict_contract, "counter")
             patch_status = await client.call(patch_contract, "get_status", {})
 
+            allocation_small = ensure_positive_submission(
+                await client.send_tx(
+                    allocation_contract,
+                    "small_bytes",
+                    {"size": 16},
+                    chi=DEFAULT_TX_CHI,
+                    wait_for_tx=True,
+                ),
+                label="allocation-small-bytes",
+            )
+            stable_status = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract=allocation_contract,
+                variable="last_status",
+                expected="bytes:16",
+                label="allocation guard stable status",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+
+            allocation_limit_receipts = []
+            for function_name, kwargs in (
+                ("explode_range", {"size": 131_073}),
+                ("explode_bytes", {"size": 131_073}),
+                ("explode_bytearray", {"size": 131_073}),
+                ("explode_string_repeat", {"count": 65_537}),
+                ("explode_list_repeat", {"count": 65_537}),
+            ):
+                failed = ensure_failed_submission(
+                    await client.send_tx(
+                        allocation_contract,
+                        function_name,
+                        kwargs,
+                        chi=DEFAULT_TX_CHI,
+                        wait_for_tx=True,
+                    ),
+                    label=f"allocation-{function_name}",
+                    expected_message_fragment="maximum allowed allocation size",
+                )
+                allocation_limit_receipts.append(failed)
+
+            stable_after_failures = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract=allocation_contract,
+                variable="last_status",
+                expected="bytes:16",
+                label="allocation guard status after failures",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+
         return {
             "wallets": [wallet.public_key for wallet in wallets],
             "funding": funding,
-            "deployments": [conflict_receipt, patch_receipt],
+            "deployments": [
+                conflict_receipt,
+                patch_receipt,
+                allocation_receipt,
+            ],
             "founder_balance": normalize_value(balance),
             "simulate_balance": normalize_value(simulated),
             "conflict_counter_state": counter_state,
             "patch_status": patch_status,
+            "allocation_guards": {
+                "small_success": allocation_small,
+                "stable_status": stable_status,
+                "failure_receipts": allocation_limit_receipts,
+                "stable_status_after_failures": stable_after_failures,
+            },
         }
 
     async def contract_orchestration_phase(
@@ -2821,110 +3105,199 @@ class E2ERunner:
         ]
         await self.fund_wallets(session, catchup_wallets, amount=5_000)
 
-        async with self.client(self.founder_wallet, service.index, session) as client:
-            baseline_status = await wait_for_bds_indexed(
-                client,
-                target_height=current_height,
+        secondary_bds: dict[str, Any] | None = None
+        try:
+            async with self.client(self.founder_wallet, service.index, session) as client:
+                baseline_status = await wait_for_bds_indexed(
+                    client,
+                    target_height=current_height,
+                    timeout_seconds=30.0,
+                )
+
+            run_localnet_compose("stop", LOCALNET_POSTGRES_SERVICE, env=env)
+            stopped_state = await wait_for_container_state(
+                LOCALNET_POSTGRES_CONTAINER,
+                expected_states={"exited"},
                 timeout_seconds=30.0,
             )
 
-        run_localnet_compose("stop", LOCALNET_POSTGRES_SERVICE, env=env)
-        stopped_state = await wait_for_container_state(
-            LOCALNET_POSTGRES_CONTAINER,
-            expected_states={"exited"},
-            timeout_seconds=30.0,
-        )
-
-        catchup_records = []
-        for index, wallet in enumerate(catchup_wallets * 2):
-            node_index = index % len(self.nodes)
-            slot = f"bds-catchup-{short_hash(f'{self.run_id}:{index}')}"
-            async with self.client(wallet, node_index, session) as client:
-                submission = await client.send_tx(
-                    self.contracts["conflict"],
-                    "claim",
-                    {"slot": slot, "amount": 1},
-                    chi=DEFAULT_TX_CHI,
-                    wait_for_tx=True,
-                )
-                receipt = ensure_positive_submission(
-                    submission,
-                    label=f"bds-catchup-claim-{index}",
-                )
-                receipt["slot"] = slot
-                catchup_records.append(receipt)
-
-        catchup_height = await latest_height(session, service.rpc_url)
-
-        async with self.client(self.founder_wallet, service.index, session) as client:
-            outage_pressure_task = asyncio.create_task(
-                bds_query_pressure(client, rounds=12)
-            )
-            lagged_status = await wait_for_bds_backlog(
-                client,
-                target_height=catchup_height,
-                timeout_seconds=30.0,
-            )
-            outage_pressure = await outage_pressure_task
-            for name in ("list_blocks", "list_events", "state_history"):
-                if outage_pressure.get(name, {}).get("failure", 0) == 0:
-                    raise E2EError(
-                        f"BDS outage pressure did not surface a failure for {name}"
+            catchup_records = []
+            for index, wallet in enumerate(catchup_wallets * 2):
+                node_index = index % len(self.nodes)
+                slot = f"bds-catchup-{short_hash(f'{self.run_id}:{index}')}"
+                async with self.client(wallet, node_index, session) as client:
+                    submission = await client.send_tx(
+                        self.contracts["conflict"],
+                        "claim",
+                        {"slot": slot, "amount": 1},
+                        chi=DEFAULT_TX_CHI,
+                        wait_for_tx=True,
                     )
-
-        run_localnet_compose("start", LOCALNET_POSTGRES_SERVICE, env=env)
-        healthy_state = await wait_for_container_state(
-            LOCALNET_POSTGRES_CONTAINER,
-            expected_states={"healthy"},
-            timeout_seconds=45.0,
-        )
-
-        async with self.client(self.founder_wallet, service.index, session) as client:
-            recovery_pressure_task = asyncio.create_task(
-                bds_query_pressure(client, rounds=40)
-            )
-            recovered_status = await wait_for_bds_recovered(
-                client,
-                target_height=catchup_height,
-                timeout_seconds=120.0,
-            )
-            recovery_pressure = await recovery_pressure_task
-            for name in ("list_blocks", "list_events", "state_history"):
-                if recovery_pressure.get(name, {}).get("success", 0) == 0:
-                    raise E2EError(
-                        f"BDS recovery pressure never recovered successful {name} reads"
+                    receipt = ensure_positive_submission(
+                        submission,
+                        label=f"bds-catchup-claim-{index}",
                     )
-            indexed_txs = []
-            for record in catchup_records[-3:]:
-                indexed_tx = await client.get_indexed_tx(record["tx_hash"])
-                if indexed_tx is None:
-                    raise E2EError("BDS catch-up did not index a lagged transaction")
-                indexed_txs.append(normalize_value(indexed_tx.raw))
-            indexed_events = await client.get_events_for_tx(catchup_records[-1]["tx_hash"])
-            indexed_state = await client.get_state_for_tx(catchup_records[-1]["tx_hash"])
-            if not indexed_events or not indexed_state:
-                raise E2EError("BDS catch-up did not restore indexed tx details")
+                    receipt["slot"] = slot
+                    catchup_records.append(receipt)
 
-        self.sample_event_tx_hash = catchup_records[-1]["tx_hash"]
-        return {
-            "postgres_stopped_state": stopped_state,
-            "postgres_recovered_state": healthy_state,
-            "baseline_status": baseline_status,
-            "lagged_status": lagged_status,
-            "recovered_status": recovered_status,
-            "outage_query_pressure": normalize_value(outage_pressure),
-            "recovery_query_pressure": normalize_value(recovery_pressure),
-            "catchup_height": catchup_height,
-            "catchup_tx_hashes": [record["tx_hash"] for record in catchup_records],
-            "catchup_receipts": catchup_records,
-            "indexed_tx_sample": indexed_txs,
-            "indexed_events_for_last_tx": normalize_value(
-                [item.raw for item in indexed_events]
-            ),
-            "indexed_state_for_last_tx": normalize_value(
-                [item.raw for item in indexed_state]
-            ),
-        }
+            catchup_height = await latest_height(session, service.rpc_url)
+
+            async with self.client(self.founder_wallet, service.index, session) as client:
+                outage_pressure_task = asyncio.create_task(
+                    bds_query_pressure(client, rounds=12)
+                )
+                lagged_status = await wait_for_bds_backlog(
+                    client,
+                    target_height=catchup_height,
+                    timeout_seconds=30.0,
+                )
+                outage_pressure = await outage_pressure_task
+                for name in ("list_blocks", "list_events", "state_history"):
+                    if outage_pressure.get(name, {}).get("failure", 0) == 0:
+                        raise E2EError(
+                            f"BDS outage pressure did not surface a failure for {name}"
+                        )
+
+            run_localnet_compose("start", LOCALNET_POSTGRES_SERVICE, env=env)
+            healthy_state = await wait_for_container_state(
+                LOCALNET_POSTGRES_CONTAINER,
+                expected_states={"healthy"},
+                timeout_seconds=45.0,
+            )
+
+            async with self.client(self.founder_wallet, service.index, session) as client:
+                recovery_pressure_task = asyncio.create_task(
+                    bds_query_pressure(client, rounds=40)
+                )
+                recovered_status = await wait_for_bds_recovered(
+                    client,
+                    target_height=catchup_height,
+                    timeout_seconds=120.0,
+                )
+                recovery_pressure = await recovery_pressure_task
+                for name in ("list_blocks", "list_events", "state_history"):
+                    if recovery_pressure.get(name, {}).get("success", 0) == 0:
+                        raise E2EError(
+                            f"BDS recovery pressure never recovered successful {name} reads"
+                        )
+                indexed_txs = []
+                for record in catchup_records[-3:]:
+                    indexed_tx = await client.get_indexed_tx(record["tx_hash"])
+                    if indexed_tx is None:
+                        raise E2EError("BDS catch-up did not index a lagged transaction")
+                    indexed_txs.append(normalize_value(indexed_tx.raw))
+                indexed_events = await client.get_events_for_tx(catchup_records[-1]["tx_hash"])
+                indexed_state = await client.get_state_for_tx(catchup_records[-1]["tx_hash"])
+                if not indexed_events or not indexed_state:
+                    raise E2EError("BDS catch-up did not restore indexed tx details")
+
+            secondary_start = await self.start_secondary_bds_postgres()
+            initial_secondary_sync = self.run_secondary_bds_reindex(
+                source_node=service,
+                reset=True,
+            )
+            secondary_initial_height = int(
+                self.query_secondary_bds_scalar(
+                    "SELECT COALESCE(MAX(height), 0) FROM blocks;"
+                )
+                or "0"
+            )
+            if secondary_initial_height < catchup_height:
+                raise E2EError(
+                    "secondary BDS initial sync did not reach the current chain height"
+                )
+
+            secondary_outage_state = await self.stop_secondary_bds_postgres()
+
+            secondary_catchup_records = []
+            for index, wallet in enumerate(catchup_wallets[:3]):
+                node_index = (index + 1) % len(self.nodes)
+                slot = f"secondary-bds-{short_hash(f'{self.run_id}:{index}')}"
+                async with self.client(wallet, node_index, session) as client:
+                    submission = await client.send_tx(
+                        self.contracts["conflict"],
+                        "claim",
+                        {"slot": slot, "amount": 1},
+                        chi=DEFAULT_TX_CHI,
+                        wait_for_tx=True,
+                    )
+                    receipt = ensure_positive_submission(
+                        submission,
+                        label=f"secondary-bds-claim-{index}",
+                    )
+                    receipt["slot"] = slot
+                    secondary_catchup_records.append(receipt)
+
+            secondary_target_height = await latest_height(session, service.rpc_url)
+            secondary_restarted_state = await self.restart_secondary_bds_postgres()
+            secondary_resume_sync = self.run_secondary_bds_reindex(
+                source_node=service,
+                reset=False,
+            )
+            secondary_resumed_height = int(
+                self.query_secondary_bds_scalar(
+                    "SELECT COALESCE(MAX(height), 0) FROM blocks;"
+                )
+                or "0"
+            )
+            if secondary_resumed_height < secondary_target_height:
+                raise E2EError(
+                    "secondary BDS resume sync did not catch up to the latest height"
+                )
+            latest_secondary_tx_hash = secondary_catchup_records[-1]["tx_hash"]
+            secondary_tx_count = int(
+                self.query_secondary_bds_scalar(
+                    "SELECT COUNT(*) FROM transactions "
+                    f"WHERE hash = '{latest_secondary_tx_hash}';"
+                )
+                or "0"
+            )
+            if secondary_tx_count == 0:
+                raise E2EError(
+                    "secondary BDS did not index the lagged transaction after restart"
+                )
+
+            secondary_bds = {
+                "start": secondary_start,
+                "initial_sync": initial_secondary_sync,
+                "initial_indexed_height": secondary_initial_height,
+                "stopped_state": secondary_outage_state,
+                "resume_sync": secondary_resume_sync,
+                "restarted_state": secondary_restarted_state,
+                "resumed_indexed_height": secondary_resumed_height,
+                "target_height": secondary_target_height,
+                "lagged_tx_hashes": [
+                    record["tx_hash"] for record in secondary_catchup_records
+                ],
+                "lagged_receipts": secondary_catchup_records,
+                "lagged_tx_count": secondary_tx_count,
+            }
+
+            self.sample_event_tx_hash = catchup_records[-1]["tx_hash"]
+            return {
+                "postgres_stopped_state": stopped_state,
+                "postgres_recovered_state": healthy_state,
+                "baseline_status": baseline_status,
+                "lagged_status": lagged_status,
+                "recovered_status": recovered_status,
+                "outage_query_pressure": normalize_value(outage_pressure),
+                "recovery_query_pressure": normalize_value(recovery_pressure),
+                "catchup_height": catchup_height,
+                "catchup_tx_hashes": [
+                    record["tx_hash"] for record in catchup_records
+                ],
+                "catchup_receipts": catchup_records,
+                "indexed_tx_sample": indexed_txs,
+                "indexed_events_for_last_tx": normalize_value(
+                    [item.raw for item in indexed_events]
+                ),
+                "indexed_state_for_last_tx": normalize_value(
+                    [item.raw for item in indexed_state]
+                ),
+                "secondary_bds": normalize_value(secondary_bds),
+            }
+        finally:
+            self.cleanup_secondary_bds_postgres()
 
     async def retrieval_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         founder = self.founder_wallet
@@ -2965,6 +3338,33 @@ class E2ERunner:
                 "Claimed",
                 limit=1,
             )
+            keys_page_one = await fetch_abci_query(
+                session,
+                service.rpc_url,
+                f"/keys/{self.contracts['conflict']}.claims/limit=2",
+            )
+            if not isinstance(keys_page_one, dict):
+                raise E2EError("/keys pagination did not return an object")
+            if len(keys_page_one.get("items", [])) != 2:
+                raise E2EError("/keys first page did not respect the requested limit")
+            next_after = None
+            next_after = keys_page_one.get("next_after")
+            keys_page_two = (
+                await fetch_abci_query(
+                    session,
+                    service.rpc_url,
+                    f"/keys/{self.contracts['conflict']}.claims/limit=2/after={next_after}",
+                )
+                if next_after
+                else None
+            )
+            if keys_page_one.get("has_more") and not next_after:
+                raise E2EError("/keys response reported more results without a cursor")
+            if next_after and (
+                not isinstance(keys_page_two, dict)
+                or len(keys_page_two.get("items", [])) == 0
+            ):
+                raise E2EError("/keys pagination did not return the follow-up page")
             after_event_id = None
             if current_events:
                 after_event_id = current_events[0].id
@@ -3009,6 +3409,8 @@ class E2ERunner:
             "tx_events": [normalize_value(item.raw) for item in tx_events],
             "tx_state": [normalize_value(item.raw) for item in tx_state],
             "current_state": normalize_value(current_state),
+            "keys_page_one": normalize_value(keys_page_one),
+            "keys_page_two": normalize_value(keys_page_two),
             "watch_block": watched_block,
             "watch_event": watched_event,
             "websocket_tx_event": ws_message,
