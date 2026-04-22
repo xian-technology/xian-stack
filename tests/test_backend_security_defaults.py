@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import backend
+
+
+def runtime_env_kwargs(**overrides: object) -> dict[str, object]:
+    kwargs: dict[str, object] = {
+        "node_image_mode": "local_build",
+        "node_integrated_image": None,
+        "node_split_image": None,
+        "service_node": False,
+        "dashboard_enabled": False,
+        "dashboard_host": "127.0.0.1",
+        "dashboard_port": 8080,
+        "public_rpc_enabled": False,
+        "public_query_enabled": False,
+        "public_metrics_enabled": False,
+        "intentkit_enabled": False,
+        "intentkit_network_id": "xian-localnet",
+        "intentkit_host": "127.0.0.1",
+        "intentkit_port": 38000,
+        "intentkit_api_port": 38080,
+        "shielded_relayer_enabled": False,
+        "shielded_relayer_host": backend.DEFAULT_SHIELDED_RELAYER_HOST,
+        "shielded_relayer_port": backend.DEFAULT_SHIELDED_RELAYER_PORT,
+    }
+    kwargs.update(overrides)
+    return kwargs
+
+
+class BackendSecurityDefaultsTests(unittest.TestCase):
+    def test_runtime_env_generates_local_secrets_and_safe_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(os.environ, {}, clear=True):
+                    env = backend.runtime_env(**runtime_env_kwargs())
+
+            secrets_env = stack_dir / ".stack-secrets.env"
+            self.assertTrue(secrets_env.exists())
+            self.assertEqual(str(secrets_env.resolve()), env["XIAN_STACK_SECRETS_ENV"])
+            self.assertTrue(env["XIAN_BDS_PASSWORD"])
+            self.assertTrue(env["XIAN_POSTGRAPHILE_PASSWORD"])
+            self.assertEqual("127.0.0.1", env["XIAN_COMETBFT_RPC_HOST"])
+            self.assertEqual("127.0.0.1", env["XIAN_COMETBFT_METRICS_HOST"])
+            self.assertEqual("127.0.0.1", env["XIAN_APP_METRICS_HOST"])
+            self.assertEqual("127.0.0.1", env["XIAN_POSTGRAPHILE_HOST"])
+            self.assertEqual("0", env["XIAN_PUBLIC_RPC_ENABLED"])
+            self.assertEqual("0", env["XIAN_PUBLIC_QUERY_ENABLED"])
+            self.assertEqual("0", env["XIAN_PUBLIC_METRICS_ENABLED"])
+
+    def test_runtime_env_rejects_weak_default_bds_password(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(
+                    os.environ,
+                    {
+                        "XIAN_BDS_PASSWORD": "xian",
+                        "XIAN_POSTGRAPHILE_PASSWORD": "strong-postgraphile-secret",
+                    },
+                    clear=True,
+                ):
+                    with self.assertRaisesRegex(ValueError, "weak default value 'xian'"):
+                        backend.runtime_env(**runtime_env_kwargs())
+
+    def test_runtime_env_rejects_public_rpc_without_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(
+                    os.environ,
+                    {"XIAN_COMETBFT_RPC_HOST": "0.0.0.0"},
+                    clear=True,
+                ):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "Public RPC exposure requires XIAN_PUBLIC_RPC_ENABLED=1",
+                    ):
+                        backend.runtime_env(**runtime_env_kwargs())
+
+    def test_runtime_env_public_query_requires_service_node(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(
+                    os.environ,
+                    {"XIAN_POSTGRAPHILE_HOST": "0.0.0.0"},
+                    clear=True,
+                ):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "Public PostGraphile exposure requires XIAN_SERVICE_NODE=1",
+                    ):
+                        backend.runtime_env(
+                            **runtime_env_kwargs(public_query_enabled=True)
+                        )
+
+    def test_runtime_env_exposes_only_requested_surfaces(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(os.environ, {}, clear=True):
+                    env = backend.runtime_env(
+                        **runtime_env_kwargs(
+                            service_node=True,
+                            public_query_enabled=True,
+                        )
+                    )
+
+            self.assertEqual("127.0.0.1", env["XIAN_COMETBFT_RPC_HOST"])
+            self.assertEqual("127.0.0.1", env["XIAN_COMETBFT_METRICS_HOST"])
+            self.assertEqual("127.0.0.1", env["XIAN_APP_METRICS_HOST"])
+            self.assertEqual("0.0.0.0", env["XIAN_POSTGRAPHILE_HOST"])
+
+
+if __name__ == "__main__":
+    unittest.main()

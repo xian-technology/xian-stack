@@ -17,6 +17,9 @@ docker compose --profile fidelity -f docker-compose-abci.yml config -q
 docker compose --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml config -q
 docker compose --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml config -q
 docker compose --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml config -q
+XIAN_PUBLIC_RPC_ENABLED=1 XIAN_COMETBFT_RPC_HOST=0.0.0.0 docker compose --profile integrated -f docker-compose-abci.yml config -q
+XIAN_PUBLIC_METRICS_ENABLED=1 XIAN_COMETBFT_METRICS_HOST=0.0.0.0 XIAN_APP_METRICS_HOST=0.0.0.0 docker compose --profile integrated -f docker-compose-abci.yml config -q
+XIAN_SERVICE_NODE=1 XIAN_PUBLIC_QUERY_ENABLED=1 XIAN_POSTGRAPHILE_HOST=0.0.0.0 docker compose --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml config -q
 docker compose --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml config -q
 docker compose --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml config -q
 docker compose --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml config -q

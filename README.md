@@ -23,6 +23,32 @@ python3 ./scripts/backend.py health --no-service-node --dashboard --monitoring
 python3 ./scripts/backend.py stop --no-service-node --dashboard --monitoring
 ```
 
+The stack now defaults to fail-closed host bindings:
+
+- CometBFT RPC binds to `127.0.0.1` unless you pass `--public-rpc`
+- CometBFT and app metrics bind to `127.0.0.1` unless you pass `--public-metrics`
+- PostGraphile binds to `127.0.0.1` unless you run a service node and pass
+  `--public-query`
+- local credentials are generated once into `.stack-secrets.env`, which is
+  ignored by git
+
+`public-query` and `public-rpc` are intentionally separate. `public-query`
+publishes the read-only BDS/PostGraphile surface; it does not expose live node
+RPC, mempool, or raw ABCI traffic.
+
+Examples:
+
+```bash
+# Read-only public query surface on a service node.
+python3 ./scripts/backend.py start --service-node --public-query
+
+# Explicit public RPC and metrics exposure for a non-validator/gateway node.
+python3 ./scripts/backend.py start --no-service-node --public-rpc --public-metrics
+```
+
+When BDS is enabled, PostGraphile now runs against a dedicated read-only
+database role rather than the primary BDS owner account.
+
 Run the optional shielded relayer sidecar against the local node:
 
 ```bash

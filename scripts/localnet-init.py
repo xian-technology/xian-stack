@@ -31,7 +31,7 @@ from xian.node_setup import (  # noqa: E402
     build_node_key,
     generate_validator_material,
     materialize_cometbft_home,
-    render_cometbft_config,
+    render_node_configs,
 )
 
 LOCALNET_DIR = STACK_DIR / ".localnet"
@@ -191,7 +191,7 @@ def write_node_config(
     other_nodes = [n for n in all_nodes if n["index"] != node["index"]]
     peers = build_persistent_peers(other_nodes)
 
-    config = render_cometbft_config(
+    configs = render_node_configs(
         moniker=node["moniker"],
         service_node=service_node,
         seed_nodes=[],
@@ -224,6 +224,8 @@ def write_node_config(
         bds_user="xian",
         bds_password="xian",
     )
+    config = configs["cometbft"]
+    xian_config = configs["xian"]
     # Override peers and listen addresses (inside container, always same ports)
     config["p2p"]["persistent_peers"] = peers
     config["p2p"]["laddr"] = "tcp://0.0.0.0:26656"
@@ -262,6 +264,7 @@ def write_node_config(
     materialize_cometbft_home(
         home=home,
         config=config,
+        xian_config=xian_config,
         genesis=genesis,
         priv_validator_key=node["validator_material"]["priv_validator_key"],
         node_key=node["node_key"],

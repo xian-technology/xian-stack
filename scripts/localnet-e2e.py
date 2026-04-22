@@ -819,7 +819,7 @@ def update_logging_config(
     json_logging: bool,
 ) -> None:
     for config_path in sorted(
-        (STACK_DIR / ".localnet").glob("node-*/.cometbft/config/config.toml")
+        (STACK_DIR / ".localnet").glob("node-*/.cometbft/config/xian.toml")
     ):
         text = config_path.read_text(encoding="utf-8")
         replacements = {

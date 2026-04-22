@@ -1,4 +1,11 @@
 DOCKER_COMPOSE ?= docker compose
+STACK_DIR := $(abspath .)
+
+XIAN_STACK_SECRETS_ENV ?= $(STACK_DIR)/.stack-secrets.env
+
+define stack_secret
+$(strip $(shell XIAN_STACK_SECRETS_ENV='$(abspath $(XIAN_STACK_SECRETS_ENV))' bash -lc 'source ./scripts/stack-env.sh >/dev/null 2>&1; ensure_stack_secrets_env >/dev/null; printf "%s" "$${$(1)}"'))
+endef
 
 XIAN_CLI_DIR ?= ../xian-cli
 XIAN_ABCI_DIR ?= ../xian-abci
@@ -6,13 +13,14 @@ XIAN_CONFIGS_DIR ?= ../xian-configs
 XIAN_CONTRACTING_DIR ?= ../xian-contracting
 XIAN_PY_DIR ?= ../xian-py
 XIAN_STACK_PYTHON ?= 3.14
+XIAN_SERVICE_NODE ?= 0
 XIAN_COMETBFT_HOME ?= ./.cometbft
 XIAN_BDS_DATA_DIR ?= ./.bds.db
 XIAN_BDS_HOST ?= postgres
 XIAN_BDS_PORT ?= 5432
 XIAN_BDS_DATABASE ?= xian
 XIAN_BDS_USER ?= xian
-XIAN_BDS_PASSWORD ?= xian
+XIAN_BDS_PASSWORD ?= $(call stack_secret,XIAN_BDS_PASSWORD)
 XIAN_BDS_POOL_MIN_SIZE ?= 1
 XIAN_BDS_POOL_MAX_SIZE ?= 10
 XIAN_BDS_STATEMENT_TIMEOUT_MS ?= 0
@@ -33,11 +41,14 @@ XIAN_TRACER_MODE ?= python_line_v1
 XIAN_NODE_IMAGE_MODE ?= local_build
 XIAN_NODE_INTEGRATED_IMAGE ?= xian-node-integrated:local
 XIAN_NODE_SPLIT_IMAGE ?= xian-node-split:local
-XIAN_COMETBFT_RPC_HOST ?= 0.0.0.0
+XIAN_PUBLIC_RPC_ENABLED ?= 0
+XIAN_PUBLIC_QUERY_ENABLED ?= 0
+XIAN_PUBLIC_METRICS_ENABLED ?= 0
+XIAN_COMETBFT_RPC_HOST ?= 127.0.0.1
 XIAN_COMETBFT_RPC_PORT ?= 26657
 XIAN_COMETBFT_P2P_HOST ?= 0.0.0.0
 XIAN_COMETBFT_P2P_PORT ?= 26656
-XIAN_COMETBFT_METRICS_HOST ?= 0.0.0.0
+XIAN_COMETBFT_METRICS_HOST ?= 127.0.0.1
 XIAN_COMETBFT_METRICS_PORT ?= 26660
 XIAN_APP_METRICS_ENABLED ?= 1
 XIAN_APP_METRICS_LISTEN_HOST ?= 0.0.0.0
@@ -92,6 +103,10 @@ XIAN_DOCKER_POSTGRAPHILE_MEMORY_SWAP ?= 768m
 XIAN_DOCKER_POSTGRAPHILE_PIDS_LIMIT ?= 256
 XIAN_DOCKER_POSTGRAPHILE_NOFILE_SOFT ?= 65536
 XIAN_DOCKER_POSTGRAPHILE_NOFILE_HARD ?= 65536
+XIAN_POSTGRAPHILE_USER ?= xian_graphql
+XIAN_POSTGRAPHILE_PASSWORD ?= $(call stack_secret,XIAN_POSTGRAPHILE_PASSWORD)
+XIAN_POSTGRAPHILE_HOST ?= 127.0.0.1
+XIAN_POSTGRAPHILE_PORT ?= 5000
 XIAN_LOCALNET_TOPOLOGY ?= integrated
 XIAN_LOCALNET_GENESIS_NETWORK ?= local
 XIAN_LOCALNET_TRACER_MODE ?= $(XIAN_TRACER_MODE)
@@ -138,6 +153,8 @@ export XIAN_ABCI_DIR := $(abspath $(XIAN_ABCI_DIR))
 export XIAN_CONFIGS_DIR := $(abspath $(XIAN_CONFIGS_DIR))
 export XIAN_CONTRACTING_DIR := $(abspath $(XIAN_CONTRACTING_DIR))
 export XIAN_PY_DIR := $(abspath $(XIAN_PY_DIR))
+export XIAN_STACK_SECRETS_ENV := $(abspath $(XIAN_STACK_SECRETS_ENV))
+export XIAN_SERVICE_NODE := $(XIAN_SERVICE_NODE)
 export XIAN_COMETBFT_HOME := $(abspath $(XIAN_COMETBFT_HOME))
 export XIAN_BDS_DATA_DIR := $(abspath $(XIAN_BDS_DATA_DIR))
 export XIAN_BDS_HOST := $(XIAN_BDS_HOST)
@@ -165,6 +182,9 @@ export XIAN_TRACER_MODE := $(XIAN_TRACER_MODE)
 export XIAN_NODE_IMAGE_MODE := $(XIAN_NODE_IMAGE_MODE)
 export XIAN_NODE_INTEGRATED_IMAGE := $(XIAN_NODE_INTEGRATED_IMAGE)
 export XIAN_NODE_SPLIT_IMAGE := $(XIAN_NODE_SPLIT_IMAGE)
+export XIAN_PUBLIC_RPC_ENABLED := $(XIAN_PUBLIC_RPC_ENABLED)
+export XIAN_PUBLIC_QUERY_ENABLED := $(XIAN_PUBLIC_QUERY_ENABLED)
+export XIAN_PUBLIC_METRICS_ENABLED := $(XIAN_PUBLIC_METRICS_ENABLED)
 export XIAN_COMETBFT_RPC_HOST := $(XIAN_COMETBFT_RPC_HOST)
 export XIAN_COMETBFT_RPC_PORT := $(XIAN_COMETBFT_RPC_PORT)
 export XIAN_COMETBFT_P2P_HOST := $(XIAN_COMETBFT_P2P_HOST)
@@ -224,6 +244,10 @@ export XIAN_DOCKER_POSTGRAPHILE_MEMORY_SWAP := $(XIAN_DOCKER_POSTGRAPHILE_MEMORY
 export XIAN_DOCKER_POSTGRAPHILE_PIDS_LIMIT := $(XIAN_DOCKER_POSTGRAPHILE_PIDS_LIMIT)
 export XIAN_DOCKER_POSTGRAPHILE_NOFILE_SOFT := $(XIAN_DOCKER_POSTGRAPHILE_NOFILE_SOFT)
 export XIAN_DOCKER_POSTGRAPHILE_NOFILE_HARD := $(XIAN_DOCKER_POSTGRAPHILE_NOFILE_HARD)
+export XIAN_POSTGRAPHILE_USER := $(XIAN_POSTGRAPHILE_USER)
+export XIAN_POSTGRAPHILE_PASSWORD := $(XIAN_POSTGRAPHILE_PASSWORD)
+export XIAN_POSTGRAPHILE_HOST := $(XIAN_POSTGRAPHILE_HOST)
+export XIAN_POSTGRAPHILE_PORT := $(XIAN_POSTGRAPHILE_PORT)
 export XIAN_LOCALNET_TOPOLOGY := $(XIAN_LOCALNET_TOPOLOGY)
 export XIAN_LOCALNET_TRACER_MODE := $(XIAN_LOCALNET_TRACER_MODE)
 export XIAN_LOCALNET_EXECUTION_MODE := $(XIAN_LOCALNET_EXECUTION_MODE)
@@ -360,7 +384,7 @@ LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK ?= testnet
 
 .DEFAULT_GOAL := help
 
-.PHONY: help print-env validate smoke smoke-cli prepare-dirs \
+.PHONY: help print-env validate smoke smoke-cli guard-stack-security prepare-dirs \
 	dev-contracting-shell dev-contracting-up dev-contracting-build dev-contracting-down \
 	dev-abci-build dev-abci-up dev-abci-down dev-abci-shell \
 	abci-build abci-up abci-down abci-fidelity-build abci-fidelity-up abci-fidelity-down dev-base-abci-shell \
@@ -378,6 +402,7 @@ LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK ?= testnet
 help:
 	@printf "Available targets:\n"
 	@printf "  %-24s %s\n" "print-env" "Show resolved workspace and data paths"
+	@printf "  %-24s %s\n" "guard-stack-security" "Validate hardened stack exposure and secret settings"
 	@printf "  %-24s %s\n" "validate" "Validate compose topology and required local paths"
 	@printf "  %-24s %s\n" "smoke" "Run the smallest real ABCI bring-up and shutdown path"
 	@printf "  %-24s %s\n" "smoke-cli" "Run the cross-repo operator flow through xian-cli"
@@ -440,6 +465,8 @@ print-env:
 	@printf "XIAN_CONFIGS_DIR=%s\n" "$(XIAN_CONFIGS_DIR)"
 	@printf "XIAN_CONTRACTING_DIR=%s\n" "$(XIAN_CONTRACTING_DIR)"
 	@printf "XIAN_PY_DIR=%s\n" "$(XIAN_PY_DIR)"
+	@printf "XIAN_STACK_SECRETS_ENV=%s\n" "$(XIAN_STACK_SECRETS_ENV)"
+	@printf "XIAN_SERVICE_NODE=%s\n" "$(XIAN_SERVICE_NODE)"
 	@printf "XIAN_COMETBFT_HOME=%s\n" "$(XIAN_COMETBFT_HOME)"
 	@printf "XIAN_BDS_DATA_DIR=%s\n" "$(XIAN_BDS_DATA_DIR)"
 	@printf "XIAN_BDS_HOST=%s\n" "$(XIAN_BDS_HOST)"
@@ -466,6 +493,13 @@ print-env:
 	@printf "XIAN_NODE_IMAGE_MODE=%s\n" "$(XIAN_NODE_IMAGE_MODE)"
 	@printf "XIAN_NODE_INTEGRATED_IMAGE=%s\n" "$(XIAN_NODE_INTEGRATED_IMAGE)"
 	@printf "XIAN_NODE_SPLIT_IMAGE=%s\n" "$(XIAN_NODE_SPLIT_IMAGE)"
+	@printf "XIAN_PUBLIC_RPC_ENABLED=%s\n" "$(XIAN_PUBLIC_RPC_ENABLED)"
+	@printf "XIAN_PUBLIC_QUERY_ENABLED=%s\n" "$(XIAN_PUBLIC_QUERY_ENABLED)"
+	@printf "XIAN_PUBLIC_METRICS_ENABLED=%s\n" "$(XIAN_PUBLIC_METRICS_ENABLED)"
+	@printf "XIAN_COMETBFT_RPC_HOST=%s\n" "$(XIAN_COMETBFT_RPC_HOST)"
+	@printf "XIAN_COMETBFT_RPC_PORT=%s\n" "$(XIAN_COMETBFT_RPC_PORT)"
+	@printf "XIAN_COMETBFT_METRICS_HOST=%s\n" "$(XIAN_COMETBFT_METRICS_HOST)"
+	@printf "XIAN_COMETBFT_METRICS_PORT=%s\n" "$(XIAN_COMETBFT_METRICS_PORT)"
 	@printf "XIAN_APP_METRICS_ENABLED=%s\n" "$(XIAN_APP_METRICS_ENABLED)"
 	@printf "XIAN_APP_METRICS_LISTEN_HOST=%s\n" "$(XIAN_APP_METRICS_LISTEN_HOST)"
 	@printf "XIAN_APP_METRICS_HOST=%s\n" "$(XIAN_APP_METRICS_HOST)"
@@ -519,6 +553,9 @@ print-env:
 	@printf "XIAN_DOCKER_POSTGRAPHILE_PIDS_LIMIT=%s\n" "$(XIAN_DOCKER_POSTGRAPHILE_PIDS_LIMIT)"
 	@printf "XIAN_DOCKER_POSTGRAPHILE_NOFILE_SOFT=%s\n" "$(XIAN_DOCKER_POSTGRAPHILE_NOFILE_SOFT)"
 	@printf "XIAN_DOCKER_POSTGRAPHILE_NOFILE_HARD=%s\n" "$(XIAN_DOCKER_POSTGRAPHILE_NOFILE_HARD)"
+	@printf "XIAN_POSTGRAPHILE_USER=%s\n" "$(XIAN_POSTGRAPHILE_USER)"
+	@printf "XIAN_POSTGRAPHILE_HOST=%s\n" "$(XIAN_POSTGRAPHILE_HOST)"
+	@printf "XIAN_POSTGRAPHILE_PORT=%s\n" "$(XIAN_POSTGRAPHILE_PORT)"
 	@printf "XIAN_LOCALNET_TOPOLOGY=%s\n" "$(XIAN_LOCALNET_TOPOLOGY)"
 	@printf "XIAN_LOCALNET_NODE_MEMORY_LIMIT=%s\n" "$(XIAN_LOCALNET_NODE_MEMORY_LIMIT)"
 	@printf "XIAN_LOCALNET_NODE_MEMORY_RESERVATION=%s\n" "$(XIAN_LOCALNET_NODE_MEMORY_RESERVATION)"
@@ -549,7 +586,10 @@ smoke:
 smoke-cli:
 	./scripts/smoke-cli.sh
 
-prepare-dirs:
+guard-stack-security:
+	@bash -lc 'source ./scripts/stack-env.sh && export_stack_env >/dev/null'
+
+prepare-dirs: guard-stack-security
 	mkdir -p "$(XIAN_COMETBFT_HOME)" "$(XIAN_BDS_DATA_DIR)" "$(XIAN_CONTRACTS_DIR)" "$(dir $(XIAN_BDS_SNAPSHOT_PATH))"
 
 
@@ -655,6 +695,8 @@ dev-base-abci-shell:
 
 
 # ABCI BDS Commands
+abci-bds-build abci-bds-up dashboard-bds-up monitoring-bds-up bds-postgres-up bds-snapshot-export bds-snapshot-import node-start-bds: XIAN_SERVICE_NODE=1
+
 abci-bds-build: prepare-dirs
 	$(ABCI_BDS_COMPOSE) build --no-cache abci postgres postgraphile
 
@@ -696,7 +738,7 @@ node-start-bds:
 node-init:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci init
 
-node-configure:
+node-configure: guard-stack-security
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "metrics_flag='--metrics-enabled'; if [ '$(XIAN_APP_METRICS_ENABLED)' = '0' ]; then metrics_flag='--no-metrics-enabled'; fi; xian-configure-node --tracer-mode $(XIAN_TRACER_MODE) $$metrics_flag --metrics-host $(XIAN_APP_METRICS_LISTEN_HOST) --metrics-port $(XIAN_APP_METRICS_PORT) --metrics-bds-refresh-seconds $(XIAN_APP_METRICS_BDS_REFRESH_SECONDS) --bds-host $(XIAN_BDS_HOST) --bds-port $(XIAN_BDS_PORT) --bds-database $(XIAN_BDS_DATABASE) --bds-user $(XIAN_BDS_USER) --bds-password $(XIAN_BDS_PASSWORD) --bds-pool-min-size $(XIAN_BDS_POOL_MIN_SIZE) --bds-pool-max-size $(XIAN_BDS_POOL_MAX_SIZE) --bds-statement-timeout-ms $(XIAN_BDS_STATEMENT_TIMEOUT_MS) --bds-application-name $(XIAN_BDS_APPLICATION_NAME) $(if $(XIAN_BDS_SPOOL_DIR),--bds-spool-dir $(XIAN_BDS_SPOOL_DIR),) --bds-spool-warn-entries $(XIAN_BDS_SPOOL_WARN_ENTRIES) --bds-spool-warn-bytes $(XIAN_BDS_SPOOL_WARN_BYTES) --bds-disk-free-warn-bytes $(XIAN_BDS_DISK_FREE_WARN_BYTES) ${CONFIGURE_ARGS}"
 
 node-id:
