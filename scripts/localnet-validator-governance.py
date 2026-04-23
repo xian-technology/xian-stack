@@ -432,11 +432,30 @@ def normalize_receipt(submission, *, label: str) -> dict[str, Any]:
     }
 
 
+def submission_error_context(submission) -> str:
+    parts = []
+    if submission.message:
+        parts.append(f"message={submission.message!r}")
+    response = submission.response or {}
+    if response:
+        parts.append(
+            "response="
+            + json.dumps(response, sort_keys=True, default=str)[:500]
+        )
+    return "" if not parts else " (" + "; ".join(parts) + ")"
+
+
 def ensure_positive_submission(submission, *, label: str) -> dict[str, Any]:
     if not submission.submitted:
-        raise RunnerError(f"{label}: transaction was not submitted")
+        raise RunnerError(
+            f"{label}: transaction was not submitted"
+            f"{submission_error_context(submission)}"
+        )
     if submission.accepted is False:
-        raise RunnerError(f"{label}: CheckTx rejected: {submission.message}")
+        raise RunnerError(
+            f"{label}: CheckTx rejected: {submission.message}"
+            f"{submission_error_context(submission)}"
+        )
     if submission.receipt is None:
         if submission.mode == "commit" and submission.accepted is True and submission.finalized:
             return normalize_receipt(submission, label=label)
@@ -455,7 +474,10 @@ def ensure_failed_submission(
     message_contains: str | None = None,
 ) -> dict[str, Any]:
     if not submission.submitted:
-        raise RunnerError(f"{label}: transaction was not submitted")
+        raise RunnerError(
+            f"{label}: transaction was not submitted"
+            f"{submission_error_context(submission)}"
+        )
     if submission.receipt is None:
         raise RunnerError(f"{label}: receipt missing for expected failure")
     if submission.receipt.success is not False:
@@ -1316,6 +1338,13 @@ def get_status():
             )
 
         await self.restart_localnet(session)
+        restart_height = await latest_height(session, self.nodes[0].rpc_url)
+        await wait_for_height(
+            session,
+            self.nodes[0].rpc_url,
+            restart_height + 1,
+            timeout_seconds=30.0,
+        )
 
         (
             node0_wallet,
@@ -1329,6 +1358,8 @@ def get_status():
         ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
             node3_wallet, 3, session
         ) as node3:
+            for client in (node0, node1, node2, node3):
+                await client.refresh_nonce()
             proposal = await node0.send_tx(
                 "governance",
                 "propose_state_patch",
