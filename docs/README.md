@@ -7,5 +7,6 @@ Start with:
 - `ARCHITECTURE.md`
 - `BACKLOG.md`
 - `LOCALNET_VALIDATOR_GOVERNANCE.md`
+- `RELEASES.md`
 
 Deeper runtime and review notes live alongside them.

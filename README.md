@@ -11,6 +11,7 @@ Validate the stack:
 
 ```bash
 python3 ./scripts/backend.py validate
+make release-safety
 ```
 
 Run a local stack-managed node:
@@ -117,6 +118,12 @@ Run the same layered harness with `xian_vm_v1` in native-authority mode:
 make localnet-vm-e2e
 ```
 
+Run the full release-grade safety gate before tagging `xian-stack`:
+
+```bash
+make release-safety
+```
+
 Run the tuned VM throughput sweep on a fresh 5-node localnet:
 
 ```bash
@@ -193,8 +200,9 @@ Use [docs/RELEASES.md](./docs/RELEASES.md) for the verification commands and
 the reproducibility checker.
 
 The `localnet-e2e` harness now also validates direct `currency.approve` /
-`transfer_from` behavior and the `permit_authorizer -> approve_from_authorizer`
-path against the same 5-validator `testnet`-shaped network.
+`transfer_from` behavior, the `permit_authorizer -> approve_from_authorizer`
+path, validator restart and convergence chaos, and timed soak/abuse coverage
+against the same 5-validator `testnet`-shaped network.
 
 ## Principles
 

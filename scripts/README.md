@@ -9,6 +9,8 @@ tooling behind `xian-stack`.
 
 - `backend.py`: the main machine-facing backend command surface
 - `stack-env.sh`: shared environment/bootstrap shell helper for Compose flows
+- `release-safety.sh`: cross-repo release gate that runs repo validation plus
+  the native-VM and governance localnet safety paths
 - `smoke-stack.sh` and `smoke-cli.sh`: repo-level smoke entrypoints
 - `localnet-init.py`: multi-node localnet creation, including local-only
   validator keys, preset-backed genesis selection, native tracer selection, and
@@ -19,7 +21,8 @@ tooling behind `xian-stack`.
   committed chain throughput and end-to-end client workload throughput
 - `localnet-e2e.py`: the layered 5-validator testnet-shaped end-to-end program
   that exercises the live stack phase by phase, including direct and
-  permit-authorized `currency.approvals` flows, and writes artifacts under
+  permit-authorized `currency.approvals` flows, restart-and-convergence chaos
+  coverage, timed soak/abuse coverage, and writes artifacts under
   `.artifacts/localnet-e2e/<run-id>/`
 - `localnet_vm_rollout.py`: collects execution-mode, shadow comparison, and
   mismatch counters from a running localnet and emits a rollout report as JSON;
@@ -59,3 +62,7 @@ tooling behind `xian-stack`.
 - `make localnet-vm-tps-bench` is the benchmark wrapper for a tuned 5-node
   native-VM localnet. Prefer `committed_workload_tps` over client-side
   `workload_tps` when reporting chain throughput.
+- `./scripts/release-safety.sh` and `make release-safety` are the release-grade
+  stack entrypoints. They validate sibling repos, run the native-authority
+  localnet e2e harness, enforce the VM rollout mismatch budget, and run the
+  validator/governance localnet.

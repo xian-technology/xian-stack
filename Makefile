@@ -361,6 +361,11 @@ LOCALNET_E2E_PERIODIC_ROUNDS ?= 8
 LOCALNET_E2E_PERIODIC_INTERVAL_SECONDS ?= 0.35
 LOCALNET_E2E_BURST_COUNTER_OPS ?= 260
 LOCALNET_E2E_DEX_ROUNDS ?= 8
+LOCALNET_E2E_CHAOS_CYCLES ?= 2
+LOCALNET_E2E_CHAOS_LOAD_TRANSACTIONS ?= 8
+LOCALNET_E2E_SOAK_DURATION_SECONDS ?= 90
+LOCALNET_E2E_SOAK_BATCH_SIZE ?= 9
+LOCALNET_E2E_SOAK_PROGRESS_INTERVAL_SECONDS ?= 20
 LOCALNET_E2E_PARALLEL_EXECUTION_ENABLED ?= 1
 LOCALNET_E2E_PARALLEL_EXECUTION_WORKERS ?= 4
 LOCALNET_E2E_PARALLEL_EXECUTION_MIN_TRANSACTIONS ?= 8
@@ -384,7 +389,7 @@ LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK ?= testnet
 
 .DEFAULT_GOAL := help
 
-.PHONY: help print-env validate smoke smoke-cli guard-stack-security prepare-dirs \
+.PHONY: help print-env validate release-safety smoke smoke-cli guard-stack-security prepare-dirs \
 	dev-contracting-shell dev-contracting-up dev-contracting-build dev-contracting-down \
 	dev-abci-build dev-abci-up dev-abci-down dev-abci-shell \
 	abci-build abci-up abci-down abci-fidelity-build abci-fidelity-up abci-fidelity-down dev-base-abci-shell \
@@ -404,6 +409,7 @@ help:
 	@printf "  %-24s %s\n" "print-env" "Show resolved workspace and data paths"
 	@printf "  %-24s %s\n" "guard-stack-security" "Validate hardened stack exposure and secret settings"
 	@printf "  %-24s %s\n" "validate" "Validate compose topology and required local paths"
+	@printf "  %-24s %s\n" "release-safety" "Run the cross-repo release gate, including repo validation and localnet safety checks"
 	@printf "  %-24s %s\n" "smoke" "Run the smallest real ABCI bring-up and shutdown path"
 	@printf "  %-24s %s\n" "smoke-cli" "Run the cross-repo operator flow through xian-cli"
 	@printf "  %-24s %s\n" "abci-build" "Build the default integrated node image"
@@ -579,6 +585,9 @@ print-env:
 
 validate:
 	./scripts/validate-stack.sh
+
+release-safety:
+	./scripts/release-safety.sh
 
 smoke:
 	./scripts/smoke-stack.sh
@@ -859,6 +868,11 @@ localnet-e2e:
 		--periodic-interval-seconds $(LOCALNET_E2E_PERIODIC_INTERVAL_SECONDS) \
 		--burst-counter-ops $(LOCALNET_E2E_BURST_COUNTER_OPS) \
 		--dex-rounds $(LOCALNET_E2E_DEX_ROUNDS) \
+		--chaos-cycles $(LOCALNET_E2E_CHAOS_CYCLES) \
+		--chaos-load-transactions $(LOCALNET_E2E_CHAOS_LOAD_TRANSACTIONS) \
+		--soak-duration-seconds $(LOCALNET_E2E_SOAK_DURATION_SECONDS) \
+		--soak-batch-size $(LOCALNET_E2E_SOAK_BATCH_SIZE) \
+		--soak-progress-interval-seconds $(LOCALNET_E2E_SOAK_PROGRESS_INTERVAL_SECONDS) \
 		--vm-max-shadow-mismatches $(LOCALNET_VM_REPORT_MAX_SHADOW_MISMATCHES)
 
 localnet-vm-report:

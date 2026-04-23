@@ -961,6 +961,8 @@ class E2ERunner:
             "14-logging",
             "15-shielded-note-token",
             "16-parallel-execution",
+            "17-chaos-convergence",
+            "18-soak-abuse",
         ]
 
     def _load_resume_json(self, phase_name: str) -> dict[str, Any]:
@@ -1688,10 +1690,28 @@ class E2ERunner:
     ) -> list[dict[str, Any]]:
         receipts = []
         founder = self.founder_wallet
+        minimum_amount = Decimal(str(amount))
+        wallets_to_fund: list[tuple[Wallet, Decimal]] = []
+
+        for wallet in wallets:
+            current_balance = await fetch_abci_query(
+                session,
+                self.nodes[0].rpc_url,
+                f"/get/currency.balances:{wallet.public_key}",
+            )
+            try:
+                current_amount = Decimal(str(current_balance or 0))
+            except Exception:  # noqa: BLE001
+                current_amount = Decimal("0")
+            delta = minimum_amount - current_amount
+            if delta > 0:
+                wallets_to_fund.append((wallet, delta))
+
         async with self.client(founder, 0, session) as client:
-            for wallet in wallets:
+            for wallet, delta in wallets_to_fund:
+                send_amount = int(delta) if delta == int(delta) else float(delta)
                 submission = await client.send(
-                    amount=amount,
+                    amount=send_amount,
                     to_address=wallet.public_key,
                     chi=DEFAULT_TRANSFER_CHI,
                     mode="commit",
@@ -1700,7 +1720,7 @@ class E2ERunner:
                 receipts.append(
                     ensure_positive_submission(
                         submission,
-                        label=f"fund {wallet.public_key[:12]}",
+                        label=f"fund {wallet.public_key[:12]} (+{send_amount})",
                     )
                 )
         for wallet in wallets:
@@ -5612,6 +5632,413 @@ class E2ERunner:
             "parallel_metadata": metadata_matches,
         }
 
+    async def collect_vm_rollout_snapshot(self) -> dict[str, Any]:
+        if self.network is None:
+            raise E2EError("vm rollout snapshot requires a loaded network")
+        report = await asyncio.to_thread(
+            collect_localnet_vm_rollout_report,
+            self.network,
+            timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
+            max_shadow_mismatches=self.args.vm_max_shadow_mismatches,
+        )
+        if not report["ok"]:
+            raise E2EError(
+                "vm rollout report failed checks: "
+                + json.dumps(
+                    {
+                        "checks": report["checks"],
+                        "errors": report["errors"],
+                        "nodes_with_mismatches": report["nodes_with_mismatches"],
+                    },
+                    sort_keys=True,
+                )
+            )
+        return report
+
+    async def wait_for_conflict_counter_convergence(
+        self,
+        session: aiohttp.ClientSession,
+        *,
+        label: str,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        conflict_contract = self.contracts["conflict"]
+        expected = await fetch_abci_query(
+            session,
+            self.nodes[0].rpc_url,
+            f"/get/{conflict_contract}.counter",
+        )
+        states = await wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract=conflict_contract,
+            variable="counter",
+            expected=expected,
+            label=label,
+            timeout_seconds=(
+                min(self.args.rpc_timeout_seconds, 60.0)
+                if timeout_seconds is None
+                else timeout_seconds
+            ),
+        )
+        return {
+            "expected": expected,
+            "states": states,
+        }
+
+    async def submit_contract_call(
+        self,
+        session: aiohttp.ClientSession,
+        *,
+        wallet: Wallet,
+        node_index: int,
+        contract: str,
+        function: str,
+        kwargs: dict[str, Any],
+        label: str,
+        chi: int = DEFAULT_TX_CHI,
+        expect_success: bool = True,
+        expected_message_fragment: str | None = None,
+    ) -> dict[str, Any]:
+        async with self.client(wallet, node_index, session) as client:
+            submission = await client.send_tx(
+                contract,
+                function,
+                kwargs,
+                chi=chi,
+                wait_for_tx=True,
+            )
+        if expect_success:
+            return ensure_positive_submission(submission, label=label)
+        return ensure_failed_submission(
+            submission,
+            label=label,
+            expected_message_fragment=expected_message_fragment,
+        )
+
+    async def chaos_convergence_phase(
+        self,
+        session: aiohttp.ClientSession,
+    ) -> dict[str, Any]:
+        if self.args.chaos_cycles <= 0:
+            return {
+                "skipped": True,
+                "reason": "chaos_cycles <= 0",
+            }
+
+        wallets = [
+            derive_wallet(self.seed, f"chaos-wallet-{index}")
+            for index in range(6)
+        ]
+        await self.fund_wallets(session, wallets, amount=10_000)
+
+        candidate_nodes = [
+            node
+            for node in self.nodes
+            if node.index != 0 and not node.service_node
+        ]
+        if not candidate_nodes:
+            candidate_nodes = [node for node in self.nodes if node.index != 0]
+        if not candidate_nodes:
+            raise E2EError("chaos phase requires at least two localnet nodes")
+
+        allocation_contract = self.contracts["allocation_guards"]
+        conflict_contract = self.contracts["conflict"]
+        cycles = []
+
+        for cycle_index in range(self.args.chaos_cycles):
+            target_node = candidate_nodes[cycle_index % len(candidate_nodes)]
+            active_node_indexes = [
+                node.index
+                for node in self.nodes
+                if node.index != target_node.index
+            ]
+            cycle_claims = []
+            pre_heights = await latest_heights(session, self.nodes)
+            stop = await self.stop_node_runtime(target_node)
+
+            for tx_index in range(max(self.args.chaos_load_transactions, 1)):
+                wallet = wallets[(cycle_index + tx_index) % len(wallets)]
+                node_index = active_node_indexes[
+                    tx_index % len(active_node_indexes)
+                ]
+                slot = (
+                    f"chaos-{cycle_index}-{tx_index}-"
+                    f"{short_hash(self.run_id)}"
+                )
+                cycle_claims.append(
+                    await self.submit_contract_call(
+                        session,
+                        wallet=wallet,
+                        node_index=node_index,
+                        contract=conflict_contract,
+                        function="claim",
+                        kwargs={"slot": slot, "amount": 1 + (tx_index % 3)},
+                        label=f"chaos-claim-{cycle_index}-{tx_index}",
+                    )
+                )
+
+            expected_failure = await self.submit_contract_call(
+                session,
+                wallet=wallets[cycle_index % len(wallets)],
+                node_index=active_node_indexes[0],
+                contract=allocation_contract,
+                function="explode_bytes",
+                kwargs={"size": 131_073},
+                label=f"chaos-allocation-failure-{cycle_index}",
+                expect_success=False,
+                expected_message_fragment="maximum allowed allocation size",
+            )
+
+            anchor_height = await latest_height(session, self.nodes[0].rpc_url)
+            restart = await self.start_node_runtime(
+                session,
+                target_node,
+                target_height=anchor_height,
+            )
+            counter_convergence = await self.wait_for_conflict_counter_convergence(
+                session,
+                label=f"chaos cycle {cycle_index} conflict counter",
+            )
+            post_heights = await latest_heights(session, self.nodes)
+            app_hash = await compare_app_hash_window(
+                session,
+                self.nodes,
+                window=self.args.app_hash_window,
+            )
+            if not app_hash["ok"]:
+                raise E2EError(
+                    f"app hash mismatch detected during chaos cycle {cycle_index}"
+                )
+
+            vm_rollout = None
+            if self.execution_mode == "xian_vm_v1":
+                vm_rollout = await self.collect_vm_rollout_snapshot()
+
+            cycles.append(
+                {
+                    "cycle": cycle_index,
+                    "target_node": target_node.moniker,
+                    "pre_heights": pre_heights,
+                    "stop": normalize_value(stop),
+                    "restart": normalize_value(restart),
+                    "post_heights": post_heights,
+                    "claim_count": len(cycle_claims),
+                    "claims": cycle_claims,
+                    "expected_failure": expected_failure,
+                    "counter_convergence": counter_convergence,
+                    "app_hash": app_hash,
+                    "vm_rollout": vm_rollout,
+                }
+            )
+
+        return {
+            "cycles": cycles,
+            "final_heights": await latest_heights(session, self.nodes),
+            "final_vm_rollout": (
+                await self.collect_vm_rollout_snapshot()
+                if self.execution_mode == "xian_vm_v1"
+                else None
+            ),
+        }
+
+    async def soak_abuse_phase(
+        self,
+        session: aiohttp.ClientSession,
+    ) -> dict[str, Any]:
+        if self.args.soak_duration_seconds <= 0:
+            return {
+                "skipped": True,
+                "reason": "soak_duration_seconds <= 0",
+            }
+
+        wallets = [
+            derive_wallet(self.seed, f"soak-wallet-{index}")
+            for index in range(max(self.args.soak_batch_size, 6))
+        ]
+        await self.fund_wallets(session, wallets, amount=12_000)
+
+        conflict_contract = self.contracts["conflict"]
+        allocation_contract = self.contracts["allocation_guards"]
+        duplicate_slot = f"soak-duplicate-{short_hash(self.run_id)}"
+        soak_run_tag = short_hash(f"{self.run_id}:{time.time_ns()}")
+        existing_duplicate_seed = await fetch_abci_query(
+            session,
+            self.nodes[0].rpc_url,
+            f"/get/{conflict_contract}.claims:{duplicate_slot}",
+        )
+        if existing_duplicate_seed:
+            duplicate_seed = {
+                "label": "soak-duplicate-seed",
+                "already_present": True,
+                "slot": duplicate_slot,
+            }
+        else:
+            duplicate_seed = await self.submit_contract_call(
+                session,
+                wallet=wallets[0],
+                node_index=0,
+                contract=conflict_contract,
+                function="claim",
+                kwargs={"slot": duplicate_slot, "amount": 1},
+                label="soak-duplicate-seed",
+            )
+
+        started = time.monotonic()
+        deadline = started + self.args.soak_duration_seconds
+        progress_interval = max(self.args.soak_progress_interval_seconds, 1.0)
+        next_progress = started + min(
+            progress_interval,
+            self.args.soak_duration_seconds,
+        )
+        valid_successes = 1
+        expected_failures = 0
+        batch_summaries = []
+        progress_checks = []
+        batch_size = max(self.args.soak_batch_size, 1)
+        batch_index = 0
+
+        while time.monotonic() < deadline:
+            batch_index += 1
+            tasks = []
+            for item_index in range(batch_size):
+                wallet = wallets[(batch_index + item_index) % len(wallets)]
+                node_index = (batch_index + item_index) % len(self.nodes)
+                pattern = (batch_index + item_index) % 3
+                if pattern == 0:
+                    slot = (
+                        f"soak-{soak_run_tag}-{batch_index}-{item_index}"
+                    )
+                    tasks.append(
+                        self.submit_contract_call(
+                            session,
+                            wallet=wallet,
+                            node_index=node_index,
+                            contract=conflict_contract,
+                            function="claim",
+                            kwargs={"slot": slot, "amount": 1 + (item_index % 3)},
+                            label=f"soak-claim-{batch_index}-{item_index}",
+                        )
+                    )
+                elif pattern == 1:
+                    tasks.append(
+                        self.submit_contract_call(
+                            session,
+                            wallet=wallet,
+                            node_index=node_index,
+                            contract=conflict_contract,
+                            function="claim",
+                            kwargs={"slot": "", "amount": -1},
+                            label=f"soak-invalid-claim-{batch_index}-{item_index}",
+                            expect_success=False,
+                            expected_message_fragment="slot is required",
+                        )
+                    )
+                elif (batch_index + item_index) % 2 == 0:
+                    tasks.append(
+                        self.submit_contract_call(
+                            session,
+                            wallet=wallet,
+                            node_index=node_index,
+                            contract=conflict_contract,
+                            function="claim",
+                            kwargs={"slot": duplicate_slot, "amount": 1},
+                            label=f"soak-duplicate-claim-{batch_index}-{item_index}",
+                            expect_success=False,
+                            expected_message_fragment="slot already claimed",
+                        )
+                    )
+                else:
+                    tasks.append(
+                        self.submit_contract_call(
+                            session,
+                            wallet=wallet,
+                            node_index=node_index,
+                            contract=allocation_contract,
+                            function="explode_bytes",
+                            kwargs={"size": 131_073},
+                            label=f"soak-allocation-failure-{batch_index}-{item_index}",
+                            expect_success=False,
+                            expected_message_fragment="maximum allowed allocation size",
+                        )
+                    )
+
+            results = await asyncio.gather(*tasks)
+            batch_successes = sum(
+                1 for item in results if item.get("success") is True
+            )
+            batch_failures = len(results) - batch_successes
+            valid_successes += batch_successes
+            expected_failures += batch_failures
+            batch_summaries.append(
+                {
+                    "batch": batch_index,
+                    "successes": batch_successes,
+                    "expected_failures": batch_failures,
+                    "sample": normalize_value(results[: min(4, len(results))]),
+                }
+            )
+
+            if time.monotonic() >= next_progress:
+                convergence = await self.wait_for_conflict_counter_convergence(
+                    session,
+                    label=f"soak progress {batch_index} conflict counter",
+                )
+                app_hash = await compare_app_hash_window(
+                    session,
+                    self.nodes,
+                    window=self.args.app_hash_window,
+                )
+                if not app_hash["ok"]:
+                    raise E2EError(
+                        f"app hash mismatch detected during soak batch {batch_index}"
+                    )
+                progress_checks.append(
+                    {
+                        "batch": batch_index,
+                        "heights": await latest_heights(session, self.nodes),
+                        "counter_convergence": convergence,
+                        "app_hash": app_hash,
+                        "vm_rollout": (
+                            await self.collect_vm_rollout_snapshot()
+                            if self.execution_mode == "xian_vm_v1"
+                            else None
+                        ),
+                    }
+                )
+                next_progress += progress_interval
+
+            await asyncio.sleep(0.15)
+
+        final_counter = await self.wait_for_conflict_counter_convergence(
+            session,
+            label="soak final conflict counter",
+        )
+        final_app_hash = await compare_app_hash_window(
+            session,
+            self.nodes,
+            window=self.args.app_hash_window,
+        )
+        if not final_app_hash["ok"]:
+            raise E2EError("app hash mismatch detected at the end of soak phase")
+
+        return {
+            "duplicate_seed": duplicate_seed,
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "batches": batch_summaries,
+            "progress_checks": progress_checks,
+            "valid_successes": valid_successes,
+            "expected_failures": expected_failures,
+            "final_heights": await latest_heights(session, self.nodes),
+            "final_counter_convergence": final_counter,
+            "final_app_hash": final_app_hash,
+            "final_vm_rollout": (
+                await self.collect_vm_rollout_snapshot()
+                if self.execution_mode == "xian_vm_v1"
+                else None
+            ),
+        }
+
     async def finalize_summary(self) -> dict[str, Any]:
         summary = {
             "ok": all(phase.ok for phase in self.phase_results),
@@ -5669,6 +6096,8 @@ class E2ERunner:
                 ("14-logging", lambda: self.logging_phase(session)),
                 ("15-shielded-note-token", lambda: self.shielded_phase(session)),
                 ("16-parallel-execution", lambda: self.parallel_execution_phase(session)),
+                ("17-chaos-convergence", lambda: self.chaos_convergence_phase(session)),
+                ("18-soak-abuse", lambda: self.soak_abuse_phase(session)),
             ]
             if start_phase != "00-bootstrap":
                 self.load_resume_context()
@@ -5682,31 +6111,12 @@ class E2ERunner:
                 await self.run_phase(phase_name, fn)
 
         if self.execution_mode == "xian_vm_v1" and self.network is not None:
-            self.vm_rollout_report = await asyncio.to_thread(
-                collect_localnet_vm_rollout_report,
-                self.network,
-                timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
-                max_shadow_mismatches=self.args.vm_max_shadow_mismatches,
-            )
+            self.vm_rollout_report = await self.collect_vm_rollout_snapshot()
             (self.output_dir / "vm_rollout.json").write_text(
                 json.dumps(self.vm_rollout_report, indent=2, sort_keys=True)
                 + "\n",
                 encoding="utf-8",
             )
-            if not self.vm_rollout_report["ok"]:
-                raise E2EError(
-                    "vm rollout report failed checks: "
-                    + json.dumps(
-                        {
-                            "checks": self.vm_rollout_report["checks"],
-                            "errors": self.vm_rollout_report["errors"],
-                            "nodes_with_mismatches": self.vm_rollout_report[
-                                "nodes_with_mismatches"
-                            ],
-                        },
-                        sort_keys=True,
-                    )
-                )
 
         summary = await self.finalize_summary()
         (self.output_dir / "summary.json").write_text(
@@ -5744,6 +6154,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--periodic-interval-seconds", type=float, default=0.35)
     parser.add_argument("--burst-counter-ops", type=int, default=260)
     parser.add_argument("--dex-rounds", type=int, default=8)
+    parser.add_argument("--chaos-cycles", type=int, default=2)
+    parser.add_argument("--chaos-load-transactions", type=int, default=8)
+    parser.add_argument("--soak-duration-seconds", type=float, default=90.0)
+    parser.add_argument("--soak-batch-size", type=int, default=9)
+    parser.add_argument(
+        "--soak-progress-interval-seconds",
+        type=float,
+        default=20.0,
+    )
     parser.add_argument(
         "--simulator-burst-concurrency",
         type=int,

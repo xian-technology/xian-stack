@@ -164,17 +164,24 @@ decisions from PyPI.
 The image workflow:
 
 1. validates the manifest
-2. checks out the exact pinned component refs
-3. builds and publishes:
+2. runs the cross-repo release safety gate:
+   - `xian-contracting/scripts/validate-release.sh`
+   - `xian-abci/scripts/validate-release.sh`
+   - `xian-stack/scripts/validate-stack.sh`
+   - `make localnet-vm-e2e`
+   - `make localnet-vm-report`
+   - `make localnet-validator-governance`
+3. checks out the exact pinned component refs
+4. builds and publishes:
    - `ghcr.io/<owner>/xian-node`
    - `ghcr.io/<owner>/xian-node-split`
-4. signs the published images by digest through Sigstore keyless signing
-5. attaches signed release assets to the GitHub Release:
+5. signs the published images by digest through Sigstore keyless signing
+6. attaches signed release assets to the GitHub Release:
    - `release-manifest.json`
    - `image-release.txt`
    - `image-release.json`
    - per-asset `.sigstore.json` bundle files
-6. runs a post-publish reproducibility audit that rebuilds the release images
+7. runs a post-publish reproducibility audit that rebuilds the release images
    per platform and compares the observed `linux/amd64` and `linux/arm64`
    digests with the digests recorded in `image-release.json`
 
