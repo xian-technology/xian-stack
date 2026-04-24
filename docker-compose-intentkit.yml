@@ -1,3 +1,8 @@
+x-intentkit-xian-source-volumes: &intentkit-xian-source-volumes
+  - ${XIAN_PY_DIR}:/xian-py:ro
+  - ${XIAN_CONTRACTING_DIR}/packages/xian-accounts:/xian-contracting/packages/xian-accounts:ro
+  - ${XIAN_CONTRACTING_DIR}/packages/xian-runtime-types:/xian-contracting/packages/xian-runtime-types:ro
+
 services:
   api:
     build:
@@ -11,6 +16,7 @@ services:
         RELEASE: ${XIAN_INTENTKIT_RELEASE}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes: *intentkit-xian-source-volumes
     ports:
       - "${XIAN_INTENTKIT_HOST}:${XIAN_INTENTKIT_API_PORT}:8000"
 
@@ -26,6 +32,7 @@ services:
         RELEASE: ${XIAN_INTENTKIT_RELEASE}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes: *intentkit-xian-source-volumes
 
   scheduler:
     build:
@@ -39,6 +46,7 @@ services:
         RELEASE: ${XIAN_INTENTKIT_RELEASE}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes: *intentkit-xian-source-volumes
 
   frontend:
     build:

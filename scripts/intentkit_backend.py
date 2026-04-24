@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -366,6 +367,7 @@ def run_intentkit_compose(
         cwd=STACK_DIR,
         check=check,
         capture_output=capture_output,
+        stdout=None if capture_output else sys.stderr,
         text=True,
         env=source_env,
     )
