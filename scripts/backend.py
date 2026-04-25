@@ -13,6 +13,14 @@ from urllib.error import URLError
 from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import urlopen
 
+from dex_automation_backend import (
+    DEFAULT_DEX_AUTOMATION_HOST,
+    DEFAULT_DEX_AUTOMATION_PORT,
+    dex_automation_endpoints,
+    get_dex_automation_status,
+    start_dex_automation_runtime,
+    stop_dex_automation_runtime,
+)
 from intentkit_backend import (
     SUPPORTED_INTENTKIT_NETWORK_IDS,
     ensure_intentkit_env,
@@ -33,6 +41,7 @@ from shielded_relayer_backend import (
 STACK_DIR = Path(__file__).resolve().parent.parent
 LOCALNET_NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 LOCALNET_INIT_SCRIPT = STACK_DIR / "scripts" / "localnet-init.py"
+LOCALNET_DEX_BOOTSTRAP_SCRIPT = STACK_DIR / "scripts" / "localnet-dex-bootstrap.py"
 LOCALNET_WORKLOAD_SCRIPT = STACK_DIR / "scripts" / "localnet-workload.py"
 LOCALNET_E2E_SCRIPT = STACK_DIR / "scripts" / "localnet-e2e.py"
 LOCALNET_VM_ROLLOUT_SCRIPT = STACK_DIR / "scripts" / "localnet_vm_rollout.py"
@@ -137,6 +146,9 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
     env.setdefault("XIAN_POSTGRAPHILE_PORT", "5000")
     env.setdefault("XIAN_DASHBOARD_HOST", "127.0.0.1")
     env.setdefault("XIAN_DASHBOARD_PORT", "8080")
+    env.setdefault("XIAN_DEX_AUTOMATION_ENABLED", "0")
+    env.setdefault("XIAN_DEX_AUTOMATION_HOST", DEFAULT_DEX_AUTOMATION_HOST)
+    env.setdefault("XIAN_DEX_AUTOMATION_PORT", str(DEFAULT_DEX_AUTOMATION_PORT))
     env.setdefault("XIAN_SERVICE_NODE", "0")
 
     secrets_path = stack_secrets_env_path(env)
@@ -198,6 +210,15 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
         and not env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED"))
     ):
         errors.append("Public dashboard exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
+
+    if (
+        env_truthy(env.get("XIAN_DEX_AUTOMATION_ENABLED"))
+        and not is_loopback_host(env.get("XIAN_DEX_AUTOMATION_HOST"))
+        and not env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED"))
+    ):
+        errors.append(
+            "Public DEX automation exposure requires XIAN_PUBLIC_QUERY_ENABLED=1"
+        )
 
     if errors:
         detail = "\n".join(f"  - {message}" for message in errors)
@@ -584,6 +605,10 @@ def runtime_env(
     intentkit_host: str,
     intentkit_port: int,
     intentkit_api_port: int,
+    dex_automation_enabled: bool,
+    dex_automation_host: str,
+    dex_automation_port: int,
+    dex_automation_config: str | None,
     shielded_relayer_enabled: bool,
     shielded_relayer_host: str,
     shielded_relayer_port: int,
@@ -638,6 +663,19 @@ def runtime_env(
     env["XIAN_INTENTKIT_PORT"] = str(intentkit_port)
     env["XIAN_INTENTKIT_API_PORT"] = str(intentkit_api_port)
     env["XIAN_INTENTKIT_S3_PORT"] = env.get("XIAN_INTENTKIT_S3_PORT", "39000")
+    env["XIAN_DEX_AUTOMATION_ENABLED"] = (
+        "1" if dex_automation_enabled else "0"
+    )
+    env["XIAN_DEX_AUTOMATION_DIR"] = str(
+        resolve_repo_dir("xian-dex-automation", "XIAN_DEX_AUTOMATION_DIR")
+    )
+    env["XIAN_DEX_AUTOMATION_HOST"] = dex_automation_host
+    env["XIAN_DEX_AUTOMATION_PUBLIC_HOST"] = display_host(
+        dex_automation_host
+    )
+    env["XIAN_DEX_AUTOMATION_PORT"] = str(dex_automation_port)
+    if dex_automation_config is not None:
+        env["XIAN_DEX_AUTOMATION_CONFIG"] = dex_automation_config
     env["XIAN_SHIELDED_RELAYER_ENABLED"] = (
         "1" if shielded_relayer_enabled else "0"
     )
@@ -774,6 +812,10 @@ def backend_start(
     intentkit_host: str,
     intentkit_port: int,
     intentkit_api_port: int,
+    dex_automation_enabled: bool,
+    dex_automation_host: str,
+    dex_automation_port: int,
+    dex_automation_config: str | None,
     shielded_relayer_enabled: bool,
     shielded_relayer_host: str,
     shielded_relayer_port: int,
@@ -803,6 +845,10 @@ def backend_start(
         intentkit_host=intentkit_host,
         intentkit_port=intentkit_port,
         intentkit_api_port=intentkit_api_port,
+        dex_automation_enabled=dex_automation_enabled,
+        dex_automation_host=dex_automation_host,
+        dex_automation_port=dex_automation_port,
+        dex_automation_config=dex_automation_config,
         shielded_relayer_enabled=shielded_relayer_enabled,
         shielded_relayer_host=shielded_relayer_host,
         shielded_relayer_port=shielded_relayer_port,
@@ -835,6 +881,7 @@ def backend_start(
             env.get("XIAN_PUBLIC_METRICS_ENABLED")
         ),
         "intentkit_enabled": intentkit_enabled,
+        "dex_automation_enabled": dex_automation_enabled,
         "shielded_relayer_enabled": shielded_relayer_enabled,
         "rpc_checked": wait_for_health,
     }
@@ -852,8 +899,18 @@ def backend_start(
             f"http://{display_host(shielded_relayer_host)}:"
             f"{shielded_relayer_port}"
         )
+    if dex_automation_enabled:
+        result["dex_automation_url"] = (
+            f"http://{display_host(dex_automation_host)}:"
+            f"{dex_automation_port}"
+        )
     rpc_status = None
-    if wait_for_health or intentkit_enabled or shielded_relayer_enabled:
+    if (
+        wait_for_health
+        or intentkit_enabled
+        or dex_automation_enabled
+        or shielded_relayer_enabled
+    ):
         rpc_status = wait_for_rpc_ready(
             rpc_url=rpc_url,
             timeout_seconds=rpc_timeout_seconds,
@@ -875,6 +932,15 @@ def backend_start(
             )
         )
         result["intentkit_status"] = start_intentkit_runtime(env=env)
+    if dex_automation_enabled:
+        if rpc_status is None:
+            raise RuntimeError("xian-dex-automation requires RPC readiness")
+        result["dex_automation_status"] = start_dex_automation_runtime(
+            bind_host=dex_automation_host,
+            port=dex_automation_port,
+            rpc_url=rpc_base_url(rpc_url),
+            env=env,
+        )
     if shielded_relayer_enabled:
         if rpc_status is None:
             raise RuntimeError("shielded relayer requires RPC readiness")
@@ -904,6 +970,10 @@ def backend_stop(
     intentkit_host: str,
     intentkit_port: int,
     intentkit_api_port: int,
+    dex_automation_enabled: bool,
+    dex_automation_host: str,
+    dex_automation_port: int,
+    dex_automation_config: str | None,
     shielded_relayer_enabled: bool,
     shielded_relayer_host: str,
     shielded_relayer_port: int,
@@ -929,6 +999,10 @@ def backend_stop(
         intentkit_host=intentkit_host,
         intentkit_port=intentkit_port,
         intentkit_api_port=intentkit_api_port,
+        dex_automation_enabled=dex_automation_enabled,
+        dex_automation_host=dex_automation_host,
+        dex_automation_port=dex_automation_port,
+        dex_automation_config=dex_automation_config,
         shielded_relayer_enabled=shielded_relayer_enabled,
         shielded_relayer_host=shielded_relayer_host,
         shielded_relayer_port=shielded_relayer_port,
@@ -936,6 +1010,13 @@ def backend_stop(
     intentkit_result = None
     if intentkit_enabled:
         intentkit_result = stop_intentkit_runtime(env=env)
+    dex_automation_result = None
+    if dex_automation_enabled:
+        dex_automation_result = stop_dex_automation_runtime(
+            bind_host=dex_automation_host,
+            port=dex_automation_port,
+            env=env,
+        )
     shielded_relayer_result = None
     if shielded_relayer_enabled:
         shielded_relayer_result = stop_shielded_relayer_runtime(
@@ -963,10 +1044,12 @@ def backend_stop(
             env.get("XIAN_PUBLIC_METRICS_ENABLED")
         ),
         "intentkit_enabled": intentkit_enabled,
+        "dex_automation_enabled": dex_automation_enabled,
         "shielded_relayer_enabled": shielded_relayer_enabled,
         "dashboard_target": dashboard_target if dashboard_enabled else None,
         "monitoring_target": monitoring_target if monitoring_enabled else None,
         "intentkit_status": intentkit_result,
+        "dex_automation_status": dex_automation_result,
         "shielded_relayer_status": shielded_relayer_result,
     }
 
@@ -989,6 +1072,10 @@ def backend_status(
     intentkit_host: str,
     intentkit_port: int,
     intentkit_api_port: int,
+    dex_automation_enabled: bool,
+    dex_automation_host: str,
+    dex_automation_port: int,
+    dex_automation_config: str | None,
     shielded_relayer_enabled: bool,
     shielded_relayer_host: str,
     shielded_relayer_port: int,
@@ -1009,6 +1096,10 @@ def backend_status(
         intentkit_host=intentkit_host,
         intentkit_port=intentkit_port,
         intentkit_api_port=intentkit_api_port,
+        dex_automation_enabled=dex_automation_enabled,
+        dex_automation_host=dex_automation_host,
+        dex_automation_port=dex_automation_port,
+        dex_automation_config=dex_automation_config,
         shielded_relayer_enabled=shielded_relayer_enabled,
         shielded_relayer_host=shielded_relayer_host,
         shielded_relayer_port=shielded_relayer_port,
@@ -1018,6 +1109,7 @@ def backend_status(
     payload["dashboard_enabled"] = dashboard_enabled
     payload["monitoring_enabled"] = monitoring_enabled
     payload["intentkit_enabled"] = intentkit_enabled
+    payload["dex_automation_enabled"] = dex_automation_enabled
     payload["shielded_relayer_enabled"] = shielded_relayer_enabled
     payload["public_rpc_enabled"] = env_truthy(env.get("XIAN_PUBLIC_RPC_ENABLED"))
     payload["public_query_enabled"] = env_truthy(
@@ -1046,6 +1138,10 @@ def backend_status(
         intentkit_host=intentkit_host,
         intentkit_port=intentkit_port,
         intentkit_api_port=intentkit_api_port,
+        dex_automation_enabled=dex_automation_enabled,
+        dex_automation_host=dex_automation_host,
+        dex_automation_port=dex_automation_port,
+        dex_automation_config=dex_automation_config,
         shielded_relayer_enabled=shielded_relayer_enabled,
         shielded_relayer_host=shielded_relayer_host,
         shielded_relayer_port=shielded_relayer_port,
@@ -1152,6 +1248,33 @@ def backend_status(
         ) as exc:
             payload["intentkit_api_reachable"] = False
             payload["intentkit_api_error"] = str(exc)
+    if dex_automation_enabled:
+        payload["dex_automation_url"] = str(
+            endpoints.get("dex_automation", "")
+        )
+        payload["dex_automation_status"] = get_dex_automation_status(
+            bind_host=dex_automation_host,
+            port=dex_automation_port,
+            env=env,
+        )
+        payload["dex_automation_running"] = bool(
+            payload["dex_automation_status"].get("dex_automation_running")
+        )
+        try:
+            payload["dex_automation_health_status"] = fetch_json(
+                str(endpoints["dex_automation_health"]),
+                timeout=2.0,
+            )
+            payload["dex_automation_reachable"] = True
+        except (
+            OSError,
+            URLError,
+            TimeoutError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
+            payload["dex_automation_reachable"] = False
+            payload["dex_automation_error"] = str(exc)
     if shielded_relayer_enabled:
         payload["shielded_relayer_url"] = str(
             endpoints.get("shielded_relayer", DEFAULT_SHIELDED_RELAYER_URL)
@@ -1202,6 +1325,10 @@ def backend_endpoints(
     intentkit_host: str,
     intentkit_port: int,
     intentkit_api_port: int,
+    dex_automation_enabled: bool,
+    dex_automation_host: str,
+    dex_automation_port: int,
+    dex_automation_config: str | None,
     shielded_relayer_enabled: bool,
     shielded_relayer_host: str,
     shielded_relayer_port: int,
@@ -1222,6 +1349,10 @@ def backend_endpoints(
         intentkit_host=intentkit_host,
         intentkit_port=intentkit_port,
         intentkit_api_port=intentkit_api_port,
+        dex_automation_enabled=dex_automation_enabled,
+        dex_automation_host=dex_automation_host,
+        dex_automation_port=dex_automation_port,
+        dex_automation_config=dex_automation_config,
         shielded_relayer_enabled=shielded_relayer_enabled,
         shielded_relayer_host=shielded_relayer_host,
         shielded_relayer_port=shielded_relayer_port,
@@ -1285,6 +1416,13 @@ def backend_endpoints(
                 api_port=intentkit_api_port,
             )
         )
+    if dex_automation_enabled:
+        endpoints.update(
+            dex_automation_endpoints(
+                bind_host=dex_automation_host,
+                port=dex_automation_port,
+            )
+        )
     if shielded_relayer_enabled:
         endpoints.update(
             shielded_relayer_endpoints(
@@ -1322,6 +1460,7 @@ def backend_endpoints(
             env.get("XIAN_PUBLIC_METRICS_ENABLED")
         ),
         "intentkit_enabled": intentkit_enabled,
+        "dex_automation_enabled": dex_automation_enabled,
         "shielded_relayer_enabled": shielded_relayer_enabled,
         "intentkit_network_id": intentkit_network_id,
         "endpoints": endpoints,
@@ -1346,6 +1485,10 @@ def backend_health(
     intentkit_host: str,
     intentkit_port: int,
     intentkit_api_port: int,
+    dex_automation_enabled: bool,
+    dex_automation_host: str,
+    dex_automation_port: int,
+    dex_automation_config: str | None,
     shielded_relayer_enabled: bool,
     shielded_relayer_host: str,
     shielded_relayer_port: int,
@@ -1369,6 +1512,10 @@ def backend_health(
         intentkit_host=intentkit_host,
         intentkit_port=intentkit_port,
         intentkit_api_port=intentkit_api_port,
+        dex_automation_enabled=dex_automation_enabled,
+        dex_automation_host=dex_automation_host,
+        dex_automation_port=dex_automation_port,
+        dex_automation_config=dex_automation_config,
         shielded_relayer_enabled=shielded_relayer_enabled,
         shielded_relayer_host=shielded_relayer_host,
         shielded_relayer_port=shielded_relayer_port,
@@ -1550,6 +1697,15 @@ def backend_health(
                 "error": status.get("grafana_error"),
             },
         }
+    if dex_automation_enabled:
+        checks["dex_automation"] = {
+            "ok": bool(status.get("dex_automation_running"))
+            and bool(status.get("dex_automation_reachable")),
+            "detail": {
+                "url": endpoints.get("dex_automation"),
+                "error": status.get("dex_automation_error"),
+            },
+        }
     if shielded_relayer_enabled:
         checks["shielded_relayer"] = {
             "ok": bool(status.get("shielded_relayer_running"))
@@ -1588,6 +1744,7 @@ def backend_health(
         "monitoring_enabled": monitoring_enabled,
         "intentkit_enabled": intentkit_enabled,
         "intentkit_network_id": intentkit_network_id,
+        "dex_automation_enabled": dex_automation_enabled,
         "shielded_relayer_enabled": shielded_relayer_enabled,
         "state": state,
         "checks": checks,
@@ -1725,6 +1882,7 @@ def backend_localnet_up(
     *,
     wait_for_health: bool,
     rpc_timeout_seconds: float,
+    with_dex: bool,
 ) -> dict:
     try:
         run_make_target("localnet-up")
@@ -1746,6 +1904,21 @@ def backend_localnet_up(
             ) from exc
     else:
         result["network"] = load_localnet_metadata()
+    if with_dex:
+        result["dex_bootstrap"] = backend_localnet_dex_bootstrap(
+            deploy_helper=True,
+            seed_demo_pool=True,
+            top_up_liquidity=False,
+            emit_test_swap=False,
+            demo_token_contract="con_dex_demo_token",
+            demo_lp_contract="con_dex_demo_lp",
+            rpc_url=None,
+            chain_id=None,
+            deployer_private_key=None,
+            dex_contracts_dir=None,
+            liquidity_currency_amount=10_000.0,
+            liquidity_demo_token_amount=10_000.0,
+        )
     return result
 
 
@@ -1762,6 +1935,68 @@ def backend_localnet_status(*, timeout_seconds: float) -> dict:
         "all_up": all(node["up"] for node in nodes),
         "nodes": nodes,
     }
+
+
+def backend_localnet_dex_bootstrap(
+    *,
+    deploy_helper: bool,
+    seed_demo_pool: bool,
+    top_up_liquidity: bool,
+    emit_test_swap: bool,
+    demo_token_contract: str,
+    demo_lp_contract: str,
+    rpc_url: str | None,
+    chain_id: str | None,
+    deployer_private_key: str | None,
+    dex_contracts_dir: str | None,
+    liquidity_currency_amount: float,
+    liquidity_demo_token_amount: float,
+) -> dict:
+    script_args = [
+        "--json-only",
+        "--deploy-helper" if deploy_helper else "--no-deploy-helper",
+        "--seed-demo-pool" if seed_demo_pool else "--no-seed-demo-pool",
+        "--top-up-liquidity" if top_up_liquidity else "--no-top-up-liquidity",
+        "--emit-test-swap" if emit_test_swap else "--no-emit-test-swap",
+        "--demo-token-contract",
+        demo_token_contract,
+        "--demo-lp-contract",
+        demo_lp_contract,
+        "--liquidity-currency-amount",
+        str(liquidity_currency_amount),
+        "--liquidity-demo-token-amount",
+        str(liquidity_demo_token_amount),
+    ]
+    if dex_contracts_dir is not None:
+        script_args.extend(["--dex-contracts-dir", dex_contracts_dir])
+    if rpc_url is not None:
+        script_args.extend(["--rpc-url", rpc_url])
+    if chain_id is not None:
+        script_args.extend(["--chain-id", chain_id])
+    if deployer_private_key is not None:
+        script_args.extend(["--deployer-private-key", deployer_private_key])
+
+    try:
+        result = run_python_script(
+            LOCALNET_DEX_BOOTSTRAP_SCRIPT,
+            *script_args,
+            capture_output=True,
+            uv_project=resolve_repo_dir("xian-py", "XIAN_PY_DIR"),
+            uv_python=STACK_UV_PYTHON,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise RuntimeError(f"localnet-dex-bootstrap failed: {detail}") from exc
+
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"localnet-dex-bootstrap returned invalid JSON: {result.stdout}"
+        ) from exc
+    if result.stderr:
+        payload["stderr"] = result.stderr
+    return payload
 
 
 def backend_localnet_diagnostic(
@@ -1951,6 +2186,24 @@ def add_intentkit_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_dex_automation_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--dex-automation",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--dex-automation-host",
+        default=DEFAULT_DEX_AUTOMATION_HOST,
+    )
+    parser.add_argument(
+        "--dex-automation-port",
+        type=int,
+        default=DEFAULT_DEX_AUTOMATION_PORT,
+    )
+    parser.add_argument("--dex-automation-config")
+
+
 def add_shielded_relayer_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--shielded-relayer",
@@ -2023,6 +2276,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_public_surface_args(start)
     add_node_image_args(start)
     add_intentkit_args(start)
+    add_dex_automation_args(start)
     add_shielded_relayer_args(start)
     start.add_argument(
         "--wait-for-health",
@@ -2067,6 +2321,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_public_surface_args(stop)
     add_node_image_args(stop)
     add_intentkit_args(stop)
+    add_dex_automation_args(stop)
     add_shielded_relayer_args(stop)
 
     status = subparsers.add_parser("status")
@@ -2097,6 +2352,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_public_surface_args(status)
     add_node_image_args(status)
     add_intentkit_args(status)
+    add_dex_automation_args(status)
     add_shielded_relayer_args(status)
 
     endpoints = subparsers.add_parser("endpoints")
@@ -2127,6 +2383,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_public_surface_args(endpoints)
     add_node_image_args(endpoints)
     add_intentkit_args(endpoints)
+    add_dex_automation_args(endpoints)
     add_shielded_relayer_args(endpoints)
 
     health = subparsers.add_parser("health")
@@ -2157,6 +2414,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_public_surface_args(health)
     add_node_image_args(health)
     add_intentkit_args(health)
+    add_dex_automation_args(health)
     add_shielded_relayer_args(health)
     health.add_argument(
         "--rpc-url",
@@ -2235,12 +2493,62 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_RPC_TIMEOUT_SECONDS,
     )
+    localnet_up.add_argument(
+        "--with-dex",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="bootstrap canonical DEX contracts after localnet health checks pass",
+    )
 
     localnet_status = subparsers.add_parser("localnet-status")
     localnet_status.add_argument(
         "--timeout-seconds",
         type=float,
         default=2.0,
+    )
+
+    localnet_dex_bootstrap = subparsers.add_parser("localnet-dex-bootstrap")
+    localnet_dex_bootstrap.add_argument(
+        "--deploy-helper",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    localnet_dex_bootstrap.add_argument(
+        "--seed-demo-pool",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    localnet_dex_bootstrap.add_argument(
+        "--top-up-liquidity",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    localnet_dex_bootstrap.add_argument(
+        "--emit-test-swap",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    localnet_dex_bootstrap.add_argument(
+        "--demo-token-contract",
+        default="con_dex_demo_token",
+    )
+    localnet_dex_bootstrap.add_argument(
+        "--demo-lp-contract",
+        default="con_dex_demo_lp",
+    )
+    localnet_dex_bootstrap.add_argument("--rpc-url")
+    localnet_dex_bootstrap.add_argument("--chain-id")
+    localnet_dex_bootstrap.add_argument("--deployer-private-key")
+    localnet_dex_bootstrap.add_argument("--dex-contracts-dir")
+    localnet_dex_bootstrap.add_argument(
+        "--liquidity-currency-amount",
+        type=float,
+        default=10_000.0,
+    )
+    localnet_dex_bootstrap.add_argument(
+        "--liquidity-demo-token-amount",
+        type=float,
+        default=10_000.0,
     )
 
     localnet_vm_report = subparsers.add_parser("localnet-vm-report")
@@ -2493,6 +2801,10 @@ def main(argv: list[str] | None = None) -> int:
             intentkit_host=args.intentkit_host,
             intentkit_port=args.intentkit_port,
             intentkit_api_port=args.intentkit_api_port,
+            dex_automation_enabled=args.dex_automation,
+            dex_automation_host=args.dex_automation_host,
+            dex_automation_port=args.dex_automation_port,
+            dex_automation_config=args.dex_automation_config,
             shielded_relayer_enabled=args.shielded_relayer,
             shielded_relayer_host=args.shielded_relayer_host,
             shielded_relayer_port=args.shielded_relayer_port,
@@ -2518,6 +2830,10 @@ def main(argv: list[str] | None = None) -> int:
             intentkit_host=args.intentkit_host,
             intentkit_port=args.intentkit_port,
             intentkit_api_port=args.intentkit_api_port,
+            dex_automation_enabled=args.dex_automation,
+            dex_automation_host=args.dex_automation_host,
+            dex_automation_port=args.dex_automation_port,
+            dex_automation_config=args.dex_automation_config,
             shielded_relayer_enabled=args.shielded_relayer,
             shielded_relayer_host=args.shielded_relayer_host,
             shielded_relayer_port=args.shielded_relayer_port,
@@ -2540,6 +2856,10 @@ def main(argv: list[str] | None = None) -> int:
             intentkit_host=args.intentkit_host,
             intentkit_port=args.intentkit_port,
             intentkit_api_port=args.intentkit_api_port,
+            dex_automation_enabled=args.dex_automation,
+            dex_automation_host=args.dex_automation_host,
+            dex_automation_port=args.dex_automation_port,
+            dex_automation_config=args.dex_automation_config,
             shielded_relayer_enabled=args.shielded_relayer,
             shielded_relayer_host=args.shielded_relayer_host,
             shielded_relayer_port=args.shielded_relayer_port,
@@ -2562,6 +2882,10 @@ def main(argv: list[str] | None = None) -> int:
             intentkit_host=args.intentkit_host,
             intentkit_port=args.intentkit_port,
             intentkit_api_port=args.intentkit_api_port,
+            dex_automation_enabled=args.dex_automation,
+            dex_automation_host=args.dex_automation_host,
+            dex_automation_port=args.dex_automation_port,
+            dex_automation_config=args.dex_automation_config,
             shielded_relayer_enabled=args.shielded_relayer,
             shielded_relayer_host=args.shielded_relayer_host,
             shielded_relayer_port=args.shielded_relayer_port,
@@ -2584,6 +2908,10 @@ def main(argv: list[str] | None = None) -> int:
             intentkit_host=args.intentkit_host,
             intentkit_port=args.intentkit_port,
             intentkit_api_port=args.intentkit_api_port,
+            dex_automation_enabled=args.dex_automation,
+            dex_automation_host=args.dex_automation_host,
+            dex_automation_port=args.dex_automation_port,
+            dex_automation_config=args.dex_automation_config,
             shielded_relayer_enabled=args.shielded_relayer,
             shielded_relayer_host=args.shielded_relayer_host,
             shielded_relayer_port=args.shielded_relayer_port,
@@ -2621,6 +2949,7 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_localnet_up(
             wait_for_health=args.wait_for_health,
             rpc_timeout_seconds=args.rpc_timeout_seconds,
+            with_dex=args.with_dex,
         )
     elif args.command == "localnet-down":
         payload = backend_make_result("localnet-down")
@@ -2628,6 +2957,21 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_make_result("localnet-clean")
     elif args.command == "localnet-status":
         payload = backend_localnet_status(timeout_seconds=args.timeout_seconds)
+    elif args.command == "localnet-dex-bootstrap":
+        payload = backend_localnet_dex_bootstrap(
+            deploy_helper=args.deploy_helper,
+            seed_demo_pool=args.seed_demo_pool,
+            top_up_liquidity=args.top_up_liquidity,
+            emit_test_swap=args.emit_test_swap,
+            demo_token_contract=args.demo_token_contract,
+            demo_lp_contract=args.demo_lp_contract,
+            rpc_url=args.rpc_url,
+            chain_id=args.chain_id,
+            deployer_private_key=args.deployer_private_key,
+            dex_contracts_dir=args.dex_contracts_dir,
+            liquidity_currency_amount=args.liquidity_currency_amount,
+            liquidity_demo_token_amount=args.liquidity_demo_token_amount,
+        )
     elif args.command == "localnet-vm-report":
         payload = backend_localnet_vm_report(
             timeout_seconds=args.timeout_seconds,

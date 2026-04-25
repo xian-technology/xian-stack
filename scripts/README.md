@@ -8,6 +8,9 @@ tooling behind `xian-stack`.
 ## Key Files
 
 - `backend.py`: the main machine-facing backend command surface
+- `dex_automation_backend.py`: stack adapter for the optional
+  `xian-dex-automation` Python sidecar, including generated config, service
+  wallet key file, process lifecycle, and health probing
 - `stack-env.sh`: shared environment/bootstrap shell helper for Compose flows
 - `release-safety.sh`: cross-repo release gate that runs repo validation plus
   the native-VM and governance localnet safety paths
@@ -15,6 +18,9 @@ tooling behind `xian-stack`.
 - `localnet-init.py`: multi-node localnet creation, including local-only
   validator keys, preset-backed genesis selection, native tracer selection, and
   optional BDS wiring
+- `localnet-dex-bootstrap.py`: opt-in canonical DEX deployment for a running
+  local node or generated localnet; it deploys `con_pairs`, `con_dex`, optional
+  `con_dex_helper`, and a reusable local demo pool for DEX UI and event testing
 - `localnet-workload.py`: deterministic workload execution against the localnet
 - `localnet-tps-bench.py`: repeatable throughput sweeps for a running localnet;
   it writes benchmark artifacts under `.artifacts/tps-bench/` and reports both
@@ -50,9 +56,16 @@ tooling behind `xian-stack`.
   operator docs.
 - `backend.py` is the contract to build on if another repo or tool wants to
   drive the local stack programmatically.
+- `dex_automation_backend.py` expects the sibling `xian-dex-automation` repo
+  by default. Override `XIAN_DEX_AUTOMATION_DIR`,
+  `XIAN_DEX_AUTOMATION_CONFIG`, or
+  `XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE` for non-standard layouts.
 - `network.json` under `.localnet/` includes local-only validator private keys
   for automated governance flows. Treat it as disposable dev material and do
   not reuse it outside the local test network.
+- `localnet-dex-bootstrap.py` is post-start bootstrap, not a genesis mutation.
+  The base contract bundle remains unchanged; local DEX availability is an
+  explicit operator action.
 - The validator/governance runner should be executed through `uv` with the
   `xian-abci` project and local `xian-py` package available, preferably through
   `make localnet-validator-governance`.

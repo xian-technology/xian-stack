@@ -12,6 +12,11 @@ XIAN_ABCI_DIR ?= ../xian-abci
 XIAN_CONFIGS_DIR ?= ../xian-configs
 XIAN_CONTRACTING_DIR ?= ../xian-contracting
 XIAN_PY_DIR ?= ../xian-py
+XIAN_DEX_CONTRACTS_DIR ?= ../xian-contracts/contracts/dex/src
+XIAN_DEX_BOOTSTRAP_RPC_URL ?=
+XIAN_DEX_BOOTSTRAP_CHAIN_ID ?=
+XIAN_DEX_DEPLOYER_PRIVATE_KEY ?=
+XIAN_DEX_VALIDATOR_KEY_PATH ?= ./.cometbft/config/priv_validator_key.json
 XIAN_STACK_PYTHON ?= 3.14
 XIAN_SERVICE_NODE ?= 0
 XIAN_COMETBFT_HOME ?= ./.cometbft
@@ -153,6 +158,9 @@ export XIAN_ABCI_DIR := $(abspath $(XIAN_ABCI_DIR))
 export XIAN_CONFIGS_DIR := $(abspath $(XIAN_CONFIGS_DIR))
 export XIAN_CONTRACTING_DIR := $(abspath $(XIAN_CONTRACTING_DIR))
 export XIAN_PY_DIR := $(abspath $(XIAN_PY_DIR))
+export XIAN_DEX_CONTRACTS_DIR := $(abspath $(XIAN_DEX_CONTRACTS_DIR))
+export XIAN_DEX_DEPLOYER_PRIVATE_KEY := $(XIAN_DEX_DEPLOYER_PRIVATE_KEY)
+export XIAN_DEX_VALIDATOR_KEY_PATH := $(abspath $(XIAN_DEX_VALIDATOR_KEY_PATH))
 export XIAN_STACK_SECRETS_ENV := $(abspath $(XIAN_STACK_SECRETS_ENV))
 export XIAN_SERVICE_NODE := $(XIAN_SERVICE_NODE)
 export XIAN_COMETBFT_HOME := $(abspath $(XIAN_COMETBFT_HOME))
@@ -334,6 +342,19 @@ LOCALNET_WORKLOAD_SCENARIO ?= counter_basic
 LOCALNET_RECEIPT_RESOLUTION ?= serial
 LOCALNET_RECEIPT_WORKERS ?= 16
 LOCALNET_WORKLOAD_MEASURE_MEMORY ?= 1
+LOCALNET_DEX_DEPLOY_HELPER ?= 1
+LOCALNET_DEX_SEED_DEMO_POOL ?= 1
+LOCALNET_DEX_TOP_UP_LIQUIDITY ?= 0
+LOCALNET_DEX_EMIT_TEST_SWAP ?= 0
+LOCALNET_DEX_DEMO_TOKEN_CONTRACT ?= con_dex_demo_token
+LOCALNET_DEX_DEMO_LP_CONTRACT ?= con_dex_demo_lp
+LOCALNET_DEX_DEMO_TOKEN_NAME ?= Xian DEX Demo Token
+LOCALNET_DEX_DEMO_TOKEN_SYMBOL ?= XDT
+LOCALNET_DEX_DEMO_TOKEN_SUPPLY ?= 1000000
+LOCALNET_DEX_DEMO_TOKEN_PRECISION ?= 8
+LOCALNET_DEX_LIQUIDITY_CURRENCY_AMOUNT ?= 10000
+LOCALNET_DEX_LIQUIDITY_DEMO_TOKEN_AMOUNT ?= 10000
+LOCALNET_DEX_TEST_SWAP_AMOUNT ?= 10
 LOCALNET_TPS_BENCH_NODES ?= 5
 LOCALNET_TPS_BENCH_PORT_OFFSET ?= 1000
 LOCALNET_TPS_BENCH_PROFILE ?= throughput
@@ -452,6 +473,8 @@ help:
 	@printf "  %-24s %s\n" "localnet-up" "Start all localnet nodes"
 	@printf "  %-24s %s\n" "localnet-down" "Stop all localnet nodes"
 	@printf "  %-24s %s\n" "localnet-status" "Show block height and peer count for each node"
+	@printf "  %-24s %s\n" "localnet-dex-bootstrap" "Deploy canonical DEX contracts and a demo pool to a running localnet"
+	@printf "  %-24s %s\n" "localnet-up-with-dex" "Start localnet nodes, then bootstrap the canonical DEX"
 	@printf "  %-24s %s\n" "localnet-workload" "Run a deterministic workload scenario (counter_basic or dex_mixed)"
 	@printf "  %-24s %s\n" "localnet-burst" "Drive the legacy counter_basic workload alias"
 	@printf "  %-24s %s\n" "localnet-memwatch" "Sample container memory during localnet tx load"
@@ -805,6 +828,28 @@ localnet-down:
 
 localnet-status:
 	@./scripts/localnet-status.sh
+
+localnet-dex-bootstrap:
+	uv run --project "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-dex-bootstrap.py \
+		--dex-contracts-dir "$(XIAN_DEX_CONTRACTS_DIR)" \
+		$(if $(XIAN_DEX_BOOTSTRAP_RPC_URL),--rpc-url "$(XIAN_DEX_BOOTSTRAP_RPC_URL)",) \
+		$(if $(XIAN_DEX_BOOTSTRAP_CHAIN_ID),--chain-id "$(XIAN_DEX_BOOTSTRAP_CHAIN_ID)",) \
+		--validator-key-path "$(XIAN_DEX_VALIDATOR_KEY_PATH)" \
+		$(if $(filter 1,$(LOCALNET_DEX_DEPLOY_HELPER)),--deploy-helper,--no-deploy-helper) \
+		$(if $(filter 1,$(LOCALNET_DEX_SEED_DEMO_POOL)),--seed-demo-pool,--no-seed-demo-pool) \
+		$(if $(filter 1,$(LOCALNET_DEX_TOP_UP_LIQUIDITY)),--top-up-liquidity,--no-top-up-liquidity) \
+		$(if $(filter 1,$(LOCALNET_DEX_EMIT_TEST_SWAP)),--emit-test-swap,--no-emit-test-swap) \
+		--demo-token-contract "$(LOCALNET_DEX_DEMO_TOKEN_CONTRACT)" \
+		--demo-lp-contract "$(LOCALNET_DEX_DEMO_LP_CONTRACT)" \
+		--demo-token-name "$(LOCALNET_DEX_DEMO_TOKEN_NAME)" \
+		--demo-token-symbol "$(LOCALNET_DEX_DEMO_TOKEN_SYMBOL)" \
+		--demo-token-supply $(LOCALNET_DEX_DEMO_TOKEN_SUPPLY) \
+		--demo-token-precision $(LOCALNET_DEX_DEMO_TOKEN_PRECISION) \
+		--liquidity-currency-amount $(LOCALNET_DEX_LIQUIDITY_CURRENCY_AMOUNT) \
+		--liquidity-demo-token-amount $(LOCALNET_DEX_LIQUIDITY_DEMO_TOKEN_AMOUNT) \
+		--test-swap-amount $(LOCALNET_DEX_TEST_SWAP_AMOUNT)
+
+localnet-up-with-dex: localnet-up localnet-dex-bootstrap
 
 localnet-workload:
 	uv run --project "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-workload.py \

@@ -109,6 +109,12 @@ validate_stack_security_env() {
     errors+=("Public dashboard exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
   fi
 
+  if _stack_truthy "${XIAN_DEX_AUTOMATION_ENABLED:-0}" \
+    && ! _stack_is_loopback_host "${XIAN_DEX_AUTOMATION_HOST:-127.0.0.1}" \
+    && ! _stack_truthy "${public_query_enabled}"; then
+    errors+=("Public DEX automation exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
+  fi
+
   if [[ "${#errors[@]}" -gt 0 ]]; then
     printf 'xian-stack security configuration error:\n' >&2
     local error
@@ -159,6 +165,13 @@ export_stack_env() {
   export XIAN_INTENTKIT_PRICE_FIXED_USD="${XIAN_INTENTKIT_PRICE_FIXED_USD:-}"
   export XIAN_INTENTKIT_PRICE_SOLANA_MINT="${XIAN_INTENTKIT_PRICE_SOLANA_MINT:-}"
   export XIAN_INTENTKIT_PRICE_MARKET_URL="${XIAN_INTENTKIT_PRICE_MARKET_URL:-}"
+  export XIAN_DEX_AUTOMATION_DIR="${XIAN_DEX_AUTOMATION_DIR:-$(resolve_repo_dir xian-dex-automation "${XIAN_DEX_AUTOMATION_DIR:-}")}"
+  export XIAN_DEX_AUTOMATION_ENABLED="${XIAN_DEX_AUTOMATION_ENABLED:-0}"
+  export XIAN_DEX_AUTOMATION_HOST="${XIAN_DEX_AUTOMATION_HOST:-127.0.0.1}"
+  export XIAN_DEX_AUTOMATION_PUBLIC_HOST="${XIAN_DEX_AUTOMATION_PUBLIC_HOST:-127.0.0.1}"
+  export XIAN_DEX_AUTOMATION_PORT="${XIAN_DEX_AUTOMATION_PORT:-38280}"
+  export XIAN_DEX_AUTOMATION_CONFIG="${XIAN_DEX_AUTOMATION_CONFIG:-${stack_root}/.artifacts/dex-automation/config.yaml}"
+  export XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE="${XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE:-${stack_root}/.artifacts/dex-automation/wallet.key}"
   export XIAN_COMETBFT_HOME="${XIAN_COMETBFT_HOME:-${stack_root}/.cometbft}"
   export XIAN_BDS_DATA_DIR="${XIAN_BDS_DATA_DIR:-${stack_root}/.bds.db}"
   ensure_stack_secrets_env

@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import dex_automation_backend
+
+
+class DexAutomationBackendTests(unittest.TestCase):
+    def test_endpoints_use_loopback_display_for_public_host(self) -> None:
+        endpoints = dex_automation_backend.dex_automation_endpoints(
+            bind_host="0.0.0.0",
+            port=38280,
+        )
+
+        self.assertEqual(
+            "http://127.0.0.1:38280",
+            endpoints["dex_automation"],
+        )
+        self.assertEqual(
+            "http://127.0.0.1:38280/health",
+            endpoints["dex_automation_health"],
+        )
+
+    def test_ensure_config_generates_wallet_and_config(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = root / "xian-dex-automation"
+            repo.mkdir()
+            (repo / "pyproject.toml").write_text(
+                "[project]\nname='xian-dex-automation'\n",
+                encoding="utf-8",
+            )
+            process_dir = root / "artifacts"
+            config_path = process_dir / "config.yaml"
+            wallet_path = process_dir / "wallet.key"
+            env = {
+                "XIAN_DEX_AUTOMATION_DIR": str(repo),
+                "XIAN_DEX_AUTOMATION_CONFIG": str(config_path),
+                "XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE": str(wallet_path),
+            }
+
+            with patch.object(
+                dex_automation_backend,
+                "_PROCESS_DIR",
+                process_dir,
+            ):
+                result = dex_automation_backend.ensure_dex_automation_config(
+                    rpc_url="http://127.0.0.1:26657",
+                    env=env,
+                )
+
+            self.assertEqual(
+                str(repo.resolve()),
+                result["dex_automation_repo_dir"],
+            )
+            self.assertTrue(config_path.exists())
+            self.assertTrue(wallet_path.exists())
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                "http://127.0.0.1:26657",
+                payload["network"]["rpc_url"],
+            )
+            self.assertEqual(
+                str(wallet_path.resolve()),
+                payload["wallet"]["private_key_file"],
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()
