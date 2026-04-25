@@ -215,6 +215,7 @@ def _derived_env_values(
         "DEBUG": os.environ.get("XIAN_INTENTKIT_DEBUG", "true"),
         "APP_BASE_URL": endpoints["intentkit"],
         "AWS_S3_CDN_URL": endpoints["intentkit_static"],
+        "XIAN_AGENT_LOGO_URL": f"{endpoints['intentkit_api']}/skills/xian/xian.jpg",
         f"{prefix}_RPC_URL": _intentkit_rpc_url(rpc_status_url),
         f"{prefix}_CHAIN_ID": chain_id,
     }
