@@ -28,7 +28,7 @@ STACK_DIR = SCRIPT_DIR.parent
 ROOT_DIR = STACK_DIR.parent
 WORKLOADS_DIR = STACK_DIR / "workloads"
 NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
-DEFAULT_DEX_CONTRACTS_DIR = ROOT_DIR / "xian-contracts" / "contracts" / "dex" / "src"
+DEFAULT_DEX_CONTRACTS_DIR = ROOT_DIR / "xian-dex" / "src"
 DEFAULT_XIAN_CONFIG_PATH = STACK_DIR / ".cometbft" / "config" / "xian.toml"
 DEFAULT_VALIDATOR_KEY_PATH = (
     STACK_DIR / ".cometbft" / "config" / "priv_validator_key.json"

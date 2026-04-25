@@ -135,7 +135,9 @@ The bootstrap deploys `con_pairs`, `con_dex`, `con_dex_helper`, and an optional
 demo XIAN/XDT pool. It is idempotent: existing contracts and already-seeded
 pools are skipped unless `LOCALNET_DEX_TOP_UP_LIQUIDITY=1` is set. Use
 `LOCALNET_DEX_EMIT_TEST_SWAP=1` when you want the bootstrap to also emit a
-small `Swap` event for event-trigger testing.
+small `Swap` event for event-trigger testing. Contract sources default to the
+sibling `../xian-dex/src` checkout and can be overridden with
+`XIAN_DEX_CONTRACTS_DIR`.
 
 Run the richer 5-validator testnet-shaped governance exercise:
 
