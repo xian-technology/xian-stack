@@ -137,7 +137,7 @@ pools are skipped unless `LOCALNET_DEX_TOP_UP_LIQUIDITY=1` is set. Use
 `LOCALNET_DEX_EMIT_TEST_SWAP=1` when you want the bootstrap to also emit a
 small `Swap` event for event-trigger testing. Contract sources default to the
 hash-pinned DEX bundle in
-`../xian-configs/solution-packs/dex/contract-bundle.json`. Use
+`../xian-configs/modules/dex/contract-bundle.json`. Use
 `XIAN_DEX_BUNDLE` to test another bundle, or `XIAN_DEX_CONTRACTS_DIR` only as a
 development override for raw `xian-dex/src` files.
 
