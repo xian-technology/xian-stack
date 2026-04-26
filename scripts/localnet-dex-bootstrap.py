@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy canonical DEX contracts and a local demo pool to a running localnet."""
+"""Deploy a pinned DEX contract bundle and demo pool to a running localnet."""
 
 from __future__ import annotations
 
@@ -28,19 +28,40 @@ STACK_DIR = SCRIPT_DIR.parent
 ROOT_DIR = STACK_DIR.parent
 WORKLOADS_DIR = STACK_DIR / "workloads"
 NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
-DEFAULT_DEX_CONTRACTS_DIR = ROOT_DIR / "xian-dex" / "src"
+DEFAULT_XIAN_CONFIGS_DIR = ROOT_DIR / "xian-configs"
+DEFAULT_DEX_BUNDLE_PATH = (
+    DEFAULT_XIAN_CONFIGS_DIR
+    / "solution-packs"
+    / "dex"
+    / "contract-bundle.json"
+)
 DEFAULT_XIAN_CONFIG_PATH = STACK_DIR / ".cometbft" / "config" / "xian.toml"
 DEFAULT_VALIDATOR_KEY_PATH = (
     STACK_DIR / ".cometbft" / "config" / "priv_validator_key.json"
 )
 XIAN_CONTRACTING_SRC = ROOT_DIR / "xian-contracting" / "src"
+XIAN_CLI_SRC = ROOT_DIR / "xian-cli" / "src"
 
 sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
+sys.path.insert(0, str(XIAN_CLI_SRC))
 
 try:
     from contracting.compilation.artifacts import build_contract_artifacts
 except ImportError:  # pragma: no cover - only used when xian-contracting is absent.
     build_contract_artifacts = None
+
+try:
+    from xian_cli.contract_bundles import (
+        contract_by_role,
+        read_contract_bundle,
+        read_contract_source_from_bundle,
+        validate_contract_bundle,
+    )
+except ImportError:  # pragma: no cover - only used outside the workspace layout.
+    contract_by_role = None
+    read_contract_bundle = None
+    read_contract_source_from_bundle = None
+    validate_contract_bundle = None
 
 
 CORE_DEPLOY_CHI = {
@@ -203,6 +224,163 @@ def read_required(path: Path) -> str:
     if not path.exists():
         raise DexBootstrapError(f"required contract source not found: {path}")
     return path.read_text(encoding="utf-8")
+
+
+def _source_env_path(name: str) -> Path | None:
+    value = os.environ.get(name)
+    if value is None or value.strip() == "":
+        return None
+    return Path(value).expanduser()
+
+
+def _contract_default_chi(
+    entry: dict[str, Any],
+    fallback: int,
+) -> int:
+    value = entry.get("default_chi")
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return fallback
+
+
+def _require_bundle_support() -> None:
+    if (
+        contract_by_role is None
+        or read_contract_bundle is None
+        or read_contract_source_from_bundle is None
+        or validate_contract_bundle is None
+    ):
+        raise DexBootstrapError(
+            "xian-cli is required to read contract bundles; use the standard "
+            "workspace layout or pass --dex-contracts-dir for a development "
+            "source override"
+        )
+
+
+def _bundle_entry_by_role(
+    bundle: dict[str, Any],
+    role: str,
+) -> dict[str, Any]:
+    _require_bundle_support()
+    entry = contract_by_role(bundle, role)
+    if entry is None:
+        raise DexBootstrapError(f"DEX bundle missing role {role!r}")
+    return entry
+
+
+def _bundle_source_by_role(
+    bundle_path: Path,
+    bundle: dict[str, Any],
+    role: str,
+) -> tuple[dict[str, Any], str]:
+    entry = _bundle_entry_by_role(bundle, role)
+    assert read_contract_source_from_bundle is not None
+    return entry, read_contract_source_from_bundle(bundle_path, entry)
+
+
+def load_dex_contract_sources(
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    if args.dex_contracts_dir is not None:
+        dex_contracts_dir = args.dex_contracts_dir.expanduser().resolve()
+        core_sources: dict[str, dict[str, Any]] = {
+            "con_pairs": {
+                "code": read_required(dex_contracts_dir / "con_pairs.py"),
+                "chi": CORE_DEPLOY_CHI["con_pairs"],
+            },
+            "con_dex": {
+                "code": read_required(dex_contracts_dir / "con_dex.py"),
+                "chi": CORE_DEPLOY_CHI["con_dex"],
+            },
+        }
+        if args.deploy_helper:
+            core_sources["con_dex_helper"] = {
+                "code": read_required(dex_contracts_dir / "con_dex_helper.py"),
+                "chi": CORE_DEPLOY_CHI["con_dex_helper"],
+            }
+
+        return {
+            "kind": "directory",
+            "bundle_path": None,
+            "contracts_dir": dex_contracts_dir,
+            "core_sources": core_sources,
+            "lp_token_source": read_required(
+                dex_contracts_dir / "con_lp_token.py"
+            ),
+            "demo_token_source": read_required(
+                WORKLOADS_DIR / "dex_bootstrap" / "demo_token.py"
+            ),
+        }
+
+    _require_bundle_support()
+    bundle_path = args.dex_bundle.expanduser().resolve()
+    assert validate_contract_bundle is not None
+    assert read_contract_bundle is not None
+    validate_contract_bundle(bundle_path)
+    bundle = read_contract_bundle(bundle_path)
+
+    pairs_entry, pairs_source = _bundle_source_by_role(
+        bundle_path, bundle, "pairs"
+    )
+    router_entry, router_source = _bundle_source_by_role(
+        bundle_path, bundle, "router"
+    )
+    if pairs_entry["name"] != "con_pairs" or router_entry["name"] != "con_dex":
+        raise DexBootstrapError(
+            "DEX bootstrap expects canonical con_pairs and con_dex names"
+        )
+
+    core_sources = {
+        "con_pairs": {
+            "code": pairs_source,
+            "chi": _contract_default_chi(
+                pairs_entry, CORE_DEPLOY_CHI["con_pairs"]
+            ),
+        },
+        "con_dex": {
+            "code": router_source,
+            "chi": _contract_default_chi(
+                router_entry, CORE_DEPLOY_CHI["con_dex"]
+            ),
+        },
+    }
+    if args.deploy_helper:
+        helper_entry, helper_source = _bundle_source_by_role(
+            bundle_path, bundle, "helper"
+        )
+        if helper_entry["name"] != "con_dex_helper":
+            raise DexBootstrapError(
+                "DEX bootstrap expects canonical con_dex_helper name"
+            )
+        core_sources["con_dex_helper"] = {
+            "code": helper_source,
+            "chi": _contract_default_chi(
+                helper_entry, CORE_DEPLOY_CHI["con_dex_helper"]
+            ),
+        }
+
+    lp_entry, lp_source = _bundle_source_by_role(
+        bundle_path, bundle, "lp_token_template"
+    )
+    demo_entry = contract_by_role(bundle, "demo_token")
+    demo_source = None
+    if demo_entry is not None:
+        assert read_contract_source_from_bundle is not None
+        demo_source = read_contract_source_from_bundle(bundle_path, demo_entry)
+
+    return {
+        "kind": "bundle",
+        "bundle_path": bundle_path,
+        "contracts_dir": None,
+        "core_sources": core_sources,
+        "lp_token_source": lp_source,
+        "lp_token_chi": _contract_default_chi(lp_entry, LP_TOKEN_DEPLOY_CHI),
+        "demo_token_source": demo_source
+        or read_required(WORKLOADS_DIR / "dex_bootstrap" / "demo_token.py"),
+        "demo_token_chi": _contract_default_chi(
+            demo_entry or {}, TOKEN_DEPLOY_CHI
+        ),
+    }
 
 
 @functools.lru_cache(maxsize=128)
@@ -519,7 +697,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     rpc_url = args.rpc_url or localnet_rpc_url(network)
     wait_for_rpc_ready(rpc_url, timeout_seconds=args.rpc_timeout_seconds)
 
-    dex_contracts_dir = args.dex_contracts_dir.resolve()
+    source_bundle = load_dex_contract_sources(args)
     metadata_for_execution = None if args.rpc_url else network
     execution_mode_name = execution_mode(
         metadata_for_execution,
@@ -529,17 +707,9 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         private_key=resolve_deployer_private_key(args=args, network=network)
     )
 
-    core_sources = {
-        "con_pairs": read_required(dex_contracts_dir / "con_pairs.py"),
-        "con_dex": read_required(dex_contracts_dir / "con_dex.py"),
-    }
-    if args.deploy_helper:
-        core_sources["con_dex_helper"] = read_required(
-            dex_contracts_dir / "con_dex_helper.py"
-        )
-
-    demo_token_source = read_required(WORKLOADS_DIR / "dex_bootstrap" / "demo_token.py")
-    lp_token_source = read_required(dex_contracts_dir / "con_lp_token.py")
+    core_sources = source_bundle["core_sources"]
+    demo_token_source = source_bundle["demo_token_source"]
+    lp_token_source = source_bundle["lp_token_source"]
 
     chain_id = args.chain_id or (
         None if args.rpc_url else (network or {}).get("chain_id")
@@ -549,14 +719,14 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         resolved_chain_id = client.chain_id
         deployments: list[dict[str, Any]] = []
 
-        for name, source in core_sources.items():
+        for name, source_info in core_sources.items():
             deployments.append(
                 submit_contract_if_missing(
                     client,
                     name=name,
-                    code=source,
+                    code=source_info["code"],
                     constructor_args=None,
-                    chi=CORE_DEPLOY_CHI[name],
+                    chi=source_info["chi"],
                     execution_mode_name=execution_mode_name,
                     mode=args.submission_mode,
                     receipt_timeout_seconds=args.receipt_timeout_seconds,
@@ -576,7 +746,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                         "token_symbol": args.demo_token_symbol,
                         "precision": args.demo_token_precision,
                     },
-                    chi=TOKEN_DEPLOY_CHI,
+                    chi=source_bundle.get("demo_token_chi", TOKEN_DEPLOY_CHI),
                     execution_mode_name=execution_mode_name,
                     mode=args.submission_mode,
                     receipt_timeout_seconds=args.receipt_timeout_seconds,
@@ -593,7 +763,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                         "operator_address": deployer_wallet.public_key,
                         "minter_address": "con_pairs",
                     },
-                    chi=LP_TOKEN_DEPLOY_CHI,
+                    chi=source_bundle.get("lp_token_chi", LP_TOKEN_DEPLOY_CHI),
                     execution_mode_name=execution_mode_name,
                     mode=args.submission_mode,
                     receipt_timeout_seconds=args.receipt_timeout_seconds,
@@ -632,7 +802,17 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "rpc_url": rpc_url,
         "deployer": deployer_wallet.public_key,
         "execution_mode": execution_mode_name,
-        "dex_contracts_dir": str(dex_contracts_dir),
+        "dex_source": source_bundle["kind"],
+        "dex_bundle": (
+            str(source_bundle["bundle_path"])
+            if source_bundle["bundle_path"] is not None
+            else None
+        ),
+        "dex_contracts_dir": (
+            str(source_bundle["contracts_dir"])
+            if source_bundle["contracts_dir"] is not None
+            else None
+        ),
         "contracts": {
             "router": "con_dex",
             "pairs": "con_pairs",
@@ -675,9 +855,21 @@ def parse_args() -> argparse.Namespace:
         default=Path(os.environ.get("XIAN_CONFIG_PATH", DEFAULT_XIAN_CONFIG_PATH)),
     )
     parser.add_argument(
+        "--dex-bundle",
+        type=Path,
+        default=Path(
+            os.environ.get("XIAN_DEX_BUNDLE", DEFAULT_DEX_BUNDLE_PATH)
+        ),
+        help="hash-pinned DEX contract bundle; defaults to xian-configs",
+    )
+    parser.add_argument(
         "--dex-contracts-dir",
         type=Path,
-        default=Path(os.environ.get("XIAN_DEX_CONTRACTS_DIR", DEFAULT_DEX_CONTRACTS_DIR)),
+        default=_source_env_path("XIAN_DEX_CONTRACTS_DIR"),
+        help=(
+            "development override for raw xian-dex src/ files; when omitted "
+            "--dex-bundle is used"
+        ),
     )
     parser.add_argument(
         "--deploy-helper",

@@ -65,7 +65,9 @@ tooling behind `xian-stack`.
   not reuse it outside the local test network.
 - `localnet-dex-bootstrap.py` is post-start bootstrap, not a genesis mutation.
   The base contract bundle remains unchanged; local DEX availability is an
-  explicit operator action.
+  explicit operator action. By default it consumes the hash-pinned DEX solution
+  pack bundle from `xian-configs`; raw source directory overrides are only for
+  development.
 - The validator/governance runner should be executed through `uv` with the
   `xian-abci` project and local `xian-py` package available, preferably through
   `make localnet-validator-governance`.

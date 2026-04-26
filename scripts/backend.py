@@ -1915,6 +1915,7 @@ def backend_localnet_up(
             rpc_url=None,
             chain_id=None,
             deployer_private_key=None,
+            dex_bundle=None,
             dex_contracts_dir=None,
             liquidity_currency_amount=10_000.0,
             liquidity_demo_token_amount=10_000.0,
@@ -1948,6 +1949,7 @@ def backend_localnet_dex_bootstrap(
     rpc_url: str | None,
     chain_id: str | None,
     deployer_private_key: str | None,
+    dex_bundle: str | None,
     dex_contracts_dir: str | None,
     liquidity_currency_amount: float,
     liquidity_demo_token_amount: float,
@@ -1967,6 +1969,8 @@ def backend_localnet_dex_bootstrap(
         "--liquidity-demo-token-amount",
         str(liquidity_demo_token_amount),
     ]
+    if dex_bundle is not None:
+        script_args.extend(["--dex-bundle", dex_bundle])
     if dex_contracts_dir is not None:
         script_args.extend(["--dex-contracts-dir", dex_contracts_dir])
     if rpc_url is not None:
@@ -2539,6 +2543,7 @@ def build_parser() -> argparse.ArgumentParser:
     localnet_dex_bootstrap.add_argument("--rpc-url")
     localnet_dex_bootstrap.add_argument("--chain-id")
     localnet_dex_bootstrap.add_argument("--deployer-private-key")
+    localnet_dex_bootstrap.add_argument("--dex-bundle")
     localnet_dex_bootstrap.add_argument("--dex-contracts-dir")
     localnet_dex_bootstrap.add_argument(
         "--liquidity-currency-amount",
@@ -2968,6 +2973,7 @@ def main(argv: list[str] | None = None) -> int:
             rpc_url=args.rpc_url,
             chain_id=args.chain_id,
             deployer_private_key=args.deployer_private_key,
+            dex_bundle=args.dex_bundle,
             dex_contracts_dir=args.dex_contracts_dir,
             liquidity_currency_amount=args.liquidity_currency_amount,
             liquidity_demo_token_amount=args.liquidity_demo_token_amount,

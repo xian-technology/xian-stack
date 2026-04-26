@@ -136,8 +136,10 @@ demo XIAN/XDT pool. It is idempotent: existing contracts and already-seeded
 pools are skipped unless `LOCALNET_DEX_TOP_UP_LIQUIDITY=1` is set. Use
 `LOCALNET_DEX_EMIT_TEST_SWAP=1` when you want the bootstrap to also emit a
 small `Swap` event for event-trigger testing. Contract sources default to the
-sibling `../xian-dex/src` checkout and can be overridden with
-`XIAN_DEX_CONTRACTS_DIR`.
+hash-pinned DEX bundle in
+`../xian-configs/solution-packs/dex/contract-bundle.json`. Use
+`XIAN_DEX_BUNDLE` to test another bundle, or `XIAN_DEX_CONTRACTS_DIR` only as a
+development override for raw `xian-dex/src` files.
 
 Run the richer 5-validator testnet-shaped governance exercise:
 

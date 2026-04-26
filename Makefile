@@ -12,7 +12,8 @@ XIAN_ABCI_DIR ?= ../xian-abci
 XIAN_CONFIGS_DIR ?= ../xian-configs
 XIAN_CONTRACTING_DIR ?= ../xian-contracting
 XIAN_PY_DIR ?= ../xian-py
-XIAN_DEX_CONTRACTS_DIR ?= ../xian-dex/src
+XIAN_DEX_BUNDLE ?= ../xian-configs/solution-packs/dex/contract-bundle.json
+XIAN_DEX_CONTRACTS_DIR ?=
 XIAN_DEX_BOOTSTRAP_RPC_URL ?=
 XIAN_DEX_BOOTSTRAP_CHAIN_ID ?=
 XIAN_DEX_DEPLOYER_PRIVATE_KEY ?=
@@ -158,7 +159,8 @@ export XIAN_ABCI_DIR := $(abspath $(XIAN_ABCI_DIR))
 export XIAN_CONFIGS_DIR := $(abspath $(XIAN_CONFIGS_DIR))
 export XIAN_CONTRACTING_DIR := $(abspath $(XIAN_CONTRACTING_DIR))
 export XIAN_PY_DIR := $(abspath $(XIAN_PY_DIR))
-export XIAN_DEX_CONTRACTS_DIR := $(abspath $(XIAN_DEX_CONTRACTS_DIR))
+export XIAN_DEX_BUNDLE := $(abspath $(XIAN_DEX_BUNDLE))
+export XIAN_DEX_CONTRACTS_DIR := $(if $(XIAN_DEX_CONTRACTS_DIR),$(abspath $(XIAN_DEX_CONTRACTS_DIR)),)
 export XIAN_DEX_DEPLOYER_PRIVATE_KEY := $(XIAN_DEX_DEPLOYER_PRIVATE_KEY)
 export XIAN_DEX_VALIDATOR_KEY_PATH := $(abspath $(XIAN_DEX_VALIDATOR_KEY_PATH))
 export XIAN_STACK_SECRETS_ENV := $(abspath $(XIAN_STACK_SECRETS_ENV))
@@ -831,7 +833,8 @@ localnet-status:
 
 localnet-dex-bootstrap:
 	uv run --project "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-dex-bootstrap.py \
-		--dex-contracts-dir "$(XIAN_DEX_CONTRACTS_DIR)" \
+		--dex-bundle "$(XIAN_DEX_BUNDLE)" \
+		$(if $(XIAN_DEX_CONTRACTS_DIR),--dex-contracts-dir "$(XIAN_DEX_CONTRACTS_DIR)",) \
 		$(if $(XIAN_DEX_BOOTSTRAP_RPC_URL),--rpc-url "$(XIAN_DEX_BOOTSTRAP_RPC_URL)",) \
 		$(if $(XIAN_DEX_BOOTSTRAP_CHAIN_ID),--chain-id "$(XIAN_DEX_BOOTSTRAP_CHAIN_ID)",) \
 		--validator-key-path "$(XIAN_DEX_VALIDATOR_KEY_PATH)" \
