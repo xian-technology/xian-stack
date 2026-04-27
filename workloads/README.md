@@ -17,3 +17,15 @@
 - The `e2e/` helper contracts are intentionally minimal and exist to exercise
   conflict handling and governed state patching without introducing unrelated
   business logic.
+
+```mermaid
+flowchart LR
+  Harness["Localnet harness"] --> Counter["counter_basic"]
+  Harness --> DexMixed["dex_mixed"]
+  Harness --> E2E["e2e helper contracts"]
+  Harness --> Parallel["parallel_probe"]
+  Counter --> Validation["Correctness and performance signals"]
+  DexMixed --> Validation
+  E2E --> Validation
+  Parallel --> Validation
+```

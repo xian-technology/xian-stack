@@ -9,6 +9,23 @@ The stable machine-facing contract is `scripts/backend.py`. The `Makefile`
 is the developer and debugging surface. `xian-cli` is the human-facing
 control plane built on top of this backend.
 
+## Runtime Shape
+
+```mermaid
+flowchart LR
+  CLI["xian-cli"] -->|calls stable backend| Backend["scripts/backend.py"]
+  Makefile["Makefile targets"] -->|developer and release gates| Backend
+  Backend -->|renders and controls| Compose["Docker Compose topology"]
+  Compose --> Node["Xian node"]
+  Compose --> BDS["BDS and PostGraphile"]
+  Compose --> Monitoring["Prometheus and Grafana"]
+  Compose --> Dashboard["Dashboard"]
+  Compose --> Sidecars["Optional sidecars"]
+  Sidecars --> IntentKit["xian-intentkit"]
+  Sidecars --> DexAutomation["xian-dex-automation"]
+  Sidecars --> ShieldedRelayer["Shielded relayer"]
+```
+
 ## Quick Start
 
 Validate the stack:
