@@ -11,7 +11,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "grafana"
+        "uid": "xian-prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -52,7 +52,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "grafana"
+        "uid": "xian-prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -93,7 +93,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "grafana"
+        "uid": "xian-prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -134,7 +134,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "grafana"
+        "uid": "xian-prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -188,7 +188,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "grafana"
+        "uid": "xian-prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -229,7 +229,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "grafana"
+        "uid": "xian-prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -270,7 +270,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "grafana"
+        "uid": "xian-prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -311,7 +311,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "grafana"
+        "uid": "xian-prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -352,7 +352,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "grafana"
+        "uid": "xian-prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -380,7 +380,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "grafana"
+        "uid": "xian-prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -408,7 +408,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "grafana"
+        "uid": "xian-prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -436,7 +436,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "grafana"
+        "uid": "xian-prometheus"
       },
       "fieldConfig": {
         "defaults": {
