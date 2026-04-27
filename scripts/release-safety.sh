@@ -36,10 +36,29 @@ while (($#)); do
   shift
 done
 
+restore_ci_workspace_ownership() {
+  if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+    return 0
+  fi
+
+  local paths=()
+  local path
+  for path in .localnet .artifacts docker-compose-localnet.yml; do
+    if [[ -e "${path}" ]]; then
+      paths+=("${path}")
+    fi
+  done
+
+  if ((${#paths[@]})); then
+    sudo chown -R "$(id -u):$(id -g)" "${paths[@]}" || true
+  fi
+}
+
 cleanup() {
   if [[ "${keep_localnet}" != "1" ]]; then
     (cd "${stack_root}" && make localnet-down >/dev/null 2>&1) || true
   fi
+  (cd "${stack_root}" && restore_ci_workspace_ownership) || true
 }
 trap cleanup EXIT
 
@@ -67,5 +86,6 @@ fi
 
 if [[ "${validator_governance}" == "1" ]]; then
   run_step "Reset localnet before validator governance" make localnet-down
+  restore_ci_workspace_ownership
   run_step "Run validator governance localnet" make localnet-validator-governance
 fi
