@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.4
 
 # Build stage
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -34,7 +34,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --group app
 
 # Runtime stage
-FROM python:3.13-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 # Install runtime dependencies only
 RUN apt-get update \
@@ -46,6 +46,9 @@ WORKDIR /app
 
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /xian-py /xian-py
+COPY --from=builder /xian-contracting/packages/xian-accounts /xian-contracting/packages/xian-accounts
+COPY --from=builder /xian-contracting/packages/xian-runtime-types /xian-contracting/packages/xian-runtime-types
 
 # Copy application code
 COPY --from=builder /app/intentkit /app/intentkit
