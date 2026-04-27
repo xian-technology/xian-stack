@@ -16,6 +16,10 @@
     "xian-py": {
       "repository": "xian-technology/xian-py",
       "ref": "619e80a8ff870728665dfe29b5ef81ec87a7ccd4"
+    },
+    "xian-stable-protocol": {
+      "repository": "xian-technology/xian-stable-protocol",
+      "ref": "a4bad83ac5e6305aafba88b4bc30843d06971a09"
     }
   },
   "build": {

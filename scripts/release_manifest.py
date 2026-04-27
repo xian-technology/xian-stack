@@ -12,6 +12,7 @@ REQUIRED_COMPONENTS = (
     "xian-configs",
     "xian-contracting",
     "xian-py",
+    "xian-stable-protocol",
 )
 REQUIRED_BUILD_FIELDS = (
     "python_image",
