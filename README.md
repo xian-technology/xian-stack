@@ -108,6 +108,41 @@ Release images are built from digest-pinned base images and checksum-pinned
 external inputs, signed by digest, and accompanied by signed release assets.
 See `docs/RELEASES.md` for verification commands.
 
+## Runtime Recipes
+
+`xian-stack` has two surfaces by design:
+
+- `scripts/backend.py` is the stable machine contract used by `xian-cli`, CI,
+  and automation.
+- `make ...` targets are the developer and release-engineering surface for
+  image builds, localnet harnesses, and deep validation.
+
+Use the smallest recipe that proves the behavior you care about:
+
+| Need | Command | What it proves |
+| --- | --- | --- |
+| Single local node with optional services | `python3 ./scripts/backend.py start ...` | Compose wiring, node health, dashboard / monitoring / BDS sidecars |
+| Clean multi-node topology | `LOCALNET_NODES=5 make localnet-init && make localnet-up` | Validator topology, genesis distribution, peer connectivity |
+| Workload smoke on a running localnet | `make localnet-workload` | Basic contract submission and transaction flow |
+| Full 5-validator e2e harness | `make localnet-e2e` | Layered cross-repo behavior, workload phases, DEX coverage, catchup, governance, chaos / restart convergence |
+| VM-native 5-validator harness | `make localnet-vm-e2e` | The same e2e program under native VM authority |
+| Focused validator governance run | `make localnet-validator-governance` | Validator set, delegation, governance, and state-patch behavior |
+| Release gate | `make release-safety` | Repo validation plus the release-grade localnet gates |
+
+The localnet harnesses are intentionally heavier than a clean topology. A
+clean five-node network tells you that the validators can start and peer. The
+e2e harness tells you that the product stack still behaves under realistic
+contract, indexer, governance, recovery, and restart pressure.
+
+For automation, prefer the backend command equivalents where available:
+
+```bash
+python3 ./scripts/backend.py validate
+python3 ./scripts/backend.py localnet-init --nodes 5 --topology integrated --clean
+python3 ./scripts/backend.py localnet-up --wait-for-health
+python3 ./scripts/backend.py localnet-e2e
+```
+
 ## Principles
 
 - **Runtime plumbing, not operator UX.** Images, Compose topology, smoke
