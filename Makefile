@@ -120,7 +120,6 @@ XIAN_LOCALNET_EXECUTION_MODE ?=
 XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION ?=
 XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE ?=
 XIAN_LOCALNET_EXECUTION_AUTHORITY ?=
-XIAN_LOCALNET_EXECUTION_SHADOW_TRACER_MODE ?=
 XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED ?= 0
 XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS ?= 4
 XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS ?= 8
@@ -264,7 +263,6 @@ export XIAN_LOCALNET_EXECUTION_MODE := $(XIAN_LOCALNET_EXECUTION_MODE)
 export XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION := $(XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION)
 export XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE := $(XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE)
 export XIAN_LOCALNET_EXECUTION_AUTHORITY := $(XIAN_LOCALNET_EXECUTION_AUTHORITY)
-export XIAN_LOCALNET_EXECUTION_SHADOW_TRACER_MODE := $(XIAN_LOCALNET_EXECUTION_SHADOW_TRACER_MODE)
 export XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED := $(XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED)
 export XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS := $(XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS)
 export XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS := $(XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS)
@@ -424,7 +422,7 @@ LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK ?= testnet
 	node-status node-status-fidelity bds-postgres-up bds-snapshot-export bds-snapshot-import \
 	storage-report \
 	localnet-init localnet-build localnet-up localnet-down localnet-status \
-	localnet-workload localnet-burst localnet-memwatch localnet-leak-hunt localnet-e2e localnet-vm-report localnet-vm-e2e localnet-vm-tps-bench localnet-validator-governance \
+	localnet-workload localnet-memwatch localnet-leak-hunt localnet-e2e localnet-vm-report localnet-vm-e2e localnet-vm-tps-bench localnet-validator-governance \
 	localnet-clean localnet-logs localnet-shell
 
 help:
@@ -476,9 +474,7 @@ help:
 	@printf "  %-24s %s\n" "localnet-down" "Stop all localnet nodes"
 	@printf "  %-24s %s\n" "localnet-status" "Show block height and peer count for each node"
 	@printf "  %-24s %s\n" "localnet-dex-bootstrap" "Deploy canonical DEX contracts and a demo pool to a running localnet"
-	@printf "  %-24s %s\n" "localnet-up-with-dex" "Start localnet nodes, then bootstrap the canonical DEX"
 	@printf "  %-24s %s\n" "localnet-workload" "Run a deterministic workload scenario (counter_basic or dex_mixed)"
-	@printf "  %-24s %s\n" "localnet-burst" "Drive the legacy counter_basic workload alias"
 	@printf "  %-24s %s\n" "localnet-memwatch" "Sample container memory during localnet tx load"
 	@printf "  %-24s %s\n" "localnet-leak-hunt" "Split localnet memory growth by process"
 	@printf "  %-24s %s\n" "localnet-e2e" "Run the full layered 5-validator testnet-shaped localnet end-to-end program"
@@ -852,8 +848,6 @@ localnet-dex-bootstrap:
 		--liquidity-demo-token-amount $(LOCALNET_DEX_LIQUIDITY_DEMO_TOKEN_AMOUNT) \
 		--test-swap-amount $(LOCALNET_DEX_TEST_SWAP_AMOUNT)
 
-localnet-up-with-dex: localnet-up localnet-dex-bootstrap
-
 localnet-workload:
 	uv run --project "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-workload.py \
 		--scenario "$(LOCALNET_WORKLOAD_SCENARIO)" \
@@ -866,17 +860,6 @@ localnet-workload:
 		--broadcast-mode "$(LOCALNET_BROADCAST_MODE)" \
 		--receipt-timeout-seconds $(LOCALNET_RECEIPT_TIMEOUT_SECONDS) \
 		--heavy-rounds $(LOCALNET_HEAVY_ROUNDS) \
-		--state-sample-nodes $(LOCALNET_STATE_SAMPLE_NODES) \
-		--app-hash-window $(LOCALNET_APP_HASH_WINDOW) \
-		--receipt-resolution "$(LOCALNET_RECEIPT_RESOLUTION)" \
-		--receipt-workers $(LOCALNET_RECEIPT_WORKERS) \
-		$(if $(filter 0,$(LOCALNET_WORKLOAD_MEASURE_MEMORY)),--no-measure-memory,--measure-memory)
-
-localnet-burst:
-	uv run --project "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-workload.py \
-		--scenario counter_basic \
-		--seed "$(LOCALNET_WORKLOAD_SEED)" \
-		--counter-ops $(LOCALNET_COUNTER_OPS) \
 		--state-sample-nodes $(LOCALNET_STATE_SAMPLE_NODES) \
 		--app-hash-window $(LOCALNET_APP_HASH_WINDOW) \
 		--receipt-resolution "$(LOCALNET_RECEIPT_RESOLUTION)" \
@@ -907,7 +890,6 @@ localnet-e2e:
 		--execution-bytecode-version "$(XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION)" \
 		--execution-gas-schedule "$(XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE)" \
 		--execution-authority "$(XIAN_LOCALNET_EXECUTION_AUTHORITY)" \
-		--execution-shadow-tracer-mode "$(XIAN_LOCALNET_EXECUTION_SHADOW_TRACER_MODE)" \
 		--rpc-timeout-seconds $(LOCALNET_E2E_RPC_TIMEOUT_SECONDS) \
 		--state-sample-nodes $(LOCALNET_E2E_STATE_SAMPLE_NODES) \
 		--app-hash-window $(LOCALNET_E2E_APP_HASH_WINDOW) \

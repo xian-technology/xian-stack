@@ -17,12 +17,7 @@ from localnet_vm_rollout import (  # noqa: E402
 METRICS_TEXT = """
 # HELP xian_node Static Xian node runtime information.
 # TYPE xian_node_info gauge
-xian_node_info{chain_id="xian-local",tracer_mode="native_instruction_v1",execution_mode="xian_vm_v1",execution_authority="native",execution_shadow="true",execution_bytecode_version="xvm-1",execution_gas_schedule="xvm-gas-1",block_service_mode="false",parallel_execution_enabled="false",tx_fees_enabled="true"} 1
-xian_vm_shadow_metric{field="comparisons_total"} 12
-xian_vm_shadow_metric{field="mismatches_total"} 0
-xian_vm_shadow_stage_metric{stage="execute_tx_native_authoritative",field="comparisons_total"} 12
-xian_vm_shadow_stage_metric{stage="execute_tx_native_authoritative",field="mismatches_total"} 0
-xian_vm_shadow_last_mismatch_info{stage="",contract="",function="",sender="",nonce="",tx_hash="",block_height="",mismatch_fields=""} 1
+xian_node_info{chain_id="xian-local",tracer_mode="native_instruction_v1",execution_mode="xian_vm_v1",execution_authority="native",execution_shadow="false",execution_bytecode_version="xvm-1",execution_gas_schedule="xvm-gas-1",block_service_mode="false",parallel_execution_enabled="false",tx_fees_enabled="true"} 1
 """.strip()
 
 
@@ -31,7 +26,6 @@ class LocalnetVmRolloutTests(unittest.TestCase):
         samples = parse_prometheus_text(METRICS_TEXT)
         names = {sample["name"] for sample in samples}
         self.assertIn("xian_node_info", names)
-        self.assertIn("xian_vm_shadow_metric", names)
         node_sample = next(
             sample for sample in samples if sample["name"] == "xian_node_info"
         )
@@ -45,7 +39,6 @@ class LocalnetVmRolloutTests(unittest.TestCase):
                 "bytecode_version": "xvm-1",
                 "gas_schedule": "xvm-gas-1",
                 "authority": "native",
-                "shadow_tracer_mode": "native_instruction_v1",
             },
             "nodes": [
                 {
@@ -85,7 +78,7 @@ class LocalnetVmRolloutTests(unittest.TestCase):
 
         self.assertTrue(report["ok"])
         self.assertEqual(report["totals"]["node_count"], 2)
-        self.assertEqual(report["totals"]["comparisons_total"], 24)
+        self.assertEqual(report["totals"]["comparisons_total"], 0)
         self.assertEqual(report["totals"]["mismatches_total"], 0)
         self.assertTrue(report["checks"]["uniform_execution"])
         self.assertTrue(report["checks"]["matches_expected_execution"])

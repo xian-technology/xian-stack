@@ -42,7 +42,7 @@ tooling behind `xian-stack`.
   duplicate-vote evidence injection, governance state-patch activation, and
   announce-leave coverage, with JSON artifacts under
   `.artifacts/localnet-validator-governance/<run-id>/`
-- `localnet-burst-test.py`, `localnet-memwatch.py`,
+- `localnet-workload.py`, `localnet-memwatch.py`,
   `localnet-leak-hunt.py`, `localnet-perf-summary.py`: deeper runtime
   investigation helpers
 - `release_manifest.py` and `trusted_publishers.py`: release and publisher

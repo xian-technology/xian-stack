@@ -48,7 +48,6 @@ LOCALNET_VM_ROLLOUT_SCRIPT = STACK_DIR / "scripts" / "localnet_vm_rollout.py"
 LOCALNET_VALIDATOR_GOVERNANCE_SCRIPT = (
     STACK_DIR / "scripts" / "localnet-validator-governance.py"
 )
-LOCALNET_BURST_SCRIPT = STACK_DIR / "scripts" / "localnet-burst-test.py"
 LOCALNET_MEMWATCH_SCRIPT = STACK_DIR / "scripts" / "localnet-memwatch.py"
 LOCALNET_LEAK_HUNT_SCRIPT = STACK_DIR / "scripts" / "localnet-leak-hunt.py"
 STACK_UV_PYTHON = "3.14"
@@ -2651,23 +2650,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
     )
 
-    localnet_burst = subparsers.add_parser("localnet-burst")
-    localnet_burst.add_argument(
-        "--counter-ops",
-        type=int,
-        default=180,
-    )
-    localnet_burst.add_argument(
-        "--state-sample-nodes",
-        type=int,
-        default=2,
-    )
-    localnet_burst.add_argument(
-        "--app-hash-window",
-        type=int,
-        default=3,
-    )
-
     localnet_memwatch = subparsers.add_parser("localnet-memwatch")
     localnet_memwatch.add_argument(
         "--duration-minutes",
@@ -3026,20 +3008,6 @@ def main(argv: list[str] | None = None) -> int:
             ],
             uv_project=resolve_repo_dir("xian-abci", "XIAN_ABCI_DIR"),
             uv_with=[resolve_repo_dir("xian-py", "XIAN_PY_DIR")],
-        )
-    elif args.command == "localnet-burst":
-        payload = backend_localnet_diagnostic(
-            script_path=LOCALNET_WORKLOAD_SCRIPT,
-            script_args=[
-                "--scenario",
-                "counter_basic",
-                "--counter-ops",
-                str(args.counter_ops),
-                "--state-sample-nodes",
-                str(args.state_sample_nodes),
-                "--app-hash-window",
-                str(args.app_hash_window),
-            ],
         )
     elif args.command == "localnet-memwatch":
         payload = backend_localnet_diagnostic(

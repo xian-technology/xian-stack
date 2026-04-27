@@ -164,7 +164,7 @@ def collect_localnet_vm_rollout_report(
     expected_signature = (
         str(expected_execution.get("mode", "")),
         str(expected_execution.get("authority", "")),
-        str(bool(expected_execution.get("shadow_tracer_mode"))).lower(),
+        "false",
         str(expected_execution.get("bytecode_version", "")),
         str(expected_execution.get("gas_schedule", "")),
     )

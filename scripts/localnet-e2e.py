@@ -264,9 +264,6 @@ def make_localnet_env(args: argparse.Namespace) -> dict[str, str]:
     )
     env["XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE"] = args.execution_gas_schedule
     env["XIAN_LOCALNET_EXECUTION_AUTHORITY"] = args.execution_authority
-    env["XIAN_LOCALNET_EXECUTION_SHADOW_TRACER_MODE"] = (
-        args.execution_shadow_tracer_mode
-    )
     env["XIAN_LOCALNET_GENESIS_NETWORK"] = args.genesis_network
     env["XIAN_LOCALNET_ENABLE_BDS"] = "1"
     env["XIAN_LOCALNET_BDS_NODE_INDEX"] = str(args.bds_node_index)
@@ -6144,7 +6141,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--execution-bytecode-version", default="")
     parser.add_argument("--execution-gas-schedule", default="")
     parser.add_argument("--execution-authority", default="")
-    parser.add_argument("--execution-shadow-tracer-mode", default="")
     parser.add_argument("--vm-max-shadow-mismatches", type=int, default=0)
     parser.add_argument("--rpc-timeout-seconds", type=float, default=180.0)
     parser.add_argument("--state-sample-nodes", type=int, default=DEFAULT_LOCALNET_NODES)

@@ -26,7 +26,7 @@
   `node-start`, `node-stop`, `node-status`, and container bring-up/down. Do not
   keep expanding the Makefile into the primary operator interface.
 - Prefer package entrypoints such as `python -m xian.cli.configure_node` over
-  `cd`-ing into legacy script locations inside `xian-abci`.
+  reaching into internal script paths inside `xian-abci`.
 - When documenting operator workflows, prefer `xian-cli` commands. Reserve
   direct `make node-*` examples for backend validation, smoke coverage, and
   local debugging.
@@ -58,5 +58,5 @@
 - This repo now has a real smoke harness for the base ABCI path. Keep it green when changing Dockerfiles, compose files, or backend lifecycle targets.
 - `make node-status` is part of the backend contract consumed by `xian-cli`.
   Keep it emitting machine-readable JSON.
-- The stack mounts `xian-configs` into the ABCI container so legacy chain
+- The stack mounts `xian-configs` into the ABCI container so canonical chain
   fixtures can live outside `xian-abci`.

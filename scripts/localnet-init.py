@@ -160,7 +160,6 @@ def write_node_config(
     execution_bytecode_version: str,
     execution_gas_schedule: str,
     execution_authority: str,
-    execution_shadow_tracer_mode: str,
     block_policy_mode: str,
     block_policy_interval: str,
     consensus_timeout_propose: str | None,
@@ -202,7 +201,6 @@ def write_node_config(
         execution_bytecode_version=execution_bytecode_version,
         execution_gas_schedule=execution_gas_schedule,
         execution_authority=execution_authority,
-        execution_shadow_tracer_mode=execution_shadow_tracer_mode,
         block_policy_mode=block_policy_mode,
         block_policy_interval=block_policy_interval,
         metrics_enabled=True,
@@ -334,11 +332,6 @@ def main():
     execution_authority = env_str(
         "XIAN_LOCALNET_EXECUTION_AUTHORITY", ""
     ).strip()
-    execution_shadow_tracer_mode = env_str(
-        "XIAN_LOCALNET_EXECUTION_SHADOW_TRACER_MODE", ""
-    ).strip()
-    if execution_mode == "xian_vm_v1" and execution_shadow_tracer_mode:
-        tracer_mode = execution_shadow_tracer_mode
     port_offset = env_int("XIAN_LOCALNET_PORT_OFFSET", 0)
     BASE_P2P_PORT = 26656 + port_offset
     BASE_RPC_PORT = 26657 + port_offset
@@ -484,7 +477,6 @@ def main():
             execution_bytecode_version=execution_bytecode_version,
             execution_gas_schedule=execution_gas_schedule,
             execution_authority=execution_authority,
-            execution_shadow_tracer_mode=execution_shadow_tracer_mode,
             block_policy_mode=block_policy_mode,
             block_policy_interval=block_policy_interval,
             consensus_timeout_propose=consensus_timeout_propose,
@@ -538,7 +530,6 @@ def main():
             "bytecode_version": execution_bytecode_version,
             "gas_schedule": execution_gas_schedule,
             "authority": execution_authority,
-            "shadow_tracer_mode": execution_shadow_tracer_mode,
         },
         "nodes": [
             {

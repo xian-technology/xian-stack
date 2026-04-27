@@ -9,9 +9,8 @@ ecosystem.
 
 ## Current Gap
 
-`scripts/localnet-burst-test.py` proves that a multi-node network stays alive
-under a basic mixed load and that nodes agree on `app_hash` across sampled
-heights. It does not yet provide:
+`scripts/localnet-workload.py` provides a deterministic scenario runner for
+multi-node validation. The remaining gaps are:
 
 - reusable scenario packs
 - realistic contract-heavy workloads
@@ -75,8 +74,6 @@ For each scenario:
 
 ## Rollout Order
 
-1. Refactor `localnet-burst-test.py` into a scenario runner.
-2. Add a vendored DEX scenario.
-3. Add deterministic failure cases to the DEX scenario.
-4. Add state cross-checks in addition to `app_hash`.
-5. Add more contract packs over time as the ecosystem grows.
+1. Add more deterministic failure cases to the DEX scenario.
+2. Add state cross-checks in addition to `app_hash`.
+3. Add more contract packs over time as the ecosystem grows.
