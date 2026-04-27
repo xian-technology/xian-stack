@@ -1,11 +1,15 @@
 # xian-stack
 
 `xian-stack` is the local runtime backend for Xian. It owns Docker images,
-Compose topology, monitoring assets, localnet flows, and backend validation. It
-is the implementation surface behind local operator workflows, not the primary
-operator UX itself.
+Compose topology, monitoring assets, localnet flows, and backend validation.
+It is the implementation surface that sits behind the operator-facing
+`xian-cli`, not a primary user-facing tool itself.
 
-## Common Workflows
+The stable machine-facing contract is `scripts/backend.py`. The `Makefile`
+is the developer and debugging surface. `xian-cli` is the human-facing
+control plane built on top of this backend.
+
+## Quick Start
 
 Validate the stack:
 
@@ -14,220 +18,84 @@ python3 ./scripts/backend.py validate
 make release-safety
 ```
 
-Run a local stack-managed node:
+Run a stack-managed local node:
 
 ```bash
-python3 ./scripts/backend.py start --no-service-node --dashboard --monitoring
+python3 ./scripts/backend.py start  --no-service-node --dashboard --monitoring
 python3 ./scripts/backend.py status --no-service-node --dashboard --monitoring
 python3 ./scripts/backend.py endpoints --no-service-node --dashboard --monitoring
 python3 ./scripts/backend.py health --no-service-node --dashboard --monitoring
-python3 ./scripts/backend.py stop --no-service-node --dashboard --monitoring
+python3 ./scripts/backend.py stop   --no-service-node --dashboard --monitoring
 ```
 
-The stack now defaults to fail-closed host bindings:
+The stack defaults to fail-closed host bindings:
 
-- CometBFT RPC binds to `127.0.0.1` unless you pass `--public-rpc`
-- CometBFT and app metrics bind to `127.0.0.1` unless you pass `--public-metrics`
+- CometBFT RPC binds to `127.0.0.1` unless `--public-rpc` is set.
+- CometBFT and app metrics bind to `127.0.0.1` unless `--public-metrics` is set.
 - PostGraphile binds to `127.0.0.1` unless you run a service node and pass
-  `--public-query`
-- local credentials are generated once into `.stack-secrets.env`, which is
-  ignored by git
+  `--public-query` (read-only BDS surface; does not expose live RPC, mempool,
+  or raw ABCI traffic).
+- Local credentials are generated once into `.stack-secrets.env`, which is
+  ignored by git.
+- BDS uses a dedicated read-only PostgreSQL role for PostGraphile rather than
+  the BDS owner account.
 
-`public-query` and `public-rpc` are intentionally separate. `public-query`
-publishes the read-only BDS/PostGraphile surface; it does not expose live node
-RPC, mempool, or raw ABCI traffic.
+### Localnet
 
-Examples:
-
-```bash
-# Read-only public query surface on a service node.
-python3 ./scripts/backend.py start --service-node --public-query
-
-# Explicit public RPC and metrics exposure for a non-validator/gateway node.
-python3 ./scripts/backend.py start --no-service-node --public-rpc --public-metrics
-```
-
-When BDS is enabled, PostGraphile now runs against a dedicated read-only
-database role rather than the primary BDS owner account.
-
-Run the optional shielded relayer sidecar against the local node:
+Initialize, start, and exercise a multi-node localnet:
 
 ```bash
-export XIAN_SHIELDED_RELAYER_PRIVATE_KEY=<relayer-ed25519-private-key>
-python3 ./scripts/backend.py start --no-service-node --shielded-relayer
-python3 ./scripts/backend.py status --no-service-node --shielded-relayer
-python3 ./scripts/backend.py endpoints --no-service-node --shielded-relayer
-python3 ./scripts/backend.py health --no-service-node --shielded-relayer
-python3 ./scripts/backend.py stop --no-service-node --shielded-relayer
-```
-
-Optional relayer policy is configured through environment variables:
-
-```bash
-XIAN_SHIELDED_RELAYER_AUTH_TOKEN=<bearer-token>
-XIAN_SHIELDED_RELAYER_PUBLIC_INFO=1
-XIAN_SHIELDED_RELAYER_PUBLIC_QUOTE=0
-XIAN_SHIELDED_RELAYER_PUBLIC_JOB_LOOKUP=0
-XIAN_SHIELDED_RELAYER_ALLOWED_NOTE_CONTRACTS=con_shielded_note_token
-XIAN_SHIELDED_RELAYER_ALLOWED_COMMAND_CONTRACTS=con_shielded_commands
-XIAN_SHIELDED_RELAYER_ALLOWED_COMMAND_TARGETS=currency,con_token_factory
-XIAN_SHIELDED_RELAYER_MIN_NOTE_RELAYER_FEE=0
-XIAN_SHIELDED_RELAYER_MIN_COMMAND_RELAYER_FEE=0
-XIAN_SHIELDED_RELAYER_DEFAULT_EXPIRY_SECONDS=300
-XIAN_SHIELDED_RELAYER_MAX_EXPIRY_SECONDS=1800
-XIAN_SHIELDED_RELAYER_METRICS_ENABLED=1
-XIAN_SHIELDED_RELAYER_METRICS_PUBLIC=0
-XIAN_SHIELDED_RELAYER_RATE_LIMIT_REQUESTS_PER_MINUTE=120
-XIAN_SHIELDED_RELAYER_RATE_LIMIT_BURST=30
-XIAN_SHIELDED_RELAYER_RATE_LIMIT_TRUST_PROXY=0
-XIAN_SHIELDED_RELAYER_JOB_HISTORY_LIMIT=256
-XIAN_SHIELDED_RELAYER_JOB_HISTORY_TTL_SECONDS=86400
-XIAN_SHIELDED_RELAYER_LOG_REQUESTS=1
-```
-
-The relayer defaults to `127.0.0.1`. If you bind it to a non-loopback host,
-you must also set `XIAN_SHIELDED_RELAYER_AUTH_TOKEN`.
-
-When enabled, the relayer also exposes a Prometheus-style metrics endpoint at
-`/metrics`. The backend endpoint catalog includes that URL as
-`shielded_relayer_metrics`.
-
-Run the optional deterministic DEX automation sidecar against the local node:
-
-```bash
-python3 ./scripts/backend.py start --no-service-node --dex-automation
-python3 ./scripts/backend.py status --no-service-node --dex-automation
-python3 ./scripts/backend.py endpoints --no-service-node --dex-automation
-python3 ./scripts/backend.py health --no-service-node --dex-automation
-python3 ./scripts/backend.py stop --no-service-node --dex-automation
-```
-
-The default admin UI is `http://127.0.0.1:38280`. The backend writes its config
-to `.artifacts/dex-automation/config.yaml`, creates a local service-wallet key
-file at `.artifacts/dex-automation/wallet.key`, and leaves execution disabled
-until `wallet.execute` is set to `true`. Use
-`--dex-automation-config <path>` when you want to pin a custom config file.
-Binding the admin UI to a non-loopback host requires the same explicit
-`--public-query` opt-in used for other read/admin sidecars.
-
-Run a localnet workload:
-
-```bash
-python3 ./scripts/backend.py localnet-init --nodes 4 --topology integrated --clean
-python3 ./scripts/backend.py localnet-up --wait-for-health --rpc-timeout-seconds 120
+python3 ./scripts/backend.py localnet-init  --nodes 4 --topology integrated --clean
+python3 ./scripts/backend.py localnet-up    --wait-for-health --rpc-timeout-seconds 120
 python3 ./scripts/backend.py localnet-workload --scenario counter_basic
 ```
 
 Bootstrap the canonical DEX contracts on a running local node:
 
 ```bash
-# Multi-node localnet generated by xian-stack.
 make localnet-up
 make localnet-dex-bootstrap
-
-# Existing single stack node, such as the local IntentKit node on 26657.
+# or against a specific RPC:
 XIAN_DEX_BOOTSTRAP_RPC_URL=http://127.0.0.1:26657 make localnet-dex-bootstrap
-
-# Machine-facing form.
-python3 ./scripts/backend.py localnet-dex-bootstrap --rpc-url http://127.0.0.1:26657
 ```
 
-The bootstrap deploys `con_pairs`, `con_dex`, `con_dex_helper`, and an optional
-demo XIAN/XDT pool. It is idempotent: existing contracts and already-seeded
-pools are skipped unless `LOCALNET_DEX_TOP_UP_LIQUIDITY=1` is set. Use
-`LOCALNET_DEX_EMIT_TEST_SWAP=1` when you want the bootstrap to also emit a
-small `Swap` event for event-trigger testing. Contract sources default to the
-hash-pinned DEX bundle in
-`../xian-configs/modules/dex/contract-bundle.json`. Use
-`XIAN_DEX_BUNDLE` to test another bundle, or `XIAN_DEX_CONTRACTS_DIR` only as a
-development override for raw `xian-dex/src` files.
-
-Run the richer 5-validator testnet-shaped governance exercise:
+Higher-level harnesses:
 
 ```bash
-make localnet-validator-governance
+make localnet-validator-governance   # 5-validator testnet-shaped governance run
+make localnet-e2e                    # layered 5-validator e2e harness
+make localnet-vm-e2e                 # same harness with xian_vm_v1 native authority
+make localnet-vm-tps-bench           # tuned VM throughput sweep
+make release-safety                  # full release-grade safety gate
 ```
 
-Run the broader layered 5-validator e2e harness:
+### Optional Sidecars
+
+Shielded relayer (proof-bound private-submission HTTP surface):
 
 ```bash
-make localnet-e2e
+export XIAN_SHIELDED_RELAYER_PRIVATE_KEY=<relayer-ed25519-private-key>
+python3 ./scripts/backend.py start --no-service-node --shielded-relayer
 ```
 
-Run the same layered harness with `xian_vm_v1` in native-authority mode:
+Defaults to `127.0.0.1`. Binding to a non-loopback host requires
+`XIAN_SHIELDED_RELAYER_AUTH_TOKEN`. When enabled, exposes Prometheus metrics
+at `/metrics`. See `docs/` and the relayer environment variables in this
+repo's history for the full policy surface
+(`XIAN_SHIELDED_RELAYER_*`).
+
+Deterministic DEX automation:
 
 ```bash
-make localnet-vm-e2e
+python3 ./scripts/backend.py start --no-service-node --dex-automation
 ```
 
-Run the full release-grade safety gate before tagging `xian-stack`:
+The default admin UI is `http://127.0.0.1:38280`. Config and service-wallet
+key file are written under `.artifacts/dex-automation/`. Execution stays
+disabled until `wallet.execute=true` in the config. Binding the admin UI to
+a non-loopback host requires the same explicit `--public-query` opt-in.
 
-```bash
-make release-safety
-```
-
-Run the tuned VM throughput sweep on a fresh 5-node localnet:
-
-```bash
-make localnet-vm-tps-bench
-```
-
-Run the benchmark directly against an already-running localnet:
-
-```bash
-uv run --project ../xian-py --python 3.14 python3 ./scripts/localnet-tps-bench.py \
-  --scenario both \
-  --ops 4000 8000 12000 \
-  --wallet-count 64 \
-  --submit-workers 128 \
-  --receipt-timeout-seconds 120 \
-  --broadcast-mode checktx
-```
-
-The benchmark writes JSON artifacts under `.artifacts/tps-bench/`. The most
-useful throughput numbers are:
-
-- `committed_workload_tps`: workload transactions divided by the committed
-  block window
-- `committed_chain_tps`: all committed transactions in that same block window
-- `workload_tps`: end-to-end client-side workload submission rate
-- `peak_block_tps`: highest instantaneous per-block rate inside the committed
-  window
-
-Use `committed_workload_tps` as the main chain-throughput figure. `workload_tps`
-is still useful for spotting client-side admission or confirmation bottlenecks.
-
-Inspect the current VM rollout posture and mismatch counters across the running
-localnet:
-
-```bash
-make localnet-vm-report
-python3 ./scripts/backend.py localnet-vm-report
-```
-
-The localnet generator now exposes the Xian app metrics endpoint separately from
-the CometBFT metrics endpoint, so the VM rollout report reads the native/shadow
-observability data from the app-side `9108` exporter rather than the `26660`
-CometBFT metrics port.
-
-When the monitoring stack is enabled, Grafana now also provisions a dedicated
-`Xian VM Runtime` dashboard, a dedicated `Xian BDS Recovery` dashboard, and VM
-summary panels on the existing overview and preset dashboards. Example
-Alertmanager routing is included under `monitoring/alertmanager/` for the VM
-mismatch and BDS recovery alerts.
-
-Export or import the standardized BDS recovery snapshot:
-
-```bash
-python3 ./scripts/backend.py bds-snapshot-export
-python3 ./scripts/backend.py bds-snapshot-import
-```
-
-By default the archive lives at:
-
-```bash
-.cometbft/snapshots/xian-bds-snapshot.tar.gz
-```
+### Releases
 
 Plan or apply a coordinated workspace release:
 
@@ -236,79 +104,77 @@ python3 ./scripts/release_orchestrator.py plan
 python3 ./scripts/release_orchestrator.py apply
 ```
 
-Release images are now built from digest-pinned base images and checksum-pinned
+Release images are built from digest-pinned base images and checksum-pinned
 external inputs, signed by digest, and accompanied by signed release assets.
-Use [docs/RELEASES.md](./docs/RELEASES.md) for the verification commands and
-the reproducibility checker.
-
-The `localnet-e2e` harness now also validates direct `currency.approve` /
-`transfer_from` behavior, the `permit_authorizer -> approve_from_authorizer`
-path, validator restart and convergence chaos, and timed soak/abuse coverage
-against the same 5-validator `testnet`-shaped network.
+See `docs/RELEASES.md` for verification commands.
 
 ## Principles
 
-- `xian-stack` owns runtime plumbing, images, and smoke-tested local flows.
-  User-facing lifecycle orchestration belongs in `xian-cli`.
-- The stable machine-facing contract is `scripts/backend.py`. The `Makefile`
-  remains the developer and debugging surface.
-- Monitoring, dashboard, and BDS are optional stack layers. They should be easy
-  to enable without becoming required to understand the core node.
-- `xian-intentkit` can be attached as another optional stack-managed service
-  without copying its compose topology into this repo.
-- `xian-dex-automation` can be attached as an optional Python sidecar for
-  deterministic DEX event rules without putting that logic in the DEX frontend
-  or in an AI-agent workflow.
-- The shielded relayer is another optional stack-managed service. It exposes a
-  proof-bound private-submission HTTP surface without changing the node runtime
-  itself.
-- Localnet and smoke flows matter as product safety nets, not just as internal
-  convenience scripts.
+- **Runtime plumbing, not operator UX.** Images, Compose topology, smoke
+  flows, and localnet harnesses live here. User-facing lifecycle commands
+  live in `xian-cli`.
+- **`scripts/backend.py` is the stable machine contract.** External callers
+  (CLI, CI, automation) target it. The `Makefile` is for developers and
+  debugging.
+- **Optional layers stay optional.** Monitoring, dashboard, BDS, shielded
+  relayer, DEX automation, and IntentKit are easy to enable without becoming
+  required to understand the core node.
+- **Fail-closed network bindings.** Loopback by default; public exposure is
+  always an explicit opt-in flag.
+- **Localnet flows are product safety nets.** They double as smoke gates for
+  cross-repo behavior, not just developer convenience.
+- **Independent sibling repos stay independent.** `xian-intentkit` and
+  `xian-dex-automation` are attached as optional services without copying
+  their topology into this repo.
 
 ## Key Directories
 
-- `docker/`: runtime images and container build definitions
-- `scripts/`: backend control plane, smoke flows, and localnet tooling
-- `monitoring/`: Prometheus, Grafana, dashboards, and alert presets
-- `workloads/`: localnet workload fixtures and contracts
-- `docs/`: repo-local runtime and release notes
-
-## What It Can Do
-
-- build and run the local Xian runtime in `integrated` or `fidelity` topology
-- run canonical-network nodes from pinned published `xian-node` release images
-  while keeping source builds available as a local override
-- expose a stable machine-facing backend command surface through
-  `scripts/backend.py`
-- start optional dashboard, BDS, Prometheus, and Grafana layers
-- start an optional stack-managed DEX automation service for deterministic
-  rule-based DEX actions
-- start an optional stack-managed shielded relayer for proof-bound private
-  submission
-- attach a stack-managed `xian-intentkit` deployment while keeping its repo and
-  compose files independent
-- run smoke checks and CLI-driven smoke flows
-- initialize multi-node localnets and drive workload scenarios against them
-- ship monitoring dashboards and alert rules that match the validated operator
-  profiles
+- `docker/` — runtime image build definitions for the node and BDS layers.
+- `docker-compose-*.yml` — Compose topology files (`abci`, `abci-bds`,
+  `abci-dev`, `contracting`, `intentkit`, `localnet`, `monitoring`).
+- `scripts/` — backend control plane (`backend.py`), release orchestrator,
+  smoke flows, localnet tooling, and TPS benchmarks.
+- `monitoring/` — Prometheus, Grafana dashboards (including dedicated
+  `Xian VM Runtime` and `Xian BDS Recovery`), and alert presets.
+- `workloads/` — localnet workload fixtures and contracts.
+- `contracts/` — built-in contract bundles deployed by localnet bootstrap.
+- `tests/` — backend, smoke, and harness coverage.
+- `docs/` — runtime, release, and governance notes.
 
 ## Backend Surface
 
-The stable backend interface is `scripts/backend.py`. It covers:
+The stable interface exposed by `scripts/backend.py` covers:
 
 - `validate`
-- `start`, `stop`, and `status`
-- `endpoints` and `health`
-- `bds-snapshot-export` and `bds-snapshot-import`
-- `smoke` and `smoke-cli`
+- `start`, `stop`, `status`
+- `endpoints`, `health`
+- `bds-snapshot-export`, `bds-snapshot-import`
+- `smoke`, `smoke-cli`
 - `localnet-*` flows
-- `localnet-dex-bootstrap` for opt-in canonical DEX deployment on local nodes
+- `localnet-dex-bootstrap` for opt-in canonical DEX deployment
+- `localnet-vm-report` for VM rollout posture and mismatch counters
 
-Use the `Makefile` directly for lower-level debugging, image builds, and
-developer shell access.
+Use the `Makefile` for lower-level debugging, image builds, and developer
+shell access. Use `xian-cli` for human-facing operator workflows.
 
-Use `xian-cli` for the human-facing operator workflows built on top of this
-backend contract.
+## Capabilities
+
+- build and run the local Xian runtime in `integrated` or `fidelity` topology
+- run canonical-network nodes from pinned published `xian-node` release
+  images, with source builds available as a local override
+- expose a stable machine-facing backend command surface
+  (`scripts/backend.py`)
+- start optional dashboard, BDS, Prometheus, and Grafana layers
+- start an optional stack-managed DEX automation service for deterministic,
+  rule-based DEX actions
+- start an optional stack-managed shielded relayer for proof-bound private
+  submission
+- attach a stack-managed `xian-intentkit` deployment while keeping its repo
+  and Compose files independent
+- run smoke checks and CLI-driven smoke flows
+- initialize multi-node localnets and drive workload scenarios against them
+- ship monitoring dashboards and alert rules that match validated operator
+  profiles
 
 ## Validation
 
@@ -319,11 +185,17 @@ make smoke-cli
 ```
 
 `make smoke` is the main repo safety net. `make smoke-cli` is the cross-repo
-operator-flow gate.
+operator-flow gate. `make release-safety` runs the full release-grade gate
+before tagging this repo.
 
 ## Related Docs
 
-- [AGENTS.md](AGENTS.md)
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- [docs/BACKLOG.md](docs/BACKLOG.md)
-- [docs/README.md](docs/README.md)
+- [AGENTS.md](AGENTS.md) — repo-specific guidance for AI agents and contributors
+- [docs/README.md](docs/README.md) — index of internal docs
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — major components and dependency direction
+- [docs/BACKLOG.md](docs/BACKLOG.md) — open work and follow-ups
+- [docs/RELEASES.md](docs/RELEASES.md) — release process, signing, and reproducibility checks
+- [docs/RUNTIME_LIMITS.md](docs/RUNTIME_LIMITS.md) — runtime resource limits and policy
+- [docs/RUNTIME_RELEASE_BACKLOG.md](docs/RUNTIME_RELEASE_BACKLOG.md) — runtime release follow-ups
+- [docs/LOCALNET_VALIDATOR_GOVERNANCE.md](docs/LOCALNET_VALIDATOR_GOVERNANCE.md) — 5-validator governance harness
+- [docs/LOCALNET_WORKLOAD_BACKLOG.md](docs/LOCALNET_WORKLOAD_BACKLOG.md) — localnet workload follow-ups
