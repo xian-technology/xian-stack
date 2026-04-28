@@ -78,6 +78,7 @@ RUN python -m pip install --upgrade \
     -r /tmp/build/python-runtime-requirements.txt \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-accounts \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-runtime-types \
+    && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-fastpath-core \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-native-tracer \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-vm-core \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-zk \
@@ -122,6 +123,7 @@ RUN python -m pip install --no-index --find-links /tmp/wheels --require-hashes \
     && python -m pip install --no-index --find-links /tmp/wheels --no-deps \
     /tmp/wheels/xian_tech_accounts-*.whl \
     /tmp/wheels/xian_tech_runtime_types-*.whl \
+    /tmp/wheels/xian_tech_fastpath_core-*.whl \
     /tmp/wheels/xian_tech_native_tracer-*.whl \
     /tmp/wheels/xian_tech_vm_core-*.whl \
     /tmp/wheels/xian_tech_zk-*.whl \

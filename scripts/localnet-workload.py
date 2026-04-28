@@ -480,6 +480,12 @@ def canonical_json(value: Any) -> str:
     return json.dumps(normalize_value(value), sort_keys=True, separators=(",", ":"))
 
 
+def fixed(value: int | str | Decimal | ContractingDecimal) -> ContractingDecimal:
+    if isinstance(value, ContractingDecimal):
+        return value
+    return ContractingDecimal(str(value))
+
+
 def normalize_value(value: Any) -> Any:
     if isinstance(value, ContractingDecimal | Decimal):
         return str(value)
@@ -1028,7 +1034,7 @@ async def fund_wallets(
     *,
     seed_wallet: Wallet,
     worker_wallets: list[Wallet],
-    amount: float,
+    amount: ContractingDecimal,
     chi: int,
     label_prefix: str,
 ) -> list[BroadcastRecord]:
@@ -1179,8 +1185,8 @@ async def broadcast_funding_record(
     founder: Wallet,
     wallet: Wallet,
     index: int,
-    gas_amount: float,
-    token_amount: float,
+    gas_amount: ContractingDecimal,
+    token_amount: ContractingDecimal,
     token_a: str,
     token_b: str,
 ) -> list[BroadcastRecord]:
@@ -1237,7 +1243,7 @@ async def broadcast_approval_record(
         rpc_index=wallet_index % len(context.nodes),
         contract=token_name,
         function="approve",
-        kwargs={"amount": 1_000_000.0, "to": dex_contract},
+        kwargs={"amount": fixed(1_000_000), "to": dex_contract},
         chi=TOKEN_TX_CHI,
         expected_success=True,
     )
@@ -1284,7 +1290,7 @@ async def run_counter_basic(
                 rpc_index=index,
                 contract="currency",
                 function="transfer",
-                kwargs={"amount": 5_000.0, "to": wallet.public_key},
+                kwargs={"amount": fixed(5_000), "to": wallet.public_key},
                 chi=COUNTER_TX_CHI,
                 expected_success=True,
             )
@@ -1305,7 +1311,7 @@ async def run_counter_basic(
                     rpc_index=rpc_index,
                     contract="currency",
                     function="transfer",
-                    kwargs={"amount": 1.0, "to": recipient},
+                    kwargs={"amount": fixed(1), "to": recipient},
                     chi=COUNTER_TX_CHI,
                     expected_success=True,
                 )
@@ -1325,8 +1331,8 @@ async def run_counter_basic(
                 )
             )
         else:
-            amount = float((index % 11) + 1)
-            expected_counter += int(amount)
+            amount = (index % 11) + 1
+            expected_counter += amount
             records.append(
                 await context.broadcast_tx(
                     label=f"add #{index}",
@@ -1429,7 +1435,7 @@ async def run_dex_mixed(
                 code=token_code,
                 constructor_args={
                     "owner": founder.public_key,
-                    "supply": 5_000_000.0,
+                    "supply": fixed(5_000_000),
                     "name": "Workload Token A",
                     "symbol": "WTA",
                 },
@@ -1449,7 +1455,7 @@ async def run_dex_mixed(
                 code=token_code,
                 constructor_args={
                     "owner": founder.public_key,
-                    "supply": 5_000_000.0,
+                    "supply": fixed(5_000_000),
                     "name": "Workload Token B",
                     "symbol": "WTB",
                 },
@@ -1497,8 +1503,8 @@ async def run_dex_mixed(
                 founder=founder,
                 wallet=wallet,
                 index=index,
-                gas_amount=50_000.0,
-                token_amount=25_000.0,
+                gas_amount=fixed(50_000),
+                token_amount=fixed(25_000),
                 token_a=token_a,
                 token_b=token_b,
             )
@@ -1535,10 +1541,10 @@ async def run_dex_mixed(
         kwargs={
             "tokenA": token_a,
             "tokenB": token_b,
-            "amountADesired": 250_000.0,
-            "amountBDesired": 250_000.0,
-            "amountAMin": 240_000.0,
-            "amountBMin": 240_000.0,
+            "amountADesired": fixed(250_000),
+            "amountBDesired": fixed(250_000),
+            "amountAMin": fixed(240_000),
+            "amountBMin": fixed(240_000),
             "to": founder.public_key,
             "deadline": deadline_value(seconds_from_now=300),
         },
@@ -1565,7 +1571,7 @@ async def run_dex_mixed(
         rpc_index=0,
         contract=pairs_contract,
         function="liqApprove",
-        kwargs={"pair": pair_id, "amount": 10_000.0, "to": dex_contract},
+        kwargs={"pair": pair_id, "amount": fixed(10_000), "to": dex_contract},
         chi=DEX_TX_CHI,
         expected_success=True,
     )
@@ -1581,9 +1587,9 @@ async def run_dex_mixed(
         trader_b = approved_traders[(round_index + 1) % len(approved_traders)]
         trader_c = approved_traders[(round_index + 2) % len(approved_traders)]
         rpc_index = round_index % len(context.nodes)
-        trade_a_amount = float(10 + round_index)
-        trade_b_amount = float(7 + round_index)
-        impossible_min = float(10_000_000 + round_index)
+        trade_a_amount = fixed(10 + round_index)
+        trade_b_amount = fixed(7 + round_index)
+        impossible_min = fixed(10_000_000 + round_index)
 
         round_records = [
             await context.broadcast_tx(
@@ -1594,7 +1600,7 @@ async def run_dex_mixed(
                 function="swapExactTokenForToken",
                 kwargs={
                     "amountIn": trade_a_amount,
-                    "amountOutMin": 0.0001,
+                    "amountOutMin": fixed("0.0001"),
                     "pair": pair_id,
                     "src": token_a,
                     "to": trader_a.public_key,
@@ -1611,7 +1617,7 @@ async def run_dex_mixed(
                 function="swapExactTokenForToken",
                 kwargs={
                     "amountIn": trade_b_amount,
-                    "amountOutMin": 0.0001,
+                    "amountOutMin": fixed("0.0001"),
                     "pair": pair_id,
                     "src": token_b,
                     "to": trader_b.public_key,
@@ -1627,8 +1633,8 @@ async def run_dex_mixed(
                 contract=dex_contract,
                 function="swapExactTokenForToken",
                 kwargs={
-                    "amountIn": 5.0,
-                    "amountOutMin": 0.0001,
+                    "amountIn": fixed(5),
+                    "amountOutMin": fixed("0.0001"),
                     "pair": pair_id,
                     "src": token_a,
                     "to": trader_c.public_key,
@@ -1645,7 +1651,7 @@ async def run_dex_mixed(
                 contract=dex_contract,
                 function="swapExactTokenForToken",
                 kwargs={
-                    "amountIn": 5.0,
+                    "amountIn": fixed(5),
                     "amountOutMin": impossible_min,
                     "pair": pair_id,
                     "src": token_b,
@@ -1672,8 +1678,8 @@ async def run_dex_mixed(
             contract=dex_contract,
             function="swapExactTokenForToken",
             kwargs={
-                "amountIn": 9.0,
-                "amountOutMin": 0.0001,
+                "amountIn": fixed(9),
+                "amountOutMin": fixed("0.0001"),
                 "pair": pair_id,
                 "src": token_a,
                 "to": unapproved_trader.public_key,
@@ -1692,8 +1698,8 @@ async def run_dex_mixed(
             contract=dex_contract,
             function="swapExactTokenForToken",
             kwargs={
-                "amountIn": 4.0,
-                "amountOutMin": 0.0001,
+                "amountIn": fixed(4),
+                "amountOutMin": fixed("0.0001"),
                 "pair": int(pair_id) + 999,
                 "src": token_a,
                 "to": approved_traders[0].public_key,
@@ -1714,9 +1720,9 @@ async def run_dex_mixed(
             kwargs={
                 "tokenA": token_a,
                 "tokenB": token_b,
-                "liquidity": 1000.0,
-                "amountAMin": 0.0001,
-                "amountBMin": 0.0001,
+                "liquidity": fixed(1_000),
+                "amountAMin": fixed("0.0001"),
+                "amountBMin": fixed("0.0001"),
                 "to": founder.public_key,
                 "deadline": deadline_value(seconds_from_now=300),
             },
@@ -1922,7 +1928,7 @@ async def run_parallel_probe(
                 rpc_index=index % len(context.nodes),
                 contract="currency",
                 function="transfer",
-                kwargs={"amount": 5_000.0, "to": wallet.public_key},
+                kwargs={"amount": fixed(5_000), "to": wallet.public_key},
                 chi=PARALLEL_PROBE_TX_CHI,
                 expected_success=True,
             )
@@ -2317,7 +2323,7 @@ async def run_transfer_fanout(
         for index in range(wallet_count)
     ]
     counts = distribute_operation_counts(operations, wallet_count)
-    funding_amount = float(max(5_000, max(counts) * 4 + 1_000))
+    funding_amount = fixed(max(5_000, max(counts) * 4 + 1_000))
     funding_records = await fund_wallets(
         context,
         seed_wallet=context.founder_wallet,
@@ -2347,7 +2353,7 @@ async def run_transfer_fanout(
                     "rpc_index": index,
                     "contract": "currency",
                     "function": "transfer",
-                    "kwargs": {"amount": 1.0, "to": recipient},
+                    "kwargs": {"amount": fixed(1), "to": recipient},
                     "chi": THROUGHPUT_TRANSFER_TX_CHI,
                     "expected_success": True,
                     "mode": broadcast_mode,
@@ -2485,7 +2491,7 @@ async def run_contract_heavy(
         for index in range(wallet_count)
     ]
     counts = distribute_operation_counts(operations, wallet_count)
-    funding_amount = float(max(5_000, max(counts) * 2 + 1_000))
+    funding_amount = fixed(max(5_000, max(counts) * 2 + 1_000))
     funding_records = await fund_wallets(
         context,
         seed_wallet=context.founder_wallet,
