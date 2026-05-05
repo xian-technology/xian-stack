@@ -809,6 +809,32 @@ def local_log_paths(node: LocalnetNode) -> list[Path]:
     return sorted(log_dir.glob("xian-abci-*.log"), key=lambda path: path.stat().st_mtime)
 
 
+def log_file_positions(paths: list[Path]) -> dict[Path, int]:
+    positions: dict[Path, int] = {}
+    for path in paths:
+        try:
+            positions[path] = path.stat().st_size
+        except FileNotFoundError:
+            continue
+    return positions
+
+
+def read_logs_since(paths: list[Path], positions: dict[Path, int]) -> str:
+    chunks: list[str] = []
+    for path in paths:
+        try:
+            size = path.stat().st_size
+            offset = positions.get(path, 0)
+            if offset > size:
+                offset = 0
+            with path.open("rb") as handle:
+                handle.seek(offset)
+                chunks.append(handle.read().decode("utf-8", errors="replace"))
+        except FileNotFoundError:
+            continue
+    return "\n".join(chunk for chunk in chunks if chunk)
+
+
 def update_logging_config(
     *,
     level: str,
@@ -4041,9 +4067,13 @@ class E2ERunner:
         }
 
     async def logging_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
-        initial_logs = {
-            node.moniker: [str(path) for path in local_log_paths(node)]
+        initial_log_positions = {
+            node.moniker: log_file_positions(local_log_paths(node))
             for node in self.nodes
+        }
+        initial_logs = {
+            moniker: [str(path) for path in positions]
+            for moniker, positions in initial_log_positions.items()
         }
         update_logging_config(level="DEBUG", trace_logging=False, json_logging=False)
         await self.restart_localnet_and_wait_ready(session)
@@ -4090,9 +4120,9 @@ class E2ERunner:
             logs = local_log_paths(node)
             if not logs:
                 raise E2EError(f"no logs found for {node.moniker}")
-            recent_logs = logs[-3:]
-            text = "\n".join(
-                path.read_text(encoding="utf-8") for path in recent_logs
+            text = read_logs_since(
+                logs,
+                initial_log_positions.get(node.moniker, {}),
             )
             debug_lines[node.moniker] = [
                 line
