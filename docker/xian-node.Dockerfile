@@ -113,14 +113,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /opt/xian
 
+COPY --from=ghcr.io/astral-sh/uv:0.6.11 /uv /uvx /bin/
+
 COPY --from=xian-configs . /opt/xian-configs
 COPY --from=python-wheel-builder /tmp/wheels /tmp/wheels
 COPY --from=python-wheel-builder /tmp/build/python-runtime-requirements.txt /tmp/python-runtime-requirements.txt
 COPY --from=cometbft-builder /out/cometbft /usr/local/bin/cometbft
 
-RUN python -m pip install --no-index --find-links /tmp/wheels --require-hashes \
+RUN uv pip install --system --no-index --find-links /tmp/wheels --require-hashes \
     -r /tmp/python-runtime-requirements.txt \
-    && python -m pip install --no-index --find-links /tmp/wheels --no-deps \
+    && uv pip install --system --no-index --find-links /tmp/wheels --no-deps \
     /tmp/wheels/xian_tech_accounts-*.whl \
     /tmp/wheels/xian_tech_runtime_types-*.whl \
     /tmp/wheels/xian_tech_fastpath_core-*.whl \
@@ -170,7 +172,7 @@ ENTRYPOINT ["/init"]
 
 FROM split AS dev
 
-RUN python -m pip install pytest parameterized
+RUN uv pip install --system pytest parameterized
 
 WORKDIR /workspace
 CMD ["/bin/bash"]
