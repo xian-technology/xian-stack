@@ -37,6 +37,10 @@ from shielded_relayer_backend import (
     start_shielded_relayer_runtime,
     stop_shielded_relayer_runtime,
 )
+from stack_backend.request import (
+    args_from_backend_request,
+    read_backend_request,
+)
 
 STACK_DIR = Path(__file__).resolve().parent.parent
 LOCALNET_NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
@@ -2245,6 +2249,38 @@ def add_public_surface_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_runtime_surface_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--service-node",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--dashboard",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--monitoring",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--dashboard-host",
+        default="127.0.0.1",
+    )
+    parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=8080,
+    )
+    add_public_surface_args(parser)
+    add_node_image_args(parser)
+    add_intentkit_args(parser)
+    add_dex_automation_args(parser)
+    add_shielded_relayer_args(parser)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Stable machine-readable backend control surface for xian-stack"
@@ -2252,35 +2288,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     start = subparsers.add_parser("start")
-    start.add_argument(
-        "--service-node",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    start.add_argument(
-        "--dashboard",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    start.add_argument(
-        "--monitoring",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    start.add_argument(
-        "--dashboard-host",
-        default="127.0.0.1",
-    )
-    start.add_argument(
-        "--dashboard-port",
-        type=int,
-        default=8080,
-    )
-    add_public_surface_args(start)
-    add_node_image_args(start)
-    add_intentkit_args(start)
-    add_dex_automation_args(start)
-    add_shielded_relayer_args(start)
+    add_runtime_surface_args(start)
     start.add_argument(
         "--wait-for-health",
         action=argparse.BooleanOptionalAction,
@@ -2297,128 +2305,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     stop = subparsers.add_parser("stop")
-    stop.add_argument(
-        "--service-node",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    stop.add_argument(
-        "--dashboard",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    stop.add_argument(
-        "--monitoring",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    stop.add_argument(
-        "--dashboard-host",
-        default="127.0.0.1",
-    )
-    stop.add_argument(
-        "--dashboard-port",
-        type=int,
-        default=8080,
-    )
-    add_public_surface_args(stop)
-    add_node_image_args(stop)
-    add_intentkit_args(stop)
-    add_dex_automation_args(stop)
-    add_shielded_relayer_args(stop)
+    add_runtime_surface_args(stop)
 
     status = subparsers.add_parser("status")
-    status.add_argument(
-        "--service-node",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    status.add_argument(
-        "--dashboard",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    status.add_argument(
-        "--monitoring",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    status.add_argument(
-        "--dashboard-host",
-        default="127.0.0.1",
-    )
-    status.add_argument(
-        "--dashboard-port",
-        type=int,
-        default=8080,
-    )
-    add_public_surface_args(status)
-    add_node_image_args(status)
-    add_intentkit_args(status)
-    add_dex_automation_args(status)
-    add_shielded_relayer_args(status)
+    add_runtime_surface_args(status)
 
     endpoints = subparsers.add_parser("endpoints")
-    endpoints.add_argument(
-        "--service-node",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    endpoints.add_argument(
-        "--dashboard",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    endpoints.add_argument(
-        "--monitoring",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    endpoints.add_argument(
-        "--dashboard-host",
-        default="127.0.0.1",
-    )
-    endpoints.add_argument(
-        "--dashboard-port",
-        type=int,
-        default=8080,
-    )
-    add_public_surface_args(endpoints)
-    add_node_image_args(endpoints)
-    add_intentkit_args(endpoints)
-    add_dex_automation_args(endpoints)
-    add_shielded_relayer_args(endpoints)
+    add_runtime_surface_args(endpoints)
 
     health = subparsers.add_parser("health")
-    health.add_argument(
-        "--service-node",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    health.add_argument(
-        "--dashboard",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    health.add_argument(
-        "--monitoring",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    health.add_argument(
-        "--dashboard-host",
-        default="127.0.0.1",
-    )
-    health.add_argument(
-        "--dashboard-port",
-        type=int,
-        default=8080,
-    )
-    add_public_surface_args(health)
-    add_node_image_args(health)
-    add_intentkit_args(health)
-    add_dex_automation_args(health)
-    add_shielded_relayer_args(health)
+    add_runtime_surface_args(health)
     health.add_argument(
         "--rpc-url",
         default=f"{DEFAULT_RPC_BASE_URL}/status",
@@ -2767,8 +2663,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
-    args = parser.parse_args(argv)
+    if argv[:1] == ["--request-json"]:
+        if len(argv) != 2:
+            raise ValueError("--request-json requires '-' or a JSON file path")
+        args = args_from_backend_request(
+            parser,
+            read_backend_request(argv[1]),
+        )
+    else:
+        args = parser.parse_args(argv)
 
     if args.command == "start":
         payload = backend_start(
@@ -3056,6 +2961,6 @@ if __name__ == "__main__":
     except subprocess.CalledProcessError as exc:
         print(format_subprocess_error(exc), file=sys.stderr)
         raise SystemExit(1) from exc
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(1) from exc

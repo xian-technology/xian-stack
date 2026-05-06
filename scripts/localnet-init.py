@@ -25,9 +25,15 @@ from xian.genesis_builder import (  # noqa: E402
     build_local_network_genesis,
 )
 from xian.node_setup import (  # noqa: E402
+    AppLoggingOptions,
+    BdsOptions,
     DEFAULT_PARALLEL_EXECUTION_ENABLED,
     DEFAULT_PARALLEL_EXECUTION_MIN_TRANSACTIONS,
     DEFAULT_PARALLEL_EXECUTION_WORKERS,
+    ExecutionOptions,
+    MetricsOptions,
+    NodeConfigOptions,
+    ParallelExecutionOptions,
     build_node_key,
     generate_validator_material,
     materialize_cometbft_home,
@@ -46,17 +52,6 @@ PORT_STRIDE = 100  # node-0: 266xx, node-1: 267xx, node-2: 268xx, ...
 NODE_IMAGE_INTEGRATED = "xian-node-integrated:local"
 NODE_IMAGE_SPLIT = "xian-node-split:local"
 LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
-
-
-class _YamlAnchoredDict(dict):
-    def __init__(self, anchor: str, payload: dict):
-        super().__init__(payload)
-        self.anchor = anchor
-
-
-class _YamlAlias:
-    def __init__(self, name: str):
-        self.name = name
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -191,36 +186,45 @@ def write_node_config(
     peers = build_persistent_peers(other_nodes)
 
     configs = render_node_configs(
-        moniker=node["moniker"],
-        service_node=service_node,
-        seed_nodes=[],
-        allow_cors=True,
-        prometheus=True,
-        tracer_mode=tracer_mode,
-        execution_mode=execution_mode,
-        execution_bytecode_version=execution_bytecode_version,
-        execution_gas_schedule=execution_gas_schedule,
-        execution_authority=execution_authority,
-        block_policy_mode=block_policy_mode,
-        block_policy_interval=block_policy_interval,
-        metrics_enabled=True,
-        metrics_host="0.0.0.0",
-        metrics_port=9108,
-        transaction_trace_logging=transaction_trace_logging,
-        app_log_level=app_log_level,
-        app_log_json=app_log_json,
-        app_log_rotation_hours=app_log_rotation_hours,
-        app_log_retention_days=app_log_retention_days,
-        parallel_execution_enabled=parallel_execution_enabled,
-        parallel_execution_workers=parallel_execution_workers,
-        parallel_execution_min_transactions=(
-            parallel_execution_min_transactions
-        ),
-        bds_host=LOCALNET_POSTGRES_SERVICE if bds_enabled else "",
-        bds_port=5432,
-        bds_database="xian",
-        bds_user="xian",
-        bds_password="xian",
+        options=NodeConfigOptions(
+            moniker=node["moniker"],
+            service_node=service_node,
+            allow_cors=True,
+            prometheus=True,
+            execution=ExecutionOptions(
+                tracer_mode=tracer_mode,
+                mode=execution_mode,
+                bytecode_version=execution_bytecode_version,
+                gas_schedule=execution_gas_schedule,
+                authority=execution_authority,
+            ),
+            block_policy_mode=block_policy_mode,
+            block_policy_interval=block_policy_interval,
+            metrics=MetricsOptions(
+                enabled=True,
+                host="0.0.0.0",
+                port=9108,
+            ),
+            transaction_trace_logging=transaction_trace_logging,
+            app_logging=AppLoggingOptions(
+                level=app_log_level,
+                json_logging=app_log_json,
+                rotation_hours=app_log_rotation_hours,
+                retention_days=app_log_retention_days,
+            ),
+            parallel_execution=ParallelExecutionOptions(
+                enabled=parallel_execution_enabled,
+                workers=parallel_execution_workers,
+                min_transactions=parallel_execution_min_transactions,
+            ),
+            bds=BdsOptions(
+                host=LOCALNET_POSTGRES_SERVICE if bds_enabled else "",
+                port=5432,
+                database="xian",
+                user="xian",
+                password="xian",
+            ),
+        )
     )
     config = configs["cometbft"]
     xian_config = configs["xian"]
@@ -623,18 +627,29 @@ def write_compose_file(
     services = {}
     integrated_build = node_build_config("integrated")
     split_build = node_build_config("split")
-    integrated_ulimits = {
-        "nofile": {
-            "soft": "${XIAN_LOCALNET_NODE_NOFILE_SOFT}",
-            "hard": "${XIAN_LOCALNET_NODE_NOFILE_HARD}",
-        }
-    }
-    integrated_environment = {
-        "XIAN_CONFIGS_DIR": "/opt/xian-configs",
-        "S6_VERBOSITY": "${XIAN_S6_VERBOSITY}",
-        "XIAN_PERF_ENABLED": "1" if profiling_enabled else "0",
-        "XIAN_PERF_OUTPUT_PATH": "/root/.cometbft/xian-perf.json",
-        "XIAN_PERF_RECENT_BLOCKS": str(profiling_recent_blocks),
+    integrated_service_base = {
+        "image": NODE_IMAGE_INTEGRATED,
+        "restart": "always",
+        "stop_grace_period": "45s",
+        "build": integrated_build,
+        "mem_limit": "${XIAN_LOCALNET_NODE_MEMORY_LIMIT}",
+        "mem_reservation": "${XIAN_LOCALNET_NODE_MEMORY_RESERVATION}",
+        "memswap_limit": "${XIAN_LOCALNET_NODE_MEMORY_SWAP}",
+        "pids_limit": "${XIAN_LOCALNET_NODE_PIDS_LIMIT}",
+        "ulimits": {
+            "nofile": {
+                "soft": "${XIAN_LOCALNET_NODE_NOFILE_SOFT}",
+                "hard": "${XIAN_LOCALNET_NODE_NOFILE_HARD}",
+            }
+        },
+        "environment": {
+            "XIAN_CONFIGS_DIR": "/opt/xian-configs",
+            "S6_VERBOSITY": "${XIAN_S6_VERBOSITY}",
+            "XIAN_PERF_ENABLED": "1" if profiling_enabled else "0",
+            "XIAN_PERF_OUTPUT_PATH": "/root/.cometbft/xian-perf.json",
+            "XIAN_PERF_RECENT_BLOCKS": str(profiling_recent_blocks),
+        },
+        "networks": ["localnet"],
     }
     if bds_enabled:
         services[LOCALNET_POSTGRES_SERVICE] = {
@@ -682,15 +697,15 @@ def write_compose_file(
         host_metrics = BASE_METRICS_PORT + idx * PORT_STRIDE
         host_xian_metrics = BASE_XIAN_METRICS_PORT + idx * PORT_STRIDE
         if topology == "integrated":
-            services[moniker] = {
-                "<<": _YamlAlias("x-node-service"),
+            service = {
+                **integrated_service_base,
                 "hostname": moniker,
                 "container_name": f"xian-{moniker}",
                 "volumes": [
                     f"./.localnet/{moniker}/.cometbft:/root/.cometbft",
                 ],
                 "environment": {
-                    "<<": _YamlAlias("x-node-environment"),
+                    **integrated_service_base["environment"],
                     "NODE_INDEX": str(idx),
                 },
                 "ports": [
@@ -699,6 +714,9 @@ def write_compose_file(
                     f"{host_metrics}:26660",
                     f"{host_xian_metrics}:9108",
                 ],
+            }
+            services[moniker] = {
+                key: value for key, value in service.items()
             }
             if bds_enabled and idx == bds_node_index:
                 services[moniker]["depends_on"] = {
@@ -787,100 +805,12 @@ def write_compose_file(
             },
         },
     }
-    if topology == "integrated":
-        compose["x-node-build"] = _YamlAnchoredDict(
-            "x-node-build",
-            integrated_build,
-        )
-        compose["x-node-ulimits"] = _YamlAnchoredDict(
-            "x-node-ulimits",
-            integrated_ulimits,
-        )
-        compose["x-node-environment"] = _YamlAnchoredDict(
-            "x-node-environment",
-            integrated_environment,
-        )
-        compose["x-node-service"] = _YamlAnchoredDict(
-            "x-node-service",
-            {
-                "image": NODE_IMAGE_INTEGRATED,
-                "restart": "always",
-                "stop_grace_period": "45s",
-                "build": _YamlAlias("x-node-build"),
-                "mem_limit": "${XIAN_LOCALNET_NODE_MEMORY_LIMIT}",
-                "mem_reservation": "${XIAN_LOCALNET_NODE_MEMORY_RESERVATION}",
-                "memswap_limit": "${XIAN_LOCALNET_NODE_MEMORY_SWAP}",
-                "pids_limit": "${XIAN_LOCALNET_NODE_PIDS_LIMIT}",
-                "ulimits": _YamlAlias("x-node-ulimits"),
-                "environment": _YamlAlias("x-node-environment"),
-                "networks": ["localnet"],
-            },
-        )
     compose["services"] = services
 
     compose_path = STACK_DIR / "docker-compose-localnet.yml"
-    # Write as YAML manually (avoid PyYAML dependency)
-    with open(compose_path, "w") as f:
-        f.write(_compose_to_yaml(compose))
+    compose_path.write_text(json.dumps(compose, indent=2) + "\n", encoding="utf-8")
 
     print(f"  Wrote {compose_path}")
-
-
-def _compose_to_yaml(compose: dict) -> str:
-    """Minimal YAML serializer for docker-compose structure."""
-    lines = []
-    _yaml_write_mapping(lines, compose, indent=0)
-    return "\n".join(lines) + "\n"
-
-
-def _yaml_write_mapping(lines: list[str], payload: dict, *, indent: int) -> None:
-    prefix = " " * indent
-    for key, value in payload.items():
-        if isinstance(value, _YamlAlias):
-            lines.append(f"{prefix}{key}: *{value.name}")
-        elif isinstance(value, dict):
-            anchor = (
-                f" &{value.anchor}"
-                if isinstance(value, _YamlAnchoredDict)
-                else ""
-            )
-            lines.append(f"{prefix}{key}:{anchor}")
-            _yaml_write_mapping(lines, value, indent=indent + 2)
-        elif isinstance(value, list):
-            lines.append(f"{prefix}{key}:")
-            _yaml_write_sequence(lines, value, indent=indent + 2)
-        else:
-            lines.append(f"{prefix}{key}: {_yaml_val(value)}")
-
-
-def _yaml_write_sequence(lines: list[str], payload: list, *, indent: int) -> None:
-    prefix = " " * indent
-    for item in payload:
-        if isinstance(item, dict):
-            lines.append(f"{prefix}-")
-            _yaml_write_mapping(lines, item, indent=indent + 2)
-        elif isinstance(item, list):
-            lines.append(f"{prefix}-")
-            _yaml_write_sequence(lines, item, indent=indent + 2)
-        else:
-            lines.append(f"{prefix}- {_yaml_val(item)}")
-
-
-def _yaml_val(v) -> str:
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, int):
-        return str(v)
-    if isinstance(v, str):
-        if (
-            not v
-            or v.startswith("${")
-            or any(c in v for c in ":{},[]&*#?|-<>=!%@\\")
-            or v.lower() in {"true", "false", "null"}
-        ):
-            return f'"{v}"'
-        return v
-    return str(v)
 
 
 if __name__ == "__main__":
