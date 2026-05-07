@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
+from localnet_common import compare_app_hash_window, fetch_json
 from xian_runtime_types.decimal import ContractingDecimal
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -567,16 +568,6 @@ def parse_rfc3339_utc(value: str) -> datetime:
     return datetime.fromisoformat(f"{normalized}{tz_suffix}")
 
 
-async def fetch_json(
-    session: aiohttp.ClientSession,
-    url: str,
-    *,
-    timeout: float = 5.0,
-) -> dict[str, Any]:
-    async with session.get(url, timeout=timeout) as response:
-        return await response.json()
-
-
 async def wait_for_tx_receipt(
     *,
     clients: list[XianAsync],
@@ -627,45 +618,6 @@ async def wait_for_tx_receipt(
         await asyncio.sleep(0.5)
 
     raise WorkloadError(f"timed out waiting for tx {tx_hash}") from last_error
-
-
-async def compare_app_hash_window(
-    session: aiohttp.ClientSession,
-    nodes: list[LocalnetNode],
-    *,
-    window: int,
-) -> dict[str, Any]:
-    heights = {}
-    for node in nodes:
-        payload = await fetch_json(
-            session,
-            f"{node.rpc_url}/status",
-            timeout=5.0,
-        )
-        heights[node.moniker] = int(
-            payload["result"]["sync_info"]["latest_block_height"]
-        )
-
-    min_height = min(heights.values())
-    start_height = max(1, min_height - max(1, window) + 1)
-    checks = []
-    all_match = True
-
-    for height in range(start_height, min_height + 1):
-        hashes = {}
-        for node in nodes:
-            payload = await fetch_json(
-                session,
-                f"{node.rpc_url}/block?height={height}",
-                timeout=5.0,
-            )
-            hashes[node.moniker] = payload["result"]["block"]["header"]["app_hash"]
-        unique = set(hashes.values())
-        ok = len(unique) == 1
-        all_match = all_match and ok
-        checks.append({"height": height, "ok": ok, "app_hashes": hashes})
-
-    return {"ok": all_match, "heights": heights, "checks": checks}
 
 
 def collect_container_memory(nodes: list[LocalnetNode]) -> dict[str, str]:

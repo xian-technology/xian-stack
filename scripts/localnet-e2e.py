@@ -23,6 +23,7 @@ from typing import Any
 
 import aiohttp
 from governance_vote_helpers import cast_votes_until_status, wait_for_status
+from localnet_common import compare_app_hash_window, fetch_json
 from localnet_vm_rollout import collect_localnet_vm_rollout_report
 from shielded_relayer_backend import (
     DEFAULT_SHIELDED_RELAYER_HOST,
@@ -601,39 +602,6 @@ async def wait_for_container_state(
     )
 
 
-async def compare_app_hash_window(
-    session: aiohttp.ClientSession,
-    nodes: list[LocalnetNode],
-    *,
-    window: int,
-) -> dict[str, Any]:
-    heights: dict[str, int] = {}
-    for node in nodes:
-        payload = await fetch_json(session, f"{node.rpc_url}/status", timeout=5.0)
-        heights[node.moniker] = int(payload["result"]["sync_info"]["latest_block_height"])
-
-    min_height = min(heights.values())
-    start_height = max(1, min_height - max(window, 1) + 1)
-    checks: list[dict[str, Any]] = []
-    overall_ok = True
-
-    for height in range(start_height, min_height + 1):
-        app_hashes: dict[str, str] = {}
-        for node in nodes:
-            payload = await fetch_json(
-                session,
-                f"{node.rpc_url}/block",
-                timeout=5.0,
-                params={"height": str(height)},
-            )
-            app_hashes[node.moniker] = payload["result"]["block"]["header"]["app_hash"]
-        ok = len(set(app_hashes.values())) == 1
-        overall_ok = overall_ok and ok
-        checks.append({"height": height, "ok": ok, "app_hashes": app_hashes})
-
-    return {"ok": overall_ok, "heights": heights, "checks": checks}
-
-
 async def query_state_from_all_nodes(
     session: aiohttp.ClientSession,
     nodes: list[LocalnetNode],
@@ -715,17 +683,6 @@ async def wait_for_uniform_node_state(
         )
     except RuntimeError as exc:
         raise E2EError(str(exc)) from exc
-
-
-async def fetch_json(
-    session: aiohttp.ClientSession,
-    url: str,
-    *,
-    timeout: float = 10.0,
-    params: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    async with session.get(url, params=params, timeout=timeout) as response:
-        return await response.json()
 
 
 def ensure_positive_submission(

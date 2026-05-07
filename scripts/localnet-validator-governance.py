@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
+from localnet_common import fetch_json
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent
@@ -292,17 +293,6 @@ def image_available(tag: str) -> bool:
         text=True,
     )
     return result.returncode == 0
-
-
-async def fetch_json(
-    session: aiohttp.ClientSession,
-    url: str,
-    *,
-    timeout: float = 10.0,
-    params: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    async with session.get(url, params=params, timeout=timeout) as response:
-        return await response.json()
 
 
 async def fetch_abci_query(
