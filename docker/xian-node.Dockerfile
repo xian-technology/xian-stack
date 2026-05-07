@@ -29,6 +29,8 @@ WORKDIR /tmp/cometbft-src
 RUN wget -O /tmp/cometbft.tar.gz "${COMETBFT_SOURCE_URL}" \
     && echo "${COMETBFT_SOURCE_SHA256}  /tmp/cometbft.tar.gz" | sha256sum -c - \
     && tar -xzf /tmp/cometbft.tar.gz --strip-components=1 -C /tmp/cometbft-src \
+    && sed -i "s/TMCoreSemVer = \"[^\"]*\"/TMCoreSemVer = \"${COMETBFT_VERSION}\"/" /tmp/cometbft-src/version/version.go \
+    && grep -F "TMCoreSemVer = \"${COMETBFT_VERSION}\"" /tmp/cometbft-src/version/version.go \
     && rm -f /tmp/cometbft.tar.gz
 
 RUN --mount=type=cache,target=/go/pkg/mod \
