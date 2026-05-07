@@ -72,6 +72,16 @@ CONTRACT_ORCHESTRATION_TX_CHI = {
     "deploy_family": 100_000,
     "dynamic_call": 50_000,
 }
+X402_CONTRACT_SOURCE = (
+    ROOT_DIR
+    / "xian-configs"
+    / "solutions"
+    / "x402-exact"
+    / "contracts"
+    / "x402_settlement.s.py"
+)
+X402_PAYMENT_AMOUNT = Decimal("0.001")
+X402_SETTLEMENT_TX_CHI = 15_000
 SHIELDED_TX_CHI = {
     "deposit": 8_000_000,
     "transfer": 10_000_000,
@@ -90,6 +100,13 @@ from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian_async import XianAsync  # noqa: E402
 from xian_py.exception import SimulationError, TransportError, TxTimeoutError  # noqa: E402
 from xian_py.shielded_relayer import ShieldedRelayerAsyncClient  # noqa: E402
+from xian_py.x402 import (  # noqa: E402
+    XianX402Facilitator,
+    XianX402PaymentRequirement,
+    sign_xian_x402_payment,
+    verify_xian_x402_payment,
+    xian_network_id,
+)
 
 try:  # noqa: SIM105
     from xian_zk import (  # noqa: E402
@@ -929,6 +946,7 @@ class E2ERunner:
             "01-health",
             "02-xian-py-smoke",
             "03-contract-orchestration",
+            "03-x402-exact",
             "04-periodic-load",
             "05-burst-load",
             "06-conflict-invalid",
@@ -2596,6 +2614,235 @@ class E2ERunner:
                 "sender_balance_after": duplicate_sender_balance_after,
                 "recipient_balance_after": duplicate_recipient_balance_after,
             },
+        }
+
+    async def x402_exact_phase(
+        self,
+        session: aiohttp.ClientSession,
+    ) -> dict[str, Any]:
+        buyer = derive_wallet(self.seed, "x402-exact-buyer")
+        seller = derive_wallet(self.seed, "x402-exact-seller")
+        facilitator = derive_wallet(self.seed, "x402-exact-facilitator")
+        await self.fund_wallets(session, [buyer, facilitator], amount=100)
+
+        contract_name = f"con_x402_{short_hash(f'{self.run_id}:x402')}"
+        self.contracts["x402_settlement"] = contract_name
+        resource = f"https://e2e.xian.local/x402/{self.run_id}/data"
+        payment_id = f"pay_{short_hash(f'{self.run_id}:x402:payment')}{'0' * 16}"
+        deadline = (
+            datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=15)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+
+        buyer_balance_before = Decimal(
+            str(
+                await fetch_abci_query(
+                    session,
+                    self.nodes[0].rpc_url,
+                    f"/get/currency.balances:{buyer.public_key}",
+                )
+                or 0
+            )
+        )
+        seller_balance_before = Decimal(
+            str(
+                await fetch_abci_query(
+                    session,
+                    self.nodes[0].rpc_url,
+                    f"/get/currency.balances:{seller.public_key}",
+                )
+                or 0
+            )
+        )
+
+        async with self.client(facilitator, 0, session) as client:
+            existing_contract = await client.get_contract(contract_name)
+            if existing_contract is None:
+                deployment = ensure_positive_submission(
+                    await client.submit_contract(
+                        name=contract_name,
+                        **self.contract_submission_kwargs(
+                            name=contract_name,
+                            code=read_text(X402_CONTRACT_SOURCE),
+                        ),
+                        chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
+                        wait_for_tx=True,
+                    ),
+                    label=f"deploy {contract_name}",
+                )
+            else:
+                deployment = {
+                    "accepted": True,
+                    "reused": True,
+                    "contract": contract_name,
+                }
+
+            requirement = XianX402PaymentRequirement(
+                network=xian_network_id(self.network["chain_id"]),
+                asset="currency",
+                amount=X402_PAYMENT_AMOUNT,
+                pay_to=seller.public_key,
+                resource=resource,
+                settlement_contract=contract_name,
+                description="5-node x402 exact payment e2e",
+            )
+            payload = sign_xian_x402_payment(
+                requirement,
+                buyer,
+                payment_id=payment_id,
+                deadline=deadline,
+            )
+            verification = verify_xian_x402_payment(payload, requirement)
+            if not verification.valid:
+                raise E2EError(f"x402 verification failed: {verification.error}")
+
+            invalid_requirement = XianX402PaymentRequirement(
+                network=requirement.network,
+                asset=requirement.asset,
+                amount=Decimal("0.002"),
+                pay_to=requirement.pay_to,
+                resource=requirement.resource,
+                settlement_contract=requirement.settlement_contract,
+            )
+            invalid_verification = verify_xian_x402_payment(
+                payload,
+                invalid_requirement,
+            )
+            if invalid_verification.valid:
+                raise E2EError("tampered x402 requirement unexpectedly verified")
+
+            facilitator_api = XianX402Facilitator(
+                client=client,
+                requirement=requirement,
+            )
+            settlement = await facilitator_api.settle(
+                payload,
+                mode="checktx",
+                wait_for_tx=True,
+                chi=X402_SETTLEMENT_TX_CHI,
+            )
+            if not settlement.success or settlement.submission is None:
+                raise E2EError(f"x402 settlement failed: {settlement.error}")
+            settlement_receipt = ensure_positive_submission(
+                settlement.submission,
+                label="x402-settlement",
+            )
+
+            replay = await facilitator_api.settle(
+                payload,
+                mode="checktx",
+                wait_for_tx=True,
+                chi=X402_SETTLEMENT_TX_CHI,
+            )
+            if replay.success:
+                raise E2EError("x402 replay unexpectedly succeeded")
+            if "Payment has already been settled." not in str(replay.error):
+                raise E2EError(f"x402 replay failed for wrong reason: {replay.error}")
+            replay_receipt = (
+                normalize_receipt(replay.submission, label="x402-replay")
+                if replay.submission is not None
+                else replay.to_dict()
+            )
+
+        expected_payment_state = {
+            "payer": buyer.public_key,
+            "pay_to": seller.public_key,
+            "token_contract": "currency",
+            "amount": str(X402_PAYMENT_AMOUNT),
+            "amount_text": str(X402_PAYMENT_AMOUNT),
+            "resource": resource,
+            "facilitator": facilitator.public_key,
+        }
+        payment_state = await wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract=contract_name,
+            variable="payments",
+            keys=[payload.payment_id],
+            expected=expected_payment_state,
+            label="x402 payment state",
+            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+        )
+        allowance_state = await wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract="currency",
+            variable="approvals",
+            keys=[buyer.public_key, contract_name],
+            expected="0",
+            label="x402 allowance consumed",
+            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+        )
+        buyer_balance = await wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract="currency",
+            variable="balances",
+            keys=[buyer.public_key],
+            expected=buyer_balance_before - X402_PAYMENT_AMOUNT,
+            label="x402 buyer balance",
+            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+        )
+        seller_balance = await wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract="currency",
+            variable="balances",
+            keys=[seller.public_key],
+            expected=seller_balance_before + X402_PAYMENT_AMOUNT,
+            label="x402 seller balance",
+            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+        )
+
+        bds_event_match = None
+        bds_status = None
+        if self.service_node is not None:
+            async with self.client(
+                facilitator,
+                self.service_node.index,
+                session,
+            ) as service_client:
+                target_height = await latest_height(
+                    session,
+                    self.service_node.rpc_url,
+                )
+                bds_status = await wait_for_bds_indexed(
+                    service_client,
+                    target_height=target_height,
+                    timeout_seconds=min(self.args.rpc_timeout_seconds, 60.0),
+                )
+                events = await service_client.list_events(
+                    contract_name,
+                    "X402PaymentSettled",
+                    limit=20,
+                )
+                bds_event_match = next(
+                    (
+                        normalize_value(event.raw)
+                        for event in events
+                        if (event.data_indexed or {}).get("payment_id")
+                        == payload.payment_id
+                    ),
+                    None,
+                )
+                if bds_event_match is None:
+                    raise E2EError("BDS did not index X402PaymentSettled")
+
+        return {
+            "contract": contract_name,
+            "deployment": deployment,
+            "payment": payload.to_dict(),
+            "verification": verification.to_dict(),
+            "tampered_verification": invalid_verification.to_dict(),
+            "settlement": settlement.to_dict(),
+            "settlement_receipt": settlement_receipt,
+            "replay": replay.to_dict(),
+            "replay_receipt": replay_receipt,
+            "payment_state": payment_state,
+            "allowance_state": allowance_state,
+            "buyer_balance": buyer_balance,
+            "seller_balance": seller_balance,
+            "bds_status": bds_status,
+            "bds_event": bds_event_match,
         }
 
     async def periodic_load(self, session: aiohttp.ClientSession) -> dict[str, Any]:
@@ -6081,6 +6328,7 @@ class E2ERunner:
                     "03-contract-orchestration",
                     lambda: self.contract_orchestration_phase(session),
                 ),
+                ("03-x402-exact", lambda: self.x402_exact_phase(session)),
                 ("04-periodic-load", lambda: self.periodic_load(session)),
                 ("05-burst-load", self.burst_phase),
                 ("06-conflict-invalid", lambda: self.conflict_phase(session)),
