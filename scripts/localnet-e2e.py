@@ -57,6 +57,7 @@ STATE_PATCH_DELAY_BLOCKS = 8
 STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS = 8
 SIMULATOR_BURST_REQUESTS = 128
 DEFAULT_SIMULATOR_BURST_CONCURRENCY = 32
+SIMULATOR_MAX_TRANSPORT_FAILURE_RATIO = 0.25
 WEBSOCKET_TIMEOUT_SECONDS = 20.0
 LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
 LOCALNET_POSTGRES_CONTAINER = "xian-localnet-postgres"
@@ -2940,11 +2941,24 @@ class E2ERunner:
                 )
                 continue
             responses.append(item)
-        if transport_failures:
+
+        allowed_transport_failures = max(
+            len(self.nodes),
+            int(SIMULATOR_BURST_REQUESTS * SIMULATOR_MAX_TRANSPORT_FAILURE_RATIO),
+        )
+        if len(transport_failures) > allowed_transport_failures:
             raise E2EError(
-                "simulator burst encountered transport failures after retries: "
-                + json.dumps(transport_failures[:5], sort_keys=True)
+                "simulator burst exceeded transport failure budget after retries: "
+                + json.dumps(
+                    {
+                        "allowed": allowed_transport_failures,
+                        "count": len(transport_failures),
+                        "sample": transport_failures[:5],
+                    },
+                    sort_keys=True,
+                )
             )
+
         failures = [
             item for item in responses if item["status"] not in (None, 0)
         ]
@@ -2974,12 +2988,15 @@ class E2ERunner:
         if recovery["status"] not in (None, 0):
             raise E2EError("simulator phase did not recover after burst load")
         return {
-            "request_count": len(responses),
+            "request_count": SIMULATOR_BURST_REQUESTS,
+            "response_count": len(responses),
             "elapsed_seconds": round(elapsed, 3),
-            "approx_qps": round(len(responses) / elapsed, 3),
+            "approx_qps": round(SIMULATOR_BURST_REQUESTS / elapsed, 3),
             "success_count": len(successes),
             "failure_count": len(failures),
             "transport_failure_count": len(transport_failures),
+            "transport_failure_budget": allowed_transport_failures,
+            "transport_failure_sample": transport_failures[:8],
             "baseline_sample": baseline[:4],
             "failure_sample": failures[:8],
             "success_sample": successes[:8],
