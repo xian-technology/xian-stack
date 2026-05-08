@@ -2068,6 +2068,7 @@ def backend_localnet_e2e(
     periodic_interval_seconds: float,
     burst_counter_ops: int,
     dex_rounds: int,
+    intentkit_x402: bool,
     vm_max_shadow_mismatches: int,
     start_phase: str,
     resume_dir: str | None,
@@ -2103,6 +2104,7 @@ def backend_localnet_e2e(
         str(burst_counter_ops),
         "--dex-rounds",
         str(dex_rounds),
+        "--intentkit-x402" if intentkit_x402 else "--no-intentkit-x402",
         "--vm-max-shadow-mismatches",
         str(vm_max_shadow_mismatches),
         "--start-phase",
@@ -2644,6 +2646,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=8,
     )
     localnet_e2e.add_argument(
+        "--intentkit-x402",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    localnet_e2e.add_argument(
         "--vm-max-shadow-mismatches",
         type=int,
         default=0,
@@ -2943,6 +2950,7 @@ def main(argv: list[str] | None = None) -> int:
             periodic_interval_seconds=args.periodic_interval_seconds,
             burst_counter_ops=args.burst_counter_ops,
             dex_rounds=args.dex_rounds,
+            intentkit_x402=args.intentkit_x402,
             vm_max_shadow_mismatches=args.vm_max_shadow_mismatches,
             start_phase=args.start_phase,
             resume_dir=args.resume_dir,

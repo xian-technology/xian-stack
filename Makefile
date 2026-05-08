@@ -11,6 +11,7 @@ XIAN_CLI_DIR ?= ../xian-cli
 XIAN_ABCI_DIR ?= ../xian-abci
 XIAN_CONFIGS_DIR ?= ../xian-configs
 XIAN_CONTRACTING_DIR ?= ../xian-contracting
+XIAN_INTENTKIT_DIR ?= ../xian-intentkit
 XIAN_PY_DIR ?= ../xian-py
 XIAN_DEX_BUNDLE ?= ../xian-configs/modules/dex/contract-bundle.json
 XIAN_DEX_CONTRACTS_DIR ?=
@@ -157,6 +158,7 @@ export XIAN_CLI_DIR := $(abspath $(XIAN_CLI_DIR))
 export XIAN_ABCI_DIR := $(abspath $(XIAN_ABCI_DIR))
 export XIAN_CONFIGS_DIR := $(abspath $(XIAN_CONFIGS_DIR))
 export XIAN_CONTRACTING_DIR := $(abspath $(XIAN_CONTRACTING_DIR))
+export XIAN_INTENTKIT_DIR := $(abspath $(XIAN_INTENTKIT_DIR))
 export XIAN_PY_DIR := $(abspath $(XIAN_PY_DIR))
 export XIAN_DEX_BUNDLE := $(abspath $(XIAN_DEX_BUNDLE))
 export XIAN_DEX_CONTRACTS_DIR := $(if $(XIAN_DEX_CONTRACTS_DIR),$(abspath $(XIAN_DEX_CONTRACTS_DIR)),)
@@ -387,6 +389,7 @@ LOCALNET_E2E_CHAOS_LOAD_TRANSACTIONS ?= 8
 LOCALNET_E2E_SOAK_DURATION_SECONDS ?= 90
 LOCALNET_E2E_SOAK_BATCH_SIZE ?= 9
 LOCALNET_E2E_SOAK_PROGRESS_INTERVAL_SECONDS ?= 20
+LOCALNET_E2E_INTENTKIT_X402 ?= 0
 LOCALNET_E2E_PARALLEL_EXECUTION_ENABLED ?= 1
 LOCALNET_E2E_PARALLEL_EXECUTION_WORKERS ?= 4
 LOCALNET_E2E_PARALLEL_EXECUTION_MIN_TRANSACTIONS ?= 8
@@ -903,6 +906,7 @@ localnet-e2e:
 		--soak-duration-seconds $(LOCALNET_E2E_SOAK_DURATION_SECONDS) \
 		--soak-batch-size $(LOCALNET_E2E_SOAK_BATCH_SIZE) \
 		--soak-progress-interval-seconds $(LOCALNET_E2E_SOAK_PROGRESS_INTERVAL_SECONDS) \
+		$(if $(filter 1,$(LOCALNET_E2E_INTENTKIT_X402)),--intentkit-x402,--no-intentkit-x402) \
 		--vm-max-shadow-mismatches $(LOCALNET_VM_REPORT_MAX_SHADOW_MISMATCHES)
 
 localnet-vm-report:

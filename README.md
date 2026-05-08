@@ -142,6 +142,7 @@ Use the smallest recipe that proves the behavior you care about:
 | Clean multi-node topology | `LOCALNET_NODES=5 make localnet-init && make localnet-up` | Validator topology, genesis distribution, peer connectivity |
 | Workload smoke on a running localnet | `make localnet-workload` | Basic contract submission and transaction flow |
 | Full 5-validator e2e harness | `make localnet-e2e` | Layered cross-repo behavior, workload phases, DEX coverage, catchup, governance, chaos / restart convergence |
+| IntentKit x402 buyer phase | `LOCALNET_E2E_INTENTKIT_X402=1 make localnet-e2e` | Adds a live IntentKit Xian-native x402 payment through a local seller/facilitator |
 | VM-native 5-validator harness | `make localnet-vm-e2e` | The same e2e program under native VM authority |
 | Focused validator governance run | `make localnet-validator-governance` | Validator set, delegation, governance, and state-patch behavior |
 | Release gate | `make release-safety` | Repo validation plus the release-grade localnet gates |

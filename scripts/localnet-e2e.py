@@ -46,6 +46,10 @@ XIAN_ZK_PYTHON_DIR = (
 )
 XIAN_CONTRACTING_SRC = ROOT_DIR / "xian-contracting" / "src"
 XIAN_ABCI_SRC = ROOT_DIR / "xian-abci" / "src"
+INTENTKIT_DIR = Path(
+    os.environ.get("XIAN_INTENTKIT_DIR", str(ROOT_DIR / "xian-intentkit"))
+).expanduser().resolve()
+INTENTKIT_X402_SMOKE_SCRIPT = SCRIPT_DIR / "intentkit-x402-localnet-smoke.py"
 ORCHESTRATION_TEMPLATE_MODULE = "__ORCH_TEMPLATE__"
 RUST_TRACER_MODE = "native_instruction_v1"
 DEFAULT_LOCALNET_NODES = 5
@@ -173,7 +177,10 @@ def normalize_value(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, dict):
-        return {str(key): normalize_value(val) for key, val in value.items()}
+        return {
+            str(key): normalize_value(value[key])
+            for key in sorted(value, key=lambda item: str(item))
+        }
     if isinstance(value, list):
         return [normalize_value(item) for item in value]
     if isinstance(value, tuple):
@@ -359,6 +366,38 @@ def run_localnet_compose(
         cwd=STACK_DIR,
         env=env,
     )
+
+
+def parse_json_stdout(stdout: str, *, label: str) -> Any:
+    stripped = stdout.strip()
+    if not stripped:
+        raise E2EError(f"{label} did not return JSON")
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    for start in reversed([index for index, char in enumerate(stripped) if char == "{"]):
+        try:
+            payload, end = decoder.raw_decode(stripped[start:])
+        except json.JSONDecodeError:
+            continue
+        if stripped[start + end :].strip():
+            continue
+        return payload
+    raise E2EError(f"{label} did not return JSON: {stripped[-1000:]}")
+
+
+def write_private_json(path: Path, payload: dict[str, Any]) -> None:
+    serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(serialized)
 
 
 async def fetch_abci_query(
@@ -947,6 +986,7 @@ class E2ERunner:
             "02-xian-py-smoke",
             "03-contract-orchestration",
             "03-x402-exact",
+            "03-intentkit-x402",
             "04-periodic-load",
             "05-burst-load",
             "06-conflict-invalid",
@@ -1030,6 +1070,10 @@ class E2ERunner:
         if "03-contract-orchestration" in completed_phase_names:
             orchestration = self._load_resume_json("03-contract-orchestration")
             self.contracts.update(orchestration["details"]["contracts"])
+
+        if "03-x402-exact" in completed_phase_names:
+            x402 = self._load_resume_json("03-x402-exact")
+            self.contracts["x402_settlement"] = x402["details"]["contract"]
 
         if "06-conflict-invalid" in completed_phase_names:
             conflict = self._load_resume_json("06-conflict-invalid")
@@ -2623,7 +2667,12 @@ class E2ERunner:
         buyer = derive_wallet(self.seed, "x402-exact-buyer")
         seller = derive_wallet(self.seed, "x402-exact-seller")
         facilitator = derive_wallet(self.seed, "x402-exact-facilitator")
-        await self.fund_wallets(session, [buyer, facilitator], amount=100)
+        buyer_funding = await self.fund_wallets(session, [buyer], amount=100)
+        facilitator_funding = await self.fund_wallets(
+            session,
+            [facilitator],
+            amount=250_000,
+        )
 
         contract_name = f"con_x402_{short_hash(f'{self.run_id}:x402')}"
         self.contracts["x402_settlement"] = contract_name
@@ -2665,7 +2714,7 @@ class E2ERunner:
                             code=read_text(X402_CONTRACT_SOURCE),
                         ),
                         chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
-                        wait_for_tx=True,
+                        mode="commit",
                     ),
                     label=f"deploy {contract_name}",
                 )
@@ -2744,13 +2793,13 @@ class E2ERunner:
             )
 
         expected_payment_state = {
-            "payer": buyer.public_key,
-            "pay_to": seller.public_key,
-            "token_contract": "currency",
             "amount": str(X402_PAYMENT_AMOUNT),
             "amount_text": str(X402_PAYMENT_AMOUNT),
-            "resource": resource,
             "facilitator": facilitator.public_key,
+            "pay_to": seller.public_key,
+            "payer": buyer.public_key,
+            "resource": resource,
+            "token_contract": "currency",
         }
         payment_state = await wait_for_uniform_node_state(
             session,
@@ -2829,6 +2878,10 @@ class E2ERunner:
 
         return {
             "contract": contract_name,
+            "funding": {
+                "buyer": buyer_funding,
+                "facilitator": facilitator_funding,
+            },
             "deployment": deployment,
             "payment": payload.to_dict(),
             "verification": verification.to_dict(),
@@ -2843,6 +2896,211 @@ class E2ERunner:
             "seller_balance": seller_balance,
             "bds_status": bds_status,
             "bds_event": bds_event_match,
+        }
+
+    async def intentkit_x402_phase(
+        self,
+        session: aiohttp.ClientSession,
+    ) -> dict[str, Any]:
+        if not self.args.intentkit_x402:
+            return {
+                "skipped": True,
+                "reason": "enable with --intentkit-x402 or LOCALNET_E2E_INTENTKIT_X402=1",
+            }
+
+        if not (INTENTKIT_DIR / "pyproject.toml").exists():
+            raise E2EError(
+                "IntentKit x402 phase requires the xian-intentkit sibling repo at "
+                f"{INTENTKIT_DIR}"
+            )
+        if not INTENTKIT_X402_SMOKE_SCRIPT.exists():
+            raise E2EError(
+                f"IntentKit x402 smoke script not found: {INTENTKIT_X402_SMOKE_SCRIPT}"
+            )
+
+        contract_name = self.contracts.get("x402_settlement")
+        if not contract_name:
+            raise E2EError("x402 settlement contract is not available")
+
+        buyer = derive_wallet(self.seed, "intentkit-x402-buyer")
+        seller = derive_wallet(self.seed, "intentkit-x402-seller")
+        facilitator = derive_wallet(self.seed, "intentkit-x402-facilitator")
+        buyer_funding = await self.fund_wallets(session, [buyer], amount=100)
+        facilitator_funding = await self.fund_wallets(
+            session,
+            [facilitator],
+            amount=50_000,
+        )
+
+        buyer_balance_before = Decimal(
+            str(
+                await fetch_abci_query(
+                    session,
+                    self.nodes[0].rpc_url,
+                    f"/get/currency.balances:{buyer.public_key}",
+                )
+                or 0
+            )
+        )
+        seller_balance_before = Decimal(
+            str(
+                await fetch_abci_query(
+                    session,
+                    self.nodes[0].rpc_url,
+                    f"/get/currency.balances:{seller.public_key}",
+                )
+                or 0
+            )
+        )
+
+        env = os.environ.copy()
+        env.setdefault("REDIS_HOST", "localhost")
+        env["XIAN_LOCALNET_RPC_URL"] = self.nodes[0].rpc_url
+        env["XIAN_LOCALNET_CHAIN_ID"] = self.network["chain_id"]
+        env["XIAN_INTENTKIT_DIR"] = str(INTENTKIT_DIR)
+
+        smoke_config_path = self.output_dir / ".intentkit-x402-smoke-config.json"
+        write_private_json(
+            smoke_config_path,
+            {
+                "agent_id": "localnet-intentkit-x402-agent",
+                "amount": str(X402_PAYMENT_AMOUNT),
+                "buyer_private_key": buyer.private_key,
+                "chain_id": self.network["chain_id"],
+                "chat_id": f"localnet-intentkit-x402-{short_hash(self.run_id)}",
+                "facilitator_private_key": facilitator.private_key,
+                "max_value": 1,
+                "rpc_url": self.nodes[0].rpc_url,
+                "run_id": self.run_id,
+                "seller_private_key": seller.private_key,
+                "settlement_chi": X402_SETTLEMENT_TX_CHI,
+                "settlement_contract": contract_name,
+            },
+        )
+        try:
+            result = run_cmd(
+                [
+                    "uv",
+                    "run",
+                    "--project",
+                    str(INTENTKIT_DIR),
+                    "--python",
+                    CURRENT_UV_PYTHON,
+                    "python3",
+                    str(INTENTKIT_X402_SMOKE_SCRIPT),
+                    "--config",
+                    str(smoke_config_path),
+                ],
+                cwd=STACK_DIR,
+                env=env,
+            )
+        finally:
+            try:
+                smoke_config_path.unlink()
+            except FileNotFoundError:
+                pass
+        payload = parse_json_stdout(
+            result.stdout,
+            label="IntentKit x402 smoke script",
+        )
+        if not isinstance(payload, dict):
+            raise E2EError("IntentKit x402 smoke script returned non-object JSON")
+
+        payment_id = payload.get("payment_id")
+        if not payment_id:
+            raise E2EError("IntentKit x402 smoke did not return a payment_id")
+        if payload.get("buyer") != buyer.public_key:
+            raise E2EError("IntentKit x402 smoke used an unexpected buyer")
+        if payload.get("seller") != seller.public_key:
+            raise E2EError("IntentKit x402 smoke used an unexpected seller")
+
+        order = payload.get("order") or {}
+        expected_order_fields = {
+            "agent_id": "localnet-intentkit-x402-agent",
+            "amount": 0,
+            "amount_text": str(X402_PAYMENT_AMOUNT),
+            "asset": "currency",
+            "network": f"xian:{self.network['chain_id']}",
+            "pay_to": seller.public_key,
+            "payer": buyer.public_key,
+            "payment_id": payment_id,
+            "status": "success",
+        }
+        for key, expected in expected_order_fields.items():
+            if order.get(key) != expected:
+                raise E2EError(
+                    f"IntentKit x402 order field {key!r} mismatch: "
+                    f"expected {expected!r}, got {order.get(key)!r}"
+                )
+
+        settlement = payload.get("settlement") or {}
+        settlement_tx_hash = settlement.get("tx_hash")
+        if not settlement_tx_hash:
+            raise E2EError("IntentKit x402 settlement did not return a tx hash")
+        if order.get("tx_hash") != settlement_tx_hash:
+            raise E2EError("IntentKit x402 order tx hash did not match settlement")
+
+        expected_payment_state = {
+            "amount": str(X402_PAYMENT_AMOUNT),
+            "amount_text": str(X402_PAYMENT_AMOUNT),
+            "facilitator": facilitator.public_key,
+            "pay_to": seller.public_key,
+            "payer": buyer.public_key,
+            "resource": payload["resource"],
+            "token_contract": "currency",
+        }
+        payment_state = await wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract=contract_name,
+            variable="payments",
+            keys=[payment_id],
+            expected=expected_payment_state,
+            label="intentkit x402 payment state",
+            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+        )
+        allowance_state = await wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract="currency",
+            variable="approvals",
+            keys=[buyer.public_key, contract_name],
+            expected="0",
+            label="intentkit x402 allowance consumed",
+            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+        )
+        buyer_balance = await wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract="currency",
+            variable="balances",
+            keys=[buyer.public_key],
+            expected=buyer_balance_before - X402_PAYMENT_AMOUNT,
+            label="intentkit x402 buyer balance",
+            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+        )
+        seller_balance = await wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract="currency",
+            variable="balances",
+            keys=[seller.public_key],
+            expected=seller_balance_before + X402_PAYMENT_AMOUNT,
+            label="intentkit x402 seller balance",
+            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+        )
+
+        return {
+            "contract": contract_name,
+            "funding": {
+                "buyer": buyer_funding,
+                "facilitator": facilitator_funding,
+            },
+            "smoke": payload,
+            "payment_state": payment_state,
+            "allowance_state": allowance_state,
+            "buyer_balance": buyer_balance,
+            "seller_balance": seller_balance,
         }
 
     async def periodic_load(self, session: aiohttp.ClientSession) -> dict[str, Any]:
@@ -6329,6 +6587,7 @@ class E2ERunner:
                     lambda: self.contract_orchestration_phase(session),
                 ),
                 ("03-x402-exact", lambda: self.x402_exact_phase(session)),
+                ("03-intentkit-x402", lambda: self.intentkit_x402_phase(session)),
                 ("04-periodic-load", lambda: self.periodic_load(session)),
                 ("05-burst-load", self.burst_phase),
                 ("06-conflict-invalid", lambda: self.conflict_phase(session)),
@@ -6393,6 +6652,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--execution-bytecode-version", default="")
     parser.add_argument("--execution-gas-schedule", default="")
     parser.add_argument("--execution-authority", default="")
+    parser.add_argument(
+        "--intentkit-x402",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Run the optional IntentKit-backed Xian x402 payment phase.",
+    )
     parser.add_argument("--vm-max-shadow-mismatches", type=int, default=0)
     parser.add_argument("--rpc-timeout-seconds", type=float, default=180.0)
     parser.add_argument("--state-sample-nodes", type=int, default=DEFAULT_LOCALNET_NODES)

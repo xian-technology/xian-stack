@@ -28,7 +28,8 @@ tooling behind `xian-stack`.
 - `localnet-e2e.py`: the layered 5-validator testnet-shaped end-to-end program
   that exercises the live stack phase by phase, including direct and
   permit-authorized `currency.approvals` flows, restart-and-convergence chaos
-  coverage, timed soak/abuse coverage, and writes artifacts under
+  coverage, timed soak/abuse coverage, an opt-in IntentKit Xian-native x402
+  buyer phase via `--intentkit-x402`, and writes artifacts under
   `.artifacts/localnet-e2e/<run-id>/`
 - `localnet_vm_rollout.py`: collects execution-mode, shadow comparison, and
   mismatch counters from a running localnet and emits a rollout report as JSON;
