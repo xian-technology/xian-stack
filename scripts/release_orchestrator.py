@@ -101,6 +101,15 @@ UNITS = {
             stack_component="xian-contracting",
         ),
         ReleaseUnit(
+            key="xian-compiler-core",
+            repo="xian-contracting",
+            display_name="xian-tech-compiler-core",
+            tag_glob="compiler-core-v*",
+            tag_prefix="compiler-core-v",
+            include_prefixes=("packages/xian-compiler-core/",),
+            stack_component="xian-contracting",
+        ),
+        ReleaseUnit(
             key="xian-zk",
             repo="xian-contracting",
             display_name="xian-tech-zk",
@@ -184,6 +193,7 @@ UNITS = {
 RELEASE_ORDER = (
     "xian-accounts",
     "xian-runtime-types",
+    "xian-compiler-core",
     "xian-zk",
     "xian-contracting",
     "xian-py",
@@ -477,6 +487,18 @@ def read_source_version(unit: ReleaseUnit) -> str | None:
         )
     if unit.key == "xian-stack":
         return None
+    if unit.key == "xian-compiler-core":
+        return ensure_matching_versions(
+            "xian-compiler-core",
+            {
+                "packages/xian-compiler-core/pyproject.toml": read_pyproject_version(
+                    repo_path / "packages/xian-compiler-core/pyproject.toml"
+                ),
+                "packages/xian-compiler-core/npm/package.json": read_json(
+                    repo_path / "packages/xian-compiler-core/npm/package.json"
+                )["version"],
+            },
+        )
     if unit.key in {"xian-accounts", "xian-runtime-types", "xian-zk"}:
         package_dir = {
             "xian-accounts": "packages/xian-accounts",
@@ -630,6 +652,7 @@ def build_stack_manifest_updates(plans_by_key: dict[str, ReleasePlan]) -> dict[s
             contracting_units = {
                 "xian-accounts",
                 "xian-runtime-types",
+                "xian-compiler-core",
                 "xian-zk",
                 "xian-contracting",
             }
@@ -647,11 +670,15 @@ def plan_releases(
     repo_states: dict[str, RepoState],
     *,
     bump: str,
+    skip_units: set[str] | None = None,
 ) -> list[ReleasePlan]:
     plans: list[ReleasePlan] = []
     plans_by_key: dict[str, ReleasePlan] = {}
+    skipped = skip_units or set()
 
     for key in RELEASE_ORDER:
+        if key in skipped:
+            continue
         unit = UNITS[key]
         latest_tag = latest_tag_for_unit(unit)
         latest_version = version_from_tag(unit, latest_tag)
@@ -852,6 +879,30 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
         if updated != read_text(manifest_path):
             write_text(manifest_path, updated)
             changed_paths.add(manifest_path)
+    elif plan.unit.key == "xian-compiler-core":
+        record_change(
+            changed_paths,
+            repo_path / "packages/xian-compiler-core/pyproject.toml",
+            set_pyproject_version(
+                repo_path / "packages/xian-compiler-core/pyproject.toml",
+                version,
+            ),
+        )
+        record_change(
+            changed_paths,
+            repo_path / "packages/xian-compiler-core/npm/package.json",
+            set_json_version(
+                repo_path / "packages/xian-compiler-core/npm/package.json",
+                version,
+            ),
+        )
+        lock_path = repo_path / "uv.lock"
+        if lock_path.exists():
+            record_change(
+                changed_paths,
+                lock_path,
+                update_uv_lock_version(lock_path, "xian-tech-compiler-core", version),
+            )
     elif plan.unit.key in {"xian-accounts", "xian-runtime-types", "xian-zk"}:
         package_dir = {
             "xian-accounts": "packages/xian-accounts",
@@ -870,6 +921,7 @@ def commit_message(plan: ReleasePlan) -> str:
     subject = {
         "xian-accounts": "accounts",
         "xian-runtime-types": "runtime-types",
+        "xian-compiler-core": "compiler-core",
         "xian-zk": "zk",
         "xian-contracting": "contracting",
         "xian-py": "xian-py",
@@ -986,6 +1038,13 @@ def parse_args() -> argparse.Namespace:
         default="patch",
         help="Version bump to apply when a repo has not already been pre-bumped on main.",
     )
+    parser.add_argument(
+        "--skip-unit",
+        action="append",
+        choices=tuple(sorted(UNITS)),
+        default=[],
+        help="Release unit to ignore for this run. May be passed more than once.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     plan_parser = subparsers.add_parser("plan", help="Print the release plan without changing any repo.")
@@ -1011,7 +1070,7 @@ def main() -> None:
     args = parse_args()
     fetch = not getattr(args, "no_fetch", False)
     repo_states = collect_repo_states(fetch=fetch)
-    plans = plan_releases(repo_states, bump=args.bump)
+    plans = plan_releases(repo_states, bump=args.bump, skip_units=set(args.skip_unit))
 
     if args.command == "plan":
         print_repo_warnings(repo_states)
