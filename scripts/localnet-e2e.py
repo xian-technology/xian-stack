@@ -5610,6 +5610,25 @@ class E2ERunner:
                     if "minimum note relay fee" not in (relayer_low_fee_error or ""):
                         raise E2EError("shielded relayer low-fee rejection drifted")
 
+                    async def wait_for_relayer_job_finalized(job_id: str):
+                        deadline = time.monotonic() + self.args.rpc_timeout_seconds
+                        last_job = None
+                        while True:
+                            last_job = await authed_relayer_client.get_job(job_id)
+                            if last_job.status == "failed":
+                                raise E2EError(
+                                    "shielded relayer service persisted a failed relay job: "
+                                    f"{last_job.error or last_job.raw}"
+                                )
+                            if last_job.status == "finalized":
+                                return last_job
+                            if time.monotonic() >= deadline:
+                                raise E2EError(
+                                    "shielded relayer service relay did not finalize before "
+                                    f"timeout: {normalize_value(last_job.raw)}"
+                                )
+                            await asyncio.sleep(0.5)
+
                     submitted_job = await authed_relayer_client.submit_shielded_note_relay_transfer(
                         contract=token_name,
                         old_root=service_relay_proof.old_root,
@@ -5626,6 +5645,10 @@ class E2ERunner:
                             "shielded relayer service relay failed: "
                             f"{submitted_job.error or submitted_job.raw}"
                         )
+                    submitted_job = await wait_for_relayer_job_finalized(
+                        submitted_job.job_id
+                    )
+                    service_relay_job = normalize_value(submitted_job.raw)
 
                     fetched_job = await authed_relayer_client.get_job(submitted_job.job_id)
                     if fetched_job.job_id != submitted_job.job_id:
@@ -5680,7 +5703,13 @@ class E2ERunner:
             records_after_service_relay = await indexed_note_records(
                 founder_client,
                 minimum_count=10,
+                timeout_seconds=self.args.rpc_timeout_seconds,
             )
+            if len(records_after_service_relay) < 10:
+                raise E2EError(
+                    "shielded relayer service tx was not indexed into enough note "
+                    f"records before timeout: {len(records_after_service_relay)}"
+                )
             alice_sync_after_service_relay = alice_wallet.sync_records(
                 records_after_service_relay
             )
@@ -5689,11 +5718,15 @@ class E2ERunner:
             )
             if len(alice_sync_after_service_relay.discovered_notes) != 1:
                 raise E2EError(
-                    "shielded relayer service did not deliver Alice's relayed note"
+                    "shielded relayer service did not deliver Alice's relayed note "
+                    f"(discovered={len(alice_sync_after_service_relay.discovered_notes)}, "
+                    f"records={len(records_after_service_relay)})"
                 )
             if len(bob_sync_after_service_relay.discovered_notes) != 1:
                 raise E2EError(
-                    "shielded relayer service did not deliver Bob's relay change note"
+                    "shielded relayer service did not deliver Bob's relay change note "
+                    f"(discovered={len(bob_sync_after_service_relay.discovered_notes)}, "
+                    f"records={len(records_after_service_relay)})"
                 )
             bob_spent_after_service_relay = bob_wallet.apply_spent_nullifiers(
                 service_relay_proof.input_nullifiers
