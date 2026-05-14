@@ -474,6 +474,7 @@ def read_source_version(unit: ReleaseUnit) -> str | None:
                 "package.json": read_json(repo_path / "package.json")["version"],
                 "packages/client/package.json": read_json(repo_path / "packages/client/package.json")["version"],
                 "packages/provider/package.json": read_json(repo_path / "packages/provider/package.json")["version"],
+                "packages/types/package.json": read_json(repo_path / "packages/types/package.json")["version"],
             },
         )
     if unit.key == "xian-wallet-browser":
@@ -793,6 +794,27 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
         )
         record_change(
             changed_paths,
+            repo_path / "packages/types/package.json",
+            set_json_version(repo_path / "packages/types/package.json", version),
+        )
+        record_change(
+            changed_paths,
+            repo_path / "packages/client/package.json",
+            update_json_dependencies(
+                repo_path / "packages/client/package.json",
+                {"@xian-tech/types": version},
+            ),
+        )
+        record_change(
+            changed_paths,
+            repo_path / "packages/provider/package.json",
+            update_json_dependencies(
+                repo_path / "packages/provider/package.json",
+                {"@xian-tech/types": version},
+            ),
+        )
+        record_change(
+            changed_paths,
             repo_path / "package-lock.json",
             update_package_lock(
                 repo_path / "package-lock.json",
@@ -800,6 +822,11 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
                 package_versions={
                     "packages/client": version,
                     "packages/provider": version,
+                    "packages/types": version,
+                },
+                dependency_updates={
+                    "packages/client": {"@xian-tech/types": version},
+                    "packages/provider": {"@xian-tech/types": version},
                 },
             ),
         )
