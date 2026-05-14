@@ -33,7 +33,7 @@ XIAN_CONTRACTING_SRC = ROOT_DIR / "xian-contracting" / "src"
 
 sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
 
-from contracting.compilation.artifacts import build_contract_artifacts  # noqa: E402
+from contracting.artifacts import build_contract_artifacts  # noqa: E402
 
 from xian_py import transaction as tr  # noqa: E402
 from xian_py.exception import TransportError  # noqa: E402
@@ -122,12 +122,6 @@ class WorkloadContext:
         self._nonce_lock = asyncio.Lock()
         self._session: aiohttp.ClientSession | None = None
 
-    @property
-    def execution_mode(self) -> str:
-        execution = self.network.get("execution", {})
-        mode = execution.get("mode")
-        return str(mode or self.network.get("tracer_mode") or "python_line_v1")
-
     def contract_submission_kwargs(
         self,
         *,
@@ -135,11 +129,10 @@ class WorkloadContext:
         code: str,
         constructor_args: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {"name": name, "code": code}
+        kwargs: dict[str, Any] = {"name": name}
         if constructor_args is not None:
             kwargs["constructor_args"] = constructor_args
-        if self.execution_mode == "xian_vm_v1":
-            kwargs["deployment_artifacts"] = build_deployment_artifacts(name, code)
+        kwargs["deployment_artifacts"] = build_deployment_artifacts(name, code)
         return kwargs
 
     async def __aenter__(self) -> WorkloadContext:
@@ -880,7 +873,9 @@ async def wait_for_contract_visibility(
         all_visible = True
         for node, client in zip(context.sample_nodes, clients, strict=True):
             source = await context._retry_read(
-                lambda client=client: client.get_contract(contract_name),
+                lambda client=client: client.get_contract_source(
+                    contract_name
+                ),
                 max_attempts=3,
                 initial_delay_seconds=0.05,
                 max_delay_seconds=0.5,

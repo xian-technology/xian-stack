@@ -48,7 +48,9 @@ LOCALNET_INIT_SCRIPT = STACK_DIR / "scripts" / "localnet-init.py"
 LOCALNET_DEX_BOOTSTRAP_SCRIPT = STACK_DIR / "scripts" / "localnet-dex-bootstrap.py"
 LOCALNET_WORKLOAD_SCRIPT = STACK_DIR / "scripts" / "localnet-workload.py"
 LOCALNET_E2E_SCRIPT = STACK_DIR / "scripts" / "localnet-e2e.py"
-LOCALNET_VM_ROLLOUT_SCRIPT = STACK_DIR / "scripts" / "localnet_vm_rollout.py"
+LOCALNET_NODE_REPORT_SCRIPT = (
+    STACK_DIR / "scripts" / "localnet_node_report.py"
+)
 LOCALNET_VALIDATOR_GOVERNANCE_SCRIPT = (
     STACK_DIR / "scripts" / "localnet-validator-governance.py"
 )
@@ -2069,7 +2071,6 @@ def backend_localnet_e2e(
     burst_counter_ops: int,
     dex_rounds: int,
     intentkit_x402: bool,
-    vm_max_shadow_mismatches: int,
     start_phase: str,
     resume_dir: str | None,
 ) -> dict:
@@ -2105,8 +2106,6 @@ def backend_localnet_e2e(
         "--dex-rounds",
         str(dex_rounds),
         "--intentkit-x402" if intentkit_x402 else "--no-intentkit-x402",
-        "--vm-max-shadow-mismatches",
-        str(vm_max_shadow_mismatches),
         "--start-phase",
         start_phase,
         "--bootstrap" if bootstrap else "--no-bootstrap",
@@ -2138,33 +2137,32 @@ def backend_localnet_e2e(
     return payload
 
 
-def backend_localnet_vm_report(
+def backend_localnet_node_report(
     *,
     timeout_seconds: float,
-    max_shadow_mismatches: int,
 ) -> dict:
     try:
         result = run_python_script(
-            LOCALNET_VM_ROLLOUT_SCRIPT,
+            LOCALNET_NODE_REPORT_SCRIPT,
             "--timeout-seconds",
             str(timeout_seconds),
-            "--max-shadow-mismatches",
-            str(max_shadow_mismatches),
             capture_output=True,
         )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()
-        raise RuntimeError(f"localnet-vm-report failed: {detail}") from exc
+        raise RuntimeError(f"localnet-node-report failed: {detail}") from exc
 
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
         raise RuntimeError(
-            "localnet-vm-report did not return a JSON report"
+            "localnet-node-report did not return a JSON report"
         ) from exc
 
     if not isinstance(payload, dict):
-        raise RuntimeError("localnet-vm-report returned a non-object report")
+        raise RuntimeError(
+            "localnet-node-report returned a non-object report"
+        )
     return payload
 
 
@@ -2453,18 +2451,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=10_000.0,
     )
 
-    localnet_vm_report = subparsers.add_parser("localnet-vm-report")
-    localnet_vm_report.add_argument(
+    localnet_node_report = subparsers.add_parser("localnet-node-report")
+    localnet_node_report.add_argument(
         "--timeout-seconds",
         type=float,
         default=5.0,
     )
-    localnet_vm_report.add_argument(
-        "--max-shadow-mismatches",
-        type=int,
-        default=0,
-    )
-
     localnet_workload = subparsers.add_parser("localnet-workload")
     localnet_workload.add_argument(
         "--scenario",
@@ -2523,10 +2515,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--genesis-network",
         default="testnet",
         help="contract bundle preset used to seed localnet genesis",
-    )
-    localnet_validator_governance.add_argument(
-        "--tracer-mode",
-        default="native_instruction_v1",
     )
     localnet_validator_governance.add_argument(
         "--log-level",
@@ -2649,11 +2637,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--intentkit-x402",
         action=argparse.BooleanOptionalAction,
         default=False,
-    )
-    localnet_e2e.add_argument(
-        "--vm-max-shadow-mismatches",
-        type=int,
-        default=0,
     )
     localnet_e2e.add_argument(
         "--start-phase",
@@ -2872,10 +2855,9 @@ def main(argv: list[str] | None = None) -> int:
             liquidity_currency_amount=args.liquidity_currency_amount,
             liquidity_demo_token_amount=args.liquidity_demo_token_amount,
         )
-    elif args.command == "localnet-vm-report":
-        payload = backend_localnet_vm_report(
+    elif args.command == "localnet-node-report":
+        payload = backend_localnet_node_report(
             timeout_seconds=args.timeout_seconds,
-            max_shadow_mismatches=args.max_shadow_mismatches,
         )
     elif args.command == "localnet-workload":
         payload = backend_localnet_diagnostic(
@@ -2909,8 +2891,6 @@ def main(argv: list[str] | None = None) -> int:
                 args.topology,
                 "--genesis-network",
                 args.genesis_network,
-                "--tracer-mode",
-                args.tracer_mode,
                 "--log-level",
                 args.log_level,
                 "--rpc-timeout-seconds",
@@ -2951,7 +2931,6 @@ def main(argv: list[str] | None = None) -> int:
             burst_counter_ops=args.burst_counter_ops,
             dex_rounds=args.dex_rounds,
             intentkit_x402=args.intentkit_x402,
-            vm_max_shadow_mismatches=args.vm_max_shadow_mismatches,
             start_phase=args.start_phase,
             resume_dir=args.resume_dir,
         )

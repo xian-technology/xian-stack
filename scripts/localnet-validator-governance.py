@@ -28,6 +28,7 @@ ROOT_DIR = STACK_DIR.parent
 NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 OUTPUT_ROOT = STACK_DIR / ".artifacts" / "localnet-validator-governance"
 XIAN_ABCI_SRC = ROOT_DIR / "xian-abci" / "src"
+XIAN_CONTRACTING_SRC = ROOT_DIR / "xian-contracting" / "src"
 
 DEFAULT_TRANSFER_CHI = 2_000
 DEFAULT_TX_CHI = 200_000
@@ -42,12 +43,23 @@ LOCALNET_IMAGE_BY_TOPOLOGY = {
 }
 
 sys.path.append(str(XIAN_ABCI_SRC))
+sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
 
 import nacl.signing  # noqa: E402
 from cometbft.types.v1 import canonical_pb2  # noqa: E402
+from contracting.artifacts import build_contract_artifacts  # noqa: E402
 from google.protobuf.timestamp_pb2 import Timestamp  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian_async import XianAsync  # noqa: E402
+
+
+def build_deployment_artifacts(module_name: str, source: str) -> dict[str, Any]:
+    return build_contract_artifacts(
+        module_name=module_name,
+        source=source,
+        lint=True,
+        vm_profile="xian_vm_v1",
+    )
 
 
 @dataclass(frozen=True)
@@ -249,7 +261,6 @@ PY
 def make_localnet_env(args: argparse.Namespace) -> dict[str, str]:
     env = os.environ.copy()
     env.update(load_stack_env())
-    env["XIAN_LOCALNET_TRACER_MODE"] = args.tracer_mode
     env["XIAN_LOCALNET_GENESIS_NETWORK"] = args.genesis_network
     env["XIAN_LOCALNET_ENABLE_BDS"] = "0"
     env["XIAN_LOCALNET_PORT_OFFSET"] = str(args.port_offset)
@@ -535,7 +546,6 @@ class ValidatorGovernanceRunner:
                 "XIAN_LOCALNET_GENESIS_NETWORK": env["XIAN_LOCALNET_GENESIS_NETWORK"],
                 "XIAN_LOCALNET_PORT_OFFSET": env["XIAN_LOCALNET_PORT_OFFSET"],
                 "XIAN_LOCALNET_TOPOLOGY": env["XIAN_LOCALNET_TOPOLOGY"],
-                "XIAN_LOCALNET_TRACER_MODE": env["XIAN_LOCALNET_TRACER_MODE"],
                 "LOCALNET_NODES": env["LOCALNET_NODES"],
             }
         }
@@ -1233,7 +1243,10 @@ def get_status():
 """.strip()
             deploy_submission = await node0.submit_contract(
                 name=probe_contract,
-                code=probe_code,
+                deployment_artifacts=build_deployment_artifacts(
+                    probe_contract,
+                    probe_code,
+                ),
                 chi=GOVERNANCE_TX_CHI,
                 wait_for_tx=True,
             )
@@ -2495,7 +2508,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_GENESIS_NETWORK,
         help="contract bundle preset used to seed localnet genesis",
     )
-    parser.add_argument("--tracer-mode", default="native_instruction_v1")
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--rpc-timeout-seconds", type=float, default=180.0)
     parser.add_argument(

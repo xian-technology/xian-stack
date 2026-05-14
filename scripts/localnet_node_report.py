@@ -10,6 +10,7 @@ from urllib.request import urlopen
 
 STACK_DIR = Path(__file__).resolve().parent.parent
 LOCALNET_NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
+EXPECTED_EXECUTION_MODE = "xian_vm_v1"
 _PROMETHEUS_LINE_RE = re.compile(
     r"^(?P<name>[a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(?P<labels>.*)\})?\s+"
     r"(?P<value>[-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)$"
@@ -56,29 +57,7 @@ def _samples_by_name(samples: list[dict[str, Any]]) -> dict[str, list[dict[str, 
     return grouped
 
 
-def _metric_fields(
-    grouped: dict[str, list[dict[str, Any]]],
-    metric_name: str,
-) -> dict[str, float]:
-    return {
-        sample["labels"].get("field", ""): sample["value"]
-        for sample in grouped.get(metric_name, [])
-    }
-
-
-def _stage_metric_fields(
-    grouped: dict[str, list[dict[str, Any]]],
-    metric_name: str,
-) -> dict[str, dict[str, float]]:
-    stages: dict[str, dict[str, float]] = {}
-    for sample in grouped.get(metric_name, []):
-        stage = sample["labels"].get("stage", "")
-        field = sample["labels"].get("field", "")
-        stages.setdefault(stage, {})[field] = sample["value"]
-    return stages
-
-
-def collect_node_vm_rollout_status(
+def collect_node_capability_status(
     node: dict[str, Any],
     *,
     timeout_seconds: float,
@@ -98,10 +77,6 @@ def collect_node_vm_rollout_status(
 
     node_info_samples = grouped.get("xian_node_info", [])
     node_info = dict(node_info_samples[0]["labels"]) if node_info_samples else {}
-    last_mismatch_samples = grouped.get("xian_vm_shadow_last_mismatch_info", [])
-    last_mismatch = (
-        dict(last_mismatch_samples[0]["labels"]) if last_mismatch_samples else None
-    )
 
     return {
         "moniker": node["moniker"],
@@ -114,29 +89,19 @@ def collect_node_vm_rollout_status(
             .get("latest_block_height", 0)
         ),
         "node_info": node_info,
-        "vm_shadow": {
-            "metrics": _metric_fields(grouped, "xian_vm_shadow_metric"),
-            "stages": _stage_metric_fields(
-                grouped,
-                "xian_vm_shadow_stage_metric",
-            ),
-            "last_mismatch": last_mismatch,
-        },
     }
 
 
-def collect_localnet_vm_rollout_report(
+def collect_localnet_node_report(
     network: dict[str, Any],
     *,
     timeout_seconds: float,
-    max_shadow_mismatches: int,
 ) -> dict[str, Any]:
-    expected_execution = dict(network.get("execution", {}) or {})
     nodes: list[dict[str, Any]] = []
     errors: list[str] = []
     for node in network.get("nodes", []):
         try:
-            node_status = collect_node_vm_rollout_status(
+            node_status = collect_node_capability_status(
                 node,
                 timeout_seconds=timeout_seconds,
             )
@@ -149,74 +114,35 @@ def collect_localnet_vm_rollout_report(
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{node['moniker']}: {exc}")
 
-    execution_signature_fields = (
-        "execution_mode",
-        "execution_authority",
-        "execution_shadow",
-        "execution_bytecode_version",
-        "execution_gas_schedule",
-    )
-    signatures = [
-        tuple(node["node_info"].get(field, "") for field in execution_signature_fields)
-        for node in nodes
+    reported_modes = [
+        str(node["node_info"].get("execution_mode", "")) for node in nodes
     ]
-    uniform_execution = len(set(signatures)) <= 1 if signatures else False
-    expected_signature = (
-        str(expected_execution.get("mode", "")),
-        str(expected_execution.get("authority", "")),
-        "false",
-        str(expected_execution.get("bytecode_version", "")),
-        str(expected_execution.get("gas_schedule", "")),
-    )
-    matches_expected_execution = (
-        all(signature == expected_signature for signature in signatures)
-        if signatures
+    uniform_execution_mode = len(set(reported_modes)) <= 1 if reported_modes else False
+    all_nodes_report_xian_vm = (
+        all(mode == EXPECTED_EXECUTION_MODE for mode in reported_modes)
+        if reported_modes
         else False
     )
-
-    comparisons_total = int(
-        sum(
-            node["vm_shadow"]["metrics"].get("comparisons_total", 0.0)
-            for node in nodes
-        )
-    )
-    mismatches_total = int(
-        sum(
-            node["vm_shadow"]["metrics"].get("mismatches_total", 0.0)
-            for node in nodes
-        )
-    )
-    nodes_with_mismatches = [
-        node["moniker"]
-        for node in nodes
-        if node["vm_shadow"]["metrics"].get("mismatches_total", 0.0) > 0
-    ]
 
     ok = (
         not errors
         and bool(nodes)
-        and uniform_execution
-        and matches_expected_execution
-        and mismatches_total <= int(max_shadow_mismatches)
+        and uniform_execution_mode
+        and all_nodes_report_xian_vm
     )
 
     return {
         "ok": ok,
-        "expected_execution": expected_execution,
+        "expected_node_capabilities": {
+            "execution_mode": EXPECTED_EXECUTION_MODE,
+        },
         "checks": {
-            "uniform_execution": uniform_execution,
-            "matches_expected_execution": matches_expected_execution,
-            "max_shadow_mismatches": int(max_shadow_mismatches),
-            "within_shadow_mismatch_budget": (
-                mismatches_total <= int(max_shadow_mismatches)
-            ),
+            "uniform_execution_mode": uniform_execution_mode,
+            "all_nodes_report_xian_vm": all_nodes_report_xian_vm,
         },
         "totals": {
             "node_count": len(nodes),
-            "comparisons_total": comparisons_total,
-            "mismatches_total": mismatches_total,
         },
-        "nodes_with_mismatches": nodes_with_mismatches,
         "errors": errors,
         "nodes": nodes,
     }
@@ -224,14 +150,13 @@ def collect_localnet_vm_rollout_report(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Collect a VM rollout report from a running localnet"
+        description="Collect a node report from a running localnet"
     )
     parser.add_argument(
         "--network-json",
         default=str(LOCALNET_NETWORK_PATH),
     )
     parser.add_argument("--timeout-seconds", type=float, default=5.0)
-    parser.add_argument("--max-shadow-mismatches", type=int, default=0)
     parser.add_argument("--output")
     return parser
 
@@ -240,10 +165,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     network_path = Path(args.network_json).expanduser().resolve()
     network = json.loads(network_path.read_text(encoding="utf-8"))
-    report = collect_localnet_vm_rollout_report(
+    report = collect_localnet_node_report(
         network,
         timeout_seconds=args.timeout_seconds,
-        max_shadow_mismatches=args.max_shadow_mismatches,
     )
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:

@@ -79,9 +79,9 @@ RUN python -m pip install --upgrade \
     && python -m pip download --require-hashes --dest /tmp/wheels \
     -r /tmp/build/python-runtime-requirements.txt \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-accounts \
+    && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-compiler-core \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-runtime-types \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-fastpath-core \
-    && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-native-tracer \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-vm-core \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-zk \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-py \
@@ -126,9 +126,9 @@ RUN uv pip install --system --no-index --find-links /tmp/wheels --require-hashes
     -r /tmp/python-runtime-requirements.txt \
     && uv pip install --system --no-index --find-links /tmp/wheels --no-deps \
     /tmp/wheels/xian_tech_accounts-*.whl \
+    /tmp/wheels/xian_tech_compiler_core-*.whl \
     /tmp/wheels/xian_tech_runtime_types-*.whl \
     /tmp/wheels/xian_tech_fastpath_core-*.whl \
-    /tmp/wheels/xian_tech_native_tracer-*.whl \
     /tmp/wheels/xian_tech_vm_core-*.whl \
     /tmp/wheels/xian_tech_zk-*.whl \
     /tmp/wheels/xian_tech_py-*.whl \

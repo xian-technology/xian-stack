@@ -35,6 +35,13 @@ python3 ./scripts/backend.py validate
 make release-safety
 ```
 
+Run the Python test suite:
+
+```bash
+python -m pip install -r requirements-test.txt
+python -m pytest -q
+```
+
 Run a stack-managed local node:
 
 ```bash
@@ -81,7 +88,7 @@ Higher-level harnesses:
 ```bash
 make localnet-validator-governance   # 5-validator testnet-shaped governance run
 make localnet-e2e                    # layered 5-validator e2e harness
-make localnet-vm-e2e                 # same harness with xian_vm_v1 native authority
+make localnet-parallel-e2e                 # same harness with lower parallel-execution batching
 make localnet-vm-tps-bench           # tuned VM throughput sweep
 make release-safety                  # full release-grade safety gate
 ```
@@ -143,7 +150,7 @@ Use the smallest recipe that proves the behavior you care about:
 | Workload smoke on a running localnet | `make localnet-workload` | Basic contract submission and transaction flow |
 | Full 5-validator e2e harness | `make localnet-e2e` | Layered cross-repo behavior, workload phases, DEX coverage, catchup, governance, chaos / restart convergence |
 | IntentKit x402 buyer phase | `LOCALNET_E2E_INTENTKIT_X402=1 make localnet-e2e` | Adds a live IntentKit Xian-native x402 payment through a local seller/facilitator |
-| VM-native 5-validator harness | `make localnet-vm-e2e` | The same e2e program under native VM authority |
+| Parallel 5-validator harness | `make localnet-parallel-e2e` | The same e2e program with lower parallel-execution batching |
 | Focused validator governance run | `make localnet-validator-governance` | Validator set, delegation, governance, and state-patch behavior |
 | Release gate | `make release-safety` | Repo validation plus the release-grade localnet gates |
 
@@ -205,7 +212,7 @@ The stable interface exposed by `scripts/backend.py` covers:
 - `smoke`, `smoke-cli`
 - `localnet-*` flows
 - `localnet-dex-bootstrap` for opt-in canonical DEX deployment
-- `localnet-vm-report` for VM rollout posture and mismatch counters
+- `localnet-node-report` for fixed VM node capability checks
 
 Use the `Makefile` for lower-level debugging, image builds, and developer
 shell access. Use `xian-cli` for human-facing operator workflows.

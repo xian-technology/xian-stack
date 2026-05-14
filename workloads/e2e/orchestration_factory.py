@@ -46,13 +46,11 @@ def deploy_family(prefix: str):
     second = prefix + "_beta"
     submission.submit_contract(
         name=first,
-        code=CHILD_SOURCE,
         deployment_artifacts=build_named_deployment_artifacts(first),
         constructor_args={"factory_name": ctx.this, "role": "alpha"},
     )
     submission.submit_contract(
         name=second,
-        code=CHILD_SOURCE,
         deployment_artifacts=build_named_deployment_artifacts(second),
         constructor_args={"factory_name": ctx.this, "role": "beta"},
     )
@@ -73,13 +71,11 @@ def deploy_family_with_failure(prefix: str):
     last_failure_prefix.set(prefix)
     submission.submit_contract(
         name=first,
-        code=CHILD_SOURCE,
         deployment_artifacts=build_named_deployment_artifacts(first),
         constructor_args={"factory_name": ctx.this, "role": "good"},
     )
     submission.submit_contract(
         name=second,
-        code=CHILD_SOURCE,
         deployment_artifacts=build_named_deployment_artifacts(second),
         constructor_args={
             "factory_name": ctx.this,

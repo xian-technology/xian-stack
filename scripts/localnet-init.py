@@ -24,13 +24,13 @@ STACK_DIR = SCRIPT_DIR.parent
 from xian.genesis_builder import (  # noqa: E402
     build_local_network_genesis,
 )
+from xian.execution_policy import VM_EXECUTION_MODE  # noqa: E402
 from xian.node_setup import (  # noqa: E402
     AppLoggingOptions,
     BdsOptions,
     DEFAULT_PARALLEL_EXECUTION_ENABLED,
     DEFAULT_PARALLEL_EXECUTION_MIN_TRANSACTIONS,
     DEFAULT_PARALLEL_EXECUTION_WORKERS,
-    ExecutionOptions,
     MetricsOptions,
     NodeConfigOptions,
     ParallelExecutionOptions,
@@ -150,11 +150,6 @@ def write_node_config(
     chain_id: str,
     genesis: dict,
     *,
-    tracer_mode: str,
-    execution_mode: str,
-    execution_bytecode_version: str,
-    execution_gas_schedule: str,
-    execution_authority: str,
     block_policy_mode: str,
     block_policy_interval: str,
     consensus_timeout_propose: str | None,
@@ -191,13 +186,6 @@ def write_node_config(
             service_node=service_node,
             allow_cors=True,
             prometheus=True,
-            execution=ExecutionOptions(
-                tracer_mode=tracer_mode,
-                mode=execution_mode,
-                bytecode_version=execution_bytecode_version,
-                gas_schedule=execution_gas_schedule,
-                authority=execution_authority,
-            ),
             block_policy_mode=block_policy_mode,
             block_policy_interval=block_policy_interval,
             metrics=MetricsOptions(
@@ -325,17 +313,6 @@ def main():
         "XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED",
         DEFAULT_PARALLEL_EXECUTION_ENABLED,
     )
-    tracer_mode = env_str("XIAN_LOCALNET_TRACER_MODE", "python_line_v1")
-    execution_mode = env_str("XIAN_LOCALNET_EXECUTION_MODE", "").strip()
-    execution_bytecode_version = env_str(
-        "XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION", ""
-    ).strip()
-    execution_gas_schedule = env_str(
-        "XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE", ""
-    ).strip()
-    execution_authority = env_str(
-        "XIAN_LOCALNET_EXECUTION_AUTHORITY", ""
-    ).strip()
     port_offset = env_int("XIAN_LOCALNET_PORT_OFFSET", 0)
     BASE_P2P_PORT = 26656 + port_offset
     BASE_RPC_PORT = 26657 + port_offset
@@ -476,11 +453,6 @@ def main():
             nodes,
             args.chain_id,
             genesis,
-            tracer_mode=tracer_mode,
-            execution_mode=execution_mode,
-            execution_bytecode_version=execution_bytecode_version,
-            execution_gas_schedule=execution_gas_schedule,
-            execution_authority=execution_authority,
             block_policy_mode=block_policy_mode,
             block_policy_interval=block_policy_interval,
             consensus_timeout_propose=consensus_timeout_propose,
@@ -530,10 +502,7 @@ def main():
         "genesis_network": args.genesis_network,
         "topology": args.topology,
         "execution": {
-            "mode": execution_mode or tracer_mode,
-            "bytecode_version": execution_bytecode_version,
-            "gas_schedule": execution_gas_schedule,
-            "authority": execution_authority,
+            "mode": VM_EXECUTION_MODE,
         },
         "nodes": [
             {
@@ -586,7 +555,6 @@ def main():
             "size": mempool_size,
             "cache_size": mempool_cache_size,
         },
-        "tracer_mode": tracer_mode,
         "port_offset": port_offset,
         "bds": {
             "enabled": bds_enabled,

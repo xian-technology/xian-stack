@@ -44,7 +44,6 @@ XIAN_CONTRACTS_DIR ?= ./contracts
 XIAN_COMETBFT_VERSION ?= 0.39.3
 XIAN_S6_OVERLAY_VERSION ?= 3.2.1.0
 XIAN_S6_VERBOSITY ?= 1
-XIAN_TRACER_MODE ?= python_line_v1
 XIAN_NODE_IMAGE_MODE ?= local_build
 XIAN_NODE_INTEGRATED_IMAGE ?= xian-node-integrated:local
 XIAN_NODE_SPLIT_IMAGE ?= xian-node-split:local
@@ -116,11 +115,6 @@ XIAN_POSTGRAPHILE_HOST ?= 127.0.0.1
 XIAN_POSTGRAPHILE_PORT ?= 5000
 XIAN_LOCALNET_TOPOLOGY ?= integrated
 XIAN_LOCALNET_GENESIS_NETWORK ?= local
-XIAN_LOCALNET_TRACER_MODE ?= $(XIAN_TRACER_MODE)
-XIAN_LOCALNET_EXECUTION_MODE ?=
-XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION ?=
-XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE ?=
-XIAN_LOCALNET_EXECUTION_AUTHORITY ?=
 XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED ?= 0
 XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS ?= 4
 XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS ?= 8
@@ -189,7 +183,6 @@ export XIAN_CONTRACTS_DIR := $(abspath $(XIAN_CONTRACTS_DIR))
 export XIAN_COMETBFT_VERSION := $(XIAN_COMETBFT_VERSION)
 export XIAN_S6_OVERLAY_VERSION := $(XIAN_S6_OVERLAY_VERSION)
 export XIAN_S6_VERBOSITY := $(XIAN_S6_VERBOSITY)
-export XIAN_TRACER_MODE := $(XIAN_TRACER_MODE)
 export XIAN_NODE_IMAGE_MODE := $(XIAN_NODE_IMAGE_MODE)
 export XIAN_NODE_INTEGRATED_IMAGE := $(XIAN_NODE_INTEGRATED_IMAGE)
 export XIAN_NODE_SPLIT_IMAGE := $(XIAN_NODE_SPLIT_IMAGE)
@@ -260,11 +253,6 @@ export XIAN_POSTGRAPHILE_PASSWORD := $(XIAN_POSTGRAPHILE_PASSWORD)
 export XIAN_POSTGRAPHILE_HOST := $(XIAN_POSTGRAPHILE_HOST)
 export XIAN_POSTGRAPHILE_PORT := $(XIAN_POSTGRAPHILE_PORT)
 export XIAN_LOCALNET_TOPOLOGY := $(XIAN_LOCALNET_TOPOLOGY)
-export XIAN_LOCALNET_TRACER_MODE := $(XIAN_LOCALNET_TRACER_MODE)
-export XIAN_LOCALNET_EXECUTION_MODE := $(XIAN_LOCALNET_EXECUTION_MODE)
-export XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION := $(XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION)
-export XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE := $(XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE)
-export XIAN_LOCALNET_EXECUTION_AUTHORITY := $(XIAN_LOCALNET_EXECUTION_AUTHORITY)
 export XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED := $(XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED)
 export XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS := $(XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS)
 export XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS := $(XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS)
@@ -393,15 +381,10 @@ LOCALNET_E2E_INTENTKIT_X402 ?= 0
 LOCALNET_E2E_PARALLEL_EXECUTION_ENABLED ?= 1
 LOCALNET_E2E_PARALLEL_EXECUTION_WORKERS ?= 4
 LOCALNET_E2E_PARALLEL_EXECUTION_MIN_TRANSACTIONS ?= 8
-LOCALNET_VM_E2E_PARALLEL_EXECUTION_MIN_TRANSACTIONS ?= 4
+LOCALNET_PARALLEL_E2E_MIN_TRANSACTIONS ?= 4
 LOCALNET_TPS_BENCH_PARALLEL_EXECUTION_ENABLED ?= $(XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED)
 LOCALNET_TPS_BENCH_PARALLEL_EXECUTION_WORKERS ?= $(XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS)
 LOCALNET_TPS_BENCH_PARALLEL_EXECUTION_MIN_TRANSACTIONS ?= $(XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS)
-LOCALNET_VM_REPORT_MAX_SHADOW_MISMATCHES ?= 0
-LOCALNET_VM_E2E_EXECUTION_MODE ?= xian_vm_v1
-LOCALNET_VM_E2E_BYTECODE_VERSION ?= xvm-1
-LOCALNET_VM_E2E_GAS_SCHEDULE ?= xvm-gas-1
-LOCALNET_VM_E2E_AUTHORITY ?= native
 LOCALNET_VALIDATOR_GOVERNANCE_BOOTSTRAP ?= 1
 LOCALNET_VALIDATOR_GOVERNANCE_BUILD ?= 0
 LOCALNET_VALIDATOR_GOVERNANCE_NODES ?= 5
@@ -425,7 +408,7 @@ LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK ?= testnet
 	node-status node-status-fidelity bds-postgres-up bds-snapshot-export bds-snapshot-import \
 	storage-report \
 	localnet-init localnet-build localnet-up localnet-down localnet-status \
-	localnet-workload localnet-memwatch localnet-leak-hunt localnet-e2e localnet-vm-report localnet-vm-e2e localnet-vm-tps-bench localnet-validator-governance \
+	localnet-workload localnet-memwatch localnet-leak-hunt localnet-e2e localnet-node-report localnet-parallel-e2e localnet-vm-tps-bench localnet-validator-governance \
 	localnet-clean localnet-logs localnet-shell
 
 help:
@@ -481,8 +464,8 @@ help:
 	@printf "  %-24s %s\n" "localnet-memwatch" "Sample container memory during localnet tx load"
 	@printf "  %-24s %s\n" "localnet-leak-hunt" "Split localnet memory growth by process"
 	@printf "  %-24s %s\n" "localnet-e2e" "Run the full layered 5-validator testnet-shaped localnet end-to-end program"
-	@printf "  %-24s %s\n" "localnet-vm-report" "Collect the current VM rollout and mismatch report from localnet nodes"
-	@printf "  %-24s %s\n" "localnet-vm-e2e" "Run the localnet e2e program with xian_vm_v1 native authority"
+	@printf "  %-24s %s\n" "localnet-node-report" "Collect the current node capability report from localnet nodes"
+	@printf "  %-24s %s\n" "localnet-parallel-e2e" "Run the localnet e2e program with lower parallel-execution batching"
 	@printf "  %-24s %s\n" "localnet-vm-tps-bench" "Run the VM-native throughput sweep on a tuned 5-node localnet"
 	@printf "  %-24s %s\n" "localnet-validator-governance" "Run the 5-validator testnet-shaped governance/state-patch exercise"
 	@printf "  %-24s %s\n" "localnet-logs" "Tail logs from all nodes"
@@ -519,7 +502,6 @@ print-env:
 	@printf "XIAN_COMETBFT_VERSION=%s\n" "$(XIAN_COMETBFT_VERSION)"
 	@printf "XIAN_S6_OVERLAY_VERSION=%s\n" "$(XIAN_S6_OVERLAY_VERSION)"
 	@printf "XIAN_S6_VERBOSITY=%s\n" "$(XIAN_S6_VERBOSITY)"
-	@printf "XIAN_TRACER_MODE=%s\n" "$(XIAN_TRACER_MODE)"
 	@printf "XIAN_NODE_IMAGE_MODE=%s\n" "$(XIAN_NODE_IMAGE_MODE)"
 	@printf "XIAN_NODE_INTEGRATED_IMAGE=%s\n" "$(XIAN_NODE_INTEGRATED_IMAGE)"
 	@printf "XIAN_NODE_SPLIT_IMAGE=%s\n" "$(XIAN_NODE_SPLIT_IMAGE)"
@@ -605,7 +587,6 @@ print-env:
 	@printf "XIAN_LOCALNET_COMETBFT_PIDS_LIMIT=%s\n" "$(XIAN_LOCALNET_COMETBFT_PIDS_LIMIT)"
 	@printf "XIAN_LOCALNET_COMETBFT_NOFILE_SOFT=%s\n" "$(XIAN_LOCALNET_COMETBFT_NOFILE_SOFT)"
 	@printf "XIAN_LOCALNET_COMETBFT_NOFILE_HARD=%s\n" "$(XIAN_LOCALNET_COMETBFT_NOFILE_HARD)"
-	@printf "XIAN_LOCALNET_TRACER_MODE=%s\n" "$(XIAN_LOCALNET_TRACER_MODE)"
 
 validate:
 	./scripts/validate-stack.sh
@@ -772,7 +753,7 @@ node-init:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci init
 
 node-configure: guard-stack-security
-	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "metrics_flag='--metrics-enabled'; if [ '$(XIAN_APP_METRICS_ENABLED)' = '0' ]; then metrics_flag='--no-metrics-enabled'; fi; xian-configure-node --tracer-mode $(XIAN_TRACER_MODE) $$metrics_flag --metrics-host $(XIAN_APP_METRICS_LISTEN_HOST) --metrics-port $(XIAN_APP_METRICS_PORT) --metrics-bds-refresh-seconds $(XIAN_APP_METRICS_BDS_REFRESH_SECONDS) --bds-host $(XIAN_BDS_HOST) --bds-port $(XIAN_BDS_PORT) --bds-database $(XIAN_BDS_DATABASE) --bds-user $(XIAN_BDS_USER) --bds-password $(XIAN_BDS_PASSWORD) --bds-pool-min-size $(XIAN_BDS_POOL_MIN_SIZE) --bds-pool-max-size $(XIAN_BDS_POOL_MAX_SIZE) --bds-statement-timeout-ms $(XIAN_BDS_STATEMENT_TIMEOUT_MS) --bds-application-name $(XIAN_BDS_APPLICATION_NAME) $(if $(XIAN_BDS_SPOOL_DIR),--bds-spool-dir $(XIAN_BDS_SPOOL_DIR),) --bds-spool-warn-entries $(XIAN_BDS_SPOOL_WARN_ENTRIES) --bds-spool-warn-bytes $(XIAN_BDS_SPOOL_WARN_BYTES) --bds-disk-free-warn-bytes $(XIAN_BDS_DISK_FREE_WARN_BYTES) ${CONFIGURE_ARGS}"
+	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "metrics_flag='--metrics-enabled'; if [ '$(XIAN_APP_METRICS_ENABLED)' = '0' ]; then metrics_flag='--no-metrics-enabled'; fi; xian-configure-node $$metrics_flag --metrics-host $(XIAN_APP_METRICS_LISTEN_HOST) --metrics-port $(XIAN_APP_METRICS_PORT) --metrics-bds-refresh-seconds $(XIAN_APP_METRICS_BDS_REFRESH_SECONDS) --bds-host $(XIAN_BDS_HOST) --bds-port $(XIAN_BDS_PORT) --bds-database $(XIAN_BDS_DATABASE) --bds-user $(XIAN_BDS_USER) --bds-password $(XIAN_BDS_PASSWORD) --bds-pool-min-size $(XIAN_BDS_POOL_MIN_SIZE) --bds-pool-max-size $(XIAN_BDS_POOL_MAX_SIZE) --bds-statement-timeout-ms $(XIAN_BDS_STATEMENT_TIMEOUT_MS) --bds-application-name $(XIAN_BDS_APPLICATION_NAME) $(if $(XIAN_BDS_SPOOL_DIR),--bds-spool-dir $(XIAN_BDS_SPOOL_DIR),) --bds-spool-warn-entries $(XIAN_BDS_SPOOL_WARN_ENTRIES) --bds-spool-warn-bytes $(XIAN_BDS_SPOOL_WARN_BYTES) --bds-disk-free-warn-bytes $(XIAN_BDS_DISK_FREE_WARN_BYTES) ${CONFIGURE_ARGS}"
 
 node-id:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci show-node-id
@@ -889,10 +870,6 @@ localnet-e2e:
 		--port-offset $(LOCALNET_E2E_PORT_OFFSET) \
 		--seed "$(LOCALNET_E2E_SEED)" \
 		--log-level "$(LOCALNET_E2E_LOG_LEVEL)" \
-		--execution-mode "$(XIAN_LOCALNET_EXECUTION_MODE)" \
-		--execution-bytecode-version "$(XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION)" \
-		--execution-gas-schedule "$(XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE)" \
-		--execution-authority "$(XIAN_LOCALNET_EXECUTION_AUTHORITY)" \
 		--rpc-timeout-seconds $(LOCALNET_E2E_RPC_TIMEOUT_SECONDS) \
 		--state-sample-nodes $(LOCALNET_E2E_STATE_SAMPLE_NODES) \
 		--app-hash-window $(LOCALNET_E2E_APP_HASH_WINDOW) \
@@ -906,20 +883,14 @@ localnet-e2e:
 		--soak-duration-seconds $(LOCALNET_E2E_SOAK_DURATION_SECONDS) \
 		--soak-batch-size $(LOCALNET_E2E_SOAK_BATCH_SIZE) \
 		--soak-progress-interval-seconds $(LOCALNET_E2E_SOAK_PROGRESS_INTERVAL_SECONDS) \
-		$(if $(filter 1,$(LOCALNET_E2E_INTENTKIT_X402)),--intentkit-x402,--no-intentkit-x402) \
-		--vm-max-shadow-mismatches $(LOCALNET_VM_REPORT_MAX_SHADOW_MISMATCHES)
+		$(if $(filter 1,$(LOCALNET_E2E_INTENTKIT_X402)),--intentkit-x402,--no-intentkit-x402)
 
-localnet-vm-report:
-	python3 ./scripts/localnet_vm_rollout.py \
-		--timeout-seconds 5 \
-		--max-shadow-mismatches $(LOCALNET_VM_REPORT_MAX_SHADOW_MISMATCHES)
+localnet-node-report:
+	python3 ./scripts/localnet_node_report.py \
+		--timeout-seconds 5
 
-localnet-vm-e2e:
-	XIAN_LOCALNET_EXECUTION_MODE="$(LOCALNET_VM_E2E_EXECUTION_MODE)" \
-	XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION="$(LOCALNET_VM_E2E_BYTECODE_VERSION)" \
-	XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE="$(LOCALNET_VM_E2E_GAS_SCHEDULE)" \
-	XIAN_LOCALNET_EXECUTION_AUTHORITY="$(LOCALNET_VM_E2E_AUTHORITY)" \
-	LOCALNET_E2E_PARALLEL_EXECUTION_MIN_TRANSACTIONS="$(LOCALNET_VM_E2E_PARALLEL_EXECUTION_MIN_TRANSACTIONS)" \
+localnet-parallel-e2e:
+	LOCALNET_E2E_PARALLEL_EXECUTION_MIN_TRANSACTIONS="$(LOCALNET_PARALLEL_E2E_MIN_TRANSACTIONS)" \
 	$(MAKE) localnet-e2e
 
 localnet-vm-tps-bench:
@@ -930,10 +901,6 @@ localnet-vm-tps-bench:
 		XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS="$(LOCALNET_TPS_BENCH_PARALLEL_EXECUTION_WORKERS)" \
 		XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS="$(LOCALNET_TPS_BENCH_PARALLEL_EXECUTION_MIN_TRANSACTIONS)" \
 		XIAN_LOCALNET_PROFILE="$(LOCALNET_TPS_BENCH_PROFILE)" \
-		XIAN_LOCALNET_EXECUTION_MODE="$(LOCALNET_VM_E2E_EXECUTION_MODE)" \
-		XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION="$(LOCALNET_VM_E2E_BYTECODE_VERSION)" \
-		XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE="$(LOCALNET_VM_E2E_GAS_SCHEDULE)" \
-		XIAN_LOCALNET_EXECUTION_AUTHORITY="$(LOCALNET_VM_E2E_AUTHORITY)" \
 		XIAN_LOCALNET_PORT_OFFSET="$(LOCALNET_TPS_BENCH_PORT_OFFSET)" \
 		LOCALNET_NODES="$(LOCALNET_TPS_BENCH_NODES)" \
 		$(MAKE) localnet-init localnet-build localnet-up; \
@@ -956,7 +923,6 @@ localnet-validator-governance:
 		--genesis-network "$(LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK)" \
 		--port-offset $(LOCALNET_VALIDATOR_GOVERNANCE_PORT_OFFSET) \
 		--seed "$(LOCALNET_VALIDATOR_GOVERNANCE_SEED)" \
-		--tracer-mode "$(XIAN_LOCALNET_TRACER_MODE)" \
 		--log-level "$(LOCALNET_VALIDATOR_GOVERNANCE_LOG_LEVEL)" \
 		--rpc-timeout-seconds $(LOCALNET_VALIDATOR_GOVERNANCE_RPC_TIMEOUT_SECONDS)
 

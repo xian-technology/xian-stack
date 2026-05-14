@@ -17,7 +17,6 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from urllib.request import urlopen
-import tomllib
 
 from xian_py.models import TransactionSubmission
 from xian_py.wallet import Wallet
@@ -35,7 +34,6 @@ DEFAULT_DEX_BUNDLE_PATH = (
     / "dex"
     / "contract-bundle.json"
 )
-DEFAULT_XIAN_CONFIG_PATH = STACK_DIR / ".cometbft" / "config" / "xian.toml"
 DEFAULT_VALIDATOR_KEY_PATH = (
     STACK_DIR / ".cometbft" / "config" / "priv_validator_key.json"
 )
@@ -46,7 +44,7 @@ sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
 sys.path.insert(0, str(XIAN_CLI_SRC))
 
 try:
-    from contracting.compilation.artifacts import build_contract_artifacts
+    from contracting.artifacts import build_contract_artifacts
 except ImportError:  # pragma: no cover - only used when xian-contracting is absent.
     build_contract_artifacts = None
 
@@ -91,13 +89,6 @@ def localnet_rpc_url(network: dict[str, Any]) -> str:
     if not isinstance(nodes, list) or not nodes:
         raise DexBootstrapError("localnet metadata has no node entries")
     return f"http://127.0.0.1:{nodes[0]['host_rpc_port']}"
-
-
-def load_xian_config(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    with path.open("rb") as handle:
-        return tomllib.load(handle)
 
 
 def private_key_from_validator_key(path: Path) -> str | None:
@@ -394,34 +385,14 @@ def build_deployment_artifacts_for(module_name: str, source: str) -> dict[str, A
 
 def deployment_artifacts(
     *,
-    execution_mode: str,
     module_name: str,
     source: str,
 ) -> dict[str, Any] | None:
-    if execution_mode != "xian_vm_v1":
-        return None
     return build_deployment_artifacts_for(module_name, source)
 
 
-def execution_mode(
-    network: dict[str, Any] | None,
-    *,
-    xian_config_path: Path,
-) -> str:
-    if network is None:
-        config = load_xian_config(xian_config_path)
-        execution = config.get("execution", {})
-        engine = execution.get("engine", {}) if isinstance(execution, dict) else {}
-        mode = engine.get("mode") if isinstance(engine, dict) else None
-        return str(mode or config.get("tracer_mode") or "python_line_v1")
-
-    execution = network.get("execution", {})
-    mode = execution.get("mode") if isinstance(execution, dict) else None
-    return str(mode or network.get("tracer_mode") or "python_line_v1")
-
-
 def contract_exists(client: Xian, name: str) -> bool:
-    return bool(client.get_contract(name))
+    return bool(client.get_contract_source(name))
 
 
 def wait_for_contract(client: Xian, name: str, *, timeout_seconds: float) -> None:
@@ -440,7 +411,6 @@ def submit_contract_if_missing(
     code: str,
     constructor_args: dict[str, Any] | None,
     chi: int,
-    execution_mode_name: str,
     mode: str,
     receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
@@ -450,13 +420,11 @@ def submit_contract_if_missing(
     print(f"Deploying {name}...")
     submission = client.submit_contract(
         name,
-        code,
-        args=constructor_args,
-        deployment_artifacts=deployment_artifacts(
-            execution_mode=execution_mode_name,
+        deployment_artifacts(
             module_name=name,
             source=code,
         ),
+        args=constructor_args,
         chi=chi,
         mode=mode,
         wait_for_tx=True,
@@ -698,11 +666,6 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     wait_for_rpc_ready(rpc_url, timeout_seconds=args.rpc_timeout_seconds)
 
     source_bundle = load_dex_contract_sources(args)
-    metadata_for_execution = None if args.rpc_url else network
-    execution_mode_name = execution_mode(
-        metadata_for_execution,
-        xian_config_path=args.xian_config_path,
-    )
     deployer_wallet = Wallet(
         private_key=resolve_deployer_private_key(args=args, network=network)
     )
@@ -727,7 +690,6 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                     code=source_info["code"],
                     constructor_args=None,
                     chi=source_info["chi"],
-                    execution_mode_name=execution_mode_name,
                     mode=args.submission_mode,
                     receipt_timeout_seconds=args.receipt_timeout_seconds,
                 )
@@ -747,7 +709,6 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                         "precision": args.demo_token_precision,
                     },
                     chi=source_bundle.get("demo_token_chi", TOKEN_DEPLOY_CHI),
-                    execution_mode_name=execution_mode_name,
                     mode=args.submission_mode,
                     receipt_timeout_seconds=args.receipt_timeout_seconds,
                 )
@@ -764,7 +725,6 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                         "minter_address": "con_pairs",
                     },
                     chi=source_bundle.get("lp_token_chi", LP_TOKEN_DEPLOY_CHI),
-                    execution_mode_name=execution_mode_name,
                     mode=args.submission_mode,
                     receipt_timeout_seconds=args.receipt_timeout_seconds,
                 )
@@ -801,7 +761,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "chain_id": resolved_chain_id,
         "rpc_url": rpc_url,
         "deployer": deployer_wallet.public_key,
-        "execution_mode": execution_mode_name,
+        "execution_mode": "xian_vm_v1",
         "dex_source": source_bundle["kind"],
         "dex_bundle": (
             str(source_bundle["bundle_path"])
@@ -848,11 +808,6 @@ def parse_args() -> argparse.Namespace:
                 DEFAULT_VALIDATOR_KEY_PATH,
             )
         ),
-    )
-    parser.add_argument(
-        "--xian-config-path",
-        type=Path,
-        default=Path(os.environ.get("XIAN_CONFIG_PATH", DEFAULT_XIAN_CONFIG_PATH)),
     )
     parser.add_argument(
         "--dex-bundle",

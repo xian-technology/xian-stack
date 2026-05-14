@@ -24,7 +24,7 @@ from typing import Any
 import aiohttp
 from governance_vote_helpers import cast_votes_until_status, wait_for_status
 from localnet_common import compare_app_hash_window, fetch_json
-from localnet_vm_rollout import collect_localnet_vm_rollout_report
+from localnet_node_report import collect_localnet_node_report
 from shielded_relayer_backend import (
     DEFAULT_SHIELDED_RELAYER_HOST,
     DEFAULT_SHIELDED_RELAYER_PORT,
@@ -51,7 +51,7 @@ INTENTKIT_DIR = Path(
 ).expanduser().resolve()
 INTENTKIT_X402_SMOKE_SCRIPT = SCRIPT_DIR / "intentkit-x402-localnet-smoke.py"
 ORCHESTRATION_TEMPLATE_MODULE = "__ORCH_TEMPLATE__"
-RUST_TRACER_MODE = "native_instruction_v1"
+DEFAULT_EXECUTION_MODE = "xian_vm_v1"
 DEFAULT_LOCALNET_NODES = 5
 DEFAULT_GENESIS_NETWORK = "testnet"
 DEFAULT_TX_CHI = 15_000
@@ -97,7 +97,7 @@ sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
 sys.path.insert(0, str(XIAN_ZK_PYTHON_DIR))
 sys.path.insert(0, str(XIAN_ABCI_SRC))
 
-from contracting.compilation.artifacts import build_contract_artifacts  # noqa: E402
+from contracting.artifacts import build_contract_artifacts  # noqa: E402
 from xian_py.config import RetryPolicy, XianClientConfig  # noqa: E402
 import xian_py.transaction as tr  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
@@ -283,13 +283,6 @@ PY
 def make_localnet_env(args: argparse.Namespace) -> dict[str, str]:
     env = os.environ.copy()
     env.update(load_stack_env())
-    env["XIAN_LOCALNET_TRACER_MODE"] = RUST_TRACER_MODE
-    env["XIAN_LOCALNET_EXECUTION_MODE"] = args.execution_mode
-    env["XIAN_LOCALNET_EXECUTION_BYTECODE_VERSION"] = (
-        args.execution_bytecode_version
-    )
-    env["XIAN_LOCALNET_EXECUTION_GAS_SCHEDULE"] = args.execution_gas_schedule
-    env["XIAN_LOCALNET_EXECUTION_AUTHORITY"] = args.execution_authority
     env["XIAN_LOCALNET_GENESIS_NETWORK"] = args.genesis_network
     env["XIAN_LOCALNET_ENABLE_BDS"] = "1"
     env["XIAN_LOCALNET_BDS_NODE_INDEX"] = str(args.bds_node_index)
@@ -943,7 +936,7 @@ class E2ERunner:
         self.service_node: LocalnetNode | None = None
         self.sample_tx_hash: str | None = None
         self.sample_event_tx_hash: str | None = None
-        self.vm_rollout_report: dict[str, Any] | None = None
+        self.node_report: dict[str, Any] | None = None
 
     @property
     def execution_mode(self) -> str:
@@ -952,7 +945,7 @@ class E2ERunner:
             mode = execution.get("mode")
             if isinstance(mode, str) and mode:
                 return mode
-        return str(self.args.execution_mode or "")
+        return DEFAULT_EXECUTION_MODE
 
     def contract_submission_kwargs(
         self,
@@ -960,10 +953,9 @@ class E2ERunner:
         name: str,
         code: str,
     ) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {"code": code}
-        if self.execution_mode == "xian_vm_v1":
-            kwargs["deployment_artifacts"] = build_deployment_artifacts(name, code)
-        return kwargs
+        return {
+            "deployment_artifacts": build_deployment_artifacts(name, code),
+        }
 
     @functools.lru_cache(maxsize=1)
     def load_test_client_config(self) -> XianClientConfig:
@@ -1603,7 +1595,6 @@ class E2ERunner:
         outputs: dict[str, Any] = {
             "env": {
                 "XIAN_LOCALNET_GENESIS_NETWORK": env["XIAN_LOCALNET_GENESIS_NETWORK"],
-                "XIAN_LOCALNET_TRACER_MODE": env["XIAN_LOCALNET_TRACER_MODE"],
                 "XIAN_LOCALNET_ENABLE_BDS": env["XIAN_LOCALNET_ENABLE_BDS"],
                 "XIAN_LOCALNET_BDS_NODE_INDEX": env["XIAN_LOCALNET_BDS_NODE_INDEX"],
                 "XIAN_LOCALNET_PORT_OFFSET": env["XIAN_LOCALNET_PORT_OFFSET"],
@@ -1658,7 +1649,7 @@ class E2ERunner:
             "chain_id": self.network["chain_id"],
             "genesis_network": self.network.get("genesis_network"),
             "node_count": len(self.nodes),
-            "tracer_mode": self.network["tracer_mode"],
+            "execution": self.network.get("execution", {}),
             "bds": self.network.get("bds", {}),
         }
         (self.output_dir / "network.json").write_text(
@@ -1989,7 +1980,7 @@ class E2ERunner:
                 (mid_name, mid_code),
                 (root_name, root_code),
             ):
-                existing_contract = await client.get_contract(name)
+                existing_contract = await client.get_contract_source(name)
                 if existing_contract is not None:
                     deployments.append(
                         {
@@ -2012,8 +2003,8 @@ class E2ERunner:
                     )
                 )
 
-            alpha_existing = await client.get_contract(alpha_name)
-            beta_existing = await client.get_contract(beta_name)
+            alpha_existing = await client.get_contract_source(alpha_name)
+            beta_existing = await client.get_contract_source(beta_name)
             if alpha_existing is not None and beta_existing is not None:
                 family_receipt = {
                     "accepted": True,
@@ -2039,8 +2030,8 @@ class E2ERunner:
             )
             alpha_construct = await client.call(alpha_name, "get_construct_meta", {})
             beta_construct = await client.call(beta_name, "get_construct_meta", {})
-            alpha_source = await client.get_contract(alpha_name)
-            beta_source = await client.get_contract(beta_name)
+            alpha_source = await client.get_contract_source(alpha_name)
+            beta_source = await client.get_contract_source(beta_name)
             alpha_developer = await client.get_state(alpha_name, "__developer__")
             alpha_deployer = await client.get_state(alpha_name, "__deployer__")
             alpha_initiator = await client.get_state(alpha_name, "__initiator__")
@@ -2080,43 +2071,36 @@ class E2ERunner:
                 },
             )
 
-            if self.execution_mode == "xian_vm_v1":
-                tampered_source = read_text(WORKLOADS_DIR / "e2e" / "patch_target.py")
-                tampered_artifacts = build_deployment_artifacts(
-                    bad_artifact_name,
-                    tampered_source,
+            tampered_source = read_text(WORKLOADS_DIR / "e2e" / "patch_target.py")
+            tampered_artifacts = build_deployment_artifacts(
+                bad_artifact_name,
+                tampered_source,
+            )
+            tampered_ir = json.loads(tampered_artifacts["vm_ir_json"])
+            tampered_ir["module_name"] = f"{bad_artifact_name}_tampered"
+            tampered_artifacts["vm_ir_json"] = json.dumps(
+                tampered_ir,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            tampered_artifacts["hashes"]["vm_ir_sha256"] = hashlib.sha256(
+                tampered_artifacts["vm_ir_json"].encode("utf-8")
+            ).hexdigest()
+            artifact_failure_receipt = ensure_failed_submission(
+                await client.submit_contract(
+                    name=bad_artifact_name,
+                    deployment_artifacts=tampered_artifacts,
+                    chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
+                    wait_for_tx=True,
+                ),
+                label="orchestration-invalid-artifacts",
+            )
+            bad_artifact_source = await client.get_contract_source(bad_artifact_name)
+            bad_artifact_absent = bad_artifact_source is None
+            if not bad_artifact_absent:
+                raise E2EError(
+                    "tampered deployment_artifacts unexpectedly persisted a contract"
                 )
-                tampered_ir = json.loads(tampered_artifacts["vm_ir_json"])
-                tampered_ir["module_name"] = f"{bad_artifact_name}_tampered"
-                tampered_artifacts["vm_ir_json"] = json.dumps(
-                    tampered_ir,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                )
-                tampered_artifacts["hashes"]["vm_ir_sha256"] = hashlib.sha256(
-                    tampered_artifacts["vm_ir_json"].encode("utf-8")
-                ).hexdigest()
-                artifact_failure_receipt = ensure_failed_submission(
-                    await client.submit_contract(
-                        name=bad_artifact_name,
-                        deployment_artifacts=tampered_artifacts,
-                        chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
-                        wait_for_tx=True,
-                    ),
-                    label="orchestration-invalid-artifacts",
-                )
-                bad_artifact_source = await client.get_contract(bad_artifact_name)
-                bad_artifact_absent = bad_artifact_source is None
-                if not bad_artifact_absent:
-                    raise E2EError(
-                        "tampered deployment_artifacts unexpectedly persisted a contract"
-                    )
-            else:
-                artifact_failure_receipt = {
-                    "skipped": True,
-                    "reason": "tampered deployment_artifacts are only enforced in xian_vm_v1",
-                }
-                bad_artifact_absent = True
 
         async with self.client(operator, 2, session) as client:
             touch_submission = await client.send_tx(
@@ -2598,8 +2582,8 @@ class E2ERunner:
                 and failed_receipt["success"] is not False
             ):
                 raise E2EError("factory batch failure probe unexpectedly succeeded")
-            failed_good_source = await client.get_contract_code(failed_good_name)
-            failed_bad_source = await client.get_contract_code(failed_bad_name)
+            failed_good_source = await client.get_contract_source(failed_good_name)
+            failed_bad_source = await client.get_contract_source(failed_bad_name)
             if failed_good_source is not None or failed_bad_source is not None:
                 raise E2EError("failed batch deployment left child contracts behind")
 
@@ -2704,7 +2688,7 @@ class E2ERunner:
         )
 
         async with self.client(facilitator, 0, session) as client:
-            existing_contract = await client.get_contract(contract_name)
+            existing_contract = await client.get_contract_source(contract_name)
             if existing_contract is None:
                 deployment = ensure_positive_submission(
                     await client.submit_contract(
@@ -4731,11 +4715,11 @@ class E2ERunner:
                 raise E2EError(
                     f"expected system zk_registry owner to be governance, got {registry_owner!r}"
                 )
-            token_source = await client.get_contract(token_name)
+            token_source = await client.get_contract_source(token_name)
             token_suffix = 1
             while token_source is not None:
                 token_name = f"{base_token_name}_{token_suffix}"
-                token_source = await client.get_contract(token_name)
+                token_source = await client.get_contract_source(token_name)
                 token_suffix += 1
             if token_source is None:
                 token_submission = await client.submit_contract(
@@ -6138,23 +6122,21 @@ class E2ERunner:
             "parallel_metadata": metadata_matches,
         }
 
-    async def collect_vm_rollout_snapshot(self) -> dict[str, Any]:
+    async def collect_node_report_snapshot(self) -> dict[str, Any]:
         if self.network is None:
-            raise E2EError("vm rollout snapshot requires a loaded network")
+            raise E2EError("node report snapshot requires a loaded network")
         report = await asyncio.to_thread(
-            collect_localnet_vm_rollout_report,
+            collect_localnet_node_report,
             self.network,
             timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
-            max_shadow_mismatches=self.args.vm_max_shadow_mismatches,
         )
         if not report["ok"]:
             raise E2EError(
-                "vm rollout report failed checks: "
+                "node report failed checks: "
                 + json.dumps(
                     {
                         "checks": report["checks"],
                         "errors": report["errors"],
-                        "nodes_with_mismatches": report["nodes_with_mismatches"],
                     },
                     sort_keys=True,
                 )
@@ -6317,10 +6299,6 @@ class E2ERunner:
                     f"app hash mismatch detected during chaos cycle {cycle_index}"
                 )
 
-            vm_rollout = None
-            if self.execution_mode == "xian_vm_v1":
-                vm_rollout = await self.collect_vm_rollout_snapshot()
-
             cycles.append(
                 {
                     "cycle": cycle_index,
@@ -6334,18 +6312,14 @@ class E2ERunner:
                     "expected_failure": expected_failure,
                     "counter_convergence": counter_convergence,
                     "app_hash": app_hash,
-                    "vm_rollout": vm_rollout,
+                    "node_report": await self.collect_node_report_snapshot(),
                 }
             )
 
         return {
             "cycles": cycles,
             "final_heights": await latest_heights(session, self.nodes),
-            "final_vm_rollout": (
-                await self.collect_vm_rollout_snapshot()
-                if self.execution_mode == "xian_vm_v1"
-                else None
-            ),
+            "final_node_report": await self.collect_node_report_snapshot(),
         }
 
     async def soak_abuse_phase(
@@ -6505,11 +6479,7 @@ class E2ERunner:
                         "heights": await latest_heights(session, self.nodes),
                         "counter_convergence": convergence,
                         "app_hash": app_hash,
-                        "vm_rollout": (
-                            await self.collect_vm_rollout_snapshot()
-                            if self.execution_mode == "xian_vm_v1"
-                            else None
-                        ),
+                        "node_report": await self.collect_node_report_snapshot(),
                     }
                 )
                 next_progress += progress_interval
@@ -6538,11 +6508,7 @@ class E2ERunner:
             "final_heights": await latest_heights(session, self.nodes),
             "final_counter_convergence": final_counter,
             "final_app_hash": final_app_hash,
-            "final_vm_rollout": (
-                await self.collect_vm_rollout_snapshot()
-                if self.execution_mode == "xian_vm_v1"
-                else None
-            ),
+            "final_node_report": await self.collect_node_report_snapshot(),
         }
 
     async def finalize_summary(self) -> dict[str, Any]:
@@ -6562,8 +6528,8 @@ class E2ERunner:
                 for phase in self.phase_results
             ],
         }
-        if self.vm_rollout_report is not None:
-            summary["vm_rollout"] = self.vm_rollout_report
+        if self.node_report is not None:
+            summary["node_report"] = self.node_report
         return summary
 
     async def run(self) -> int:
@@ -6618,10 +6584,10 @@ class E2ERunner:
             for phase_name, fn in phase_sequence[start_index:]:
                 await self.run_phase(phase_name, fn)
 
-        if self.execution_mode == "xian_vm_v1" and self.network is not None:
-            self.vm_rollout_report = await self.collect_vm_rollout_snapshot()
-            (self.output_dir / "vm_rollout.json").write_text(
-                json.dumps(self.vm_rollout_report, indent=2, sort_keys=True)
+        if self.network is not None:
+            self.node_report = await self.collect_node_report_snapshot()
+            (self.output_dir / "node_report.json").write_text(
+                json.dumps(self.node_report, indent=2, sort_keys=True)
                 + "\n",
                 encoding="utf-8",
             )
@@ -6648,17 +6614,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port-offset", type=int, default=1000)
     parser.add_argument("--seed", default="xian-localnet-testnet-e2e-v1")
     parser.add_argument("--log-level", default="INFO")
-    parser.add_argument("--execution-mode", default="")
-    parser.add_argument("--execution-bytecode-version", default="")
-    parser.add_argument("--execution-gas-schedule", default="")
-    parser.add_argument("--execution-authority", default="")
     parser.add_argument(
         "--intentkit-x402",
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Run the optional IntentKit-backed Xian x402 payment phase.",
     )
-    parser.add_argument("--vm-max-shadow-mismatches", type=int, default=0)
     parser.add_argument("--rpc-timeout-seconds", type=float, default=180.0)
     parser.add_argument("--state-sample-nodes", type=int, default=DEFAULT_LOCALNET_NODES)
     parser.add_argument("--app-hash-window", type=int, default=DEFAULT_LOCALNET_NODES)

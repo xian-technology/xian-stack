@@ -16,7 +16,7 @@ tooling behind `xian-stack`.
   the native-VM and governance localnet safety paths
 - `smoke-stack.sh` and `smoke-cli.sh`: repo-level smoke entrypoints
 - `localnet-init.py`: multi-node localnet creation, including local-only
-  validator keys, preset-backed genesis selection, native tracer selection, and
+  validator keys, preset-backed genesis selection, fixed VM execution, and
   optional BDS wiring
 - `localnet-dex-bootstrap.py`: opt-in canonical DEX deployment for a running
   local node or generated localnet; it deploys `con_pairs`, `con_dex`, optional
@@ -31,13 +31,13 @@ tooling behind `xian-stack`.
   coverage, timed soak/abuse coverage, an opt-in IntentKit Xian-native x402
   buyer phase via `--intentkit-x402`, and writes artifacts under
   `.artifacts/localnet-e2e/<run-id>/`
-- `localnet_vm_rollout.py`: collects execution-mode, shadow comparison, and
-  mismatch counters from a running localnet and emits a rollout report as JSON;
+- `localnet_node_report.py`: collects fixed VM capability status from a running
+  localnet and emits a node report as JSON;
   it reads the Xian app metrics exporter, not the CometBFT metrics endpoint
-- `make localnet-vm-e2e`: wrapper around `localnet-e2e.py` that boots the same
-  5-validator integrated stack with `xian_vm_v1` in native-authority mode; it
-  also enforces the VM rollout mismatch
-  budget through the generated `vm_rollout.json` artifact
+- `make localnet-parallel-e2e`: wrapper around `localnet-e2e.py` that boots the same
+  5-validator integrated stack with lower parallel-execution batching; it also
+  enforces the node report through the generated `node_report.json`
+  artifact
 - `localnet-validator-governance.py`: focused validator/delegation/governance
   exercise against a real 5-validator testnet-shaped localnet, including real
   duplicate-vote evidence injection, governance state-patch activation, and
@@ -72,16 +72,14 @@ tooling behind `xian-stack`.
 - The validator/governance runner should be executed through `uv` with the
   `xian-abci` project and local `xian-py` package available, preferably through
   `make localnet-validator-governance`.
-- `make localnet-vm-report` is the quick operator/debugging path for checking
-  whether all localnet nodes agree on VM rollout settings and whether any
-  native/shadow mismatches have been observed.
+- `make localnet-node-report` is the quick operator/debugging path for
+  checking whether all localnet nodes report the fixed Xian VM capability.
 - `make localnet-vm-tps-bench` is the benchmark wrapper for a tuned 5-node
   native-VM localnet. Prefer `committed_workload_tps` over client-side
   `workload_tps` when reporting chain throughput.
 - `./scripts/release-safety.sh` and `make release-safety` are the release-grade
-  stack entrypoints. They validate sibling repos, run the native-authority
-  localnet e2e harness, enforce the VM rollout mismatch budget, and run the
-  validator/governance localnet.
+  stack entrypoints. They validate sibling repos, run the localnet e2e harness,
+  enforce the node report, and run the validator/governance localnet.
 
 ```mermaid
 flowchart LR
@@ -90,7 +88,7 @@ flowchart LR
   Localnet --> Workloads["localnet-workload"]
   Localnet --> E2E["localnet-e2e"]
   Localnet --> Governance["validator-governance"]
-  E2E --> VMReport["VM rollout report"]
+  E2E --> RuntimeReport["Node report"]
   Governance --> ReleaseSafety["release-safety"]
-  VMReport --> ReleaseSafety
+  RuntimeReport --> ReleaseSafety
 ```

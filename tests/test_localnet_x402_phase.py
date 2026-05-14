@@ -9,7 +9,6 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 
-
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "localnet-e2e.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
 SPEC = importlib.util.spec_from_file_location("localnet_e2e", MODULE_PATH)

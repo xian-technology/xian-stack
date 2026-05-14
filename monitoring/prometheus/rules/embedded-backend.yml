@@ -73,12 +73,3 @@ groups:
         annotations:
           summary: FinalizeBlock average latency is elevated
           description: Average FinalizeBlock latency has stayed above 1000 ms for ten minutes.
-      - alert: XianVmShadowMismatchDetected
-        expr: sum(xian_vm_shadow_metric{field="mismatches_total"}) > 0
-        for: 1m
-        labels:
-          severity: critical
-          preset: embedded_backend
-        annotations:
-          summary: Xian VM native/shadow mismatch detected
-          description: One or more native-vs-shadow mismatches have been recorded and remained present for at least one minute.

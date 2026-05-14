@@ -140,7 +140,7 @@ def main() -> None:
 
     summary = {
         "perf_root": str(perf_root),
-        "tracer_mode": first_payload.get("tracer_mode"),
+        "execution_mode": first_payload.get("execution_mode"),
         "chain_id": first_payload.get("chain_id"),
         "nodes": {
             node_name: {

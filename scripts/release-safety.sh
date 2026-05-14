@@ -78,10 +78,10 @@ if [[ "${repo_validation}" == "1" ]]; then
   run_step "Validate xian-stack repo" ./scripts/validate-stack.sh
 fi
 
-run_step "Run localnet VM-native e2e" make localnet-vm-e2e
+run_step "Run localnet parallel e2e" make localnet-parallel-e2e
 
 if [[ "${vm_report}" == "1" ]]; then
-  run_step "Collect localnet VM rollout report" make localnet-vm-report
+  run_step "Collect localnet node report" make localnet-node-report
 fi
 
 if [[ "${validator_governance}" == "1" ]]; then

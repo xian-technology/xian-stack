@@ -9,9 +9,9 @@ tag pushes, and `xian-stack` publishes GHCR images from an explicit manifest.
 Recommended release order:
 
 1. `xian-contracting` shared packages:
+   - `compiler-core-vX.Y.Z`
    - `accounts-vX.Y.Z`
    - `runtime-types-vX.Y.Z`
-   - `native-tracer-vX.Y.Z`
    - `zk-vX.Y.Z`
 2. `xian-contracting`:
    - `contracting-vX.Y.Z`
@@ -75,15 +75,15 @@ Each Python release workflow:
 
 Trusted Publishing setup still has to be completed once in PyPI for each project. The workflows expect these GitHub environments:
 
-- `xian-contracting`: `pypi-xian-contracting`
-- `xian-accounts`: `pypi-xian-accounts`
-- `xian-runtime-types`: `pypi-xian-runtime-types`
-- `xian-native-tracer`: `pypi-xian-native-tracer`
-- `xian-zk`: `pypi-xian-zk`
-- `xian-abci`: `pypi`
-- `xian-cli`: `pypi`
-- `xian-py`: `pypi`
-- `xian-linter`: `pypi`
+- `xian-tech-contracting`: `pypi-xian-contracting`
+- `xian-tech-accounts`: `pypi-xian-accounts`
+- `xian-tech-runtime-types`: `pypi-xian-runtime-types`
+- `xian-tech-compiler-core`: `pypi-xian-compiler-core`
+- `xian-tech-zk`: `pypi-xian-zk`
+- `xian-tech-abci`: `pypi`
+- `xian-tech-cli`: `pypi`
+- `xian-tech-py`: `pypi`
+- `xian-tech-linter`: `pypi`
 - `xian-intentkit`: `pypi`
 
 ### PyPI Trusted Publisher Setup
@@ -103,15 +103,15 @@ Current publisher matrix:
 
 | PyPI project | GitHub owner | GitHub repo | Workflow filename | Environment |
 | --- | --- | --- | --- | --- |
-| `xian-accounts` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-accounts` |
-| `xian-contracting` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-contracting` |
-| `xian-runtime-types` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-runtime-types` |
-| `xian-native-tracer` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-native-tracer` |
+| `xian-tech-accounts` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-accounts` |
+| `xian-tech-contracting` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-contracting` |
+| `xian-tech-runtime-types` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-runtime-types` |
+| `xian-tech-compiler-core` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-compiler-core` |
 | `xian-tech-zk` | `xian-technology` | `xian-contracting` | `release.yml` | `pypi-xian-zk` |
-| `xian-abci` | `xian-technology` | `xian-abci` | `release.yml` | `pypi` |
-| `xian-cli` | `xian-technology` | `xian-cli` | `release.yml` | `pypi` |
-| `xian-py` | `xian-technology` | `xian-py` | `release.yml` | `pypi` |
-| `xian-linter` | `xian-technology` | `xian-linter` | `release.yml` | `pypi` |
+| `xian-tech-abci` | `xian-technology` | `xian-abci` | `release.yml` | `pypi` |
+| `xian-tech-cli` | `xian-technology` | `xian-cli` | `release.yml` | `pypi` |
+| `xian-tech-py` | `xian-technology` | `xian-py` | `release.yml` | `pypi` |
+| `xian-tech-linter` | `xian-technology` | `xian-linter` | `release.yml` | `pypi` |
 | `xian-tech-intentkit` | `xian-technology` | `xian-intentkit` | `release.yml` | `pypi` |
 
 Notes:
@@ -168,8 +168,8 @@ The image workflow:
    - `xian-contracting/scripts/validate-release.sh`
    - `xian-abci/scripts/validate-release.sh`
    - `xian-stack/scripts/validate-stack.sh`
-   - `make localnet-vm-e2e`
-   - `make localnet-vm-report`
+   - `make localnet-parallel-e2e`
+   - `make localnet-node-report`
    - `make localnet-validator-governance`
 3. checks out the exact pinned component refs
 4. builds and publishes:

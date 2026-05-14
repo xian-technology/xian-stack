@@ -101,15 +101,6 @@ UNITS = {
             stack_component="xian-contracting",
         ),
         ReleaseUnit(
-            key="xian-native-tracer",
-            repo="xian-contracting",
-            display_name="xian-tech-native-tracer",
-            tag_glob="native-tracer-v*",
-            tag_prefix="native-tracer-v",
-            include_prefixes=("packages/xian-native-tracer/",),
-            stack_component="xian-contracting",
-        ),
-        ReleaseUnit(
             key="xian-zk",
             repo="xian-contracting",
             display_name="xian-tech-zk",
@@ -193,7 +184,6 @@ UNITS = {
 RELEASE_ORDER = (
     "xian-accounts",
     "xian-runtime-types",
-    "xian-native-tracer",
     "xian-zk",
     "xian-contracting",
     "xian-py",
@@ -487,11 +477,10 @@ def read_source_version(unit: ReleaseUnit) -> str | None:
         )
     if unit.key == "xian-stack":
         return None
-    if unit.key in {"xian-accounts", "xian-runtime-types", "xian-native-tracer", "xian-zk"}:
+    if unit.key in {"xian-accounts", "xian-runtime-types", "xian-zk"}:
         package_dir = {
             "xian-accounts": "packages/xian-accounts",
             "xian-runtime-types": "packages/xian-runtime-types",
-            "xian-native-tracer": "packages/xian-native-tracer",
             "xian-zk": "packages/xian-zk",
         }[unit.key]
         return read_pyproject_version(repo_path / package_dir / "pyproject.toml")
@@ -641,7 +630,6 @@ def build_stack_manifest_updates(plans_by_key: dict[str, ReleasePlan]) -> dict[s
             contracting_units = {
                 "xian-accounts",
                 "xian-runtime-types",
-                "xian-native-tracer",
                 "xian-zk",
                 "xian-contracting",
             }
@@ -864,11 +852,10 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
         if updated != read_text(manifest_path):
             write_text(manifest_path, updated)
             changed_paths.add(manifest_path)
-    elif plan.unit.key in {"xian-accounts", "xian-runtime-types", "xian-native-tracer", "xian-zk"}:
+    elif plan.unit.key in {"xian-accounts", "xian-runtime-types", "xian-zk"}:
         package_dir = {
             "xian-accounts": "packages/xian-accounts",
             "xian-runtime-types": "packages/xian-runtime-types",
-            "xian-native-tracer": "packages/xian-native-tracer",
             "xian-zk": "packages/xian-zk",
         }[plan.unit.key]
         target_path = repo_path / package_dir / "pyproject.toml"
@@ -883,7 +870,6 @@ def commit_message(plan: ReleasePlan) -> str:
     subject = {
         "xian-accounts": "accounts",
         "xian-runtime-types": "runtime-types",
-        "xian-native-tracer": "native-tracer",
         "xian-zk": "zk",
         "xian-contracting": "contracting",
         "xian-py": "xian-py",

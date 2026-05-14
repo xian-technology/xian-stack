@@ -73,12 +73,3 @@ groups:
         annotations:
           summary: BDS catch-up appears stalled
           description: BDS is still reporting catch-up activity, but indexed height has not advanced over the last fifteen minutes.
-      - alert: XianVmShadowMismatchDetected
-        expr: sum(xian_vm_shadow_metric{field="mismatches_total"}) > 0
-        for: 1m
-        labels:
-          severity: critical
-          preset: shared_network
-        annotations:
-          summary: Xian VM native/shadow mismatch detected
-          description: One or more native-vs-shadow mismatches have been recorded and remained present for at least one minute.
