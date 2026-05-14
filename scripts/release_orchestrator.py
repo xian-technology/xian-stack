@@ -472,6 +472,9 @@ def read_source_version(unit: ReleaseUnit) -> str | None:
             "xian-js",
             {
                 "package.json": read_json(repo_path / "package.json")["version"],
+                "examples/browser-dapp/package.json": read_json(repo_path / "examples/browser-dapp/package.json")[
+                    "version"
+                ],
                 "packages/client/package.json": read_json(repo_path / "packages/client/package.json")["version"],
                 "packages/provider/package.json": read_json(repo_path / "packages/provider/package.json")["version"],
                 "packages/types/package.json": read_json(repo_path / "packages/types/package.json")["version"],
@@ -784,6 +787,11 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
         record_change(changed_paths, repo_path / "package.json", set_json_version(repo_path / "package.json", version))
         record_change(
             changed_paths,
+            repo_path / "examples/browser-dapp/package.json",
+            set_json_version(repo_path / "examples/browser-dapp/package.json", version),
+        )
+        record_change(
+            changed_paths,
             repo_path / "packages/client/package.json",
             set_json_version(repo_path / "packages/client/package.json", version),
         )
@@ -796,6 +804,17 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
             changed_paths,
             repo_path / "packages/types/package.json",
             set_json_version(repo_path / "packages/types/package.json", version),
+        )
+        record_change(
+            changed_paths,
+            repo_path / "examples/browser-dapp/package.json",
+            update_json_dependencies(
+                repo_path / "examples/browser-dapp/package.json",
+                {
+                    "@xian-tech/client": version,
+                    "@xian-tech/provider": version,
+                },
+            ),
         )
         record_change(
             changed_paths,
@@ -820,11 +839,16 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
                 repo_path / "package-lock.json",
                 root_version=version,
                 package_versions={
+                    "examples/browser-dapp": version,
                     "packages/client": version,
                     "packages/provider": version,
                     "packages/types": version,
                 },
                 dependency_updates={
+                    "examples/browser-dapp": {
+                        "@xian-tech/client": version,
+                        "@xian-tech/provider": version,
+                    },
                     "packages/client": {"@xian-tech/types": version},
                     "packages/provider": {"@xian-tech/types": version},
                 },
