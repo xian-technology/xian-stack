@@ -19,7 +19,7 @@
     },
     "xian-stable-protocol": {
       "repository": "xian-technology/xian-stable-protocol",
-      "ref": "3f0c861f02f0f672885efc9edc6a806c835e9145"
+      "ref": "3f0c86124621133a7b02234fd8079fd68af15142"
     }
   },
   "build": {
