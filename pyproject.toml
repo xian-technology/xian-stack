@@ -1,0 +1,26 @@
+[project]
+name = "xian-stack"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = [
+    "aiohttp>=3.13,<4",
+    "pytest>=9,<10",
+    "xian-tech-abci[vm]>=0.8.13,<0.9",
+    "xian-tech-contracting[zk]>=1.0.8,<2",
+    "xian-tech-py>=0.4.18,<0.5",
+]
+
+[tool.uv.sources]
+xian-tech-abci = { path = "../xian-abci", editable = true }
+xian-tech-accounts = { path = "../xian-contracting/packages/xian-accounts", editable = true }
+xian-tech-compiler-core = { path = "../xian-contracting/packages/xian-compiler-core", editable = true }
+xian-tech-contracting = { path = "../xian-contracting", editable = true }
+xian-tech-runtime-types = { path = "../xian-contracting/packages/xian-runtime-types", editable = true }
+xian-tech-vm-core = { path = "../xian-contracting/packages/xian-vm-core", editable = true }
+xian-tech-zk = { path = "../xian-contracting/packages/xian-zk", editable = true }
+xian-tech-py = { path = "../xian-py", editable = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.12,<0.16",
+]

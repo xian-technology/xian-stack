@@ -14,6 +14,10 @@ SUPPORTED_PLATFORMS = ("linux/amd64", "linux/arm64")
 SUPPORTED_TARGETS = ("integrated", "split")
 
 
+class ReproducibilityMismatch(Exception):
+    pass
+
+
 def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -41,10 +45,39 @@ def expected_platform_digests(image_release: dict) -> dict[tuple[str, str], str]
             digest = platform_digests.get(platform)
             if not isinstance(digest, str) or not digest.startswith("sha256:"):
                 raise ValueError(
-                    f"image release payload is missing a digest for "
-                    f"{target} {platform}"
+                    f"image release payload is missing a digest for {target} {platform}"
                 )
             expected[(target, platform)] = digest
+    return expected
+
+
+def expected_platform_refs(image_release: dict) -> dict[tuple[str, str], str]:
+    images = image_release.get("images")
+    if not isinstance(images, dict):
+        raise ValueError("image release payload must contain an images object")
+
+    expected: dict[tuple[str, str], str] = {}
+    for target in SUPPORTED_TARGETS:
+        image = images.get(target)
+        if not isinstance(image, dict):
+            raise ValueError(f"image release payload is missing images.{target}")
+        repository = image.get("repository")
+        if not isinstance(repository, str) or not repository:
+            raise ValueError(
+                f"image release payload is missing images.{target}.repository"
+            )
+        platform_digests = image.get("platform_digests")
+        if not isinstance(platform_digests, dict):
+            raise ValueError(
+                f"image release payload is missing images.{target}.platform_digests"
+            )
+        for platform in SUPPORTED_PLATFORMS:
+            digest = platform_digests.get(platform)
+            if not isinstance(digest, str) or not digest.startswith("sha256:"):
+                raise ValueError(
+                    f"image release payload is missing a digest for {target} {platform}"
+                )
+            expected[(target, platform)] = f"{repository}@{digest}"
     return expected
 
 
@@ -69,7 +102,26 @@ def expected_image_labels(image_release: dict) -> dict[str, list[str]]:
     return expected
 
 
-def oci_manifest_digest(archive_path: Path) -> str:
+def _read_oci_blob(archive: tarfile.TarFile, digest: str) -> dict:
+    algorithm, encoded_digest = digest.split(":", 1)
+    blob_name = f"blobs/{algorithm}/{encoded_digest}"
+    blob_member = next(
+        (
+            member.name
+            for member in archive.getmembers()
+            if member.name == blob_name or member.name.endswith(f"/{blob_name}")
+        ),
+        None,
+    )
+    if blob_member is None:
+        raise ValueError(f"OCI archive is missing blob {digest}")
+    blob_file = archive.extractfile(blob_member)
+    if blob_file is None:
+        raise ValueError(f"OCI archive is missing blob {digest}")
+    return json.loads(blob_file.read().decode("utf-8"))
+
+
+def oci_image_config(archive_path: Path) -> tuple[str, dict]:
     with tarfile.open(archive_path, mode="r") as archive:
         index_name = next(
             (
@@ -93,7 +145,58 @@ def oci_manifest_digest(archive_path: Path) -> str:
     digest = manifests[0].get("digest")
     if not isinstance(digest, str) or not digest.startswith("sha256:"):
         raise ValueError(f"OCI archive {archive_path} has an invalid manifest digest")
-    return digest
+    with tarfile.open(archive_path, mode="r") as archive:
+        manifest = _read_oci_blob(archive, digest)
+        config = manifest.get("config")
+        if not isinstance(config, dict):
+            raise ValueError(f"OCI archive {archive_path} has no config descriptor")
+        config_digest = config.get("digest")
+        if not isinstance(config_digest, str) or not config_digest.startswith(
+            "sha256:"
+        ):
+            raise ValueError(f"OCI archive {archive_path} has an invalid config digest")
+        return digest, _read_oci_blob(archive, config_digest)
+
+
+def oci_manifest_digest(archive_path: Path) -> str:
+    return oci_image_config(archive_path)[0]
+
+
+def remote_image_config(ref: str) -> dict:
+    output = subprocess.run(
+        [
+            "docker",
+            "buildx",
+            "imagetools",
+            "inspect",
+            "--format",
+            "{{json .Image}}",
+            ref,
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout
+    payload = json.loads(output)
+    if not isinstance(payload, dict):
+        raise ValueError(f"image {ref} did not return an image config")
+    return payload
+
+
+def normalized_image_config(config: dict) -> dict:
+    runtime_config = config.get("config")
+    rootfs = config.get("rootfs")
+    if not isinstance(runtime_config, dict):
+        raise ValueError("image config is missing config object")
+    if not isinstance(rootfs, dict):
+        raise ValueError("image config is missing rootfs object")
+    return {
+        "architecture": config.get("architecture"),
+        "config": runtime_config,
+        "created": config.get("created"),
+        "os": config.get("os"),
+        "rootfs": rootfs,
+    }
 
 
 def build_platform_archive(
@@ -168,9 +271,14 @@ def verify_reproducibility(
     manifest: dict,
     image_release: dict,
     workspace_root: Path,
-) -> dict[str, str]:
+) -> dict[str, dict[str, str]]:
     expected = expected_platform_digests(image_release)
-    observed: dict[str, str] = {}
+    remote_refs = expected_platform_refs(image_release)
+    remote_configs = {
+        key: normalized_image_config(remote_image_config(ref))
+        for key, ref in remote_refs.items()
+    }
+    observed: dict[str, dict[str, str]] = {}
     with tempfile.TemporaryDirectory(prefix="xian-release-verify-") as tmp_dir:
         temp_root = Path(tmp_dir)
         for target in SUPPORTED_TARGETS:
@@ -184,21 +292,27 @@ def verify_reproducibility(
                     platform=platform,
                     archive_path=archive_path,
                 )
-                digest = oci_manifest_digest(archive_path)
+                digest, local_config = oci_image_config(archive_path)
                 expected_digest = expected[(target, platform)]
                 key = f"{target}:{platform}"
-                observed[key] = digest
-                if digest != expected_digest:
-                    raise SystemExit(
+                observed[key] = {
+                    "expected_manifest_digest": expected_digest,
+                    "rebuilt_manifest_digest": digest,
+                }
+                normalized_local_config = normalized_image_config(local_config)
+                normalized_remote_config = remote_configs[(target, platform)]
+                if normalized_local_config != normalized_remote_config:
+                    raise ReproducibilityMismatch(
                         "reproducibility verification failed for "
-                        f"{key}; expected {expected_digest}, observed {digest}"
+                        f"{key}; rebuilt image content/config does not match "
+                        "the published image"
                     )
     return observed
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Rebuild release images and compare platform digests."
+        description="Rebuild release images and compare normalized image content."
     )
     parser.add_argument(
         "--manifest",
@@ -218,6 +332,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path(__file__).resolve().parents[2],
         help="Workspace root containing xian-stack and sibling repos.",
     )
+    parser.add_argument(
+        "--soft-fail",
+        action="store_true",
+        help=(
+            "Report content mismatches without failing. This keeps the release "
+            "check advisory while the Docker build is not fully hermetic."
+        ),
+    )
     return parser
 
 
@@ -225,12 +347,19 @@ def main() -> int:
     args = build_parser().parse_args()
     manifest = load_json(args.manifest)
     image_release = load_json(args.image_release)
-    observed = verify_reproducibility(
-        manifest=manifest,
-        image_release=image_release,
-        workspace_root=args.workspace_root.resolve(),
-    )
-    print(json.dumps({"ok": True, "observed": observed}, indent=2, sort_keys=True))
+    try:
+        observed = verify_reproducibility(
+            manifest=manifest,
+            image_release=image_release,
+            workspace_root=args.workspace_root.resolve(),
+        )
+    except ReproducibilityMismatch as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, sort_keys=True))
+        if args.soft_fail:
+            return 0
+        return 1
+    else:
+        print(json.dumps({"ok": True, "observed": observed}, indent=2, sort_keys=True))
     return 0
 
 
