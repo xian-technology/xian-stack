@@ -3,7 +3,7 @@
   "components": {
     "xian-abci": {
       "repository": "xian-technology/xian-abci",
-      "ref": "3e7348249846986d1f4a59dde7728624b354f252"
+      "ref": "85187ea216b48d7e4d76501a7a88821fa5b17438"
     },
     "xian-configs": {
       "repository": "xian-technology/xian-configs",
