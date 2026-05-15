@@ -635,6 +635,81 @@ def recent_blocks_in_window(
     return blocks
 
 
+def metadata_int(metadata: dict[str, Any], key: str) -> int:
+    try:
+        return int(metadata.get(key, 0) or 0)
+    except TypeError, ValueError:
+        return 0
+
+
+def parallel_metadata_has_known_speculation(metadata: dict[str, Any]) -> bool:
+    return (
+        bool(metadata.get("parallel_enabled"))
+        and metadata_int(metadata, "parallel_estimated_known_transactions") > 0
+        and metadata_int(metadata, "parallel_estimated_unknown_transactions") == 0
+        and metadata_int(metadata, "parallel_estimated_parallelizable_transactions") > 0
+        and metadata_int(metadata, "parallel_planned_parallelizable_transactions") > 0
+        and metadata_int(metadata, "parallel_speculative_wave_count") > 0
+        and metadata_int(metadata, "parallel_speculative_accepted") > 0
+    )
+
+
+def parallel_metadata_has_unknown_prefilter(metadata: dict[str, Any]) -> bool:
+    return (
+        bool(metadata.get("parallel_enabled"))
+        and metadata_int(metadata, "parallel_estimated_unknown_transactions") > 0
+        and metadata_int(metadata, "parallel_serial_prefiltered") > 0
+        and metadata_int(metadata, "parallel_speculative_wave_count") == 0
+        and metadata_int(metadata, "parallel_speculative_accepted") == 0
+    )
+
+
+def parallel_metadata_has_legacy_speculation(metadata: dict[str, Any]) -> bool:
+    return (
+        bool(metadata.get("parallel_enabled"))
+        and metadata_int(metadata, "parallel_speculative_accepted") > 0
+        and metadata_int(metadata, "parallel_planned_parallelizable_transactions") > 0
+    )
+
+
+def parallel_custom_probe_batch_expectations(
+    *,
+    access_estimates_enabled: bool,
+) -> list[tuple[str, Any]]:
+    if access_estimates_enabled:
+        return [
+            ("non_conflicting", parallel_metadata_has_unknown_prefilter),
+            ("same_sender", parallel_metadata_has_unknown_prefilter),
+            ("read_after_write", parallel_metadata_has_unknown_prefilter),
+            ("prefix_scan", parallel_metadata_has_unknown_prefilter),
+        ]
+
+    return [
+        ("non_conflicting", parallel_metadata_has_legacy_speculation),
+        (
+            "same_sender",
+            lambda metadata: (
+                bool(metadata.get("parallel_enabled"))
+                and metadata_int(metadata, "parallel_serial_prefiltered") > 0
+            ),
+        ),
+        (
+            "read_after_write",
+            lambda metadata: (
+                bool(metadata.get("parallel_enabled"))
+                and metadata_int(metadata, "parallel_speculative_wave_count") > 1
+            ),
+        ),
+        (
+            "prefix_scan",
+            lambda metadata: (
+                bool(metadata.get("parallel_enabled"))
+                and metadata_int(metadata, "parallel_speculative_wave_count") > 1
+            ),
+        ),
+    ]
+
+
 async def wait_for_uniform_node_state(
     session: aiohttp.ClientSession,
     nodes: list[LocalnetNode],
@@ -3092,6 +3167,10 @@ class E2ERunner:
         seed_label: str | None = None,
         counter_ops: int | None = None,
         dex_rounds: int | None = None,
+        throughput_ops: int | None = None,
+        wallet_count: int | None = None,
+        submit_workers: int | None = None,
+        broadcast_mode: str | None = None,
     ) -> dict[str, Any]:
         workload_seed = self.seed if seed_label is None else f"{self.seed}:{seed_label}"
         cmd = [
@@ -3121,6 +3200,14 @@ class E2ERunner:
             cmd.extend(["--counter-ops", str(counter_ops)])
         if dex_rounds is not None:
             cmd.extend(["--dex-rounds", str(dex_rounds)])
+        if throughput_ops is not None:
+            cmd.extend(["--throughput-ops", str(throughput_ops)])
+        if wallet_count is not None:
+            cmd.extend(["--wallet-count", str(wallet_count)])
+        if submit_workers is not None:
+            cmd.extend(["--submit-workers", str(submit_workers)])
+        if broadcast_mode is not None:
+            cmd.extend(["--broadcast-mode", broadcast_mode])
 
         result = run_cmd(cmd, cwd=STACK_DIR)
         payload = None
@@ -5986,17 +6073,17 @@ class E2ERunner:
         self,
         session: aiohttp.ClientSession,
     ) -> dict[str, Any]:
-        payload = await self.run_localnet_workload(
+        custom_payload = await self.run_localnet_workload(
             scenario="parallel_probe",
             seed_label=f"{self.run_id}:parallel",
         )
-        scenario_summary = payload["scenario_summary"]
+        custom_summary = custom_payload["scenario_summary"]
         parallel_config = normalize_value(self.network.get("parallel_execution", {}))
         expected_enabled = bool(parallel_config.get("enabled"))
         expected_workers = int(parallel_config.get("workers", 0) or 0)
         expected_min_transactions = int(parallel_config.get("min_transactions", 8) or 8)
         effective_parallel_enabled = expected_enabled and expected_workers > 0
-        overall_window = scenario_summary.get("overall_height_window", {})
+        overall_window = custom_summary.get("overall_height_window", {})
         max_height = overall_window.get("max_height")
         if max_height is not None:
             await asyncio.gather(
@@ -6016,8 +6103,39 @@ class E2ERunner:
 
         perf_statuses = await perf_status_from_all_nodes(session, self.nodes)
         perf_config = {}
+        observed_access_estimates_enabled: set[bool] = set()
+        expected_perf_config: dict[str, Any] = {
+            "parallel_execution_enabled": expected_enabled,
+            "parallel_execution_workers": expected_workers,
+            "parallel_execution_min_transactions": expected_min_transactions,
+        }
+        optional_expected_fields = {
+            "max_speculative_waves": (
+                "parallel_execution_max_speculative_waves",
+                int,
+            ),
+            "min_wave_acceptance_ratio": (
+                "parallel_execution_min_wave_acceptance_ratio",
+                float,
+            ),
+            "low_acceptance_min_wave_size": (
+                "parallel_execution_low_acceptance_min_wave_size",
+                int,
+            ),
+            "access_estimates_enabled": (
+                "parallel_execution_access_estimates_enabled",
+                bool,
+            ),
+        }
+        for config_key, (perf_key, coerce) in optional_expected_fields.items():
+            if config_key in parallel_config:
+                expected_perf_config[perf_key] = coerce(parallel_config[config_key])
+
         for node in self.nodes:
             status = perf_statuses[node.moniker]
+            access_estimates_enabled = status.get(
+                "parallel_execution_access_estimates_enabled"
+            )
             node_config = {
                 "parallel_execution_enabled": bool(
                     status.get("parallel_execution_enabled")
@@ -6028,18 +6146,51 @@ class E2ERunner:
                 "parallel_execution_min_transactions": int(
                     status.get("parallel_execution_min_transactions", 0) or 0
                 ),
+                "parallel_execution_max_speculative_waves": int(
+                    status.get("parallel_execution_max_speculative_waves", 0) or 0
+                ),
+                "parallel_execution_min_wave_acceptance_ratio": float(
+                    status.get("parallel_execution_min_wave_acceptance_ratio", 0.0)
+                    or 0.0
+                ),
+                "parallel_execution_low_acceptance_min_wave_size": int(
+                    status.get("parallel_execution_low_acceptance_min_wave_size", 0)
+                    or 0
+                ),
+                "parallel_execution_access_estimates_enabled": (
+                    None
+                    if access_estimates_enabled is None
+                    else bool(access_estimates_enabled)
+                ),
             }
             perf_config[node.moniker] = node_config
-            if (
-                node_config["parallel_execution_enabled"] != expected_enabled
-                or node_config["parallel_execution_workers"] != expected_workers
-                or node_config["parallel_execution_min_transactions"]
-                != expected_min_transactions
-            ):
-                raise E2EError(
-                    "parallel execution config drift detected on "
-                    f"{node.moniker}: {node_config} != {parallel_config}"
+            if access_estimates_enabled is not None:
+                observed_access_estimates_enabled.add(bool(access_estimates_enabled))
+            for perf_key, expected in expected_perf_config.items():
+                actual = node_config.get(perf_key)
+                if actual is None:
+                    continue
+                drifted = (
+                    abs(actual - expected) > 0.000001
+                    if isinstance(expected, float)
+                    else actual != expected
                 )
+                if drifted:
+                    raise E2EError(
+                        "parallel execution config drift detected on "
+                        f"{node.moniker}: {node_config} != {parallel_config}"
+                    )
+
+        if len(observed_access_estimates_enabled) > 1:
+            raise E2EError(
+                "parallel execution access-estimate config differs across nodes: "
+                f"{perf_config}"
+            )
+        access_estimates_enabled = (
+            next(iter(observed_access_estimates_enabled))
+            if observed_access_estimates_enabled
+            else bool(parallel_config.get("access_estimates_enabled", True))
+        )
 
         if not effective_parallel_enabled:
             unexpected = {}
@@ -6067,52 +6218,23 @@ class E2ERunner:
             return {
                 "parallel_config": parallel_config,
                 "perf_config": perf_config,
-                "scenario_summary": scenario_summary,
+                "scenario_summary": custom_summary,
+                "custom_probe_summary": custom_summary,
                 "parallel_metadata": {
                     "disabled": True,
                     "reason": "parallel execution not effectively enabled",
                 },
             }
 
-        batch_expectations = [
-            (
-                "non_conflicting",
-                lambda metadata: (
-                    bool(metadata.get("parallel_enabled"))
-                    and int(metadata.get("parallel_speculative_accepted", 0)) > 0
-                    and int(
-                        metadata.get("parallel_planned_parallelizable_transactions", 0)
-                    )
-                    > 0
-                ),
-            ),
-            (
-                "same_sender",
-                lambda metadata: (
-                    bool(metadata.get("parallel_enabled"))
-                    and int(metadata.get("parallel_serial_prefiltered", 0)) > 0
-                ),
-            ),
-            (
-                "read_after_write",
-                lambda metadata: (
-                    bool(metadata.get("parallel_enabled"))
-                    and int(metadata.get("parallel_speculative_wave_count", 0)) > 1
-                ),
-            ),
-            (
-                "prefix_scan",
-                lambda metadata: (
-                    bool(metadata.get("parallel_enabled"))
-                    and int(metadata.get("parallel_speculative_wave_count", 0)) > 1
-                ),
-            ),
-        ]
-
-        metadata_matches = {}
+        batch_expectations = parallel_custom_probe_batch_expectations(
+            access_estimates_enabled=access_estimates_enabled,
+        )
+        custom_metadata_matches = {}
         for batch_name, predicate in batch_expectations:
-            batch = scenario_summary["batches"][batch_name]
-            metadata_matches[batch_name] = await self.wait_for_parallel_metadata_match(
+            batch = custom_summary["batches"][batch_name]
+            custom_metadata_matches[
+                batch_name
+            ] = await self.wait_for_parallel_metadata_match(
                 session,
                 label=f"parallel batch {batch_name}",
                 min_height=batch.get("min_height"),
@@ -6121,11 +6243,66 @@ class E2ERunner:
                 timeout_seconds=min(self.args.rpc_timeout_seconds, 45.0),
             )
 
+        known_transfer_payload = None
+        known_transfer_metadata = None
+        if access_estimates_enabled:
+            known_transfer_operations = max(expected_min_transactions * 8, 64)
+            known_transfer_payload = await self.run_localnet_workload(
+                scenario="transfer_fanout",
+                seed_label=f"{self.run_id}:parallel-known",
+                throughput_ops=known_transfer_operations,
+                wallet_count=known_transfer_operations,
+                submit_workers=min(known_transfer_operations, 128),
+                broadcast_mode="checktx",
+            )
+            known_transfer_summary = known_transfer_payload["scenario_summary"]
+            known_transfer_window = known_transfer_summary.get("committed_window") or {}
+            if (
+                known_transfer_window.get("min_height") is None
+                or known_transfer_window.get("max_height") is None
+            ):
+                raise E2EError(
+                    "parallel transfer_fanout did not report a committed height window"
+                )
+            known_transfer_max_height = known_transfer_window.get("max_height")
+            if known_transfer_max_height is not None:
+                await asyncio.gather(
+                    *(
+                        wait_for_height(
+                            session,
+                            node.rpc_url,
+                            int(known_transfer_max_height),
+                            timeout_seconds=min(
+                                self.args.rpc_timeout_seconds,
+                                45.0,
+                            ),
+                        )
+                        for node in self.nodes
+                    )
+                )
+            known_transfer_metadata = await self.wait_for_parallel_metadata_match(
+                session,
+                label="parallel known transfer fanout",
+                min_height=known_transfer_window.get("min_height"),
+                max_height=known_transfer_window.get("max_height"),
+                predicate=parallel_metadata_has_known_speculation,
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 45.0),
+            )
+
         return {
             "parallel_config": parallel_config,
             "perf_config": perf_config,
-            "scenario_summary": scenario_summary,
-            "parallel_metadata": metadata_matches,
+            "scenario_summary": custom_summary,
+            "custom_probe_summary": custom_summary,
+            "known_transfer_summary": (
+                None
+                if known_transfer_payload is None
+                else known_transfer_payload["scenario_summary"]
+            ),
+            "parallel_metadata": {
+                "custom_probe": custom_metadata_matches,
+                "known_transfer_fanout": known_transfer_metadata,
+            },
         }
 
     async def collect_node_report_snapshot(self) -> dict[str, Any]:

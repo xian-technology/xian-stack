@@ -28,8 +28,13 @@ from xian.execution_policy import VM_EXECUTION_MODE  # noqa: E402
 from xian.node_setup import (  # noqa: E402
     AppLoggingOptions,
     BdsOptions,
+    DEFAULT_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED,
     DEFAULT_PARALLEL_EXECUTION_ENABLED,
+    DEFAULT_PARALLEL_EXECUTION_LOW_ACCEPTANCE_MIN_WAVE_SIZE,
+    DEFAULT_PARALLEL_EXECUTION_MAX_SPECULATIVE_WAVES,
     DEFAULT_PARALLEL_EXECUTION_MIN_TRANSACTIONS,
+    DEFAULT_PARALLEL_EXECUTION_MIN_WAVE_ACCEPTANCE_RATIO,
+    DEFAULT_PARALLEL_EXECUTION_WARM_WORKERS,
     DEFAULT_PARALLEL_EXECUTION_WORKERS,
     MetricsOptions,
     NodeConfigOptions,
@@ -66,6 +71,13 @@ def env_int(name: str, default: int) -> int:
     if raw is None:
         return default
     return int(raw)
+
+
+def env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return float(raw)
 
 
 def env_str(name: str, default: str) -> str:
@@ -167,6 +179,11 @@ def write_node_config(
     parallel_execution_enabled: bool,
     parallel_execution_workers: int,
     parallel_execution_min_transactions: int,
+    parallel_execution_max_speculative_waves: int,
+    parallel_execution_min_wave_acceptance_ratio: float,
+    parallel_execution_low_acceptance_min_wave_size: int,
+    parallel_execution_warm_workers: bool,
+    parallel_execution_access_estimates_enabled: bool,
     transaction_trace_logging: bool,
     app_log_level: str,
     app_log_json: bool,
@@ -204,6 +221,15 @@ def write_node_config(
                 enabled=parallel_execution_enabled,
                 workers=parallel_execution_workers,
                 min_transactions=parallel_execution_min_transactions,
+                max_speculative_waves=parallel_execution_max_speculative_waves,
+                min_wave_acceptance_ratio=(
+                    parallel_execution_min_wave_acceptance_ratio
+                ),
+                low_acceptance_min_wave_size=(
+                    parallel_execution_low_acceptance_min_wave_size
+                ),
+                warm_workers=parallel_execution_warm_workers,
+                access_estimates_enabled=(parallel_execution_access_estimates_enabled),
             ),
             bds=BdsOptions(
                 host=LOCALNET_POSTGRES_SERVICE if bds_enabled else "",
@@ -333,6 +359,26 @@ def main():
     parallel_execution_min_transactions = env_int(
         "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS",
         DEFAULT_PARALLEL_EXECUTION_MIN_TRANSACTIONS,
+    )
+    parallel_execution_max_speculative_waves = env_int(
+        "XIAN_LOCALNET_PARALLEL_EXECUTION_MAX_SPECULATIVE_WAVES",
+        DEFAULT_PARALLEL_EXECUTION_MAX_SPECULATIVE_WAVES,
+    )
+    parallel_execution_min_wave_acceptance_ratio = env_float(
+        "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_WAVE_ACCEPTANCE_RATIO",
+        DEFAULT_PARALLEL_EXECUTION_MIN_WAVE_ACCEPTANCE_RATIO,
+    )
+    parallel_execution_low_acceptance_min_wave_size = env_int(
+        "XIAN_LOCALNET_PARALLEL_EXECUTION_LOW_ACCEPTANCE_MIN_WAVE_SIZE",
+        DEFAULT_PARALLEL_EXECUTION_LOW_ACCEPTANCE_MIN_WAVE_SIZE,
+    )
+    parallel_execution_warm_workers = env_bool(
+        "XIAN_LOCALNET_PARALLEL_EXECUTION_WARM_WORKERS",
+        DEFAULT_PARALLEL_EXECUTION_WARM_WORKERS,
+    )
+    parallel_execution_access_estimates_enabled = env_bool(
+        "XIAN_LOCALNET_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED",
+        DEFAULT_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED,
     )
     transaction_trace_logging = env_bool(
         "XIAN_LOCALNET_TRANSACTION_TRACE_LOGGING", False
@@ -474,6 +520,19 @@ def main():
             parallel_execution_min_transactions=(
                 parallel_execution_min_transactions
             ),
+            parallel_execution_max_speculative_waves=(
+                parallel_execution_max_speculative_waves
+            ),
+            parallel_execution_min_wave_acceptance_ratio=(
+                parallel_execution_min_wave_acceptance_ratio
+            ),
+            parallel_execution_low_acceptance_min_wave_size=(
+                parallel_execution_low_acceptance_min_wave_size
+            ),
+            parallel_execution_warm_workers=parallel_execution_warm_workers,
+            parallel_execution_access_estimates_enabled=(
+                parallel_execution_access_estimates_enabled
+            ),
             transaction_trace_logging=transaction_trace_logging,
             app_log_level=app_log_level,
             app_log_json=app_log_json,
@@ -533,6 +592,17 @@ def main():
             "enabled": parallel_execution_enabled,
             "workers": parallel_execution_workers,
             "min_transactions": parallel_execution_min_transactions,
+            "max_speculative_waves": parallel_execution_max_speculative_waves,
+            "min_wave_acceptance_ratio": (
+                parallel_execution_min_wave_acceptance_ratio
+            ),
+            "low_acceptance_min_wave_size": (
+                parallel_execution_low_acceptance_min_wave_size
+            ),
+            "warm_workers": parallel_execution_warm_workers,
+            "access_estimates_enabled": (
+                parallel_execution_access_estimates_enabled
+            ),
         },
         "profiling": {
             "enabled": profiling_enabled,

@@ -2219,6 +2219,9 @@ async def run_parallel_probe(
             "enabled": bool(parallel_config.get("enabled")),
             "workers": int(parallel_config.get("workers", 0) or 0),
             "min_transactions": configured_min_transactions,
+            "access_estimates_enabled": bool(
+                parallel_config.get("access_estimates_enabled", True)
+            ),
         },
         "funding_transactions": len(funding_records),
         "batches": {
