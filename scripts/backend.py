@@ -154,7 +154,7 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
     env.setdefault("XIAN_DEX_AUTOMATION_ENABLED", "0")
     env.setdefault("XIAN_DEX_AUTOMATION_HOST", DEFAULT_DEX_AUTOMATION_HOST)
     env.setdefault("XIAN_DEX_AUTOMATION_PORT", str(DEFAULT_DEX_AUTOMATION_PORT))
-    env.setdefault("XIAN_SERVICE_NODE", "0")
+    env.setdefault("XIAN_BDS_ENABLED", "0")
 
     secrets_path = stack_secrets_env_path(env)
     loaded_secrets = load_env_file(secrets_path)
@@ -205,8 +205,8 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
         errors.append("Public metrics exposure requires XIAN_PUBLIC_METRICS_ENABLED=1")
 
     if not is_loopback_host(env.get("XIAN_POSTGRAPHILE_HOST")):
-        if not env_truthy(env.get("XIAN_SERVICE_NODE")):
-            errors.append("Public PostGraphile exposure requires XIAN_SERVICE_NODE=1")
+        if not env_truthy(env.get("XIAN_BDS_ENABLED")):
+            errors.append("Public PostGraphile exposure requires XIAN_BDS_ENABLED=1")
         elif not env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED")):
             errors.append("Public query exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
 
@@ -365,14 +365,14 @@ def wait_for_abci_runtime(
     *,
     timeout_seconds: float,
     poll_interval: float = 2.0,
-    service_node: bool = False,
+    bds_enabled: bool = False,
 ) -> None:
     deadline = time.monotonic() + timeout_seconds
     shell_script = """
 source ./scripts/stack-env.sh
 export_stack_env
 compose_cmd=(docker compose --profile integrated -f docker-compose-abci.yml)
-if [[ "${XIAN_SERVICE_NODE:-0}" == "1" ]]; then
+if [[ "${XIAN_BDS_ENABLED:-0}" == "1" ]]; then
   compose_cmd+=(-f docker-compose-abci-bds.yml)
 fi
 "${compose_cmd[@]}" exec -T abci /bin/bash -lc "python -c 'import contracting, xian'"
@@ -388,7 +388,7 @@ fi
             text=True,
             env={
                 **os.environ.copy(),
-                "XIAN_SERVICE_NODE": "1" if service_node else "0",
+                "XIAN_BDS_ENABLED": "1" if bds_enabled else "0",
             },
         )
         if result.returncode == 0:
@@ -514,7 +514,7 @@ def _docker_compose_binding(
 
 def _discover_runtime_endpoints(
     *,
-    service_node: bool,
+    bds_enabled: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
 ) -> dict[str, str]:
@@ -549,7 +549,7 @@ def _discover_runtime_endpoints(
         metrics_port = xian_metrics_binding[1]
         endpoints["xian_metrics"] = f"http://{metrics_host}:{metrics_port}/metrics"
 
-    if service_node:
+    if bds_enabled:
         graphql_binding = _docker_compose_binding(
             service="postgraphile",
             container_port=5000,
@@ -598,7 +598,7 @@ def runtime_env(
     node_image_mode: str,
     node_integrated_image: str | None,
     node_split_image: str | None,
-    service_node: bool,
+    bds_enabled: bool,
     dashboard_enabled: bool,
     dashboard_host: str,
     dashboard_port: int,
@@ -624,7 +624,7 @@ def runtime_env(
         env["XIAN_NODE_INTEGRATED_IMAGE"] = node_integrated_image
     if node_split_image is not None:
         env["XIAN_NODE_SPLIT_IMAGE"] = node_split_image
-    env["XIAN_SERVICE_NODE"] = "1" if service_node else "0"
+    env["XIAN_BDS_ENABLED"] = "1" if bds_enabled else "0"
     env["XIAN_DASHBOARD_ENABLED"] = "1" if dashboard_enabled else "0"
     env["XIAN_DASHBOARD_HOST"] = dashboard_host
     env["XIAN_DASHBOARD_PORT"] = str(dashboard_port)
@@ -645,7 +645,7 @@ def runtime_env(
     env.setdefault("XIAN_POSTGRAPHILE_HOST", "127.0.0.1")
     if env_truthy(env.get("XIAN_PUBLIC_RPC_ENABLED")):
         env["XIAN_COMETBFT_RPC_HOST"] = "0.0.0.0"
-    if env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED")) and service_node:
+    if env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED")) and bds_enabled:
         env["XIAN_POSTGRAPHILE_HOST"] = "0.0.0.0"
     if env_truthy(env.get("XIAN_PUBLIC_METRICS_ENABLED")):
         env["XIAN_COMETBFT_METRICS_HOST"] = "0.0.0.0"
@@ -804,7 +804,7 @@ def backend_start(
     node_image_mode: str,
     node_integrated_image: str | None,
     node_split_image: str | None,
-    service_node: bool,
+    bds_enabled: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
     dashboard_host: str,
@@ -828,17 +828,17 @@ def backend_start(
     rpc_timeout_seconds: float,
     rpc_url: str,
 ) -> dict:
-    container_target = "abci-bds-up" if service_node else "abci-up"
-    node_target = "node-start-bds" if service_node else "node-start"
-    dashboard_target = "dashboard-bds-up" if service_node else "dashboard-up"
+    container_target = "abci-bds-up" if bds_enabled else "abci-up"
+    node_target = "node-start-bds" if bds_enabled else "node-start"
+    dashboard_target = "dashboard-bds-up" if bds_enabled else "dashboard-up"
     monitoring_target = (
-        "monitoring-bds-up" if service_node else "monitoring-up"
+        "monitoring-bds-up" if bds_enabled else "monitoring-up"
     )
     env = runtime_env(
         node_image_mode=node_image_mode,
         node_integrated_image=node_integrated_image,
         node_split_image=node_split_image,
-        service_node=service_node,
+        bds_enabled=bds_enabled,
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
@@ -867,12 +867,12 @@ def backend_start(
         run_make_target(dashboard_target, env=env)
     wait_for_abci_runtime(
         timeout_seconds=rpc_timeout_seconds,
-        service_node=service_node,
+        bds_enabled=bds_enabled,
     )
 
     result = {
         "stack_dir": str(STACK_DIR),
-        "service_node": service_node,
+        "bds_enabled": bds_enabled,
         "node_image_mode": node_image_mode,
         "node_integrated_image": node_integrated_image,
         "node_split_image": node_split_image,
@@ -962,7 +962,7 @@ def backend_stop(
     node_image_mode: str,
     node_integrated_image: str | None,
     node_split_image: str | None,
-    service_node: bool,
+    bds_enabled: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
     dashboard_host: str,
@@ -983,16 +983,16 @@ def backend_stop(
     shielded_relayer_host: str,
     shielded_relayer_port: int,
 ) -> dict:
-    container_target = "abci-bds-down" if service_node else "abci-down"
-    dashboard_target = "dashboard-bds-down" if service_node else "dashboard-down"
+    container_target = "abci-bds-down" if bds_enabled else "abci-down"
+    dashboard_target = "dashboard-bds-down" if bds_enabled else "dashboard-down"
     monitoring_target = (
-        "monitoring-bds-down" if service_node else "monitoring-down"
+        "monitoring-bds-down" if bds_enabled else "monitoring-down"
     )
     env = runtime_env(
         node_image_mode=node_image_mode,
         node_integrated_image=node_integrated_image,
         node_split_image=node_split_image,
-        service_node=service_node,
+        bds_enabled=bds_enabled,
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
@@ -1036,7 +1036,7 @@ def backend_stop(
     run_make_target("node-stop", env=env)
     return {
         "stack_dir": str(STACK_DIR),
-        "service_node": service_node,
+        "bds_enabled": bds_enabled,
         "node_image_mode": node_image_mode,
         "node_integrated_image": node_integrated_image,
         "node_split_image": node_split_image,
@@ -1064,7 +1064,7 @@ def backend_status(
     node_image_mode: str,
     node_integrated_image: str | None,
     node_split_image: str | None,
-    service_node: bool,
+    bds_enabled: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
     dashboard_host: str,
@@ -1089,7 +1089,7 @@ def backend_status(
         node_image_mode=node_image_mode,
         node_integrated_image=node_integrated_image,
         node_split_image=node_split_image,
-        service_node=service_node,
+        bds_enabled=bds_enabled,
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
@@ -1130,7 +1130,7 @@ def backend_status(
         node_image_mode=node_image_mode,
         node_integrated_image=node_integrated_image,
         node_split_image=node_split_image,
-        service_node=service_node,
+        bds_enabled=bds_enabled,
         dashboard_enabled=dashboard_enabled,
         monitoring_enabled=monitoring_enabled,
         dashboard_host=dashboard_host,
@@ -1317,7 +1317,7 @@ def backend_endpoints(
     node_image_mode: str,
     node_integrated_image: str | None,
     node_split_image: str | None,
-    service_node: bool,
+    bds_enabled: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
     dashboard_host: str,
@@ -1342,7 +1342,7 @@ def backend_endpoints(
         node_image_mode=node_image_mode,
         node_integrated_image=node_integrated_image,
         node_split_image=node_split_image,
-        service_node=service_node,
+        bds_enabled=bds_enabled,
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
@@ -1380,7 +1380,7 @@ def backend_endpoints(
             f"{env.get('XIAN_APP_METRICS_PORT', '9108')}/metrics"
         ),
     }
-    if service_node:
+    if bds_enabled:
         endpoints["bds_status_query"] = build_abci_query_url(
             rpc_url=endpoints["rpc_status"],
             path="/bds_status",
@@ -1437,12 +1437,12 @@ def backend_endpoints(
         )
     endpoints.update(
         _discover_runtime_endpoints(
-            service_node=service_node,
+            bds_enabled=bds_enabled,
             dashboard_enabled=dashboard_enabled,
             monitoring_enabled=monitoring_enabled,
         )
     )
-    if service_node:
+    if bds_enabled:
         endpoints["bds_status_query"] = build_abci_query_url(
             rpc_url=endpoints["rpc_status"],
             path="/bds_status",
@@ -1453,7 +1453,7 @@ def backend_endpoints(
         )
     return {
         "stack_dir": str(STACK_DIR),
-        "service_node": service_node,
+        "bds_enabled": bds_enabled,
         "node_image_mode": node_image_mode,
         "node_integrated_image": node_integrated_image,
         "node_split_image": node_split_image,
@@ -1477,7 +1477,7 @@ def backend_health(
     node_image_mode: str,
     node_integrated_image: str | None,
     node_split_image: str | None,
-    service_node: bool,
+    bds_enabled: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
     dashboard_host: str,
@@ -1504,7 +1504,7 @@ def backend_health(
         node_image_mode=node_image_mode,
         node_integrated_image=node_integrated_image,
         node_split_image=node_split_image,
-        service_node=service_node,
+        bds_enabled=bds_enabled,
         dashboard_enabled=dashboard_enabled,
         monitoring_enabled=monitoring_enabled,
         dashboard_host=dashboard_host,
@@ -1580,7 +1580,7 @@ def backend_health(
                 "detail": {"error": str(exc)},
             }
 
-    if service_node:
+    if bds_enabled:
         bds_query = endpoints.get("bds_status_query")
         bds_detail: dict[str, object] = {
             "query": bds_query,
@@ -1741,7 +1741,7 @@ def backend_health(
 
     payload = {
         "stack_dir": str(STACK_DIR),
-        "service_node": service_node,
+        "bds_enabled": bds_enabled,
         "node_image_mode": node_image_mode,
         "node_integrated_image": node_integrated_image,
         "node_split_image": node_split_image,
@@ -1849,6 +1849,7 @@ def backend_localnet_init(
     clean: bool,
     topology: str,
     genesis_network: str,
+    chain_id: str | None,
 ) -> dict:
     args = [
         "--nodes",
@@ -1858,6 +1859,8 @@ def backend_localnet_init(
         "--genesis-network",
         genesis_network,
     ]
+    if chain_id is not None:
+        args.extend(["--chain-id", chain_id])
     if clean:
         args.append("--clean")
     try:
@@ -1878,6 +1881,7 @@ def backend_localnet_init(
         "clean": clean,
         "topology": topology,
         "genesis_network": genesis_network,
+        "chain_id": chain_id or metadata.get("chain_id"),
         "network": metadata,
         "stdout": result.stdout,
     }
@@ -2251,7 +2255,7 @@ def add_public_surface_args(parser: argparse.ArgumentParser) -> None:
 
 def add_runtime_surface_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--service-node",
+        "--bds-enabled",
         action=argparse.BooleanOptionalAction,
         default=False,
     )
@@ -2379,6 +2383,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--genesis-network",
         default="local",
         help="contract bundle preset used to seed localnet genesis",
+    )
+    localnet_init.add_argument(
+        "--chain-id",
+        default=None,
+        help="chain identifier for the generated localnet",
     )
 
     localnet_up = subparsers.add_parser("localnet-up")
@@ -2670,7 +2679,7 @@ def main(argv: list[str] | None = None) -> int:
             node_image_mode=args.node_image_mode,
             node_integrated_image=args.node_integrated_image,
             node_split_image=args.node_split_image,
-            service_node=args.service_node,
+            bds_enabled=args.bds_enabled,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
             dashboard_host=args.dashboard_host,
@@ -2699,7 +2708,7 @@ def main(argv: list[str] | None = None) -> int:
             node_image_mode=args.node_image_mode,
             node_integrated_image=args.node_integrated_image,
             node_split_image=args.node_split_image,
-            service_node=args.service_node,
+            bds_enabled=args.bds_enabled,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
             dashboard_host=args.dashboard_host,
@@ -2725,7 +2734,7 @@ def main(argv: list[str] | None = None) -> int:
             node_image_mode=args.node_image_mode,
             node_integrated_image=args.node_integrated_image,
             node_split_image=args.node_split_image,
-            service_node=args.service_node,
+            bds_enabled=args.bds_enabled,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
             dashboard_host=args.dashboard_host,
@@ -2751,7 +2760,7 @@ def main(argv: list[str] | None = None) -> int:
             node_image_mode=args.node_image_mode,
             node_integrated_image=args.node_integrated_image,
             node_split_image=args.node_split_image,
-            service_node=args.service_node,
+            bds_enabled=args.bds_enabled,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
             dashboard_host=args.dashboard_host,
@@ -2777,7 +2786,7 @@ def main(argv: list[str] | None = None) -> int:
             node_image_mode=args.node_image_mode,
             node_integrated_image=args.node_integrated_image,
             node_split_image=args.node_split_image,
-            service_node=args.service_node,
+            bds_enabled=args.bds_enabled,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
             dashboard_host=args.dashboard_host,
@@ -2824,6 +2833,7 @@ def main(argv: list[str] | None = None) -> int:
             clean=args.clean,
             topology=args.topology,
             genesis_network=args.genesis_network,
+            chain_id=args.chain_id,
         )
     elif args.command == "localnet-build":
         payload = backend_make_result("localnet-build")

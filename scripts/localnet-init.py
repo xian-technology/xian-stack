@@ -174,7 +174,6 @@ def write_node_config(
     consensus_skip_timeout_commit: bool | None,
     mempool_size: int | None,
     mempool_cache_size: int | None,
-    service_node: bool,
     bds_enabled: bool,
     parallel_execution_enabled: bool,
     parallel_execution_workers: int,
@@ -200,7 +199,7 @@ def write_node_config(
     configs = render_node_configs(
         options=NodeConfigOptions(
             moniker=node["moniker"],
-            service_node=service_node,
+            bds_enabled=bds_enabled,
             allow_cors=True,
             prometheus=True,
             block_policy_mode=block_policy_mode,
@@ -513,7 +512,6 @@ def main():
             consensus_skip_timeout_commit=consensus_skip_timeout_commit,
             mempool_size=mempool_size,
             mempool_cache_size=mempool_cache_size,
-            service_node=bds_enabled and node["index"] == bds_node_index,
             bds_enabled=bds_enabled and node["index"] == bds_node_index,
             parallel_execution_enabled=parallel_execution_enabled,
             parallel_execution_workers=parallel_execution_workers,
@@ -583,7 +581,7 @@ def main():
                 "account_private_key": n["validator_material"][
                     "validator_private_key_hex"
                 ],
-                "service_node": bds_enabled and n["index"] == bds_node_index,
+                "bds_enabled": bds_enabled and n["index"] == bds_node_index,
             }
             for n in nodes
         ],
@@ -628,8 +626,8 @@ def main():
         "port_offset": port_offset,
         "bds": {
             "enabled": bds_enabled,
-            "service_node_index": bds_node_index if bds_enabled else None,
-            "service_rpc_url": (
+            "bds_node_index": bds_node_index if bds_enabled else None,
+            "bds_rpc_url": (
                 f"http://127.0.0.1:{BASE_RPC_PORT + bds_node_index * PORT_STRIDE}"
                 if bds_enabled
                 else None

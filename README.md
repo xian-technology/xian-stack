@@ -45,18 +45,18 @@ python -m pytest -q
 Run a stack-managed local node:
 
 ```bash
-python3 ./scripts/backend.py start  --no-service-node --dashboard --monitoring
-python3 ./scripts/backend.py status --no-service-node --dashboard --monitoring
-python3 ./scripts/backend.py endpoints --no-service-node --dashboard --monitoring
-python3 ./scripts/backend.py health --no-service-node --dashboard --monitoring
-python3 ./scripts/backend.py stop   --no-service-node --dashboard --monitoring
+python3 ./scripts/backend.py start  --no-bds-enabled --dashboard --monitoring
+python3 ./scripts/backend.py status --no-bds-enabled --dashboard --monitoring
+python3 ./scripts/backend.py endpoints --no-bds-enabled --dashboard --monitoring
+python3 ./scripts/backend.py health --no-bds-enabled --dashboard --monitoring
+python3 ./scripts/backend.py stop   --no-bds-enabled --dashboard --monitoring
 ```
 
 The stack defaults to fail-closed host bindings:
 
 - CometBFT RPC binds to `127.0.0.1` unless `--public-rpc` is set.
 - CometBFT and app metrics bind to `127.0.0.1` unless `--public-metrics` is set.
-- PostGraphile binds to `127.0.0.1` unless you run a service node and pass
+- PostGraphile binds to `127.0.0.1` unless you run a BDS node and pass
   `--public-query` (read-only BDS surface; does not expose live RPC, mempool,
   or raw ABCI traffic).
 - Local credentials are generated once into `.stack-secrets.env`, which is
@@ -99,7 +99,7 @@ Shielded relayer (proof-bound private-submission HTTP surface):
 
 ```bash
 export XIAN_SHIELDED_RELAYER_PRIVATE_KEY=<relayer-ed25519-private-key>
-python3 ./scripts/backend.py start --no-service-node --shielded-relayer
+python3 ./scripts/backend.py start --no-bds-enabled --shielded-relayer
 ```
 
 Defaults to `127.0.0.1`. Binding to a non-loopback host requires
@@ -111,7 +111,7 @@ repo's history for the full policy surface
 Deterministic DEX automation:
 
 ```bash
-python3 ./scripts/backend.py start --no-service-node --dex-automation
+python3 ./scripts/backend.py start --no-bds-enabled --dex-automation
 ```
 
 The default admin UI is `http://127.0.0.1:38280`. Config and service-wallet

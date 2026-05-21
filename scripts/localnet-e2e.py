@@ -158,7 +158,7 @@ class LocalnetNode:
     cometbft_container: str
     account_public_key: str
     account_private_key: str
-    service_node: bool
+    bds_node: bool
 
 
 @dataclass
@@ -392,7 +392,7 @@ def build_nodes(network: dict[str, Any]) -> list[LocalnetNode]:
                 cometbft_container=node["cometbft_container"],
                 account_public_key=node["account_public_key"],
                 account_private_key=node["account_private_key"],
-                service_node=bool(node.get("service_node")),
+                bds_node=bool(node.get("bds_enabled")),
             )
         )
     return nodes
@@ -947,7 +947,7 @@ class E2ERunner:
         self.phase_results: list[PhaseResult] = []
         self.seed = args.seed
         self.contracts: dict[str, str] = {}
-        self.service_node: LocalnetNode | None = None
+        self.bds_node: LocalnetNode | None = None
         self.sample_tx_hash: str | None = None
         self.sample_event_tx_hash: str | None = None
         self.node_report: dict[str, Any] | None = None
@@ -1024,8 +1024,8 @@ class E2ERunner:
             )
         self.network = json.loads(network_path.read_text(encoding="utf-8"))
         self.nodes = build_nodes(self.network)
-        self.service_node = next(
-            (node for node in self.nodes if node.service_node),
+        self.bds_node = next(
+            (node for node in self.nodes if node.bds_node),
             self.nodes[self.args.bds_node_index],
         )
         self.founder_wallet = Wallet(private_key=self.network["founder_key"])
@@ -1426,7 +1426,7 @@ class E2ERunner:
     def prepare_secondary_bds_home(self, source_node: LocalnetNode) -> Path:
         source_home = STACK_DIR / ".localnet" / source_node.moniker / ".cometbft"
         if not source_home.exists():
-            raise E2EError(f"service node home missing at {source_home}")
+            raise E2EError(f"BDS node home missing at {source_home}")
 
         secondary_home = self.secondary_bds_home_dir()
         if secondary_home.exists():
@@ -1629,8 +1629,8 @@ class E2ERunner:
 
         self.network = load_network()
         self.nodes = build_nodes(self.network)
-        self.service_node = next(
-            (node for node in self.nodes if node.service_node),
+        self.bds_node = next(
+            (node for node in self.nodes if node.bds_node),
             self.nodes[self.args.bds_node_index],
         )
         self.founder_wallet = Wallet(private_key=self.network["founder_key"])
@@ -1702,9 +1702,9 @@ class E2ERunner:
             window=self.args.app_hash_window,
         )
         service_bds = None
-        if self.service_node is not None:
+        if self.bds_node is not None:
             async with self.client(
-                self.founder_wallet, self.service_node.index, session
+                self.founder_wallet, self.bds_node.index, session
             ) as client:
                 try:
                     service_bds = normalize_value((await client.get_bds_status()).raw)
@@ -2856,15 +2856,15 @@ class E2ERunner:
 
         bds_event_match = None
         bds_status = None
-        if self.service_node is not None:
+        if self.bds_node is not None:
             async with self.client(
                 facilitator,
-                self.service_node.index,
+                self.bds_node.index,
                 session,
             ) as service_client:
                 target_height = await latest_height(
                     session,
-                    self.service_node.rpc_url,
+                    self.bds_node.rpc_url,
                 )
                 bds_status = await wait_for_bds_indexed(
                     service_client,
@@ -3531,9 +3531,9 @@ class E2ERunner:
         }
 
     async def bds_catchup_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
-        service = self.service_node
+        service = self.bds_node
         if service is None:
-            raise E2EError("service node not available for BDS catch-up phase")
+            raise E2EError("BDS node not available for BDS catch-up phase")
 
         async def post_graphql(
             *,
@@ -3847,9 +3847,9 @@ class E2ERunner:
 
     async def retrieval_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         founder = self.founder_wallet
-        service = self.service_node
+        service = self.bds_node
         if service is None:
-            raise E2EError("service node not available")
+            raise E2EError("BDS node not available")
         async with self.client(founder, service.index, session) as client:
             current_height = await latest_height(session, service.rpc_url)
             bds_status = await wait_for_bds_indexed(
@@ -4368,7 +4368,7 @@ class E2ERunner:
         }
 
     async def state_patch_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
-        service = self.service_node
+        service = self.bds_node
         founder = self.founder_wallet
         current_height = int(
             (
@@ -4702,7 +4702,7 @@ class E2ERunner:
             }
 
         founder = self.founder_wallet
-        service = self.service_node or self.nodes[0]
+        service = self.bds_node or self.nodes[0]
         alice = derive_wallet(self.seed, "shielded-alice")
         bob = derive_wallet(self.seed, "shielded-bob")
         relayer = derive_wallet(self.seed, "shielded-relayer")
@@ -6403,7 +6403,7 @@ class E2ERunner:
         await self.fund_wallets(session, wallets, amount=10_000)
 
         candidate_nodes = [
-            node for node in self.nodes if node.index != 0 and not node.service_node
+            node for node in self.nodes if node.index != 0 and not node.bds_node
         ]
         if not candidate_nodes:
             candidate_nodes = [node for node in self.nodes if node.index != 0]

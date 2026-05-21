@@ -20,7 +20,7 @@ XIAN_DEX_BOOTSTRAP_CHAIN_ID ?=
 XIAN_DEX_DEPLOYER_PRIVATE_KEY ?=
 XIAN_DEX_VALIDATOR_KEY_PATH ?= ./.cometbft/config/priv_validator_key.json
 XIAN_STACK_PYTHON ?= 3.14
-XIAN_SERVICE_NODE ?= 0
+XIAN_BDS_ENABLED ?= 0
 XIAN_COMETBFT_HOME ?= ./.cometbft
 XIAN_BDS_DATA_DIR ?= ./.bds.db
 XIAN_BDS_HOST ?= postgres
@@ -164,7 +164,7 @@ export XIAN_DEX_CONTRACTS_DIR := $(if $(XIAN_DEX_CONTRACTS_DIR),$(abspath $(XIAN
 export XIAN_DEX_DEPLOYER_PRIVATE_KEY := $(XIAN_DEX_DEPLOYER_PRIVATE_KEY)
 export XIAN_DEX_VALIDATOR_KEY_PATH := $(abspath $(XIAN_DEX_VALIDATOR_KEY_PATH))
 export XIAN_STACK_SECRETS_ENV := $(abspath $(XIAN_STACK_SECRETS_ENV))
-export XIAN_SERVICE_NODE := $(XIAN_SERVICE_NODE)
+export XIAN_BDS_ENABLED := $(XIAN_BDS_ENABLED)
 export XIAN_COMETBFT_HOME := $(abspath $(XIAN_COMETBFT_HOME))
 export XIAN_BDS_DATA_DIR := $(abspath $(XIAN_BDS_DATA_DIR))
 export XIAN_BDS_HOST := $(XIAN_BDS_HOST)
@@ -296,9 +296,9 @@ export XIAN_LOCALNET_COMETBFT_PIDS_LIMIT := $(XIAN_LOCALNET_COMETBFT_PIDS_LIMIT)
 export XIAN_LOCALNET_COMETBFT_NOFILE_SOFT := $(XIAN_LOCALNET_COMETBFT_NOFILE_SOFT)
 export XIAN_LOCALNET_COMETBFT_NOFILE_HARD := $(XIAN_LOCALNET_COMETBFT_NOFILE_HARD)
 
-ABCI_COMPOSE = XIAN_SERVICE_NODE=0 $(DOCKER_COMPOSE) --profile integrated -f docker-compose-abci.yml
-ABCI_BDS_COMPOSE = XIAN_SERVICE_NODE=1 $(DOCKER_COMPOSE) --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml
-ABCI_FIDELITY_COMPOSE = XIAN_SERVICE_NODE=0 $(DOCKER_COMPOSE) --profile fidelity -f docker-compose-abci.yml
+ABCI_COMPOSE = XIAN_BDS_ENABLED=0 $(DOCKER_COMPOSE) --profile integrated -f docker-compose-abci.yml
+ABCI_BDS_COMPOSE = XIAN_BDS_ENABLED=1 $(DOCKER_COMPOSE) --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml
+ABCI_FIDELITY_COMPOSE = XIAN_BDS_ENABLED=0 $(DOCKER_COMPOSE) --profile fidelity -f docker-compose-abci.yml
 ABCI_DEV_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-abci-dev.yml -f docker-compose-abci-bds.yml
 CONTRACTING_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-contracting.yml
 LOCALNET_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-localnet.yml
@@ -490,7 +490,7 @@ print-env:
 	@printf "XIAN_CONTRACTING_DIR=%s\n" "$(XIAN_CONTRACTING_DIR)"
 	@printf "XIAN_PY_DIR=%s\n" "$(XIAN_PY_DIR)"
 	@printf "XIAN_STACK_SECRETS_ENV=%s\n" "$(XIAN_STACK_SECRETS_ENV)"
-	@printf "XIAN_SERVICE_NODE=%s\n" "$(XIAN_SERVICE_NODE)"
+	@printf "XIAN_BDS_ENABLED=%s\n" "$(XIAN_BDS_ENABLED)"
 	@printf "XIAN_COMETBFT_HOME=%s\n" "$(XIAN_COMETBFT_HOME)"
 	@printf "XIAN_BDS_DATA_DIR=%s\n" "$(XIAN_BDS_DATA_DIR)"
 	@printf "XIAN_BDS_HOST=%s\n" "$(XIAN_BDS_HOST)"
@@ -720,7 +720,7 @@ dev-base-abci-shell:
 
 
 # ABCI BDS Commands
-abci-bds-build abci-bds-up dashboard-bds-up monitoring-bds-up bds-postgres-up bds-snapshot-export bds-snapshot-import node-start-bds: XIAN_SERVICE_NODE=1
+abci-bds-build abci-bds-up dashboard-bds-up monitoring-bds-up bds-postgres-up bds-snapshot-export bds-snapshot-import node-start-bds: XIAN_BDS_ENABLED=1
 
 abci-bds-build: prepare-dirs
 	$(ABCI_BDS_COMPOSE) build --no-cache abci postgres postgraphile

@@ -7,14 +7,14 @@ source "${script_dir}/stack-env.sh"
 export_stack_env
 
 stack_topology="${XIAN_STACK_TOPOLOGY:-integrated}"
-service_node="${XIAN_SERVICE_NODE:-0}"
+bds_enabled="${XIAN_BDS_ENABLED:-0}"
 required_processes=("xian" "cometbft")
 
 if [[ "${stack_topology}" == "integrated" ]]; then
   compose_files=(docker-compose-abci.yml)
   compose_cmd=(docker compose --profile integrated -f docker-compose-abci.yml)
   runtime_services=("abci")
-  if [[ "${service_node}" == "1" || "${service_node}" == "true" ]]; then
+  if [[ "${bds_enabled}" == "1" || "${bds_enabled}" == "true" ]]; then
     compose_files+=(docker-compose-abci-bds.yml)
     compose_cmd=(docker compose --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml)
   fi
@@ -131,7 +131,7 @@ PY
 )"
 fi
 
-python3 - "${compose_status_raw}" "${runtime_processes_raw}" "${stack_topology}" "${service_node}" "${node_id}" "${required_processes[@]}" <<'PY'
+python3 - "${compose_status_raw}" "${runtime_processes_raw}" "${stack_topology}" "${bds_enabled}" "${node_id}" "${required_processes[@]}" <<'PY'
 import json
 import sys
 
@@ -171,7 +171,7 @@ compose_services = [
 ]
 runtime_processes = parse_json_stream(sys.argv[2])
 stack_topology = sys.argv[3]
-service_node = sys.argv[4] in {"1", "true"}
+bds_enabled = sys.argv[4] in {"1", "true"}
 node_id = sys.argv[5] or None
 required_processes = sys.argv[6:]
 
@@ -197,7 +197,7 @@ required_processes_online = all(
 
 result = {
     "topology": stack_topology,
-    "service_node": service_node,
+    "bds_enabled": bds_enabled,
     "compose_services": compose_services,
     "runtime_containers": runtime_containers,
     "runtime_services_running": runtime_services_running,
