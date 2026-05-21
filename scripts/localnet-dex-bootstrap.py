@@ -505,7 +505,7 @@ def approve_for_dex(
     client: Xian,
     *,
     token: str,
-    amount: float,
+    amount: Decimal,
     mode: str,
     receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
@@ -526,8 +526,8 @@ def seed_demo_pool(
     *,
     token_contract: str,
     lp_contract: str,
-    liquidity_currency_amount: float,
-    liquidity_demo_token_amount: float,
+    liquidity_currency_amount: Decimal,
+    liquidity_demo_token_amount: Decimal,
     top_up_liquidity: bool,
     mode: str,
     receipt_timeout_seconds: float,
@@ -577,8 +577,8 @@ def seed_demo_pool(
         "tokenB": token_contract,
         "amountADesired": liquidity_currency_amount,
         "amountBDesired": liquidity_demo_token_amount,
-        "amountAMin": liquidity_currency_amount * 0.95,
-        "amountBMin": liquidity_demo_token_amount * 0.95,
+        "amountAMin": liquidity_currency_amount * Decimal("0.95"),
+        "amountBMin": liquidity_demo_token_amount * Decimal("0.95"),
         "to": client.wallet.public_key,
         "deadline": deadline_value(seconds_from_now=300),
         "lpToken": lp_contract,
@@ -610,7 +610,7 @@ def emit_test_swap(
     client: Xian,
     *,
     token_contract: str,
-    amount: float,
+    amount: Decimal,
     mode: str,
     receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
@@ -634,7 +634,7 @@ def emit_test_swap(
             function="swapExactTokenForToken",
             kwargs={
                 "amountIn": amount,
-                "amountOutMin": 0.0001,
+                "amountOutMin": Decimal("0.0001"),
                 "pair": pair_id,
                 "src": "currency",
                 "to": client.wallet.public_key,
@@ -850,11 +850,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--demo-lp-contract", default="con_dex_demo_lp")
     parser.add_argument("--demo-token-name", default="Xian DEX Demo Token")
     parser.add_argument("--demo-token-symbol", default="XDT")
-    parser.add_argument("--demo-token-supply", type=float, default=1_000_000.0)
+    parser.add_argument("--demo-token-supply", type=Decimal, default=Decimal("1000000"))
     parser.add_argument("--demo-token-precision", type=int, default=8)
-    parser.add_argument("--liquidity-currency-amount", type=float, default=10_000.0)
-    parser.add_argument("--liquidity-demo-token-amount", type=float, default=10_000.0)
-    parser.add_argument("--test-swap-amount", type=float, default=10.0)
+    parser.add_argument(
+        "--liquidity-currency-amount",
+        type=Decimal,
+        default=Decimal("10000"),
+    )
+    parser.add_argument(
+        "--liquidity-demo-token-amount",
+        type=Decimal,
+        default=Decimal("10000"),
+    )
+    parser.add_argument("--test-swap-amount", type=Decimal, default=Decimal("10"))
     parser.add_argument(
         "--submission-mode",
         choices=("checktx", "commit"),
