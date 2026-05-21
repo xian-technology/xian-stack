@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import importlib.util
 import json
 import subprocess
 import sys
@@ -13,6 +14,15 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import backend
+
+
+def _load_localnet_init_module():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "localnet-init.py"
+    spec = importlib.util.spec_from_file_location("localnet_init", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 class BackendRequestTests(unittest.TestCase):
@@ -81,6 +91,19 @@ class BackendRequestTests(unittest.TestCase):
         self.assertIn("--clean", args)
         self.assertEqual(result["chain_id"], "custom-chain")
         self.assertEqual(result["stdout"], "generated\n")
+
+    def test_localnet_bds_rpc_url_matches_runtime_topology(self) -> None:
+        localnet_init = _load_localnet_init_module()
+        node = {"moniker": "node-1"}
+
+        self.assertEqual(
+            localnet_init.bds_runtime_rpc_url(node, "integrated"),
+            "http://127.0.0.1:26657",
+        )
+        self.assertEqual(
+            localnet_init.bds_runtime_rpc_url(node, "fidelity"),
+            "http://node-1:26657",
+        )
 
 
 if __name__ == "__main__":

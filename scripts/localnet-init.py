@@ -156,6 +156,13 @@ def build_persistent_peers(nodes: list[dict]) -> str:
     return ",".join(peers)
 
 
+def bds_runtime_rpc_url(node: dict, topology: str) -> str:
+    """Return the RPC URL reachable from the BDS process."""
+    if topology == "fidelity":
+        return f"http://{node['moniker']}:26657"
+    return "http://127.0.0.1:26657"
+
+
 def write_node_config(
     node: dict,
     all_nodes: list[dict],
@@ -175,6 +182,7 @@ def write_node_config(
     mempool_size: int | None,
     mempool_cache_size: int | None,
     bds_enabled: bool,
+    topology: str,
     parallel_execution_enabled: bool,
     parallel_execution_workers: int,
     parallel_execution_min_transactions: int,
@@ -236,6 +244,9 @@ def write_node_config(
                 database="xian",
                 user="xian",
                 password="xian",
+                rpc_url=bds_runtime_rpc_url(node, topology)
+                if bds_enabled
+                else "",
             ),
         )
     )
@@ -513,6 +524,7 @@ def main():
             mempool_size=mempool_size,
             mempool_cache_size=mempool_cache_size,
             bds_enabled=bds_enabled and node["index"] == bds_node_index,
+            topology=args.topology,
             parallel_execution_enabled=parallel_execution_enabled,
             parallel_execution_workers=parallel_execution_workers,
             parallel_execution_min_transactions=(
