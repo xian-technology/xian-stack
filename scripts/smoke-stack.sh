@@ -23,8 +23,9 @@ require_stack_paths
 require_docker
 
 smoke_moniker="${XIAN_SMOKE_MONIKER:-smoke-validator}"
-smoke_genesis_source="${XIAN_SMOKE_GENESIS_SOURCE:-devnet}"
-smoke_genesis_preset="${XIAN_SMOKE_GENESIS_PRESET:-}"
+smoke_network="${XIAN_SMOKE_NETWORK:-devnet}"
+smoke_genesis_source="${XIAN_SMOKE_GENESIS_SOURCE:-}"
+smoke_genesis_bundle="${XIAN_SMOKE_GENESIS_BUNDLE:-}"
 smoke_chain_id="${XIAN_SMOKE_CHAIN_ID:-}"
 smoke_genesis_time="${XIAN_SMOKE_GENESIS_TIME:-}"
 smoke_validator_privkey="${XIAN_SMOKE_VALIDATOR_PRIVKEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
@@ -33,10 +34,9 @@ smoke_timeout_seconds="${XIAN_SMOKE_TIMEOUT_SECONDS:-90}"
 smoke_status_url="${XIAN_SMOKE_STATUS_URL:-http://${XIAN_COMETBFT_RPC_HOST}:${XIAN_COMETBFT_RPC_PORT}/status}"
 smoke_abci_info_url="${XIAN_SMOKE_ABCI_INFO_URL:-http://${XIAN_COMETBFT_RPC_HOST}:${XIAN_COMETBFT_RPC_PORT}/abci_info}"
 
-if [[ -z "${smoke_genesis_preset}" ]]; then
-  manifest_path="${XIAN_CONFIGS_DIR}/networks/${smoke_genesis_source}/manifest.json"
+if [[ -z "${smoke_genesis_source}" && -z "${smoke_genesis_bundle}" ]]; then
+  manifest_path="${XIAN_CONFIGS_DIR}/networks/${smoke_network}/manifest.json"
   if [[ -f "${manifest_path}" ]]; then
-    smoke_genesis_preset="${smoke_genesis_source}"
     if [[ -z "${smoke_chain_id}" ]]; then
       smoke_chain_id="$(python3 - <<'PY' "${manifest_path}"
 import json
@@ -49,6 +49,43 @@ print(manifest["chain_id"])
 PY
 )"
     fi
+    smoke_genesis_kind="$(python3 - <<'PY' "${manifest_path}"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+
+print(manifest["genesis"]["kind"])
+PY
+)"
+    if [[ "${smoke_genesis_kind}" == "bundle" ]]; then
+      smoke_genesis_bundle="$(python3 - <<'PY' "${manifest_path}"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+
+print(manifest["genesis"]["bundle"])
+PY
+)"
+    else
+      smoke_genesis_source="$(python3 - <<'PY' "${manifest_path}" "${smoke_network}"
+import json
+import sys
+from pathlib import PurePosixPath
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+
+source = manifest["genesis"]["source"]
+if source.startswith("./"):
+    source = str(PurePosixPath("networks") / sys.argv[2] / source[2:])
+print(source)
+PY
+)"
+    fi
     if [[ -z "${smoke_genesis_time}" ]]; then
       smoke_genesis_time="$(python3 - <<'PY' "${manifest_path}"
 import json
@@ -57,11 +94,16 @@ import sys
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     manifest = json.load(handle)
 
-print(manifest.get("genesis_time") or "")
+print(manifest["genesis"].get("genesis_time") or "")
 PY
 )"
     fi
   fi
+fi
+
+if [[ -n "${smoke_genesis_source}" && -n "${smoke_genesis_bundle}" ]]; then
+  printf 'set either XIAN_SMOKE_GENESIS_SOURCE or XIAN_SMOKE_GENESIS_BUNDLE, not both\n' >&2
+  exit 1
 fi
 
 wait_for_endpoint() {
@@ -118,15 +160,14 @@ make node-id >/dev/null
 configure_args=(
   --moniker "${smoke_moniker}"
   --validator-privkey "${smoke_validator_privkey}"
-  --copy-genesis
 )
-if [[ -n "${smoke_genesis_preset}" ]]; then
-  configure_args+=(--genesis-preset "${smoke_genesis_preset}")
+if [[ -n "${smoke_genesis_bundle}" ]]; then
+  configure_args+=(--genesis-bundle "${smoke_genesis_bundle}")
   configure_args+=(--chain-id "${smoke_chain_id}")
   if [[ -n "${smoke_genesis_time}" ]]; then
     configure_args+=(--genesis-time "${smoke_genesis_time}")
   fi
-else
+elif [[ -n "${smoke_genesis_source}" ]]; then
   configure_args+=(--genesis-source "${smoke_genesis_source}")
 fi
 

@@ -14,7 +14,7 @@ def crunch(slot: str, payload: str, rounds: int):
 
     digest = payload
     for round_index in range(rounds):
-        digest = hashlib.sha256(digest)
+        digest = hashlib.sha256_text(digest)
 
     results[slot] = digest
     return digest

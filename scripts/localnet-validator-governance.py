@@ -74,7 +74,7 @@ class LocalnetNode:
     cometbft_container: str
     account_public_key: str
     account_private_key: str
-    service_node: bool
+    bds_node: bool
 
 
 class RunnerError(RuntimeError):
@@ -350,7 +350,7 @@ def build_nodes(network: dict[str, Any]) -> list[LocalnetNode]:
                 cometbft_container=node["cometbft_container"],
                 account_public_key=node["account_public_key"],
                 account_private_key=node["account_private_key"],
-                service_node=bool(node.get("service_node")),
+                bds_node=bool(node.get("bds_enabled")),
             )
         )
     return nodes

@@ -26,9 +26,9 @@ def build_named_deployment_artifacts(contract_name: str):
         "source": CHILD_SOURCE,
         "vm_ir_json": vm_ir_json,
         "hashes": {
-            "input_source_sha256": hashlib.sha256(CHILD_SOURCE),
+            "input_source_sha256": hashlib.sha256_text(CHILD_SOURCE),
             "source_sha256": CHILD_SOURCE_SHA256,
-            "vm_ir_sha256": hashlib.sha256(vm_ir_json),
+            "vm_ir_sha256": hashlib.sha256_text(vm_ir_json),
         },
     }
 

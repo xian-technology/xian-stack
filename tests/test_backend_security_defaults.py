@@ -17,7 +17,7 @@ def runtime_env_kwargs(**overrides: object) -> dict[str, object]:
         "node_image_mode": "local_build",
         "node_integrated_image": None,
         "node_split_image": None,
-        "service_node": False,
+        "bds_enabled": False,
         "dashboard_enabled": False,
         "dashboard_host": "127.0.0.1",
         "dashboard_port": 8080,
@@ -95,7 +95,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
                     ):
                         backend.runtime_env(**runtime_env_kwargs())
 
-    def test_runtime_env_public_query_requires_service_node(self) -> None:
+    def test_runtime_env_public_query_requires_bds(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             stack_dir = Path(temp_dir) / "xian-stack"
             stack_dir.mkdir()
@@ -107,7 +107,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
                 ):
                     with self.assertRaisesRegex(
                         ValueError,
-                        "Public PostGraphile exposure requires XIAN_SERVICE_NODE=1",
+                        "Public PostGraphile exposure requires XIAN_BDS_ENABLED=1",
                     ):
                         backend.runtime_env(
                             **runtime_env_kwargs(public_query_enabled=True)
@@ -121,7 +121,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
                 with patch.dict(os.environ, {}, clear=True):
                     env = backend.runtime_env(
                         **runtime_env_kwargs(
-                            service_node=True,
+                            bds_enabled=True,
                             public_query_enabled=True,
                         )
                     )

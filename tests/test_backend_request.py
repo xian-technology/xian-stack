@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import io
+import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,13 +16,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import backend
 
 
+def _load_localnet_init_module():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "localnet-init.py"
+    spec = importlib.util.spec_from_file_location("localnet_init", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 class BackendRequestTests(unittest.TestCase):
     def test_main_accepts_json_backend_request(self) -> None:
         request = {
             "schema_version": 1,
             "command": "status",
             "options": {
-                "service_node": True,
+                "bds_enabled": True,
                 "dashboard": True,
                 "dashboard_host": "0.0.0.0",
                 "dashboard_port": 18080,
@@ -42,10 +53,57 @@ class BackendRequestTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(json.loads(stdout.getvalue()), {"ok": True})
         status.assert_called_once()
-        self.assertTrue(status.call_args.kwargs["service_node"])
+        self.assertTrue(status.call_args.kwargs["bds_enabled"])
         self.assertTrue(status.call_args.kwargs["dashboard_enabled"])
         self.assertEqual(status.call_args.kwargs["dashboard_host"], "0.0.0.0")
         self.assertEqual(status.call_args.kwargs["dashboard_port"], 18080)
+
+    def test_localnet_init_passes_chain_id_to_script(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="generated\n",
+            stderr="",
+        )
+        with patch.object(
+            backend,
+            "run_python_script",
+            return_value=completed,
+        ) as run_script:
+            with patch.object(
+                backend,
+                "load_localnet_metadata",
+                return_value={"chain_id": "metadata-chain"},
+            ):
+                result = backend.backend_localnet_init(
+                    nodes=3,
+                    clean=True,
+                    topology="integrated",
+                    genesis_network="devnet",
+                    chain_id="custom-chain",
+                )
+
+        args = run_script.call_args.args
+        self.assertEqual(args[0], backend.LOCALNET_INIT_SCRIPT)
+        self.assertIn("--chain-id", args)
+        chain_id_index = args.index("--chain-id")
+        self.assertEqual(args[chain_id_index + 1], "custom-chain")
+        self.assertIn("--clean", args)
+        self.assertEqual(result["chain_id"], "custom-chain")
+        self.assertEqual(result["stdout"], "generated\n")
+
+    def test_localnet_bds_rpc_url_matches_runtime_topology(self) -> None:
+        localnet_init = _load_localnet_init_module()
+        node = {"moniker": "node-1"}
+
+        self.assertEqual(
+            localnet_init.bds_runtime_rpc_url(node, "integrated"),
+            "http://127.0.0.1:26657",
+        )
+        self.assertEqual(
+            localnet_init.bds_runtime_rpc_url(node, "fidelity"),
+            "http://node-1:26657",
+        )
 
 
 if __name__ == "__main__":

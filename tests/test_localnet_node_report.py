@@ -17,7 +17,7 @@ from localnet_node_report import (  # noqa: E402
 METRICS_TEXT = """
 # HELP xian_node Static Xian node runtime information.
 # TYPE xian_node_info gauge
-xian_node_info{chain_id="xian-local",execution_mode="xian_vm_v1",block_service_mode="false",parallel_execution_enabled="false",tx_fees_enabled="true"} 1
+xian_node_info{chain_id="xian-local",execution_mode="xian_vm_v1",bds_enabled="false",parallel_execution_enabled="false",tx_fees_enabled="true"} 1
 """.strip()
 
 

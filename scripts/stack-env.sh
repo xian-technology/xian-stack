@@ -65,7 +65,7 @@ validate_stack_security_env() {
   local public_rpc_enabled="${XIAN_PUBLIC_RPC_ENABLED:-0}"
   local public_query_enabled="${XIAN_PUBLIC_QUERY_ENABLED:-0}"
   local public_metrics_enabled="${XIAN_PUBLIC_METRICS_ENABLED:-0}"
-  local service_node_enabled="${XIAN_SERVICE_NODE:-0}"
+  local bds_enabled="${XIAN_BDS_ENABLED:-0}"
   local errors=()
 
   if [[ -z "${XIAN_BDS_PASSWORD:-}" ]]; then
@@ -97,8 +97,8 @@ validate_stack_security_env() {
   fi
 
   if ! _stack_is_loopback_host "${XIAN_POSTGRAPHILE_HOST:-127.0.0.1}"; then
-    if ! _stack_truthy "${service_node_enabled}"; then
-      errors+=("Public PostGraphile exposure requires XIAN_SERVICE_NODE=1")
+    if ! _stack_truthy "${bds_enabled}"; then
+      errors+=("Public PostGraphile exposure requires XIAN_BDS_ENABLED=1")
     elif ! _stack_truthy "${public_query_enabled}"; then
       errors+=("Public query exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
     fi
@@ -175,6 +175,7 @@ export_stack_env() {
   export XIAN_COMETBFT_HOME="${XIAN_COMETBFT_HOME:-${stack_root}/.cometbft}"
   export XIAN_BDS_DATA_DIR="${XIAN_BDS_DATA_DIR:-${stack_root}/.bds.db}"
   ensure_stack_secrets_env
+  export XIAN_BDS_DSN="${XIAN_BDS_DSN:-}"
   export XIAN_BDS_HOST="${XIAN_BDS_HOST:-postgres}"
   export XIAN_BDS_PORT="${XIAN_BDS_PORT:-5432}"
   export XIAN_BDS_DATABASE="${XIAN_BDS_DATABASE:-xian}"
@@ -183,7 +184,12 @@ export_stack_env() {
   export XIAN_BDS_POOL_MIN_SIZE="${XIAN_BDS_POOL_MIN_SIZE:-1}"
   export XIAN_BDS_POOL_MAX_SIZE="${XIAN_BDS_POOL_MAX_SIZE:-10}"
   export XIAN_BDS_STATEMENT_TIMEOUT_MS="${XIAN_BDS_STATEMENT_TIMEOUT_MS:-0}"
+  export XIAN_BDS_ACQUIRE_TIMEOUT_MS="${XIAN_BDS_ACQUIRE_TIMEOUT_MS:-10000}"
   export XIAN_BDS_APPLICATION_NAME="${XIAN_BDS_APPLICATION_NAME:-xian-bds}"
+  export XIAN_BDS_QUEUE_MAX_SIZE="${XIAN_BDS_QUEUE_MAX_SIZE:-128}"
+  export XIAN_BDS_CATCHUP_ENABLED="${XIAN_BDS_CATCHUP_ENABLED:-1}"
+  export XIAN_BDS_CATCHUP_POLL_SECONDS="${XIAN_BDS_CATCHUP_POLL_SECONDS:-1.0}"
+  export XIAN_BDS_RPC_URL="${XIAN_BDS_RPC_URL:-http://127.0.0.1:26657}"
   export XIAN_BDS_SPOOL_DIR="${XIAN_BDS_SPOOL_DIR:-}"
   export XIAN_BDS_SPOOL_WARN_ENTRIES="${XIAN_BDS_SPOOL_WARN_ENTRIES:-256}"
   export XIAN_BDS_SPOOL_WARN_BYTES="${XIAN_BDS_SPOOL_WARN_BYTES:-536870912}"
