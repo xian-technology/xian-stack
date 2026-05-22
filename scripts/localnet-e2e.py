@@ -370,10 +370,24 @@ def construct_token_permit_message(
     deadline: str,
     authorizer_contract: str,
     chain_id: str,
+    nonce: int,
 ) -> str:
-    return (
-        f"{token_contract}:{owner}:{spender}:{value}:{deadline}:"
-        f"{authorizer_contract}:{chain_id}"
+    amount = Decimal(str(value))
+    amount_text = format(amount.normalize(), "f")
+    if "." in amount_text:
+        amount_text = amount_text.rstrip("0").rstrip(".")
+    return "\n".join(
+        [
+            "xian-permit-v2",
+            f"chain_id:{chain_id}",
+            f"authorizer:{authorizer_contract}",
+            f"token_contract:{token_contract}",
+            f"owner:{owner}",
+            f"spender:{spender}",
+            f"amount:{amount_text}",
+            f"deadline:{deadline}",
+            f"nonce:{int(nonce)}",
+        ]
     )
 
 
@@ -2197,6 +2211,7 @@ class E2ERunner:
             deadline=permit_deadline,
             authorizer_contract="permit_authorizer",
             chain_id=self.network["chain_id"],
+            nonce=0,
         )
         permit_signature = operator.sign_msg(permit_msg)
 
@@ -2271,6 +2286,7 @@ class E2ERunner:
                         "spender": permit_spender.public_key,
                         "value": permit_allowance,
                         "deadline": permit_deadline,
+                        "nonce": 0,
                         "signature": permit_signature,
                     },
                     chi=DEFAULT_TX_CHI,
@@ -2335,6 +2351,7 @@ class E2ERunner:
                     deadline=expired_deadline,
                     authorizer_contract="permit_authorizer",
                     chain_id=self.network["chain_id"],
+                    nonce=1,
                 )
             )
             expired_permit_receipt = ensure_failed_submission(
@@ -2347,6 +2364,7 @@ class E2ERunner:
                         "spender": invalid_permit_spender.public_key,
                         "value": 77,
                         "deadline": expired_deadline,
+                        "nonce": 1,
                         "signature": expired_signature,
                     },
                     chi=DEFAULT_TX_CHI,
@@ -2378,6 +2396,7 @@ class E2ERunner:
                     deadline=invalid_signature_deadline,
                     authorizer_contract="permit_authorizer",
                     chain_id=self.network["chain_id"],
+                    nonce=1,
                 )
             )
             invalid_signature_receipt = ensure_failed_submission(
@@ -2390,6 +2409,7 @@ class E2ERunner:
                         "spender": invalid_permit_spender.public_key,
                         "value": 88,
                         "deadline": invalid_signature_deadline,
+                        "nonce": 1,
                         "signature": wrong_signature,
                     },
                     chi=DEFAULT_TX_CHI,
@@ -2419,13 +2439,14 @@ class E2ERunner:
                         "spender": permit_spender.public_key,
                         "value": permit_allowance,
                         "deadline": permit_deadline,
+                        "nonce": 0,
                         "signature": permit_signature,
                     },
                     chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="currency-permit-replay",
-                expected_message_fragment="Permit can only be used once.",
+                expected_message_fragment="Invalid permit nonce.",
             )
             replay_allowance_state = await wait_for_uniform_node_state(
                 session,
