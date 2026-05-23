@@ -4,6 +4,9 @@ This folder contains small, deterministic helper contracts used by the
 multi-phase localnet end-to-end runner.
 
 - `conflict_guard.py`: deterministic conflict and failure surface
+- `atomic_rollback.py`: live rollback probe for failed contract writes and
+  failed cross-contract token transfers
+- `allocation_guards.py`: allocation limit probes for the VM runtime
 - `orchestration_factory.py`: deploys multiple child contracts from a contract
   using templated artifact bundles rendered by `localnet-e2e.py`
 - `orchestration_child.py`: canonical child contract source for the
@@ -21,5 +24,7 @@ flowchart LR
   Router --> Mid["orchestration_mid"]
   Mid --> Root["orchestration_root"]
   E2E --> Conflict["conflict_guard"]
+  E2E --> Atomic["atomic_rollback"]
+  E2E --> Allocation["allocation_guards"]
   E2E --> Patch["patch_target"]
 ```

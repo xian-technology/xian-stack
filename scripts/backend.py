@@ -2074,6 +2074,11 @@ def backend_localnet_e2e(
     periodic_interval_seconds: float,
     burst_counter_ops: int,
     dex_rounds: int,
+    transfer_fanout_ops: int,
+    contract_heavy_ops: int,
+    throughput_wallet_count: int,
+    throughput_submit_workers: int,
+    contract_heavy_rounds: int,
     intentkit_x402: bool,
     start_phase: str,
     resume_dir: str | None,
@@ -2109,6 +2114,16 @@ def backend_localnet_e2e(
         str(burst_counter_ops),
         "--dex-rounds",
         str(dex_rounds),
+        "--transfer-fanout-ops",
+        str(transfer_fanout_ops),
+        "--contract-heavy-ops",
+        str(contract_heavy_ops),
+        "--throughput-wallet-count",
+        str(throughput_wallet_count),
+        "--throughput-submit-workers",
+        str(throughput_submit_workers),
+        "--contract-heavy-rounds",
+        str(contract_heavy_rounds),
         "--intentkit-x402" if intentkit_x402 else "--no-intentkit-x402",
         "--start-phase",
         start_phase,
@@ -2643,6 +2658,31 @@ def build_parser() -> argparse.ArgumentParser:
         default=8,
     )
     localnet_e2e.add_argument(
+        "--transfer-fanout-ops",
+        type=int,
+        default=160,
+    )
+    localnet_e2e.add_argument(
+        "--contract-heavy-ops",
+        type=int,
+        default=96,
+    )
+    localnet_e2e.add_argument(
+        "--throughput-wallet-count",
+        type=int,
+        default=16,
+    )
+    localnet_e2e.add_argument(
+        "--throughput-submit-workers",
+        type=int,
+        default=32,
+    )
+    localnet_e2e.add_argument(
+        "--contract-heavy-rounds",
+        type=int,
+        default=32,
+    )
+    localnet_e2e.add_argument(
         "--intentkit-x402",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -2940,6 +2980,11 @@ def main(argv: list[str] | None = None) -> int:
             periodic_interval_seconds=args.periodic_interval_seconds,
             burst_counter_ops=args.burst_counter_ops,
             dex_rounds=args.dex_rounds,
+            transfer_fanout_ops=args.transfer_fanout_ops,
+            contract_heavy_ops=args.contract_heavy_ops,
+            throughput_wallet_count=args.throughput_wallet_count,
+            throughput_submit_workers=args.throughput_submit_workers,
+            contract_heavy_rounds=args.contract_heavy_rounds,
             intentkit_x402=args.intentkit_x402,
             start_phase=args.start_phase,
             resume_dir=args.resume_dir,

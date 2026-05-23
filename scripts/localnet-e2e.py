@@ -70,6 +70,11 @@ SIMULATOR_BURST_REQUESTS = 128
 DEFAULT_SIMULATOR_BURST_CONCURRENCY = 32
 SIMULATOR_MAX_TRANSPORT_FAILURE_RATIO = 0.25
 WEBSOCKET_TIMEOUT_SECONDS = 20.0
+DEFAULT_E2E_TRANSFER_FANOUT_OPS = 160
+DEFAULT_E2E_CONTRACT_HEAVY_OPS = 96
+DEFAULT_E2E_THROUGHPUT_WALLET_COUNT = 16
+DEFAULT_E2E_THROUGHPUT_SUBMIT_WORKERS = 32
+DEFAULT_E2E_CONTRACT_HEAVY_ROUNDS = 32
 LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
 LOCALNET_POSTGRES_CONTAINER = "xian-localnet-postgres"
 SECONDARY_BDS_POSTGRES_IMAGE = "postgres:17"
@@ -1005,12 +1010,14 @@ class E2ERunner:
             "01-health",
             "02-xian-py-smoke",
             "03-contract-orchestration",
+            "03-atomic-rollback",
             "03-x402-exact",
             "03-intentkit-x402",
             "04-periodic-load",
             "05-burst-load",
             "06-conflict-invalid",
             "07-dex-mixed",
+            "08-throughput-mix",
             "08-simulator-load",
             "09-bds-catchup",
             "10-retrieval-surfaces",
@@ -1090,6 +1097,10 @@ class E2ERunner:
         if "03-contract-orchestration" in completed_phase_names:
             orchestration = self._load_resume_json("03-contract-orchestration")
             self.contracts.update(orchestration["details"]["contracts"])
+
+        if "03-atomic-rollback" in completed_phase_names:
+            rollback = self._load_resume_json("03-atomic-rollback")
+            self.contracts["atomic_rollback"] = rollback["details"]["contract"]
 
         if "03-x402-exact" in completed_phase_names:
             x402 = self._load_resume_json("03-x402-exact")
@@ -2693,6 +2704,200 @@ class E2ERunner:
             },
         }
 
+    async def atomic_rollback_phase(
+        self,
+        session: aiohttp.ClientSession,
+    ) -> dict[str, Any]:
+        operator = derive_wallet(self.seed, "atomic-rollback-operator")
+        recipient = derive_wallet(self.seed, "atomic-rollback-recipient")
+        await self.fund_wallets(session, [operator], amount=10_000)
+
+        contract_name = f"con_e2e_atomic_{short_hash(self.run_id + ':atomic')}"
+        self.contracts["atomic_rollback"] = contract_name
+
+        async with self.client(operator, 0, session) as client:
+            existing_contract = await client.get_contract_source(contract_name)
+            if existing_contract is None:
+                deploy_receipt = ensure_positive_submission(
+                    await client.submit_contract(
+                        name=contract_name,
+                        **self.contract_submission_kwargs(
+                            name=contract_name,
+                            code=read_text(
+                                WORKLOADS_DIR / "e2e" / "atomic_rollback.py"
+                            ),
+                        ),
+                        chi=120_000,
+                        wait_for_tx=True,
+                    ),
+                    label=f"deploy {contract_name}",
+                )
+            else:
+                deploy_receipt = {
+                    "accepted": True,
+                    "reused": True,
+                    "contract": contract_name,
+                }
+
+            baseline_receipt = ensure_positive_submission(
+                await client.send_tx(
+                    contract_name,
+                    "set_record",
+                    {"key": "baseline", "value": 5},
+                    chi=DEFAULT_TX_CHI,
+                    wait_for_tx=True,
+                ),
+                label="atomic-baseline-set",
+            )
+            baseline_value = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract=contract_name,
+                variable="records",
+                keys=["baseline", "value"],
+                expected=5,
+                label="atomic baseline value",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+            baseline_attempts = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract=contract_name,
+                variable="attempts",
+                expected=1,
+                label="atomic baseline attempts",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+
+            recipient_balance_before = await fetch_abci_query(
+                session,
+                self.nodes[0].rpc_url,
+                f"/get/currency.balances:{recipient.public_key}",
+            )
+
+            assertion_failure = ensure_failed_submission(
+                await client.send_tx(
+                    contract_name,
+                    "mutate_then_assert",
+                    {"key": "assert-failure", "value": 7},
+                    chi=DEFAULT_TX_CHI,
+                    wait_for_tx=True,
+                ),
+                label="atomic-assertion-failure",
+                expected_message_fragment="intentional rollback assertion",
+            )
+            overdraw_failure = ensure_failed_submission(
+                await client.send_tx(
+                    contract_name,
+                    "mutate_then_overdraw",
+                    {
+                        "key": "overdraw-failure",
+                        "to": recipient.public_key,
+                        "amount": 1,
+                    },
+                    chi=DEFAULT_TX_CHI,
+                    wait_for_tx=True,
+                ),
+                label="atomic-overdraw-failure",
+                expected_message_fragment="Not enough coins to send",
+            )
+            type_error_failure = ensure_failed_submission(
+                await client.send_tx(
+                    contract_name,
+                    "mutate_then_type_error",
+                    {"key": "type-error-failure", "value": 11},
+                    chi=DEFAULT_TX_CHI,
+                    wait_for_tx=True,
+                ),
+                label="atomic-type-error-failure",
+            )
+
+            rollback_checks = {}
+            for key in ("assert-failure", "overdraw-failure", "type-error-failure"):
+                rollback_checks[key] = await wait_for_uniform_node_state(
+                    session,
+                    self.nodes,
+                    contract=contract_name,
+                    variable="records",
+                    keys=[key, "value"],
+                    expected=None,
+                    label=f"atomic rollback value for {key}",
+                    timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+                )
+            attempts_after_failures = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract=contract_name,
+                variable="attempts",
+                expected=1,
+                label="atomic attempts after failed transactions",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+            recipient_balance_after_failure = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract="currency",
+                variable="balances",
+                keys=[recipient.public_key],
+                expected=recipient_balance_before,
+                label="atomic failed transfer recipient balance",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+
+            recovery_receipt = ensure_positive_submission(
+                await client.send_tx(
+                    contract_name,
+                    "set_record",
+                    {"key": "recovery", "value": 13},
+                    chi=DEFAULT_TX_CHI,
+                    wait_for_tx=True,
+                ),
+                label="atomic-recovery-set",
+            )
+            recovery_value = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract=contract_name,
+                variable="records",
+                keys=["recovery", "value"],
+                expected=13,
+                label="atomic recovery value",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+            recovery_attempts = await wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract=contract_name,
+                variable="attempts",
+                expected=2,
+                label="atomic recovery attempts",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+
+        return {
+            "contract": contract_name,
+            "deploy_receipt": deploy_receipt,
+            "baseline": {
+                "receipt": baseline_receipt,
+                "value": baseline_value,
+                "attempts": baseline_attempts,
+            },
+            "failures": {
+                "assertion": assertion_failure,
+                "overdraw": overdraw_failure,
+                "type_error": type_error_failure,
+                "rollback_checks": rollback_checks,
+                "attempts_after_failures": attempts_after_failures,
+                "recipient_balance_before": recipient_balance_before,
+                "recipient_balance_after_failure": recipient_balance_after_failure,
+            },
+            "recovery": {
+                "receipt": recovery_receipt,
+                "value": recovery_value,
+                "attempts": recovery_attempts,
+            },
+        }
+
     async def x402_exact_phase(
         self,
         session: aiohttp.ClientSession,
@@ -3192,6 +3397,7 @@ class E2ERunner:
         wallet_count: int | None = None,
         submit_workers: int | None = None,
         broadcast_mode: str | None = None,
+        heavy_rounds: int | None = None,
     ) -> dict[str, Any]:
         workload_seed = self.seed if seed_label is None else f"{self.seed}:{seed_label}"
         cmd = [
@@ -3229,6 +3435,8 @@ class E2ERunner:
             cmd.extend(["--submit-workers", str(submit_workers)])
         if broadcast_mode is not None:
             cmd.extend(["--broadcast-mode", broadcast_mode])
+        if heavy_rounds is not None:
+            cmd.extend(["--heavy-rounds", str(heavy_rounds)])
 
         result = run_cmd(cmd, cwd=STACK_DIR)
         payload = None
@@ -3410,6 +3618,47 @@ class E2ERunner:
         )
         payload["approx_tps"] = round(tx_count / float(payload["elapsed_seconds"]), 3)
         return payload
+
+    async def throughput_mix_phase(self) -> dict[str, Any]:
+        transfer_fanout = await self.run_localnet_workload(
+            scenario="transfer_fanout",
+            seed_label=f"{self.run_id}:transfer-fanout",
+            throughput_ops=self.args.transfer_fanout_ops,
+            wallet_count=self.args.throughput_wallet_count,
+            submit_workers=self.args.throughput_submit_workers,
+            broadcast_mode="checktx",
+        )
+        contract_heavy = await self.run_localnet_workload(
+            scenario="contract_heavy",
+            seed_label=f"{self.run_id}:contract-heavy",
+            throughput_ops=self.args.contract_heavy_ops,
+            wallet_count=self.args.throughput_wallet_count,
+            submit_workers=self.args.throughput_submit_workers,
+            broadcast_mode="checktx",
+            heavy_rounds=self.args.contract_heavy_rounds,
+        )
+
+        transfer_summary = transfer_fanout["scenario_summary"]
+        heavy_summary = contract_heavy["scenario_summary"]
+        total_transactions = (
+            int(transfer_summary["funding_transactions"])
+            + int(transfer_summary["transaction_count"])
+            + int(heavy_summary["funding_transactions"])
+            + int(heavy_summary["transaction_count"])
+            + 1
+        )
+        elapsed = float(transfer_fanout["elapsed_seconds"]) + float(
+            contract_heavy["elapsed_seconds"]
+        )
+        return {
+            "transfer_fanout": transfer_fanout,
+            "contract_heavy": contract_heavy,
+            "total_transactions": total_transactions,
+            "elapsed_seconds": round(elapsed, 3),
+            "approx_tps": round(total_transactions / elapsed, 3)
+            if elapsed > 0
+            else None,
+        }
 
     async def simulator_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         dex_contract = self.contracts.get("dex_router")
@@ -5070,6 +5319,8 @@ class E2ERunner:
         relayer_down_error: str | None = None
         service_relay_job: dict[str, Any] | None = None
         service_relay_receipt: dict[str, Any] | None = None
+        relay_hashes: dict[str, Any] | None = None
+        service_relay_hashes: dict[str, Any] | None = None
 
         async with (
             self.client(alice, 1, session) as alice_client,
@@ -5251,6 +5502,33 @@ class E2ERunner:
                 fee=2,
             )
             relay_proof = relay_prover.prove_relay_transfer(relay_plan.request)
+            relay_hashes = await relayer_client.call(
+                token_name,
+                "hash_relay_transfer",
+                {
+                    "input_nullifiers": relay_proof.input_nullifiers,
+                    "relayer": relayer.public_key,
+                    "relayer_fee": relay_proof.relayer_fee,
+                },
+            )
+            if relay_hashes["relay_binding"] != relay_proof.relay_binding:
+                raise E2EError(
+                    "shielded relay binding drifted before submission: "
+                    f"chain_id={self.network['chain_id']!r} "
+                    f"input_nullifiers={relay_proof.input_nullifiers!r} "
+                    f"contract_hashes={normalize_value(relay_hashes)!r} "
+                    f"proof={relay_proof.relay_binding!r} "
+                    f"contract={relay_hashes['relay_binding']!r}"
+                )
+            if relay_hashes["execution_tag"] != relay_proof.execution_tag:
+                raise E2EError(
+                    "shielded relay execution tag drifted before submission: "
+                    f"chain_id={self.network['chain_id']!r} "
+                    f"input_nullifiers={relay_proof.input_nullifiers!r} "
+                    f"contract_hashes={normalize_value(relay_hashes)!r} "
+                    f"proof={relay_proof.execution_tag!r} "
+                    f"contract={relay_hashes['execution_tag']!r}"
+                )
             relay_submission = await relayer_client.send_tx(
                 token_name,
                 "relay_transfer_shielded",
@@ -5586,6 +5864,40 @@ class E2ERunner:
             service_relay_proof = relay_prover.prove_relay_transfer(
                 service_relay_plan.request
             )
+            service_relay_hashes = await founder_client.call(
+                token_name,
+                "hash_relay_transfer",
+                {
+                    "input_nullifiers": service_relay_proof.input_nullifiers,
+                    "relayer": relayer.public_key,
+                    "relayer_fee": service_relay_proof.relayer_fee,
+                },
+            )
+            if (
+                service_relay_hashes["relay_binding"]
+                != service_relay_proof.relay_binding
+            ):
+                raise E2EError(
+                    "shielded relayer-service binding drifted before submission: "
+                    f"chain_id={self.network['chain_id']!r} "
+                    f"input_nullifiers={service_relay_proof.input_nullifiers!r} "
+                    f"contract_hashes={normalize_value(service_relay_hashes)!r} "
+                    f"proof={service_relay_proof.relay_binding!r} "
+                    f"contract={service_relay_hashes['relay_binding']!r}"
+                )
+            if (
+                service_relay_hashes["execution_tag"]
+                != service_relay_proof.execution_tag
+            ):
+                raise E2EError(
+                    "shielded relayer-service execution tag drifted before "
+                    "submission: "
+                    f"chain_id={self.network['chain_id']!r} "
+                    f"input_nullifiers={service_relay_proof.input_nullifiers!r} "
+                    f"contract_hashes={normalize_value(service_relay_hashes)!r} "
+                    f"proof={service_relay_proof.execution_tag!r} "
+                    f"contract={service_relay_hashes['execution_tag']!r}"
+                )
             relayer_env = make_localnet_env(self.args)
             relayer_secret = "localnet-shielded-relayer-token"
             relayer_env.update(
@@ -6066,6 +6378,16 @@ class E2ERunner:
                         else None,
                     },
                     "event_count": len(relay_events),
+                    "proof_hashes": {
+                        "relay_binding": relay_proof.relay_binding,
+                        "execution_tag": relay_proof.execution_tag,
+                    },
+                    "contract_hashes": relay_hashes,
+                    "service_proof_hashes": {
+                        "relay_binding": service_relay_proof.relay_binding,
+                        "execution_tag": service_relay_proof.execution_tag,
+                    },
+                    "service_contract_hashes": service_relay_hashes,
                 }
             ),
             "records_sample": normalize_value(
@@ -6744,12 +7066,14 @@ class E2ERunner:
                     "03-contract-orchestration",
                     lambda: self.contract_orchestration_phase(session),
                 ),
+                ("03-atomic-rollback", lambda: self.atomic_rollback_phase(session)),
                 ("03-x402-exact", lambda: self.x402_exact_phase(session)),
                 ("03-intentkit-x402", lambda: self.intentkit_x402_phase(session)),
                 ("04-periodic-load", lambda: self.periodic_load(session)),
                 ("05-burst-load", self.burst_phase),
                 ("06-conflict-invalid", lambda: self.conflict_phase(session)),
                 ("07-dex-mixed", self.dex_phase),
+                ("08-throughput-mix", self.throughput_mix_phase),
                 ("08-simulator-load", lambda: self.simulator_phase(session)),
                 ("09-bds-catchup", lambda: self.bds_catchup_phase(session)),
                 ("10-retrieval-surfaces", lambda: self.retrieval_phase(session)),
@@ -6828,6 +7152,31 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--periodic-interval-seconds", type=float, default=0.35)
     parser.add_argument("--burst-counter-ops", type=int, default=260)
     parser.add_argument("--dex-rounds", type=int, default=8)
+    parser.add_argument(
+        "--transfer-fanout-ops",
+        type=int,
+        default=DEFAULT_E2E_TRANSFER_FANOUT_OPS,
+    )
+    parser.add_argument(
+        "--contract-heavy-ops",
+        type=int,
+        default=DEFAULT_E2E_CONTRACT_HEAVY_OPS,
+    )
+    parser.add_argument(
+        "--throughput-wallet-count",
+        type=int,
+        default=DEFAULT_E2E_THROUGHPUT_WALLET_COUNT,
+    )
+    parser.add_argument(
+        "--throughput-submit-workers",
+        type=int,
+        default=DEFAULT_E2E_THROUGHPUT_SUBMIT_WORKERS,
+    )
+    parser.add_argument(
+        "--contract-heavy-rounds",
+        type=int,
+        default=DEFAULT_E2E_CONTRACT_HEAVY_ROUNDS,
+    )
     parser.add_argument("--chaos-cycles", type=int, default=2)
     parser.add_argument("--chaos-load-transactions", type=int, default=8)
     parser.add_argument("--soak-duration-seconds", type=float, default=90.0)

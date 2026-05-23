@@ -39,7 +39,7 @@ class LocalnetX402PhaseTests(unittest.TestCase):
         phase_names = localnet_e2e.E2ERunner.phase_names()
         x402_index = phase_names.index("03-x402-exact")
 
-        self.assertEqual("03-contract-orchestration", phase_names[x402_index - 1])
+        self.assertEqual("03-atomic-rollback", phase_names[x402_index - 1])
         self.assertEqual("03-intentkit-x402", phase_names[x402_index + 1])
         self.assertEqual("04-periodic-load", phase_names[x402_index + 2])
 

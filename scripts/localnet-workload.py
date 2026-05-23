@@ -2260,6 +2260,7 @@ async def run_transfer_fanout(
     operations: int,
     wallet_count: int,
     submit_workers: int,
+    receipt_resolution: str,
     receipt_workers: int,
     receipt_timeout_seconds: float,
     broadcast_mode: str,
@@ -2320,6 +2321,13 @@ async def run_transfer_fanout(
         submit_workers=submit_workers,
     )
     require_all_admitted("transfer_fanout", records)
+    await context.resolve_records(
+        records,
+        timeout_seconds=receipt_timeout_seconds,
+        concurrent=receipt_resolution == "concurrent",
+        max_workers=receipt_workers,
+    )
+    require_all_successful("transfer_fanout", records)
     elapsed = time.monotonic() - started_at
     sample_indices = sorted(
         {
@@ -2384,8 +2392,10 @@ async def run_transfer_fanout(
         "funding_amount": funding_amount,
         "funding_transactions": len(funding_records),
         "transaction_count": len(records),
-        "successful_transactions": len(records),
-        "failed_transactions": 0,
+        "successful_transactions": sum(1 for record in records if record.final_success),
+        "failed_transactions": sum(
+            1 for record in records if record.final_success is False
+        ),
         "elapsed_workload_seconds": round(elapsed, 3),
         "committed_window": await summarize_committed_window_for_range(
             context,
@@ -2405,6 +2415,7 @@ async def run_contract_heavy(
     operations: int,
     wallet_count: int,
     submit_workers: int,
+    receipt_resolution: str,
     receipt_workers: int,
     receipt_timeout_seconds: float,
     broadcast_mode: str,
@@ -2430,6 +2441,13 @@ async def run_contract_heavy(
         mode="checktx",
     )
     require_all_admitted("contract_heavy deploy", [deploy_record])
+    await context.resolve_records(
+        [deploy_record],
+        timeout_seconds=receipt_timeout_seconds,
+        concurrent=False,
+        max_workers=1,
+    )
+    require_successful(deploy_record)
     await wait_for_contract_visibility(
         context,
         contract_name,
@@ -2497,6 +2515,13 @@ async def run_contract_heavy(
         submit_workers=submit_workers,
     )
     require_all_admitted("contract_heavy", records)
+    await context.resolve_records(
+        records,
+        timeout_seconds=receipt_timeout_seconds,
+        concurrent=receipt_resolution == "concurrent",
+        max_workers=receipt_workers,
+    )
+    require_all_successful("contract_heavy", records)
     elapsed = time.monotonic() - started_at
     sample_indices = sorted(
         {
@@ -2556,8 +2581,10 @@ async def run_contract_heavy(
         "deploy_transaction_hash": deploy_record.tx_hash,
         "funding_transactions": len(funding_records),
         "transaction_count": len(records),
-        "successful_transactions": len(records),
-        "failed_transactions": 0,
+        "successful_transactions": sum(1 for record in records if record.final_success),
+        "failed_transactions": sum(
+            1 for record in records if record.final_success is False
+        ),
         "elapsed_workload_seconds": round(elapsed, 3),
         "committed_window": await summarize_committed_window_for_range(
             context,
@@ -2604,6 +2631,7 @@ async def run_scenario(
             operations=args.throughput_ops,
             wallet_count=args.wallet_count,
             submit_workers=args.submit_workers,
+            receipt_resolution=args.receipt_resolution,
             receipt_workers=args.receipt_workers,
             receipt_timeout_seconds=args.receipt_timeout_seconds,
             broadcast_mode=args.broadcast_mode,
@@ -2615,6 +2643,7 @@ async def run_scenario(
             operations=args.throughput_ops,
             wallet_count=args.wallet_count,
             submit_workers=args.submit_workers,
+            receipt_resolution=args.receipt_resolution,
             receipt_workers=args.receipt_workers,
             receipt_timeout_seconds=args.receipt_timeout_seconds,
             broadcast_mode=args.broadcast_mode,
@@ -2783,7 +2812,7 @@ async def async_main(argv: list[str] | None = None) -> int:
             "elapsed_seconds": round(elapsed, 3),
             "seed": args.seed,
             "consensus": consensus_summary,
-            "scenario_summary": scenario_summary,
+            "scenario_summary": normalize_value(scenario_summary),
             "memory": (
                 collect_container_memory(context.nodes)
                 if args.measure_memory
