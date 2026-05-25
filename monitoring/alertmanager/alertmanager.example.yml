@@ -3,7 +3,7 @@ global:
 
 route:
   receiver: xian-default
-  group_by: ["alertname", "preset", "instance"]
+  group_by: ["alertname", "profile", "instance"]
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
@@ -45,4 +45,4 @@ inhibit_rules:
       - alertname="XianAbciTargetDown"
     target_matchers:
       - alertname=~"XianBds.*|XianNodeInfoMissing|XianVmShadowMismatchDetected"
-    equal: ["instance", "preset"]
+    equal: ["instance", "profile"]

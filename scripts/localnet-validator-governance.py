@@ -2506,7 +2506,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--genesis-network",
         default=DEFAULT_GENESIS_NETWORK,
-        help="contract bundle preset used to seed localnet genesis",
+        help="genesis bundle name used to seed localnet genesis",
     )
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--rpc-timeout-seconds", type=float, default=180.0)

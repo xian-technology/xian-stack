@@ -30,7 +30,7 @@ NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 DEFAULT_XIAN_CONFIGS_DIR = ROOT_DIR / "xian-configs"
 DEFAULT_DEX_BUNDLE_PATH = (
     DEFAULT_XIAN_CONFIGS_DIR
-    / "modules"
+    / "contract-packs"
     / "dex"
     / "contract-bundle.json"
 )
@@ -815,7 +815,10 @@ def parse_args() -> argparse.Namespace:
         default=Path(
             os.environ.get("XIAN_DEX_BUNDLE", DEFAULT_DEX_BUNDLE_PATH)
         ),
-        help="hash-pinned DEX contract bundle; defaults to xian-configs/modules/dex",
+        help=(
+            "hash-pinned DEX contract bundle; defaults to "
+            "xian-configs/contract-packs/dex"
+        ),
     )
     parser.add_argument(
         "--dex-contracts-dir",

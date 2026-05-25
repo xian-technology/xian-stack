@@ -77,7 +77,7 @@ size-sensitive work and checked before adding more code to the contract.
 
 Use this runner when changing any of the following:
 
-- the canonical `testnet` contract preset or its validator policy surface
+- the canonical `testnet` genesis bundle or its validator policy surface
 - validator selection policy
 - delegation and unbonding behavior
 - governance actions on `masternodes`

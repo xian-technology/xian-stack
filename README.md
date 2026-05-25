@@ -195,7 +195,7 @@ python3 ./scripts/backend.py localnet-e2e
 - `scripts/` — backend control plane (`backend.py`), release orchestrator,
   smoke flows, localnet tooling, and TPS benchmarks.
 - `monitoring/` — Prometheus, Grafana dashboards (including dedicated
-  `Xian VM Runtime` and `Xian BDS Recovery`), and alert presets.
+  `Xian VM Runtime` and `Xian BDS Recovery`), and alert variants.
 - `workloads/` — localnet workload fixtures and contracts.
 - `contracts/` — built-in contract bundles deployed by localnet bootstrap.
 - `tests/` — backend, smoke, and harness coverage.

@@ -2397,7 +2397,7 @@ def build_parser() -> argparse.ArgumentParser:
     localnet_init.add_argument(
         "--genesis-network",
         default="local",
-        help="contract bundle preset used to seed localnet genesis",
+        help="genesis bundle name used to seed localnet genesis",
     )
     localnet_init.add_argument(
         "--chain-id",
@@ -2538,7 +2538,7 @@ def build_parser() -> argparse.ArgumentParser:
     localnet_validator_governance.add_argument(
         "--genesis-network",
         default="testnet",
-        help="contract bundle preset used to seed localnet genesis",
+        help="genesis bundle name used to seed localnet genesis",
     )
     localnet_validator_governance.add_argument(
         "--log-level",

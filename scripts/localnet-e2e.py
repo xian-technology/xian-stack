@@ -91,7 +91,7 @@ CONTRACT_ORCHESTRATION_TX_CHI = {
 X402_CONTRACT_SOURCE = (
     ROOT_DIR
     / "xian-configs"
-    / "solutions"
+    / "examples"
     / "x402-exact"
     / "contracts"
     / "x402_settlement.s.py"

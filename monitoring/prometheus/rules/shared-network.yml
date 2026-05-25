@@ -6,7 +6,7 @@ groups:
         for: 2m
         labels:
           severity: critical
-          preset: shared_network
+          profile: shared_network
         annotations:
           summary: Xian ABCI metrics target is down
           description: The Xian ABCI metrics endpoint has been unreachable for more than two minutes.
@@ -15,7 +15,7 @@ groups:
         for: 2m
         labels:
           severity: critical
-          preset: shared_network
+          profile: shared_network
         annotations:
           summary: Xian node info metric is missing
           description: The Xian app metrics exporter is reachable, but xian_node_info has not been observed for more than two minutes.
@@ -24,7 +24,7 @@ groups:
         for: 2m
         labels:
           severity: critical
-          preset: shared_network
+          profile: shared_network
         annotations:
           summary: CometBFT metrics target is down
           description: The CometBFT metrics endpoint has been unreachable for more than two minutes.
@@ -33,7 +33,7 @@ groups:
         for: 15m
         labels:
           severity: critical
-          preset: shared_network
+          profile: shared_network
         annotations:
           summary: Block progress appears stalled
           description: Block height has not advanced over the last fifteen minutes on a shared-network posture.
@@ -42,7 +42,7 @@ groups:
         for: 10m
         labels:
           severity: warning
-          preset: shared_network
+          profile: shared_network
         annotations:
           summary: BDS indexing lag is elevated
           description: BDS height lag has stayed above five blocks for ten minutes.
@@ -51,7 +51,7 @@ groups:
         for: 5m
         labels:
           severity: warning
-          preset: shared_network
+          profile: shared_network
         annotations:
           summary: The node is reporting active BDS alerts
           description: One or more BDS alerts have remained active for at least five minutes.
@@ -60,7 +60,7 @@ groups:
         for: 5m
         labels:
           severity: warning
-          preset: shared_network
+          profile: shared_network
         annotations:
           summary: BDS status refresh is failing
           description: The node has not refreshed its BDS monitoring snapshot successfully for at least five minutes.
@@ -69,7 +69,7 @@ groups:
         for: 10m
         labels:
           severity: warning
-          preset: shared_network
+          profile: shared_network
         annotations:
           summary: BDS catch-up appears stalled
           description: BDS is still reporting catch-up activity, but indexed height has not advanced over the last fifteen minutes.

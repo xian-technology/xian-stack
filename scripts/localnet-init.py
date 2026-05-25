@@ -312,7 +312,7 @@ def main():
         "--genesis-network",
         default=env_str("XIAN_LOCALNET_GENESIS_NETWORK", "local"),
         help=(
-            "Contract bundle preset used to seed the localnet genesis "
+            "Genesis bundle name used to seed the localnet genesis "
             "(for example: local, devnet, testnet)"
         ),
     )

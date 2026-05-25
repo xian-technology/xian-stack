@@ -16,7 +16,7 @@ tooling behind `xian-stack`.
   the native-VM and governance localnet safety paths
 - `smoke-stack.sh` and `smoke-cli.sh`: repo-level smoke entrypoints
 - `localnet-init.py`: multi-node localnet creation, including local-only
-  validator keys, preset-backed genesis selection, fixed VM execution, and
+  validator keys, bundle-backed genesis selection, fixed VM execution, and
   optional BDS wiring
 - `localnet-dex-bootstrap.py`: opt-in canonical DEX deployment for a running
   local node or generated localnet; it deploys `con_pairs`, `con_dex`, optional
@@ -68,8 +68,8 @@ tooling behind `xian-stack`.
   not reuse it outside the local test network.
 - `localnet-dex-bootstrap.py` is post-start bootstrap, not a genesis mutation.
   The base contract bundle remains unchanged; local DEX availability is an
-  explicit operator action. By default it consumes the hash-pinned DEX module
-  bundle from `xian-configs`; raw source directory overrides are only for
+  explicit operator action. By default it consumes the hash-pinned DEX contract
+  pack bundle from `xian-configs`; raw source directory overrides are only for
   development.
 - The validator/governance runner should be executed through `uv` with the
   `xian-abci` project and local `xian-py` package available, preferably through
