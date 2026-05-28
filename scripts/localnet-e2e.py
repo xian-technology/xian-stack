@@ -24,6 +24,7 @@ from typing import Any
 import aiohttp
 from governance_vote_helpers import cast_votes_until_status, wait_for_status
 from localnet_common import compare_app_hash_window, fetch_json
+from localnet_e2e_phases import bind_phase_sequence, phase_names
 from localnet_e2e_support import (
     E2EError,
     normalize_value,
@@ -1005,31 +1006,7 @@ class E2ERunner:
 
     @staticmethod
     def phase_names() -> list[str]:
-        return [
-            "00-bootstrap",
-            "01-health",
-            "02-xian-py-smoke",
-            "03-contract-orchestration",
-            "03-atomic-rollback",
-            "03-x402-exact",
-            "03-intentkit-x402",
-            "04-periodic-load",
-            "05-burst-load",
-            "06-conflict-invalid",
-            "07-dex-mixed",
-            "08-throughput-mix",
-            "08-simulator-load",
-            "09-bds-catchup",
-            "10-retrieval-surfaces",
-            "11-determinism",
-            "12-validator-governance",
-            "13-state-patch",
-            "14-logging",
-            "15-shielded-note-token",
-            "16-parallel-execution",
-            "17-chaos-convergence",
-            "18-soak-abuse",
-        ]
+        return phase_names()
 
     def _load_resume_json(self, phase_name: str) -> dict[str, Any]:
         path = self.output_dir / json_file_name(phase_name)
@@ -7058,40 +7035,7 @@ class E2ERunner:
             timeout=aiohttp.ClientTimeout(total=30, sock_connect=5, sock_read=25),
             connector=aiohttp.TCPConnector(limit=256, ttl_dns_cache=300),
         ) as session:
-            phase_sequence = [
-                ("00-bootstrap", lambda: self.bootstrap(session)),
-                ("01-health", lambda: self.health_phase(session)),
-                ("02-xian-py-smoke", lambda: self.xian_py_smoke(session)),
-                (
-                    "03-contract-orchestration",
-                    lambda: self.contract_orchestration_phase(session),
-                ),
-                ("03-atomic-rollback", lambda: self.atomic_rollback_phase(session)),
-                ("03-x402-exact", lambda: self.x402_exact_phase(session)),
-                ("03-intentkit-x402", lambda: self.intentkit_x402_phase(session)),
-                ("04-periodic-load", lambda: self.periodic_load(session)),
-                ("05-burst-load", self.burst_phase),
-                ("06-conflict-invalid", lambda: self.conflict_phase(session)),
-                ("07-dex-mixed", self.dex_phase),
-                ("08-throughput-mix", self.throughput_mix_phase),
-                ("08-simulator-load", lambda: self.simulator_phase(session)),
-                ("09-bds-catchup", lambda: self.bds_catchup_phase(session)),
-                ("10-retrieval-surfaces", lambda: self.retrieval_phase(session)),
-                ("11-determinism", lambda: self.determinism_phase(session)),
-                (
-                    "12-validator-governance",
-                    lambda: self.validator_governance_phase(session),
-                ),
-                ("13-state-patch", lambda: self.state_patch_phase(session)),
-                ("14-logging", lambda: self.logging_phase(session)),
-                ("15-shielded-note-token", lambda: self.shielded_phase(session)),
-                (
-                    "16-parallel-execution",
-                    lambda: self.parallel_execution_phase(session),
-                ),
-                ("17-chaos-convergence", lambda: self.chaos_convergence_phase(session)),
-                ("18-soak-abuse", lambda: self.soak_abuse_phase(session)),
-            ]
+            phase_sequence = bind_phase_sequence(self, session)
             if start_phase != "00-bootstrap":
                 self.load_resume_context()
                 await wait_for_localnet_ready(
