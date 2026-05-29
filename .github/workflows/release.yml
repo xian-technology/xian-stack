@@ -28,8 +28,11 @@ jobs:
       python_image: ${{ steps.resolve.outputs.python_image }}
       go_image: ${{ steps.resolve.outputs.go_image }}
       rust_image: ${{ steps.resolve.outputs.rust_image }}
+      uv_image: ${{ steps.resolve.outputs.uv_image }}
+      debian_snapshot: ${{ steps.resolve.outputs.debian_snapshot }}
       source_date_epoch: ${{ steps.resolve.outputs.source_date_epoch }}
       pip_version: ${{ steps.resolve.outputs.pip_version }}
+      packaging_version: ${{ steps.resolve.outputs.packaging_version }}
       wheel_version: ${{ steps.resolve.outputs.wheel_version }}
       maturin_version: ${{ steps.resolve.outputs.maturin_version }}
       cometbft_version: ${{ steps.resolve.outputs.cometbft_version }}
@@ -276,8 +279,11 @@ jobs:
             PYTHON_IMAGE=${{ needs.release-manifest.outputs.python_image }}
             GO_IMAGE=${{ needs.release-manifest.outputs.go_image }}
             RUST_IMAGE=${{ needs.release-manifest.outputs.rust_image }}
+            UV_IMAGE=${{ needs.release-manifest.outputs.uv_image }}
+            DEBIAN_SNAPSHOT=${{ needs.release-manifest.outputs.debian_snapshot }}
             SOURCE_DATE_EPOCH=${{ needs.release-manifest.outputs.source_date_epoch }}
             PIP_VERSION=${{ needs.release-manifest.outputs.pip_version }}
+            PACKAGING_VERSION=${{ needs.release-manifest.outputs.packaging_version }}
             WHEEL_VERSION=${{ needs.release-manifest.outputs.wheel_version }}
             MATURIN_VERSION=${{ needs.release-manifest.outputs.maturin_version }}
             COMETBFT_VERSION=${{ needs.release-manifest.outputs.cometbft_version }}
@@ -310,8 +316,11 @@ jobs:
             PYTHON_IMAGE=${{ needs.release-manifest.outputs.python_image }}
             GO_IMAGE=${{ needs.release-manifest.outputs.go_image }}
             RUST_IMAGE=${{ needs.release-manifest.outputs.rust_image }}
+            UV_IMAGE=${{ needs.release-manifest.outputs.uv_image }}
+            DEBIAN_SNAPSHOT=${{ needs.release-manifest.outputs.debian_snapshot }}
             SOURCE_DATE_EPOCH=${{ needs.release-manifest.outputs.source_date_epoch }}
             PIP_VERSION=${{ needs.release-manifest.outputs.pip_version }}
+            PACKAGING_VERSION=${{ needs.release-manifest.outputs.packaging_version }}
             WHEEL_VERSION=${{ needs.release-manifest.outputs.wheel_version }}
             MATURIN_VERSION=${{ needs.release-manifest.outputs.maturin_version }}
             COMETBFT_VERSION=${{ needs.release-manifest.outputs.cometbft_version }}
@@ -461,7 +470,6 @@ jobs:
     needs:
       - release-manifest
       - publish-images
-    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -517,13 +525,13 @@ jobs:
           python xian-stack/scripts/verify_release_reproducibility.py \
             --manifest xian-stack/release-manifest.json \
             --image-release release-assets/image-release.json \
-            --workspace-root "${GITHUB_WORKSPACE}" \
-            --soft-fail
+            --workspace-root "${GITHUB_WORKSPACE}"
 
   github-release:
     needs:
       - release-manifest
       - publish-images
+      - verify-reproducibility
     runs-on: ubuntu-latest
     permissions:
       contents: write

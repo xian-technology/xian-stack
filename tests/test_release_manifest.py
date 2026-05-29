@@ -19,8 +19,11 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertIn("@sha256:", build["python_image"])
         self.assertIn("@sha256:", build["go_image"])
         self.assertIn("@sha256:", build["rust_image"])
+        self.assertIn("@sha256:", build["uv_image"])
+        self.assertRegex(build["debian_snapshot"], r"^[0-9]{8}T[0-9]{6}Z$")
         self.assertRegex(build["source_date_epoch"], r"^[0-9]+$")
         self.assertRegex(build["pip_version"], r"^[0-9][0-9A-Za-z.]+$")
+        self.assertRegex(build["packaging_version"], r"^[0-9][0-9A-Za-z.]+$")
         self.assertRegex(build["wheel_version"], r"^[0-9][0-9A-Za-z.]+$")
         self.assertRegex(build["maturin_version"], r"^[0-9][0-9A-Za-z.]+$")
         self.assertTrue(build["cometbft_source_url"].endswith(".tar.gz"))
@@ -38,8 +41,11 @@ class ReleaseManifestTests(unittest.TestCase):
             "python_image",
             "go_image",
             "rust_image",
+            "uv_image",
+            "debian_snapshot",
             "source_date_epoch",
             "pip_version",
+            "packaging_version",
             "wheel_version",
             "maturin_version",
             "cometbft_source_url",

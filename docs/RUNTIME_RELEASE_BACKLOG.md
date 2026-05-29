@@ -12,8 +12,10 @@ integrated-vs-fidelity runtime refactor itself.
 - Done: s6-overlay archives are now verified against manifest-pinned SHA256 values.
 - Done: node image Python runtime installs now come from a hash-pinned requirements export derived from `xian-abci/uv.lock`.
 - Done: Python wheel archives now use a manifest-pinned `SOURCE_DATE_EPOCH` plus pinned `pip` / `wheel` / `maturin` tool versions.
-- Audit any remaining floating runtime dependencies and either pin them or
-  document why they intentionally float.
+- Done: release image `apt-get update` runs against a manifest-pinned Debian
+  snapshot instead of live Debian repositories.
+- Done: the uv helper image and the Python packaging build dependency are now
+  manifest-pinned release inputs.
 
 ## SBOM And Provenance
 
@@ -29,12 +31,16 @@ integrated-vs-fidelity runtime refactor itself.
 
 ## Reproducibility
 
-- Done: stack release inputs are now pinned enough for deterministic rebuilds.
+- Done: stack release inputs are pinned enough for deterministic rebuilds,
+  including base images, uv image, Debian package snapshots, Python tool
+  versions, CometBFT source archives, and s6-overlay archives.
 - Done: the release workflow now runs a post-publish rebuild audit for
   `linux/amd64` and `linux/arm64` and compares the results to the recorded
   platform digests.
-- Remaining: run the hardened build path through a fresh tagged release and
-  confirm the reproducibility audit is clean enough to promote from advisory to
-  a hard release gate.
-- Document the exact release inputs and the supported Linux/macOS operator
-  paths.
+- Done: the release workflow now treats reproducibility as a hard GitHub release
+  gate; images are still built and published first, but the GitHub release is
+  blocked unless the rebuild audit passes.
+- Done: supported Linux/macOS operator verification paths are documented in
+  `docs/RELEASES.md`.
+- Remaining operational check: run the next tagged release through the hardened
+  path and confirm the release audit is clean with real published image digests.

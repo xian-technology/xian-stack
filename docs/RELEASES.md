@@ -140,10 +140,10 @@ Their workflows:
 The manifest pins:
 
 - exact Git refs for `xian-abci`, `xian-configs`, `xian-contracting`, and `xian-py`
-- digest-pinned Python and Go base images
-- a digest-pinned Rust toolchain image for native Python extension builds
+- digest-pinned Python, Go, Rust, and uv images
+- a Debian snapshot timestamp for all release-image `apt-get update` calls
 - a fixed `SOURCE_DATE_EPOCH` for deterministic wheel archives and image layers
-- pinned Python build-tool versions for `pip`, `wheel`, and `maturin`
+- pinned Python build-tool versions for `pip`, `packaging`, `wheel`, and `maturin`
 - the CometBFT version, source archive URL, and source SHA256
 - the s6-overlay version plus architecture-specific archive SHA256 values
 - the output image names
@@ -200,6 +200,24 @@ That file is intentionally easier for automation to consume than the plain-text
 
 ### Verifying A Published Image
 
+Supported operator paths:
+
+- Linux: full verification is supported with Docker Engine or Docker Desktop,
+  Buildx, Cosign, Python 3, and the sibling Xian repos checked out under one
+  workspace root. This path can verify Sigstore signatures and run the local
+  reproducibility rebuild for `linux/amd64` and `linux/arm64`.
+- macOS: signature and release-asset verification are supported with Cosign.
+  The reproducibility rebuild is supported when Docker Desktop Buildx can build
+  both `linux/amd64` and `linux/arm64` images through the configured builder.
+  Expect the rebuild to take longer on non-native platforms.
+
+Download the release assets for the tag first:
+
+- `release-manifest.json`
+- `image-release.json`
+- `release-manifest.json.sigstore.json`
+- `image-release.json.sigstore.json`
+
 Use Cosign against the immutable digest, not a floating tag:
 
 ```bash
@@ -239,10 +257,12 @@ python3 ./scripts/verify_release_reproducibility.py \
   --workspace-root /path/to/xian
 ```
 
-The reproducibility audit is currently advisory, not a hard release gate. The
-workflow still records the result so drift is visible immediately, but the
-GitHub release is allowed to proceed while the remaining bit-for-bit
-normalization work is still open.
+The reproducibility audit is a hard GitHub release gate. Images are built and
+published before the audit because the verifier compares against the published
+platform digests, but the GitHub release is blocked unless the rebuild passes.
+Keep `release-manifest.json` current before tagging: base images, the uv helper
+image, the Debian snapshot timestamp, Python packaging tool versions, CometBFT
+source metadata, and s6-overlay archive checksums are release inputs.
 
 Canonical network manifests in `xian-configs/networks/*/manifest.json` can then
 pin those published images by digest, and `xian-cli network join` will carry

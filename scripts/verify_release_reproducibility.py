@@ -237,9 +237,15 @@ def build_platform_archive(
         "--build-arg",
         f"RUST_IMAGE={build['rust_image']}",
         "--build-arg",
+        f"UV_IMAGE={build['uv_image']}",
+        "--build-arg",
+        f"DEBIAN_SNAPSHOT={build['debian_snapshot']}",
+        "--build-arg",
         f"SOURCE_DATE_EPOCH={build['source_date_epoch']}",
         "--build-arg",
         f"PIP_VERSION={build['pip_version']}",
+        "--build-arg",
+        f"PACKAGING_VERSION={build['packaging_version']}",
         "--build-arg",
         f"WHEEL_VERSION={build['wheel_version']}",
         "--build-arg",
@@ -299,13 +305,20 @@ def verify_reproducibility(
                     "expected_manifest_digest": expected_digest,
                     "rebuilt_manifest_digest": digest,
                 }
+                if digest != expected_digest:
+                    raise ReproducibilityMismatch(
+                        "reproducibility verification failed for "
+                        f"{key}; expected manifest digest {expected_digest}, "
+                        f"rebuilt manifest digest {digest}"
+                    )
                 normalized_local_config = normalized_image_config(local_config)
                 normalized_remote_config = remote_configs[(target, platform)]
                 if normalized_local_config != normalized_remote_config:
                     raise ReproducibilityMismatch(
                         "reproducibility verification failed for "
-                        f"{key}; rebuilt image content/config does not match "
-                        "the published image"
+                        f"{key}; expected manifest digest {expected_digest}, "
+                        f"rebuilt manifest digest {digest}; rebuilt image "
+                        "content/config does not match the published image"
                     )
     return observed
 

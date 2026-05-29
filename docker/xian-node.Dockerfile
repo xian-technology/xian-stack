@@ -3,13 +3,17 @@
 ARG PYTHON_IMAGE=python:3.14-bookworm@sha256:4564a2be4617886b3a7ed704c91e31b95efd1f42d5941f5bb5e53efb151edaa3
 ARG GO_IMAGE=golang:1.25-bookworm@sha256:29e59af995c51a5bf63d072eca973b918e0e7af4db0e4667aa73f1b8da1a6d8c
 ARG RUST_IMAGE=rust:1.95-bookworm@sha256:225aa827d55fae9816a0492284592827e794a5247c6c6a961c3b471b344295ec
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.6.11@sha256:fb91e82e8643382d5bce074ba0d167677d678faff4bd518dac670476d19b159c
+ARG DEBIAN_SNAPSHOT=20260515T000000Z
 ARG SOURCE_DATE_EPOCH=1704067200
 ARG PIP_VERSION=26.0.1
+ARG PACKAGING_VERSION=26.2
 ARG WHEEL_VERSION=0.46.3
 ARG MATURIN_VERSION=1.13.1
 
 FROM ${GO_IMAGE} AS cometbft-builder
 
+ARG DEBIAN_SNAPSHOT
 ARG COMETBFT_VERSION=0.39.3
 ARG COMETBFT_SOURCE_URL=https://github.com/cometbft/cometbft/archive/refs/tags/v0.39.3.tar.gz
 ARG COMETBFT_SOURCE_SHA256=f674a39ce3bdb3f62ac547a1c3296142ef1433f56fff185055c50a38b3afeee8
@@ -18,11 +22,15 @@ ARG TARGETARCH
 
 ENV CGO_ENABLED=0
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "3";\n' > /etc/apt/apt.conf.d/99snapshot; \
+    printf 'Types: deb\nURIs: http://snapshot.debian.org/archive/debian/%s/\nSuites: bookworm bookworm-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: http://snapshot.debian.org/archive/debian-security/%s/\nSuites: bookworm-security\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' "${DEBIAN_SNAPSHOT}" "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list.d/debian.sources; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
     ca-certificates \
     tar \
-    wget \
-    && rm -rf /var/lib/apt/lists/*
+    wget; \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /tmp/cometbft-src
 
@@ -41,10 +49,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM ${RUST_IMAGE} AS rust-toolchain
 
+FROM ${UV_IMAGE} AS uv-bin
+
 FROM ${PYTHON_IMAGE} AS python-wheel-builder
 
+ARG DEBIAN_SNAPSHOT
 ARG SOURCE_DATE_EPOCH
 ARG PIP_VERSION
+ARG PACKAGING_VERSION
 ARG WHEEL_VERSION
 ARG MATURIN_VERSION
 
@@ -55,9 +67,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONHASHSEED=0 \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "3";\n' > /etc/apt/apt.conf.d/99snapshot; \
+    printf 'Types: deb\nURIs: http://snapshot.debian.org/archive/debian/%s/\nSuites: bookworm bookworm-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: http://snapshot.debian.org/archive/debian-security/%s/\nSuites: bookworm-security\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' "${DEBIAN_SNAPSHOT}" "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list.d/debian.sources; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+    build-essential; \
+    rm -rf /var/lib/apt/lists/*
 
 ENV CARGO_HOME=/usr/local/cargo \
     RUSTUP_HOME=/usr/local/rustup \
@@ -74,6 +90,7 @@ COPY docker/python-runtime-requirements.txt /tmp/build/python-runtime-requiremen
 
 RUN python -m pip install --upgrade \
     pip=="${PIP_VERSION}" \
+    packaging=="${PACKAGING_VERSION}" \
     wheel=="${WHEEL_VERSION}" \
     maturin=="${MATURIN_VERSION}" \
     && python -m pip download --require-hashes --dest /tmp/wheels \
@@ -90,6 +107,7 @@ RUN python -m pip install --upgrade \
 
 FROM ${PYTHON_IMAGE} AS node-base
 
+ARG DEBIAN_SNAPSHOT
 ARG COMETBFT_VERSION=0.39.3
 ARG TARGETARCH
 ARG SOURCE_DATE_EPOCH
@@ -102,20 +120,24 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} \
     XIAN_CONFIGS_DIR=/opt/xian-configs
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "3";\n' > /etc/apt/apt.conf.d/99snapshot; \
+    printf 'Types: deb\nURIs: http://snapshot.debian.org/archive/debian/%s/\nSuites: bookworm bookworm-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: http://snapshot.debian.org/archive/debian-security/%s/\nSuites: bookworm-security\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' "${DEBIAN_SNAPSHOT}" "${DEBIAN_SNAPSHOT}" > /etc/apt/sources.list.d/debian.sources; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     curl \
     procps \
     wget \
-    xz-utils \
-    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
-    && rm -f /var/log/apt/* /var/log/dpkg.log /var/log/alternatives.log \
-    && rm -f /var/cache/ldconfig/aux-cache
+    xz-utils; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/*; \
+    rm -f /var/log/apt/* /var/log/dpkg.log /var/log/alternatives.log; \
+    rm -f /var/cache/ldconfig/aux-cache
 
 WORKDIR /opt/xian
 
-COPY --from=ghcr.io/astral-sh/uv:0.6.11 /uv /uvx /bin/
+COPY --from=uv-bin /uv /uvx /bin/
 
 COPY --from=xian-configs . /opt/xian-configs
 COPY --from=python-wheel-builder /tmp/wheels /tmp/wheels
