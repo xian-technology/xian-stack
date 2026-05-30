@@ -238,6 +238,43 @@ class WorkloadContext:
             return requested_rpc_index % len(self.nodes)
         return self.submit_node_index
 
+    async def healthy_submission_index(self, preferred_rpc_index: int) -> int:
+        preferred_rpc_index %= len(self.nodes)
+        statuses: list[tuple[int, int, bool]] = []
+
+        for index, node in enumerate(self.nodes):
+            try:
+                payload = await fetch_json(
+                    self.session,
+                    f"{node.rpc_url}/status",
+                    timeout=2.0,
+                )
+                sync_info = payload["result"]["sync_info"]
+                statuses.append(
+                    (
+                        index,
+                        int(sync_info["latest_block_height"]),
+                        bool(sync_info.get("catching_up", False)),
+                    )
+                )
+            except Exception:  # noqa: PERF203, BLE001
+                continue
+
+        if not statuses:
+            return preferred_rpc_index
+
+        target_height = max(height for _, height, _ in statuses)
+        healthy = {
+            index
+            for index, height, catching_up in statuses
+            if not catching_up and height >= target_height - 1
+        }
+        if preferred_rpc_index in healthy:
+            return preferred_rpc_index
+        if healthy:
+            return min(healthy)
+        return max(statuses, key=lambda item: item[1])[0]
+
     async def next_nonce(self, wallet: Wallet, rpc_index: int) -> int:
         return (await self.reserve_nonces(wallet, rpc_index, count=1))[0]
 
@@ -253,9 +290,10 @@ class WorkloadContext:
         public_key = wallet.public_key
         async with self._nonce_lock:
             if public_key not in self._next_nonce:
+                nonce_rpc_index = await self.healthy_submission_index(rpc_index)
                 self._next_nonce[public_key] = await self._retry_read(
                     lambda: tr.get_nonce_async(
-                        self.nodes[rpc_index % len(self.nodes)].rpc_url,
+                        self.nodes[nonce_rpc_index].rpc_url,
                         public_key,
                         session=self.session,
                     )
@@ -279,7 +317,7 @@ class WorkloadContext:
         mode: str = "checktx",
         nonce: int | None = None,
     ) -> BroadcastRecord:
-        submission_index = self.submission_index(rpc_index)
+        submission_index = await self.healthy_submission_index(self.submission_index(rpc_index))
         client = self.client(wallet, submission_index)
         response = await client.send_tx(
             contract=contract,
