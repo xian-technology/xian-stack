@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import argparse
+import asyncio
 import functools
 import hashlib
 import json
@@ -15,8 +15,8 @@ import sys
 import time
 from collections import Counter
 from dataclasses import dataclass
-from decimal import Decimal
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -34,13 +34,11 @@ XIAN_CONTRACTING_SRC = ROOT_DIR / "xian-contracting" / "src"
 sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
 
 from contracting.artifacts import build_contract_artifacts  # noqa: E402
-
 from xian_py import transaction as tr  # noqa: E402
 from xian_py.exception import TransportError  # noqa: E402
 from xian_py.models import TransactionSubmission  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian_async import XianAsync  # noqa: E402
-
 
 COUNTER_DEPLOY_CHI = 75_000
 COUNTER_TX_CHI = 1_500
@@ -66,6 +64,7 @@ class LocalnetNode:
     metrics_port: int
     abci_container: str
     cometbft_container: str
+    bds_node: bool = False
 
 
 @dataclass
@@ -112,6 +111,7 @@ class WorkloadContext:
                 metrics_port=node["host_metrics_port"],
                 abci_container=node["abci_container"],
                 cometbft_container=node["cometbft_container"],
+                bds_node=bool(node.get("bds_enabled")),
             )
             for node in network["nodes"]
         ]
@@ -263,17 +263,23 @@ class WorkloadContext:
         if not statuses:
             return preferred_rpc_index
 
-        target_height = max(height for _, height, _ in statuses)
+        submission_statuses = [
+            status for status in statuses if not self.nodes[status[0]].bds_node
+        ]
+        if not submission_statuses:
+            submission_statuses = statuses
+
+        target_height = max(height for _, height, _ in submission_statuses)
         healthy = {
             index
-            for index, height, catching_up in statuses
+            for index, height, catching_up in submission_statuses
             if not catching_up and height >= target_height - 1
         }
         if preferred_rpc_index in healthy:
             return preferred_rpc_index
         if healthy:
             return min(healthy)
-        return max(statuses, key=lambda item: item[1])[0]
+        return max(submission_statuses, key=lambda item: item[1])[0]
 
     async def next_nonce(self, wallet: Wallet, rpc_index: int) -> int:
         return (await self.reserve_nonces(wallet, rpc_index, count=1))[0]
