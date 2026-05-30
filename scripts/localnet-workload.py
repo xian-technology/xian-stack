@@ -42,6 +42,7 @@ from xian_py.xian_async import XianAsync  # noqa: E402
 
 COUNTER_DEPLOY_CHI = 75_000
 COUNTER_TX_CHI = 1_500
+COUNTER_BROADCAST_BATCH_SIZE = 40
 TOKEN_DEPLOY_CHI = 150_000
 PAIR_DEPLOY_CHI = 300_000
 DEX_DEPLOY_CHI = 200_000
@@ -1232,62 +1233,68 @@ async def run_counter_basic(
 
     print(f"Broadcasting {operations} counter_basic operations...")
     records: list[BroadcastRecord] = []
+    pending_records: list[BroadcastRecord] = []
     expected_counter = 0
+
+    async def flush_pending_records() -> None:
+        if not pending_records:
+            return
+        await context.resolve_records(
+            pending_records,
+            concurrent=receipt_resolution == "concurrent",
+            max_workers=receipt_workers,
+        )
+        pending_records.clear()
+
     for index in range(operations):
         rpc_index = index % len(context.nodes)
         sender_wallet = worker_wallets[rpc_index]
         if index % 3 == 0:
             recipient = worker_wallets[(rpc_index + 1) % len(worker_wallets)].public_key
-            records.append(
-                await context.broadcast_tx(
-                    label=f"transfer #{index}",
-                    wallet=sender_wallet,
-                    rpc_index=rpc_index,
-                    contract="currency",
-                    function="transfer",
-                    kwargs={"amount": fixed(1), "to": recipient},
-                    chi=COUNTER_TX_CHI,
-                    expected_success=True,
-                    mode="async",
-                )
+            record = await context.broadcast_tx(
+                label=f"transfer #{index}",
+                wallet=sender_wallet,
+                rpc_index=rpc_index,
+                contract="currency",
+                function="transfer",
+                kwargs={"amount": fixed(1), "to": recipient},
+                chi=COUNTER_TX_CHI,
+                expected_success=True,
+                mode="async",
             )
         elif index % 3 == 1:
             expected_counter += 1
-            records.append(
-                await context.broadcast_tx(
-                    label=f"increment #{index}",
-                    wallet=sender_wallet,
-                    rpc_index=rpc_index,
-                    contract=contract_name,
-                    function="increment",
-                    kwargs={},
-                    chi=COUNTER_TX_CHI,
-                    expected_success=True,
-                    mode="async",
-                )
+            record = await context.broadcast_tx(
+                label=f"increment #{index}",
+                wallet=sender_wallet,
+                rpc_index=rpc_index,
+                contract=contract_name,
+                function="increment",
+                kwargs={},
+                chi=COUNTER_TX_CHI,
+                expected_success=True,
+                mode="async",
             )
         else:
             amount = (index % 11) + 1
             expected_counter += amount
-            records.append(
-                await context.broadcast_tx(
-                    label=f"add #{index}",
-                    wallet=sender_wallet,
-                    rpc_index=rpc_index,
-                    contract=contract_name,
-                    function="add",
-                    kwargs={"amount": amount},
-                    chi=COUNTER_TX_CHI,
-                    expected_success=True,
-                    mode="async",
-                )
+            record = await context.broadcast_tx(
+                label=f"add #{index}",
+                wallet=sender_wallet,
+                rpc_index=rpc_index,
+                contract=contract_name,
+                function="add",
+                kwargs={"amount": amount},
+                chi=COUNTER_TX_CHI,
+                expected_success=True,
+                mode="async",
             )
+        records.append(record)
+        pending_records.append(record)
+        if len(pending_records) >= COUNTER_BROADCAST_BATCH_SIZE:
+            await flush_pending_records()
 
-    await context.resolve_records(
-        records,
-        concurrent=receipt_resolution == "concurrent",
-        max_workers=receipt_workers,
-    )
+    await flush_pending_records()
     successes = sum(1 for record in records if record.final_success)
     if successes != len(records):
         raise WorkloadError("counter_basic: one or more workload transactions failed")
