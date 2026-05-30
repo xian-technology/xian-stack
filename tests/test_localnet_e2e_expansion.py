@@ -439,6 +439,62 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         )
         self.assertEqual(["async", "async"], [options["mode"] for *_args, options in send_labels])
 
+    def test_members_vote_approval_uses_async_broadcasts(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        send_labels = []
+        vote_status_reads = 0
+
+        class FakeClient:
+            async def send_tx(self, contract, function, kwargs, **options):
+                send_labels.append((contract, function, kwargs, options))
+                return SimpleNamespace(
+                    submitted=True,
+                    accepted=True,
+                    finalized=True,
+                    message=None,
+                    tx_hash=f"tx-{function}-{len(send_labels)}",
+                    mode=options["mode"],
+                    nonce=len(send_labels),
+                    chi_supplied=options["chi"],
+                    receipt=SimpleNamespace(
+                        success=True,
+                        message="ok",
+                        execution={"state": [], "events": [], "chi_used": 10},
+                    ),
+                )
+
+            async def get_state(self, contract, variable, *keys):
+                nonlocal vote_status_reads
+                if (contract, variable) == ("masternodes", "total_votes"):
+                    return 11
+                if (contract, variable) == ("masternodes", "votes"):
+                    vote_status_reads += 1
+                    if vote_status_reads >= 4:
+                        return {"status": "approved"}
+                    return {"status": "pending"}
+                raise AssertionError((contract, variable, keys))
+
+        result = asyncio.run(
+            runner.approve_members_vote(
+                FakeClient(),
+                [("node1", FakeClient())],
+                type_of_vote="add_member",
+                arg="member-key",
+                label_prefix="member",
+            )
+        )
+
+        self.assertEqual(11, result["proposal_id"])
+        self.assertEqual("approved", result["proposal_final"]["status"])
+        self.assertEqual(
+            [("masternodes", "propose_vote"), ("masternodes", "vote")],
+            [(contract, function) for contract, function, *_rest in send_labels],
+        )
+        self.assertEqual(["async", "async"], [options["mode"] for *_args, options in send_labels])
+
     def test_uniform_state_wait_recovers_nodes_before_retry(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
         with tempfile.TemporaryDirectory() as tmpdir:

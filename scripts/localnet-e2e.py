@@ -1541,6 +1541,7 @@ class E2ERunner:
             {"type_of_vote": type_of_vote, "arg": arg},
             label=f"{label_prefix}-propose",
             chi=GOVERNANCE_TX_CHI,
+            mode="async",
         )
         proposal_id = int(await proposer.get_state("masternodes", "total_votes"))
         proposal_pending = await proposer.get_state("masternodes", "votes", proposal_id)
@@ -1558,6 +1559,7 @@ class E2ERunner:
                 {"proposal_id": proposal_id, "vote": "yes"},
                 label=f"{label_prefix}-vote-{index}-{name}",
                 chi=GOVERNANCE_TX_CHI,
+                mode="async",
             )
             for index, (name, voter) in enumerate(voters, start=1)
         ]

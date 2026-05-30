@@ -569,7 +569,7 @@ source = { directory = "../xian-contracting/packages/xian-compiler-core" }
 
 [[package]]
 name = "xian-tech-contracting"
-version = "1.0.9"
+version = "1.0.10"
 source = { editable = "../xian-contracting" }
 dependencies = [
     { name = "cachetools" },
