@@ -178,7 +178,41 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         )
         self.assertEqual("unit test", result["reason"])
         self.assertEqual(12, result["target_height"])
+        self.assertEqual(0, result["advance_blocks"])
         self.assertEqual(statuses, result["snapshot"])
+
+    def test_stabilize_nodes_can_require_height_progress(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.nodes = [
+            self._node(0, "http://node-0"),
+            self._node(1, "http://node-1"),
+        ]
+        runner.recover_lagging_nodes = AsyncMock(return_value={"restarts": []})
+        statuses = {
+            "node-0": {"ok": True, "height": 12},
+            "node-1": {"ok": True, "height": 12},
+        }
+
+        with patch.object(localnet_e2e, "latest_heights_best_effort", return_value=statuses):
+            result = asyncio.run(
+                runner.stabilize_nodes(
+                    None,
+                    reason="phase boundary",
+                    timeout_seconds=7,
+                    advance_blocks=1,
+                )
+            )
+
+        runner.recover_lagging_nodes.assert_awaited_once_with(
+            None,
+            target_height=13,
+            timeout_seconds=7,
+        )
+        self.assertEqual(13, result["target_height"])
+        self.assertEqual(1, result["advance_blocks"])
 
     def test_uniform_state_wait_recovers_nodes_before_retry(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
@@ -218,6 +252,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             None,
             reason="while waiting for demo state",
             timeout_seconds=10.0,
+            advance_blocks=1,
         )
         self.assertEqual(2, wait_for_state.await_count)
 

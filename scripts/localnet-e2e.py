@@ -1474,6 +1474,7 @@ class E2ERunner:
         reason: str,
         timeout_seconds: float,
         min_target_height: int | None = None,
+        advance_blocks: int = 0,
     ) -> dict[str, Any]:
         snapshot = await latest_heights_best_effort(session, self.nodes)
         observed_heights = [
@@ -1486,7 +1487,7 @@ class E2ERunner:
                 f"could not read any validator heights while stabilizing nodes: {reason}"
             )
 
-        target_height = max(observed_heights)
+        target_height = max(observed_heights) + max(0, advance_blocks)
         if min_target_height is not None:
             target_height = max(target_height, min_target_height)
 
@@ -1499,6 +1500,7 @@ class E2ERunner:
             "reason": reason,
             "snapshot": snapshot,
             "target_height": target_height,
+            "advance_blocks": advance_blocks,
             "recovery": recovery,
         }
 
@@ -1542,6 +1544,7 @@ class E2ERunner:
                             session,
                             reason=f"while waiting for {label}",
                             timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
+                            advance_blocks=1,
                         )
                     )
                 except E2EError as recovery_error:
@@ -6964,6 +6967,7 @@ class E2ERunner:
                         session,
                         reason=f"before phase {phase_name}",
                         timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
+                        advance_blocks=1,
                     )
                 await self.run_phase(phase_name, fn)
 
