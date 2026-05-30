@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "localnet-e2e.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
@@ -23,6 +25,22 @@ else:
 
 
 class LocalnetE2EExpansionTests(unittest.TestCase):
+    @staticmethod
+    def _node(index: int, rpc_url: str) -> localnet_e2e.LocalnetNode:
+        return localnet_e2e.LocalnetNode(
+            index=index,
+            moniker=f"node-{index}",
+            rpc_url=rpc_url,
+            rpc_port=26657 + index,
+            p2p_port=26656 + index,
+            metrics_port=26660 + index,
+            abci_container=f"xian-node-{index}",
+            cometbft_container=f"xian-node-{index}",
+            account_public_key=f"pub-{index}",
+            account_private_key=f"priv-{index}",
+            bds_node=False,
+        )
+
     def test_atomic_and_throughput_phases_are_in_five_node_sequence(self) -> None:
         phase_names = localnet_e2e.E2ERunner.phase_names()
 
@@ -106,6 +124,60 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
 
         self.assertEqual(123, config.submission.timeout_seconds)
         self.assertEqual(0.5, config.submission.poll_interval_seconds)
+
+    def test_latest_heights_best_effort_keeps_partial_statuses(self) -> None:
+        nodes = [
+            self._node(0, "http://node-0"),
+            self._node(1, "http://node-1"),
+            self._node(2, "http://node-2"),
+        ]
+
+        async def fake_latest_height(_session, rpc_url: str) -> int:
+            if rpc_url.endswith("node-1"):
+                raise TimeoutError("node is wedged")
+            return {"http://node-0": 41, "http://node-2": 39}[rpc_url]
+
+        with patch.object(localnet_e2e, "latest_height", side_effect=fake_latest_height):
+            statuses = asyncio.run(localnet_e2e.latest_heights_best_effort(None, nodes))
+
+        self.assertEqual({"ok": True, "height": 41}, statuses["node-0"])
+        self.assertEqual({"ok": True, "height": 39}, statuses["node-2"])
+        self.assertFalse(statuses["node-1"]["ok"])
+        self.assertIn("TimeoutError", statuses["node-1"]["error"])
+
+    def test_stabilize_nodes_recovers_to_highest_observed_height(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.nodes = [
+            self._node(0, "http://node-0"),
+            self._node(1, "http://node-1"),
+        ]
+        runner.recover_lagging_nodes = AsyncMock(return_value={"restarts": []})
+        statuses = {
+            "node-0": {"ok": True, "height": 12},
+            "node-1": {"ok": False, "error": "TimeoutError: node is wedged"},
+        }
+
+        with patch.object(localnet_e2e, "latest_heights_best_effort", return_value=statuses):
+            result = asyncio.run(
+                runner.stabilize_nodes(
+                    None,
+                    reason="unit test",
+                    timeout_seconds=7,
+                    min_target_height=10,
+                )
+            )
+
+        runner.recover_lagging_nodes.assert_awaited_once_with(
+            None,
+            target_height=12,
+            timeout_seconds=7,
+        )
+        self.assertEqual("unit test", result["reason"])
+        self.assertEqual(12, result["target_height"])
+        self.assertEqual(statuses, result["snapshot"])
 
 
 if __name__ == "__main__":

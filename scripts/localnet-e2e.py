@@ -469,6 +469,24 @@ async def latest_heights(
     return {node.moniker: height for node, height in zip(nodes, heights, strict=True)}
 
 
+async def latest_heights_best_effort(
+    session: aiohttp.ClientSession,
+    nodes: list[LocalnetNode],
+) -> dict[str, dict[str, Any]]:
+    async def one(node: LocalnetNode) -> tuple[str, dict[str, Any]]:
+        try:
+            height = await latest_height(session, node.rpc_url)
+            return node.moniker, {"ok": True, "height": height}
+        except Exception as exc:  # noqa: BLE001
+            return node.moniker, {
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+    entries = await asyncio.gather(*(one(node) for node in nodes))
+    return {moniker: status for moniker, status in entries}
+
+
 async def wait_for_bds_indexed(
     client: XianAsync,
     *,
@@ -1449,6 +1467,41 @@ class E2ERunner:
             "after": after,
         }
 
+    async def stabilize_nodes(
+        self,
+        session: aiohttp.ClientSession,
+        *,
+        reason: str,
+        timeout_seconds: float,
+        min_target_height: int | None = None,
+    ) -> dict[str, Any]:
+        snapshot = await latest_heights_best_effort(session, self.nodes)
+        observed_heights = [
+            int(status["height"])
+            for status in snapshot.values()
+            if status.get("ok") and status.get("height") is not None
+        ]
+        if not observed_heights:
+            raise E2EError(
+                f"could not read any validator heights while stabilizing nodes: {reason}"
+            )
+
+        target_height = max(observed_heights)
+        if min_target_height is not None:
+            target_height = max(target_height, min_target_height)
+
+        recovery = await self.recover_lagging_nodes(
+            session,
+            target_height=target_height,
+            timeout_seconds=timeout_seconds,
+        )
+        return {
+            "reason": reason,
+            "snapshot": snapshot,
+            "target_height": target_height,
+            "recovery": recovery,
+        }
+
     def secondary_bds_container_name(self) -> str:
         return f"xian-localnet-postgres-secondary-{short_hash(self.run_id)}"
 
@@ -1815,6 +1868,12 @@ class E2ERunner:
                         label=f"fund {wallet.public_key[:12]} (+{send_amount})",
                     )
                 )
+        if wallets_to_fund:
+            await self.stabilize_nodes(
+                session,
+                reason="after wallet funding",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
+            )
         for wallet in wallets:
             expected_balance = await fetch_abci_query(
                 session,
@@ -2020,6 +2079,7 @@ class E2ERunner:
                 "orchestrated_beta": beta_name,
             }
         )
+        node_recoveries: list[dict[str, Any]] = []
 
         async with self.client(operator, 1, session) as client:
             deployments = []
@@ -2149,6 +2209,14 @@ class E2ERunner:
             if not bad_artifact_absent:
                 raise E2EError("tampered deployment_artifacts unexpectedly persisted a contract")
 
+        node_recoveries.append(
+            await self.stabilize_nodes(
+                session,
+                reason="after orchestration deployments",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
+            )
+        )
+
         async with self.client(operator, 2, session) as client:
             touch_submission = await client.send_tx(
                 router_name,
@@ -2167,6 +2235,14 @@ class E2ERunner:
                 label="orchestration-dynamic-touch",
             )
             alpha_touch_total = await client.call(alpha_name, "get_touch_total", {})
+
+        node_recoveries.append(
+            await self.stabilize_nodes(
+                session,
+                reason="after orchestration dynamic touch",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
+            )
+        )
 
         async with self.client(operator, 3, session) as client:
             chain_preview = await client.call(
@@ -2688,6 +2764,7 @@ class E2ERunner:
                 "sender_balance_after": duplicate_sender_balance_after,
                 "recipient_balance_after": duplicate_recipient_balance_after,
             },
+            "node_recoveries": node_recoveries,
         }
 
     async def atomic_rollback_phase(
@@ -6828,10 +6905,9 @@ class E2ERunner:
             start_index = valid_phase_names.index(start_phase)
             for phase_name, fn in phase_sequence[start_index:]:
                 if phase_name not in {"00-bootstrap", "01-health"} and self.nodes:
-                    heights = await latest_heights(session, self.nodes)
-                    await self.recover_lagging_nodes(
+                    await self.stabilize_nodes(
                         session,
-                        target_height=max(heights.values()),
+                        reason=f"before phase {phase_name}",
                         timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
                     )
                 await self.run_phase(phase_name, fn)
