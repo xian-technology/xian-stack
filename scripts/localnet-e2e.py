@@ -1882,6 +1882,57 @@ class E2ERunner:
                 return node.index
         return 0
 
+    async def healthy_submission_node_index(
+        self,
+        session: aiohttp.ClientSession,
+        preferred_index: int | None = None,
+    ) -> int:
+        if not self.nodes:
+            raise E2EError("no localnet nodes are available")
+
+        fallback_index = self.default_submission_node_index()
+        preferred_index = fallback_index if preferred_index is None else preferred_index
+        preferred_index %= len(self.nodes)
+        statuses: list[tuple[int, int, bool]] = []
+        for node in self.nodes:
+            try:
+                payload = await fetch_json(
+                    session,
+                    f"{node.rpc_url}/status",
+                    timeout=2.0,
+                )
+                sync_info = payload["result"]["sync_info"]
+                statuses.append(
+                    (
+                        node.index,
+                        int(sync_info["latest_block_height"]),
+                        bool(sync_info.get("catching_up", False)),
+                    )
+                )
+            except Exception:  # noqa: PERF203, BLE001
+                continue
+
+        if not statuses:
+            return fallback_index
+
+        submission_statuses = [
+            status for status in statuses if not self.nodes[status[0]].bds_node
+        ]
+        if not submission_statuses:
+            submission_statuses = statuses
+
+        target_height = max(height for _, height, _ in submission_statuses)
+        healthy = {
+            index
+            for index, height, catching_up in submission_statuses
+            if not catching_up and height >= target_height - 1
+        }
+        if preferred_index in healthy:
+            return preferred_index
+        if healthy:
+            return min(healthy)
+        return max(submission_statuses, key=lambda item: item[1])[0]
+
     async def fund_wallets(
         self,
         session: aiohttp.ClientSession,
@@ -1893,7 +1944,10 @@ class E2ERunner:
         founder = self.founder_wallet
         minimum_amount = Decimal(str(amount))
         wallets_to_fund: list[tuple[Wallet, Decimal]] = []
-        node_index = self.default_submission_node_index()
+        node_index = await self.healthy_submission_node_index(
+            session,
+            self.default_submission_node_index(),
+        )
         rpc_url = self.nodes[node_index].rpc_url
 
         for wallet in wallets:
@@ -1961,7 +2015,10 @@ class E2ERunner:
         self.contracts["conflict"] = conflict_contract
         self.contracts["patch_target"] = patch_contract
         self.contracts["allocation_guards"] = allocation_contract
-        node_index = self.default_submission_node_index()
+        node_index = await self.healthy_submission_node_index(
+            session,
+            self.default_submission_node_index(),
+        )
 
         async with self.client(founder, node_index, session) as client:
             conflict_submission = await client.submit_contract(

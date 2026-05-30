@@ -27,7 +27,12 @@ else:
 
 class LocalnetE2EExpansionTests(unittest.TestCase):
     @staticmethod
-    def _node(index: int, rpc_url: str) -> localnet_e2e.LocalnetNode:
+    def _node(
+        index: int,
+        rpc_url: str,
+        *,
+        bds_node: bool = False,
+    ) -> localnet_e2e.LocalnetNode:
         return localnet_e2e.LocalnetNode(
             index=index,
             moniker=f"node-{index}",
@@ -39,7 +44,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             cometbft_container=f"xian-node-{index}",
             account_public_key=f"pub-{index}",
             account_private_key=f"priv-{index}",
-            bds_node=False,
+            bds_node=bds_node,
         )
 
     def test_atomic_and_throughput_phases_are_in_five_node_sequence(self) -> None:
@@ -213,6 +218,39 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         )
         self.assertEqual(13, result["target_height"])
         self.assertEqual(1, result["advance_blocks"])
+
+    def test_healthy_submission_node_skips_bds_and_lagging_nodes(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.nodes = [
+            self._node(0, "http://node-0", bds_node=True),
+            self._node(1, "http://node-1"),
+            self._node(2, "http://node-2"),
+        ]
+
+        async def fake_fetch_json(_session, url: str, *, timeout: float):
+            heights = {
+                "http://node-0/status": 50,
+                "http://node-1/status": 10,
+                "http://node-2/status": 49,
+            }
+            return {
+                "result": {
+                    "sync_info": {
+                        "latest_block_height": str(heights[url]),
+                        "catching_up": False,
+                    }
+                }
+            }
+
+        with patch.object(localnet_e2e, "fetch_json", side_effect=fake_fetch_json):
+            selected = asyncio.run(
+                runner.healthy_submission_node_index(None, preferred_index=0)
+            )
+
+        self.assertEqual(2, selected)
 
     def test_uniform_state_wait_recovers_nodes_before_retry(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
