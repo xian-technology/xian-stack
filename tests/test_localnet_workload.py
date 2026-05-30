@@ -173,6 +173,50 @@ def test_healthy_state_sample_nodes_skip_lagging_nodes() -> None:
     assert skipped == ["node-1: height=90, catching_up=False, target=120"]
 
 
+def test_compared_state_value_uses_returned_sample_nodes() -> None:
+    state = {
+        "ok": True,
+        "sample_nodes": ["node-2"],
+        "skipped_nodes": ["node-0: height=99, catching_up=False, target=100"],
+        "queries": [
+            {
+                "label": "counter value",
+                "values": {"node-2": "17"},
+                "errors": {},
+            }
+        ],
+    }
+
+    localnet_workload.require_matching_state("counter_basic", state)
+    assert (
+        localnet_workload.compared_state_value(state, 0, scenario="counter_basic")
+        == "17"
+    )
+
+
+def test_require_matching_state_reports_mismatched_samples() -> None:
+    state = {
+        "ok": False,
+        "sample_nodes": ["node-0", "node-1"],
+        "skipped_nodes": [],
+        "queries": [
+            {
+                "label": "counter value",
+                "values": {"node-0": "1", "node-1": "2"},
+                "errors": {},
+            }
+        ],
+    }
+
+    try:
+        localnet_workload.require_matching_state("counter_basic", state)
+    except localnet_workload.WorkloadError as exc:
+        assert "counter_basic: state comparison failed" in str(exc)
+        assert "node-1" in str(exc)
+    else:
+        raise AssertionError("expected WorkloadError")
+
+
 def test_broadcast_tx_retries_transport_timeout_on_next_healthy_node() -> None:
     context = localnet_workload.WorkloadContext(
         _network(),

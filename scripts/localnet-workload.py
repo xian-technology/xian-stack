@@ -705,6 +705,38 @@ def canonical_json(value: Any) -> str:
     return json.dumps(normalize_value(value), sort_keys=True, separators=(",", ":"))
 
 
+def require_matching_state(scenario: str, state: dict[str, Any]) -> None:
+    if state.get("ok") is True:
+        return
+    raise WorkloadError(
+        f"{scenario}: state comparison failed: {json.dumps(state, sort_keys=True)}"
+    )
+
+
+def compared_state_value(
+    state: dict[str, Any],
+    query_index: int,
+    *,
+    scenario: str,
+) -> Any:
+    queries = state.get("queries", [])
+    if query_index >= len(queries):
+        raise WorkloadError(f"{scenario}: missing state query #{query_index}: {state}")
+
+    query = queries[query_index]
+    values = query.get("values") or {}
+    if not values:
+        raise WorkloadError(
+            f"{scenario}: no state samples for {query.get('label')}: "
+            f"errors={query.get('errors', {})}, skipped={state.get('skipped_nodes', [])}"
+        )
+
+    for moniker in state.get("sample_nodes", []):
+        if moniker in values:
+            return values[moniker]
+    return next(iter(values.values()))
+
+
 def fixed(value: int | str | Decimal | ContractingDecimal) -> ContractingDecimal:
     if isinstance(value, ContractingDecimal):
         return value
@@ -1527,7 +1559,8 @@ async def run_counter_basic(
             }
         ]
     )
-    counter_value = state["queries"][0]["values"][context.sample_nodes[0].moniker]
+    require_matching_state("counter_basic", state)
+    counter_value = compared_state_value(state, 0, scenario="counter_basic")
     counter_value = coerce_numeric(counter_value)
     if counter_value != expected_counter:
         raise WorkloadError(
@@ -1995,10 +2028,10 @@ async def run_dex_mixed(
         ]
     )
 
-    first_node = context.sample_nodes[0].moniker
-    reserve0 = coerce_numeric(state["queries"][2]["values"][first_node])
-    reserve1 = coerce_numeric(state["queries"][3]["values"][first_node])
-    total_supply = coerce_numeric(state["queries"][4]["values"][first_node])
+    require_matching_state("dex_mixed", state)
+    reserve0 = coerce_numeric(compared_state_value(state, 2, scenario="dex_mixed"))
+    reserve1 = coerce_numeric(compared_state_value(state, 3, scenario="dex_mixed"))
+    total_supply = coerce_numeric(compared_state_value(state, 4, scenario="dex_mixed"))
     if reserve0 <= 0 or reserve1 <= 0 or total_supply <= 0:
         raise WorkloadError(
             f"dex_mixed: unexpected non-positive reserves or supply "
@@ -2561,9 +2594,10 @@ async def run_transfer_fanout(
         if counts[index] > 0
     ]
     state = await context.compare_state(queries) if queries else {"ok": True}
-    for query in state.get("queries", []):
+    require_matching_state("transfer_fanout", state)
+    for query_index, query in enumerate(state.get("queries", [])):
         index = int(str(query["label"]).rsplit(" ", 1)[-1])
-        sample_value = query["values"][context.sample_nodes[0].moniker]
+        sample_value = compared_state_value(state, query_index, scenario="transfer_fanout")
         if coerce_numeric(sample_value) != counts[index]:
             raise WorkloadError(
                 "transfer_fanout: recipient balance mismatch for "
@@ -2743,8 +2777,9 @@ async def run_contract_heavy(
         if index in sample_slots
     ]
     state = await context.compare_state(queries) if queries else {"ok": True}
-    for query in state.get("queries", []):
-        sample_value = query["values"][context.sample_nodes[0].moniker]
+    require_matching_state("contract_heavy", state)
+    for query_index, query in enumerate(state.get("queries", [])):
+        sample_value = compared_state_value(state, query_index, scenario="contract_heavy")
         if not isinstance(sample_value, str) or not sample_value:
             raise WorkloadError(
                 "contract_heavy: expected a non-empty digest result for "
