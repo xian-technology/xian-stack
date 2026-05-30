@@ -1765,6 +1765,12 @@ class E2ERunner:
             session=session,
         )
 
+    def default_submission_node_index(self) -> int:
+        for node in self.nodes:
+            if not node.bds_node:
+                return node.index
+        return 0
+
     async def fund_wallets(
         self,
         session: aiohttp.ClientSession,
@@ -1776,11 +1782,13 @@ class E2ERunner:
         founder = self.founder_wallet
         minimum_amount = Decimal(str(amount))
         wallets_to_fund: list[tuple[Wallet, Decimal]] = []
+        node_index = self.default_submission_node_index()
+        rpc_url = self.nodes[node_index].rpc_url
 
         for wallet in wallets:
             current_balance = await fetch_abci_query(
                 session,
-                self.nodes[0].rpc_url,
+                rpc_url,
                 f"/get/currency.balances:{wallet.public_key}",
             )
             try:
@@ -1791,7 +1799,7 @@ class E2ERunner:
             if delta > 0:
                 wallets_to_fund.append((wallet, delta))
 
-        async with self.client(founder, 0, session) as client:
+        async with self.client(founder, node_index, session) as client:
             for wallet, delta in wallets_to_fund:
                 send_amount = int(delta) if delta == int(delta) else float(delta)
                 submission = await client.send(
@@ -1810,7 +1818,7 @@ class E2ERunner:
         for wallet in wallets:
             expected_balance = await fetch_abci_query(
                 session,
-                self.nodes[0].rpc_url,
+                rpc_url,
                 f"/get/currency.balances:{wallet.public_key}",
             )
             await wait_for_uniform_node_state(
@@ -1836,8 +1844,9 @@ class E2ERunner:
         self.contracts["conflict"] = conflict_contract
         self.contracts["patch_target"] = patch_contract
         self.contracts["allocation_guards"] = allocation_contract
+        node_index = self.default_submission_node_index()
 
-        async with self.client(founder, 0, session) as client:
+        async with self.client(founder, node_index, session) as client:
             conflict_submission = await client.submit_contract(
                 name=conflict_contract,
                 **self.contract_submission_kwargs(
@@ -6818,6 +6827,13 @@ class E2ERunner:
                 )
             start_index = valid_phase_names.index(start_phase)
             for phase_name, fn in phase_sequence[start_index:]:
+                if phase_name not in {"00-bootstrap", "01-health"} and self.nodes:
+                    heights = await latest_heights(session, self.nodes)
+                    await self.recover_lagging_nodes(
+                        session,
+                        target_height=max(heights.values()),
+                        timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
+                    )
                 await self.run_phase(phase_name, fn)
 
         if self.network is not None:
