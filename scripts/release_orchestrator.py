@@ -495,6 +495,9 @@ def read_source_version(unit: ReleaseUnit) -> str | None:
                 "packages/types/package.json": read_json(repo_path / "packages/types/package.json")[
                     "version"
                 ],
+                "packages/web-kit/package.json": read_json(
+                    repo_path / "packages/web-kit/package.json"
+                )["version"],
             },
         )
     if unit.key == "xian-wallet-browser":
@@ -857,6 +860,11 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
         )
         record_change(
             changed_paths,
+            repo_path / "packages/web-kit/package.json",
+            set_json_version(repo_path / "packages/web-kit/package.json", version),
+        )
+        record_change(
+            changed_paths,
             repo_path / "examples/browser-dapp/package.json",
             update_json_dependencies(
                 repo_path / "examples/browser-dapp/package.json",
@@ -884,6 +892,14 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
         )
         record_change(
             changed_paths,
+            repo_path / "packages/web-kit/package.json",
+            update_json_dependencies(
+                repo_path / "packages/web-kit/package.json",
+                {"@xian-tech/provider": version},
+            ),
+        )
+        record_change(
+            changed_paths,
             repo_path / "package-lock.json",
             update_package_lock(
                 repo_path / "package-lock.json",
@@ -893,6 +909,7 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
                     "packages/client": version,
                     "packages/provider": version,
                     "packages/types": version,
+                    "packages/web-kit": version,
                 },
                 dependency_updates={
                     "examples/browser-dapp": {
@@ -901,6 +918,7 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
                     },
                     "packages/client": {"@xian-tech/types": version},
                     "packages/provider": {"@xian-tech/types": version},
+                    "packages/web-kit": {"@xian-tech/provider": version},
                 },
             ),
         )
