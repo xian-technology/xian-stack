@@ -4,7 +4,8 @@ import asyncio
 import importlib.util
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "localnet-workload.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
@@ -102,3 +103,54 @@ def test_healthy_submission_index_uses_highest_non_bds_when_preferred_lags() -> 
         selected = asyncio.run(context.healthy_submission_index(1))
 
     assert selected == 2
+
+
+def test_broadcast_tx_retries_transport_timeout_on_next_healthy_node() -> None:
+    context = localnet_workload.WorkloadContext(
+        _network(),
+        sample_nodes=3,
+        submit_node_index=1,
+        round_robin_submission=True,
+    )
+    context._session = object()
+    context.healthy_submission_index = AsyncMock(side_effect=[1, 2])
+    sends = []
+
+    class FakeClient:
+        def __init__(self, node_index: int):
+            self.node_index = node_index
+
+        async def send_tx(self, **kwargs):
+            sends.append((self.node_index, kwargs))
+            if self.node_index == 1:
+                raise localnet_workload.TransportError("node timed out")
+            return SimpleNamespace(
+                submitted=True,
+                accepted=True,
+                message=None,
+                tx_hash="tx-hash",
+            )
+
+    context.client = lambda _wallet, node_index: FakeClient(node_index)
+    wallet = localnet_workload.Wallet()
+
+    record = asyncio.run(
+        context.broadcast_tx(
+            label="retrying broadcast",
+            wallet=wallet,
+            rpc_index=1,
+            contract="currency",
+            function="transfer",
+            kwargs={"amount": "1", "to": wallet.public_key},
+            chi=1_500,
+            expected_success=True,
+            nonce=7,
+        )
+    )
+
+    assert record.tx_hash == "tx-hash"
+    assert record.rpc_url == context.nodes[2].rpc_url
+    assert [(node_index, kwargs["nonce"]) for node_index, kwargs in sends] == [
+        (1, 7),
+        (2, 7),
+    ]

@@ -323,18 +323,38 @@ class WorkloadContext:
         mode: str = "checktx",
         nonce: int | None = None,
     ) -> BroadcastRecord:
-        submission_index = await self.healthy_submission_index(self.submission_index(rpc_index))
-        client = self.client(wallet, submission_index)
-        response = await client.send_tx(
-            contract=contract,
-            function=function,
-            kwargs=kwargs,
-            chi=chi,
-            nonce=(nonce if nonce is not None else await self.next_nonce(wallet, submission_index)),
-            chain_id=self.chain_id,
-            mode=mode,
-            wait_for_tx=False,
-        )
+        preferred_index = self.submission_index(rpc_index)
+        if nonce is None:
+            nonce_index = await self.healthy_submission_index(preferred_index)
+            reserved_nonce = await self.next_nonce(wallet, nonce_index)
+        else:
+            reserved_nonce = nonce
+        response: TransactionSubmission | None = None
+        last_error: TransportError | None = None
+
+        for attempt in range(max(1, len(self.nodes))):
+            submission_index = await self.healthy_submission_index(
+                preferred_index + attempt
+            )
+            client = self.client(wallet, submission_index)
+            try:
+                response = await client.send_tx(
+                    contract=contract,
+                    function=function,
+                    kwargs=kwargs,
+                    chi=chi,
+                    nonce=reserved_nonce,
+                    chain_id=self.chain_id,
+                    mode=mode,
+                    wait_for_tx=False,
+                )
+                break
+            except TransportError as exc:
+                last_error = exc
+                await asyncio.sleep(min(0.25 * (attempt + 1), 1.0))
+        if response is None:
+            raise WorkloadError(f"{label}: broadcast failed after node failover") from last_error
+
         return BroadcastRecord(
             label=label,
             contract=contract,
