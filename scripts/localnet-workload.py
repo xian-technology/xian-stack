@@ -471,6 +471,7 @@ class WorkloadContext:
         details = []
         all_match = True
         founder = self.founder_wallet
+        sample_nodes, skipped_nodes = await self.healthy_state_sample_nodes()
 
         for query in queries:
 
@@ -488,12 +489,22 @@ class WorkloadContext:
                 )
                 return node.moniker, normalize_value(value)
 
-            values = dict(
-                await asyncio.gather(*(fetch_node_state(node) for node in self.sample_nodes))
+            results = await asyncio.gather(
+                *(fetch_node_state(node) for node in sample_nodes),
+                return_exceptions=True,
             )
+            values = {}
+            errors = {}
+            for node, result in zip(sample_nodes, results, strict=True):
+                if isinstance(result, Exception):
+                    errors[node.moniker] = f"{type(result).__name__}: {result}"
+                    continue
+                moniker, value = result
+                values[moniker] = value
             canonical = {moniker: canonical_json(value) for moniker, value in values.items()}
             unique = set(canonical.values())
-            ok = len(unique) == 1
+            minimum_matches = min(2, len(sample_nodes))
+            ok = len(values) >= minimum_matches and len(unique) == 1
             all_match = all_match and ok
             details.append(
                 {
@@ -503,14 +514,58 @@ class WorkloadContext:
                     "keys": [str(key) for key in query.get("keys", [])],
                     "ok": ok,
                     "values": values,
+                    "errors": errors,
                 }
             )
 
         return {
             "ok": all_match,
-            "sample_nodes": [node.moniker for node in self.sample_nodes],
+            "sample_nodes": [node.moniker for node in sample_nodes],
+            "skipped_nodes": skipped_nodes,
             "queries": details,
         }
+
+    async def healthy_state_sample_nodes(self) -> tuple[list[LocalnetNode], list[str]]:
+        statuses: list[tuple[LocalnetNode, int, bool]] = []
+        skipped_nodes: list[str] = []
+        for node in self.sample_nodes:
+            try:
+                payload = await fetch_json(
+                    self.session,
+                    f"{node.rpc_url}/status",
+                    timeout=2.0,
+                )
+                sync_info = payload["result"]["sync_info"]
+                statuses.append(
+                    (
+                        node,
+                        int(sync_info["latest_block_height"]),
+                        bool(sync_info.get("catching_up", False)),
+                    )
+                )
+            except Exception as exc:  # noqa: PERF203, BLE001
+                skipped_nodes.append(f"{node.moniker}: {type(exc).__name__}: {exc}")
+
+        if not statuses:
+            return list(self.sample_nodes), skipped_nodes
+
+        target_height = max(height for _, height, _ in statuses)
+        healthy = [
+            node
+            for node, height, catching_up in statuses
+            if not catching_up and height >= target_height
+        ]
+        minimum_samples = min(2, len(self.sample_nodes))
+        if len(healthy) < minimum_samples:
+            return list(self.sample_nodes), skipped_nodes
+
+        healthy_names = {node.moniker for node in healthy}
+        skipped_nodes.extend(
+            f"{node.moniker}: height={height}, catching_up={catching_up}, target={target_height}"
+            for node, height, catching_up in statuses
+            if node.moniker not in healthy_names
+        )
+        return healthy, skipped_nodes
 
 
 def canonical_json(value: Any) -> str:

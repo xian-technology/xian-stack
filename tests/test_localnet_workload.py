@@ -105,6 +105,38 @@ def test_healthy_submission_index_uses_highest_non_bds_when_preferred_lags() -> 
     assert selected == 2
 
 
+def test_healthy_state_sample_nodes_skip_lagging_nodes() -> None:
+    context = localnet_workload.WorkloadContext(
+        _network(),
+        sample_nodes=3,
+        submit_node_index=0,
+        round_robin_submission=True,
+    )
+    context._session = object()
+
+    async def fake_fetch_json(_session, url: str, *, timeout: float):
+        port = int(url.rsplit(":", 1)[1].split("/", 1)[0])
+        heights = {
+            27657: 120,
+            27757: 90,
+            27857: 120,
+        }
+        return {
+            "result": {
+                "sync_info": {
+                    "latest_block_height": str(heights[port]),
+                    "catching_up": False,
+                }
+            }
+        }
+
+    with patch.object(localnet_workload, "fetch_json", side_effect=fake_fetch_json):
+        nodes, skipped = asyncio.run(context.healthy_state_sample_nodes())
+
+    assert [node.moniker for node in nodes] == ["node-0", "node-2"]
+    assert skipped == ["node-1: height=90, catching_up=False, target=120"]
+
+
 def test_broadcast_tx_retries_transport_timeout_on_next_healthy_node() -> None:
     context = localnet_workload.WorkloadContext(
         _network(),
