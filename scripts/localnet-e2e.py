@@ -1985,6 +1985,7 @@ class E2ERunner:
                 session,
                 reason="after wallet funding",
                 timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
+                advance_blocks=1,
             )
         for wallet in wallets:
             expected_balance = await fetch_abci_query(
@@ -2069,6 +2070,12 @@ class E2ERunner:
             counter_state = await client.get_state(conflict_contract, "counter")
             patch_status = await client.call(patch_contract, "get_status", {})
 
+            await self.stabilize_nodes(
+                session,
+                reason="after xian-py smoke deployments",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
+                advance_blocks=1,
+            )
             allocation_small = ensure_positive_submission(
                 await client.send_tx(
                     allocation_contract,
