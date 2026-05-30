@@ -78,6 +78,7 @@ class BroadcastRecord:
     expected_success: bool
     expected_message: str | None
     response: TransactionSubmission
+    tx: dict[str, Any] | None = None
     tx_hash: str | None = None
     final_success: bool | None = None
     final_message: str | None = None
@@ -239,8 +240,7 @@ class WorkloadContext:
             return requested_rpc_index % len(self.nodes)
         return self.submit_node_index
 
-    async def healthy_submission_index(self, preferred_rpc_index: int) -> int:
-        preferred_rpc_index %= len(self.nodes)
+    async def node_statuses(self) -> list[tuple[int, int, bool]]:
         statuses: list[tuple[int, int, bool]] = []
 
         for index, node in enumerate(self.nodes):
@@ -261,8 +261,13 @@ class WorkloadContext:
             except Exception:  # noqa: PERF203, BLE001
                 continue
 
+        return statuses
+
+    async def healthy_submission_indices(self, preferred_rpc_index: int) -> list[int]:
+        preferred_rpc_index %= len(self.nodes)
+        statuses = await self.node_statuses()
         if not statuses:
-            return preferred_rpc_index
+            return [preferred_rpc_index]
 
         submission_statuses = [
             status for status in statuses if not self.nodes[status[0]].bds_node
@@ -276,11 +281,12 @@ class WorkloadContext:
             for index, height, catching_up in submission_statuses
             if not catching_up and height >= target_height
         }
-        if preferred_rpc_index in healthy:
-            return preferred_rpc_index
         if healthy:
-            return min(healthy)
-        return max(submission_statuses, key=lambda item: item[1])[0]
+            return sorted(healthy, key=lambda index: (index != preferred_rpc_index, index))
+        return [max(submission_statuses, key=lambda item: item[1])[0]]
+
+    async def healthy_submission_index(self, preferred_rpc_index: int) -> int:
+        return (await self.healthy_submission_indices(preferred_rpc_index))[0]
 
     async def next_nonce(self, wallet: Wallet, rpc_index: int) -> int:
         return (await self.reserve_nonces(wallet, rpc_index, count=1))[0]
@@ -297,14 +303,32 @@ class WorkloadContext:
         public_key = wallet.public_key
         async with self._nonce_lock:
             if public_key not in self._next_nonce:
-                nonce_rpc_index = await self.healthy_submission_index(rpc_index)
-                self._next_nonce[public_key] = await self._retry_read(
-                    lambda: tr.get_nonce_async(
-                        self.nodes[nonce_rpc_index].rpc_url,
-                        public_key,
-                        session=self.session,
+                nonce_rpc_indices = await self.healthy_submission_indices(rpc_index)
+                nonce_values: list[int] = []
+                nonce_errors: list[str] = []
+                for nonce_rpc_index in nonce_rpc_indices:
+                    try:
+                        nonce_values.append(
+                            await self._retry_read(
+                                lambda nonce_rpc_index=nonce_rpc_index: tr.get_nonce_async(
+                                    self.nodes[nonce_rpc_index].rpc_url,
+                                    public_key,
+                                    session=self.session,
+                                ),
+                                max_attempts=2,
+                                initial_delay_seconds=0.05,
+                                max_delay_seconds=0.2,
+                            )
+                        )
+                    except Exception as exc:  # noqa: PERF203, BLE001
+                        nonce_errors.append(
+                            f"{self.nodes[nonce_rpc_index].moniker}: {type(exc).__name__}: {exc}"
+                        )
+                if not nonce_values:
+                    raise WorkloadError(
+                        f"could not read nonce for {public_key}: {nonce_errors[-5:]}"
                     )
-                )
+                self._next_nonce[public_key] = max(nonce_values)
             start_nonce = self._next_nonce[public_key]
             self._next_nonce[public_key] += count
         return list(range(start_nonce, start_nonce + count))
@@ -330,6 +354,17 @@ class WorkloadContext:
             reserved_nonce = await self.next_nonce(wallet, nonce_index)
         else:
             reserved_nonce = nonce
+        payload = {
+            "chain_id": self.chain_id,
+            "contract": contract,
+            "function": function,
+            "kwargs": kwargs,
+            "nonce": reserved_nonce,
+            "sender": wallet.public_key,
+            "chi_supplied": chi,
+        }
+        tx = tr.create_tx(payload, wallet)
+        local_tx_hash = XianAsync._local_tx_hash(tx)
         response: TransactionSubmission | None = None
         last_error: TransportError | None = None
 
@@ -365,7 +400,8 @@ class WorkloadContext:
             expected_success=expected_success,
             expected_message=expected_message,
             response=response,
-            tx_hash=response.tx_hash,
+            tx=tx,
+            tx_hash=response.tx_hash or local_tx_hash,
         )
 
     async def resolve_records(
@@ -425,11 +461,21 @@ class WorkloadContext:
             )
             for node in ordered_nodes
         ]
-        receipt = await wait_for_tx_receipt(
-            clients=clients,
-            tx_hash=record.tx_hash,
-            timeout_seconds=timeout_seconds,
-        )
+        try:
+            receipt = await wait_for_tx_receipt(
+                clients=clients,
+                tx_hash=record.tx_hash,
+                timeout_seconds=timeout_seconds,
+            )
+        except WorkloadError as exc:
+            if record.tx is None:
+                raise
+            receipt = await self.rebroadcast_and_wait_for_receipt(
+                record,
+                clients=clients,
+                timeout_seconds=timeout_seconds,
+                cause=exc,
+            )
         record.height = receipt["height"]
         record.tx_index = receipt["tx_index"]
         record.final_success = receipt["success"]
@@ -437,6 +483,64 @@ class WorkloadContext:
         record.chi_used = receipt["chi_used"]
         record.events = receipt["events"]
         self._assert_record(record)
+
+    async def rebroadcast_and_wait_for_receipt(
+        self,
+        record: BroadcastRecord,
+        *,
+        clients: list[XianAsync],
+        timeout_seconds: float,
+        cause: Exception,
+    ) -> dict[str, Any]:
+        if not record.tx_hash or record.tx is None:
+            raise WorkloadError(f"{record.label}: missing tx metadata for rebroadcast") from cause
+
+        errors: list[str] = []
+        tried: set[int] = set()
+        for offset in range(max(1, len(self.nodes))):
+            node_index = await self.healthy_submission_index(offset)
+            if node_index in tried:
+                continue
+            tried.add(node_index)
+            node = self.nodes[node_index]
+            try:
+                response = await tr.broadcast_tx_wait_async(
+                    node.rpc_url,
+                    record.tx,
+                    session=self.session,
+                )
+            except Exception as exc:  # noqa: PERF203, BLE001
+                errors.append(f"{node.moniker}: {type(exc).__name__}: {exc}")
+                continue
+
+            if "error" in response:
+                message = response["error"].get("data") or response["error"].get("message")
+                if not self._is_duplicate_tx_message(message):
+                    errors.append(f"{node.moniker}: {message}")
+                    continue
+            else:
+                checktx_result = response.get("result", {})
+                accepted = int(checktx_result.get("code", 1) or 0) == 0
+                duplicate_tx = self._is_duplicate_tx_message(checktx_result.get("log"))
+                if not accepted and not duplicate_tx:
+                    errors.append(
+                        f"{node.moniker}: {checktx_result.get('log') or 'CheckTx failed'}"
+                    )
+                    continue
+
+            try:
+                return await wait_for_tx_receipt(
+                    clients=clients,
+                    tx_hash=record.tx_hash,
+                    timeout_seconds=timeout_seconds,
+                )
+            except WorkloadError as exc:
+                errors.append(f"{node.moniker}: receipt wait failed: {exc}")
+
+        raise WorkloadError(
+            f"{record.label}: tx {record.tx_hash} was not found after rebroadcast; "
+            f"errors={errors[-5:]}"
+        ) from cause
 
     @staticmethod
     def _assert_record(record: BroadcastRecord) -> None:

@@ -3921,6 +3921,8 @@ class E2ERunner:
             "concurrent",
             "--receipt-workers",
             str(self.args.receipt_workers),
+            "--receipt-timeout-seconds",
+            str(self.args.rpc_timeout_seconds),
             "--round-robin-submission",
         ]
         if counter_ops is not None:

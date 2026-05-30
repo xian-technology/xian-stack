@@ -131,6 +131,23 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertEqual(123, config.submission.timeout_seconds)
         self.assertEqual(0.5, config.submission.poll_interval_seconds)
 
+    def test_workload_subprocess_inherits_localnet_rpc_timeout(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "123"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        captured_cmd = []
+
+        def fake_run_cmd(cmd, *, cwd):
+            captured_cmd.extend(cmd)
+            return SimpleNamespace(stdout='{"scenario":"transfer_fanout","ok":true}')
+
+        with patch.object(localnet_e2e, "run_cmd", side_effect=fake_run_cmd):
+            asyncio.run(runner.run_localnet_workload(scenario="transfer_fanout"))
+
+        timeout_flag_index = captured_cmd.index("--receipt-timeout-seconds")
+        self.assertEqual("123.0", captured_cmd[timeout_flag_index + 1])
+
     def test_latest_heights_best_effort_keeps_partial_statuses(self) -> None:
         nodes = [
             self._node(0, "http://node-0"),
