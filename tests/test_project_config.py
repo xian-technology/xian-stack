@@ -12,7 +12,7 @@ def load_pyproject() -> dict:
 def test_project_uses_shared_python_and_tooling_policy() -> None:
     pyproject = load_pyproject()
 
-    assert pyproject["project"]["requires-python"] == ">=3.14"
+    assert pyproject["project"]["requires-python"] == ">=3.14,<3.15"
     assert "ruff>=0.15.12,<0.16" in pyproject["dependency-groups"]["dev"]
     assert pyproject["tool"]["pytest"]["ini_options"]["testpaths"] == ["tests"]
     assert pyproject["tool"]["ruff"]["line-length"] == 100
