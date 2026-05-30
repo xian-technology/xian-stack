@@ -1981,15 +1981,27 @@ class E2ERunner:
         self,
         session: aiohttp.ClientSession,
         preferred_index: int | None = None,
+        excluded_indices: set[int] | None = None,
     ) -> int:
         if not self.nodes:
             raise E2EError("no localnet nodes are available")
 
-        fallback_index = self.default_submission_node_index()
+        excluded_indices = set(excluded_indices or set())
+        available_nodes = [node for node in self.nodes if node.index not in excluded_indices]
+        if not available_nodes:
+            available_nodes = self.nodes
+            excluded_indices = set()
+
+        fallback_index = next(
+            (node.index for node in available_nodes if not node.bds_node),
+            available_nodes[0].index,
+        )
         preferred_index = fallback_index if preferred_index is None else preferred_index
         preferred_index %= len(self.nodes)
+        if preferred_index in excluded_indices:
+            preferred_index = fallback_index
         statuses: list[tuple[int, int, bool, bool]] = []
-        for node in self.nodes:
+        for node in available_nodes:
             try:
                 payload = await fetch_json(
                     session,
@@ -5235,9 +5247,20 @@ class E2ERunner:
                 for record in records
             ]
 
-        shielded_submission_index = await self.healthy_submission_node_index(
-            session,
-            self.default_submission_node_index(),
+        non_bds_indices = {node.index for node in self.nodes if not node.bds_node}
+        shielded_excluded_indices = (
+            {self.default_submission_node_index()} if len(non_bds_indices) > 2 else set()
+        )
+
+        async def shielded_submission_node_index(preferred_index: int | None = None) -> int:
+            return await self.healthy_submission_node_index(
+                session,
+                preferred_index,
+                excluded_indices=shielded_excluded_indices,
+            )
+
+        shielded_submission_index = await shielded_submission_node_index(
+            self.default_submission_node_index()
         )
         async with self.client(founder, shielded_submission_index, session) as client:
             for wallet in (alice, bob, relayer):
@@ -5351,26 +5374,20 @@ class E2ERunner:
             node4_wallet,
         ) = self.validator_wallets
         validator_rpc_indices = {
-            "node0": await self.healthy_submission_node_index(session, 0),
-            "node1": await self.healthy_submission_node_index(session, 1),
-            "node2": await self.healthy_submission_node_index(session, 2),
-            "node3": await self.healthy_submission_node_index(session, 3),
-            "node4": await self.healthy_submission_node_index(session, 4),
+            "node0": await shielded_submission_node_index(0),
+            "node1": await shielded_submission_node_index(1),
+            "node2": await shielded_submission_node_index(2),
+            "node3": await shielded_submission_node_index(3),
+            "node4": await shielded_submission_node_index(4),
         }
 
         async def read_governance_proposal_count() -> int:
-            node_index = await self.healthy_submission_node_index(
-                session,
-                self.default_submission_node_index(),
-            )
+            node_index = await shielded_submission_node_index(self.default_submission_node_index())
             async with self.client(founder, node_index, session) as status_client:
                 return int(await status_client.get_state("governance", "proposal_count"))
 
         async def read_governance_proposal(proposal_id: int) -> dict[str, Any]:
-            node_index = await self.healthy_submission_node_index(
-                session,
-                self.default_submission_node_index(),
-            )
+            node_index = await shielded_submission_node_index(self.default_submission_node_index())
             async with self.client(founder, node_index, session) as status_client:
                 return await status_client.call(
                     "governance",
@@ -5554,11 +5571,10 @@ class E2ERunner:
         relay_hashes: dict[str, Any] | None = None
         service_relay_hashes: dict[str, Any] | None = None
 
-        alice_submission_index = await self.healthy_submission_node_index(session, 1)
-        relayer_submission_index = await self.healthy_submission_node_index(session, 3)
-        founder_submission_index = await self.healthy_submission_node_index(
-            session,
-            self.default_submission_node_index(),
+        alice_submission_index = await shielded_submission_node_index(1)
+        relayer_submission_index = await shielded_submission_node_index(3)
+        founder_submission_index = await shielded_submission_node_index(
+            self.default_submission_node_index()
         )
         async with (
             self.client(alice, alice_submission_index, session) as alice_client,
@@ -5816,10 +5832,9 @@ class E2ERunner:
             if relay_event is None:
                 raise E2EError("shielded relay event stream drifted")
 
-        alice_submission_index = await self.healthy_submission_node_index(session, 1)
-        founder_submission_index = await self.healthy_submission_node_index(
-            session,
-            self.default_submission_node_index(),
+        alice_submission_index = await shielded_submission_node_index(1)
+        founder_submission_index = await shielded_submission_node_index(
+            self.default_submission_node_index()
         )
         async with (
             self.client(alice, alice_submission_index, session) as alice_client,
@@ -6410,6 +6425,7 @@ class E2ERunner:
             "vk_bindings": vk_bindings,
             "vk_registration_proposals": vk_registration_proposals,
             "validator_rpc_indices": validator_rpc_indices,
+            "shielded_excluded_rpc_indices": sorted(shielded_excluded_indices),
             "deposit_receipt": deposit_receipt,
             "transfer_receipt": transfer_receipt,
             "relay_receipt": relay_receipt,

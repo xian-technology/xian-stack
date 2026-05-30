@@ -298,6 +298,41 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
 
         self.assertEqual(2, selected)
 
+    def test_healthy_submission_node_honors_excluded_indices(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.nodes = [
+            self._node(0, "http://node-0", bds_node=True),
+            self._node(1, "http://node-1"),
+            self._node(2, "http://node-2"),
+        ]
+
+        async def fake_fetch_json(_session, _url: str, *, timeout: float):
+            return {
+                "result": {
+                    "sync_info": {
+                        "latest_block_height": "90",
+                        "catching_up": False,
+                    }
+                }
+            }
+
+        with (
+            patch.object(localnet_e2e, "fetch_json", side_effect=fake_fetch_json),
+            patch.object(localnet_e2e, "abci_query_responsive", AsyncMock(return_value=True)),
+        ):
+            selected = asyncio.run(
+                runner.healthy_submission_node_index(
+                    None,
+                    preferred_index=1,
+                    excluded_indices={1},
+                )
+            )
+
+        self.assertEqual(2, selected)
+
     def test_recover_lagging_nodes_restarts_abci_unresponsive_node(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
         with tempfile.TemporaryDirectory() as tmpdir:
