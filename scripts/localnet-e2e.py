@@ -1502,6 +1502,61 @@ class E2ERunner:
             "recovery": recovery,
         }
 
+    async def wait_for_uniform_node_state(
+        self,
+        session: aiohttp.ClientSession,
+        nodes: list[LocalnetNode],
+        *,
+        contract: str,
+        variable: str,
+        label: str,
+        expected: Any,
+        keys: list[str] | None = None,
+        timeout_seconds: float = 30.0,
+    ) -> dict[str, str]:
+        deadline = time.monotonic() + timeout_seconds
+        last_error: E2EError | None = None
+        recovery_attempts: list[dict[str, Any]] = []
+
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            inner_timeout = min(max(remaining, 0.1), 5.0)
+            try:
+                return await wait_for_uniform_node_state(
+                    session,
+                    nodes,
+                    contract=contract,
+                    variable=variable,
+                    keys=keys,
+                    expected=expected,
+                    label=label,
+                    timeout_seconds=inner_timeout,
+                )
+            except E2EError as exc:
+                last_error = exc
+                if time.monotonic() >= deadline:
+                    break
+                try:
+                    recovery_attempts.append(
+                        await self.stabilize_nodes(
+                            session,
+                            reason=f"while waiting for {label}",
+                            timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
+                        )
+                    )
+                except E2EError as recovery_error:
+                    last_error = recovery_error
+                    await asyncio.sleep(0.25)
+
+        recovery_summary = {
+            "attempts": len(recovery_attempts),
+            "last_recovery": recovery_attempts[-1] if recovery_attempts else None,
+        }
+        raise E2EError(
+            f"{label} did not converge before timeout after node recovery attempts; "
+            f"last_error={last_error}; recovery={normalize_value(recovery_summary)}"
+        )
+
     def secondary_bds_container_name(self) -> str:
         return f"xian-localnet-postgres-secondary-{short_hash(self.run_id)}"
 
@@ -1880,7 +1935,7 @@ class E2ERunner:
                 rpc_url,
                 f"/get/currency.balances:{wallet.public_key}",
             )
-            await wait_for_uniform_node_state(
+            await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract="currency",
@@ -1964,7 +2019,7 @@ class E2ERunner:
                 ),
                 label="allocation-small-bytes",
             )
-            stable_status = await wait_for_uniform_node_state(
+            stable_status = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract=allocation_contract,
@@ -1995,7 +2050,7 @@ class E2ERunner:
                 )
                 allocation_limit_receipts.append(failed)
 
-            stable_after_failures = await wait_for_uniform_node_state(
+            stable_after_failures = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract=allocation_contract,
@@ -2314,7 +2369,7 @@ class E2ERunner:
                 ),
                 label="currency-direct-approve",
             )
-            direct_allowance_state = await wait_for_uniform_node_state(
+            direct_allowance_state = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract="currency",
@@ -2338,7 +2393,7 @@ class E2ERunner:
                 ),
                 label="currency-direct-transfer-from",
             )
-            direct_remaining_allowance = await wait_for_uniform_node_state(
+            direct_remaining_allowance = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract="currency",
@@ -2348,7 +2403,7 @@ class E2ERunner:
                 label="direct remaining allowance",
                 timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
             )
-            direct_recipient_balance = await wait_for_uniform_node_state(
+            direct_recipient_balance = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract="currency",
@@ -2377,7 +2432,7 @@ class E2ERunner:
                 ),
                 label="currency-permit-approve",
             )
-            permit_allowance_state = await wait_for_uniform_node_state(
+            permit_allowance_state = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract="currency",
@@ -2401,7 +2456,7 @@ class E2ERunner:
                 ),
                 label="currency-permit-transfer-from",
             )
-            permit_remaining_allowance = await wait_for_uniform_node_state(
+            permit_remaining_allowance = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract="currency",
@@ -2411,7 +2466,7 @@ class E2ERunner:
                 label="permit remaining allowance",
                 timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
             )
-            permit_recipient_balance = await wait_for_uniform_node_state(
+            permit_recipient_balance = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract="currency",
@@ -2456,7 +2511,7 @@ class E2ERunner:
                 label="currency-permit-expired",
                 expected_message_fragment="Permit has expired.",
             )
-            expired_allowance_state = await wait_for_uniform_node_state(
+            expired_allowance_state = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract="currency",
@@ -2501,7 +2556,7 @@ class E2ERunner:
                 label="currency-permit-invalid-signature",
                 expected_message_fragment="Invalid signature.",
             )
-            invalid_signature_allowance_state = await wait_for_uniform_node_state(
+            invalid_signature_allowance_state = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract="currency",
@@ -2531,7 +2586,7 @@ class E2ERunner:
                 label="currency-permit-replay",
                 expected_message_fragment="Invalid permit nonce.",
             )
-            replay_allowance_state = await wait_for_uniform_node_state(
+            replay_allowance_state = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract="currency",
@@ -2637,7 +2692,7 @@ class E2ERunner:
         duplicate_recipient_expected = Decimal(
             str(duplicate_recipient_balance_before or 0)
         ) + Decimal(str(duplicate_amount))
-        duplicate_recipient_balance_after = await wait_for_uniform_node_state(
+        duplicate_recipient_balance_after = await self.wait_for_uniform_node_state(
             session,
             self.nodes,
             contract="currency",
@@ -2810,7 +2865,7 @@ class E2ERunner:
                 ),
                 label="atomic-baseline-set",
             )
-            baseline_value = await wait_for_uniform_node_state(
+            baseline_value = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract=contract_name,
@@ -2820,7 +2875,7 @@ class E2ERunner:
                 label="atomic baseline value",
                 timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
             )
-            baseline_attempts = await wait_for_uniform_node_state(
+            baseline_attempts = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract=contract_name,
@@ -2875,7 +2930,7 @@ class E2ERunner:
 
             rollback_checks = {}
             for key in ("assert-failure", "overdraw-failure", "type-error-failure"):
-                rollback_checks[key] = await wait_for_uniform_node_state(
+                rollback_checks[key] = await self.wait_for_uniform_node_state(
                     session,
                     self.nodes,
                     contract=contract_name,
@@ -2885,7 +2940,7 @@ class E2ERunner:
                     label=f"atomic rollback value for {key}",
                     timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
                 )
-            attempts_after_failures = await wait_for_uniform_node_state(
+            attempts_after_failures = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract=contract_name,
@@ -2894,7 +2949,7 @@ class E2ERunner:
                 label="atomic attempts after failed transactions",
                 timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
             )
-            recipient_balance_after_failure = await wait_for_uniform_node_state(
+            recipient_balance_after_failure = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract="currency",
@@ -2915,7 +2970,7 @@ class E2ERunner:
                 ),
                 label="atomic-recovery-set",
             )
-            recovery_value = await wait_for_uniform_node_state(
+            recovery_value = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract=contract_name,
@@ -2925,7 +2980,7 @@ class E2ERunner:
                 label="atomic recovery value",
                 timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
             )
-            recovery_attempts = await wait_for_uniform_node_state(
+            recovery_attempts = await self.wait_for_uniform_node_state(
                 session,
                 self.nodes,
                 contract=contract_name,
@@ -3100,7 +3155,7 @@ class E2ERunner:
             "resource": resource,
             "token_contract": "currency",
         }
-        payment_state = await wait_for_uniform_node_state(
+        payment_state = await self.wait_for_uniform_node_state(
             session,
             self.nodes,
             contract=contract_name,
@@ -3110,7 +3165,7 @@ class E2ERunner:
             label="x402 payment state",
             timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
         )
-        allowance_state = await wait_for_uniform_node_state(
+        allowance_state = await self.wait_for_uniform_node_state(
             session,
             self.nodes,
             contract="currency",
@@ -3120,7 +3175,7 @@ class E2ERunner:
             label="x402 allowance consumed",
             timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
         )
-        buyer_balance = await wait_for_uniform_node_state(
+        buyer_balance = await self.wait_for_uniform_node_state(
             session,
             self.nodes,
             contract="currency",
@@ -3130,7 +3185,7 @@ class E2ERunner:
             label="x402 buyer balance",
             timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
         )
-        seller_balance = await wait_for_uniform_node_state(
+        seller_balance = await self.wait_for_uniform_node_state(
             session,
             self.nodes,
             contract="currency",
@@ -3344,7 +3399,7 @@ class E2ERunner:
             "resource": payload["resource"],
             "token_contract": "currency",
         }
-        payment_state = await wait_for_uniform_node_state(
+        payment_state = await self.wait_for_uniform_node_state(
             session,
             self.nodes,
             contract=contract_name,
@@ -3354,7 +3409,7 @@ class E2ERunner:
             label="intentkit x402 payment state",
             timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
         )
-        allowance_state = await wait_for_uniform_node_state(
+        allowance_state = await self.wait_for_uniform_node_state(
             session,
             self.nodes,
             contract="currency",
@@ -3364,7 +3419,7 @@ class E2ERunner:
             label="intentkit x402 allowance consumed",
             timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
         )
-        buyer_balance = await wait_for_uniform_node_state(
+        buyer_balance = await self.wait_for_uniform_node_state(
             session,
             self.nodes,
             contract="currency",
@@ -3374,7 +3429,7 @@ class E2ERunner:
             label="intentkit x402 buyer balance",
             timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
         )
-        seller_balance = await wait_for_uniform_node_state(
+        seller_balance = await self.wait_for_uniform_node_state(
             session,
             self.nodes,
             contract="currency",
@@ -6524,7 +6579,7 @@ class E2ERunner:
             self.nodes[0].rpc_url,
             f"/get/{conflict_contract}.counter",
         )
-        states = await wait_for_uniform_node_state(
+        states = await self.wait_for_uniform_node_state(
             session,
             self.nodes,
             contract=conflict_contract,
