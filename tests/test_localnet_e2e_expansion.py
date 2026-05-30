@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "localnet-e2e.py"
@@ -219,6 +220,53 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             timeout_seconds=10.0,
         )
         self.assertEqual(2, wait_for_state.await_count)
+
+    def test_fund_wallets_uses_checktx_with_receipt_polling(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.nodes = [self._node(0, "http://node-0")]
+        runner.founder_wallet = SimpleNamespace(public_key="founder")
+        runner.network = {"chain_id": "test-chain"}
+        runner.stabilize_nodes = AsyncMock(return_value={"recovery": {"restarts": []}})
+        runner.wait_for_uniform_node_state = AsyncMock(return_value={"node-0": "3000"})
+        send_calls = []
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                return None
+
+            async def send(self, **kwargs):
+                send_calls.append(kwargs)
+                return SimpleNamespace(
+                    submitted=True,
+                    accepted=True,
+                    finalized=True,
+                    message=None,
+                    tx_hash="tx-hash",
+                    mode=kwargs["mode"],
+                    nonce=1,
+                    chi_supplied=kwargs["chi"],
+                    receipt=SimpleNamespace(
+                        success=True,
+                        message="ok",
+                        execution={"state": [], "events": [], "chi_used": 10},
+                    ),
+                )
+
+        runner.client = lambda *_args, **_kwargs: FakeClient()
+        wallet = SimpleNamespace(public_key="wallet-0")
+
+        with patch.object(localnet_e2e, "fetch_abci_query", AsyncMock(return_value="0")):
+            receipts = asyncio.run(runner.fund_wallets(None, [wallet], amount=3_000))
+
+        self.assertEqual(1, len(receipts))
+        self.assertEqual("checktx", send_calls[0]["mode"])
+        self.assertTrue(send_calls[0]["wait_for_tx"])
 
 
 if __name__ == "__main__":

@@ -1914,7 +1914,7 @@ class E2ERunner:
                     amount=send_amount,
                     to_address=wallet.public_key,
                     chi=DEFAULT_TRANSFER_CHI,
-                    mode="commit",
+                    mode="checktx",
                     wait_for_tx=True,
                 )
                 receipts.append(
