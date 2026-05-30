@@ -54,6 +54,7 @@ THROUGHPUT_TRANSFER_TX_CHI = 1_500
 THROUGHPUT_CONTRACT_DEPLOY_CHI = 120_000
 THROUGHPUT_CONTRACT_TX_CHI = 6_000
 RECEIPT_TIMEOUT_SECONDS = 45.0
+ABCI_HEALTH_QUERY_PATH = "/get/currency.balances:__xian_localnet_workload_health_probe__"
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,25 @@ class BroadcastRecord:
 
 class WorkloadError(RuntimeError):
     pass
+
+
+async def abci_query_responsive(
+    session: aiohttp.ClientSession,
+    rpc_url: str,
+    *,
+    timeout: float = 2.0,
+) -> bool:
+    try:
+        async with session.get(
+            f"{rpc_url}/abci_query",
+            params={"path": json.dumps(ABCI_HEALTH_QUERY_PATH)},
+            timeout=timeout,
+        ) as response:
+            payload = await response.json()
+        abci_response = payload.get("result", {}).get("response", {})
+        return int(abci_response.get("code", 0) or 0) == 0
+    except Exception:  # noqa: BLE001
+        return False
 
 
 class WorkloadContext:
@@ -240,8 +260,8 @@ class WorkloadContext:
             return requested_rpc_index % len(self.nodes)
         return self.submit_node_index
 
-    async def node_statuses(self) -> list[tuple[int, int, bool]]:
-        statuses: list[tuple[int, int, bool]] = []
+    async def node_statuses(self) -> list[tuple[int, int, bool, bool]]:
+        statuses: list[tuple[int, int, bool, bool]] = []
 
         for index, node in enumerate(self.nodes):
             try:
@@ -256,6 +276,7 @@ class WorkloadContext:
                         index,
                         int(sync_info["latest_block_height"]),
                         bool(sync_info.get("catching_up", False)),
+                        await abci_query_responsive(self.session, node.rpc_url),
                     )
                 )
             except Exception:  # noqa: PERF203, BLE001
@@ -275,15 +296,23 @@ class WorkloadContext:
         if not submission_statuses:
             submission_statuses = statuses
 
-        target_height = max(height for _, height, _ in submission_statuses)
+        candidates = [
+            status
+            for status in submission_statuses
+            if not status[2] and status[3]
+        ]
+        if not candidates:
+            return [max(submission_statuses, key=lambda item: item[1])[0]]
+
+        target_height = max(height for _, height, _, _ in candidates)
         healthy = {
             index
-            for index, height, catching_up in submission_statuses
-            if not catching_up and height >= target_height
+            for index, height, _catching_up, _abci_ok in candidates
+            if height >= target_height
         }
         if healthy:
             return sorted(healthy, key=lambda index: (index != preferred_rpc_index, index))
-        return [max(submission_statuses, key=lambda item: item[1])[0]]
+        return [max(candidates, key=lambda item: item[1])[0]]
 
     async def healthy_submission_index(self, preferred_rpc_index: int) -> int:
         return (await self.healthy_submission_indices(preferred_rpc_index))[0]

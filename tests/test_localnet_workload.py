@@ -105,6 +105,42 @@ def test_healthy_submission_index_uses_highest_non_bds_when_preferred_lags() -> 
     assert selected == 2
 
 
+def test_healthy_submission_index_skips_abci_unresponsive_node() -> None:
+    context = localnet_workload.WorkloadContext(
+        _network(),
+        sample_nodes=3,
+        submit_node_index=1,
+        round_robin_submission=True,
+    )
+    context._session = object()
+
+    async def fake_fetch_json(_session, url: str, *, timeout: float):
+        return {
+            "result": {
+                "sync_info": {
+                    "latest_block_height": "100",
+                    "catching_up": False,
+                }
+            }
+        }
+
+    async def fake_abci_query_responsive(_session, url: str, *, timeout: float = 2.0):
+        port = int(url.rsplit(":", 1)[1])
+        return port != 27757
+
+    with (
+        patch.object(localnet_workload, "fetch_json", side_effect=fake_fetch_json),
+        patch.object(
+            localnet_workload,
+            "abci_query_responsive",
+            side_effect=fake_abci_query_responsive,
+        ),
+    ):
+        selected = asyncio.run(context.healthy_submission_index(1))
+
+    assert selected == 2
+
+
 def test_healthy_state_sample_nodes_skip_lagging_nodes() -> None:
     context = localnet_workload.WorkloadContext(
         _network(),
