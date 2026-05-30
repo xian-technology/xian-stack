@@ -1180,12 +1180,14 @@ class E2ERunner:
         *,
         label: str,
         chi: int = DEFAULT_TX_CHI,
+        mode: str | None = None,
     ) -> dict[str, Any]:
         submission = await client.send_tx(
             contract,
             function,
             kwargs,
             chi=chi,
+            mode=mode,
             wait_for_tx=True,
         )
         return ensure_positive_submission(submission, label=label)
@@ -1249,6 +1251,7 @@ class E2ERunner:
             proposal_kwargs,
             label=f"{label_prefix}-propose",
             chi=GOVERNANCE_TX_CHI,
+            mode="async",
         )
 
         async def read_proposal_count() -> int:
@@ -1281,6 +1284,7 @@ class E2ERunner:
                 {"proposal_id": proposal_id, "support": True},
                 label=f"{label_prefix}-vote-{index}-{name}",
                 chi=GOVERNANCE_TX_CHI,
+                mode="async",
             )
             for index, (name, voter) in enumerate(voters, start=1)
         ]
@@ -5466,6 +5470,7 @@ class E2ERunner:
                         "configure_vk",
                         {"action": action, "vk_id": vk_id},
                         chi=500_000,
+                        mode="async",
                         wait_for_tx=True,
                     )
                     ensure_positive_submission(

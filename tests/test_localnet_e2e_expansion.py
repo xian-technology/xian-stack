@@ -402,6 +402,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             [("governance", "propose_contract_call"), ("governance", "vote")],
             [(contract, function) for contract, function, *_rest in send_labels],
         )
+        self.assertEqual(["async", "async"], [options["mode"] for *_args, options in send_labels])
 
     def test_uniform_state_wait_recovers_nodes_before_retry(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
