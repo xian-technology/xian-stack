@@ -511,6 +511,9 @@ def read_source_version(unit: ReleaseUnit) -> str | None:
                 "apps/wallet-extension/package.json": read_json(
                     repo_path / "apps/wallet-extension/package.json"
                 )["version"],
+                "apps/wallet-extension/public/manifest.json": read_json(
+                    repo_path / "apps/wallet-extension/public/manifest.json"
+                )["version"],
             },
         )
     if unit.key == "xian-stack":
@@ -943,6 +946,11 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
             changed_paths,
             repo_path / "apps/wallet-extension/package.json",
             set_json_version(repo_path / "apps/wallet-extension/package.json", version),
+        )
+        record_change(
+            changed_paths,
+            repo_path / "apps/wallet-extension/public/manifest.json",
+            set_json_version(repo_path / "apps/wallet-extension/public/manifest.json", version),
         )
         record_change(
             changed_paths,
