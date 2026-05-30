@@ -46,6 +46,27 @@ class StateConvergenceHelpersTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual({"node-0": "ready", "node-1": "ready"}, observed)
 
+    async def test_wait_for_uniform_state_retries_transient_fetch_errors(self) -> None:
+        attempts = 0
+
+        async def fetch_values() -> dict[str, int]:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise TimeoutError("node-2 timed out")
+            return {"node-0": 42, "node-1": 42}
+
+        observed = await wait_for_uniform_state(
+            fetch_values=fetch_values,
+            label="funded balance",
+            expected=42,
+            timeout_seconds=0.1,
+            poll_interval_seconds=0.0,
+        )
+
+        self.assertEqual({"node-0": "42", "node-1": "42"}, observed)
+        self.assertEqual(attempts, 2)
+
     async def test_wait_for_uniform_state_times_out_with_last_values_and_heights(self) -> None:
         async def fetch_values() -> dict[str, int]:
             return {"node-0": 198, "node-1": 321}
