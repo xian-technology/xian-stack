@@ -245,12 +245,101 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                 }
             }
 
-        with patch.object(localnet_e2e, "fetch_json", side_effect=fake_fetch_json):
+        with (
+            patch.object(localnet_e2e, "fetch_json", side_effect=fake_fetch_json),
+            patch.object(localnet_e2e, "abci_query_responsive", AsyncMock(return_value=True)),
+        ):
             selected = asyncio.run(
                 runner.healthy_submission_node_index(None, preferred_index=0)
             )
 
         self.assertEqual(2, selected)
+
+    def test_healthy_submission_node_skips_unresponsive_abci_nodes(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.nodes = [
+            self._node(0, "http://node-0", bds_node=True),
+            self._node(1, "http://node-1"),
+            self._node(2, "http://node-2"),
+        ]
+
+        async def fake_fetch_json(_session, url: str, *, timeout: float):
+            heights = {
+                "http://node-0/status": 80,
+                "http://node-1/status": 80,
+                "http://node-2/status": 79,
+            }
+            return {
+                "result": {
+                    "sync_info": {
+                        "latest_block_height": str(heights[url]),
+                        "catching_up": False,
+                    }
+                }
+            }
+
+        async def fake_abci_query_responsive(_session, rpc_url: str, *, timeout: float = 2.0):
+            return rpc_url == "http://node-2"
+
+        with (
+            patch.object(localnet_e2e, "fetch_json", side_effect=fake_fetch_json),
+            patch.object(
+                localnet_e2e,
+                "abci_query_responsive",
+                side_effect=fake_abci_query_responsive,
+            ),
+        ):
+            selected = asyncio.run(
+                runner.healthy_submission_node_index(None, preferred_index=1)
+            )
+
+        self.assertEqual(2, selected)
+
+    def test_recover_lagging_nodes_restarts_abci_unresponsive_node(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.nodes = [
+            self._node(0, "http://node-0"),
+            self._node(1, "http://node-1"),
+        ]
+        runner.restart_node_runtime = AsyncMock(
+            return_value={"node": "node-1", "start": {"ready_height": 42}}
+        )
+        abci_attempts: dict[str, int] = {}
+
+        async def fake_wait_for_height(_session, _rpc_url: str, _target_height: int, **_kwargs):
+            return 42
+
+        async def fake_wait_for_abci(_session, rpc_url: str, **_kwargs):
+            abci_attempts[rpc_url] = abci_attempts.get(rpc_url, 0) + 1
+            if rpc_url == "http://node-1" and abci_attempts[rpc_url] == 1:
+                raise localnet_e2e.E2EError("ABCI query timed out")
+
+        with (
+            patch.object(localnet_e2e, "wait_for_height", side_effect=fake_wait_for_height),
+            patch.object(
+                localnet_e2e,
+                "wait_for_abci_query_responsive",
+                side_effect=fake_wait_for_abci,
+            ),
+        ):
+            result = asyncio.run(
+                runner.recover_lagging_nodes(None, target_height=42, timeout_seconds=7)
+            )
+
+        runner.restart_node_runtime.assert_awaited_once_with(
+            None,
+            runner.nodes[1],
+            target_height=42,
+        )
+        self.assertTrue(result["before"]["node-0"]["ok"])
+        self.assertFalse(result["before"]["node-1"]["ok"])
+        self.assertTrue(result["after"]["node-1"]["abci_query_ready"])
 
     def test_uniform_state_wait_recovers_nodes_before_retry(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])

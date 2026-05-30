@@ -356,6 +356,51 @@ async def fetch_abci_query(
         return decoded
 
 
+ABCI_HEALTH_QUERY_PATH = "/get/currency.balances:__xian_localnet_e2e_health_probe__"
+
+
+async def abci_query_responsive(
+    session: aiohttp.ClientSession,
+    rpc_url: str,
+    *,
+    timeout: float = 2.0,
+) -> bool:
+    try:
+        await fetch_abci_query(
+            session,
+            rpc_url,
+            ABCI_HEALTH_QUERY_PATH,
+            timeout=timeout,
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+async def wait_for_abci_query_responsive(
+    session: aiohttp.ClientSession,
+    rpc_url: str,
+    *,
+    timeout_seconds: float,
+    probe_timeout: float = 2.0,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    last_error: str | None = None
+    while time.monotonic() < deadline:
+        try:
+            await fetch_abci_query(
+                session,
+                rpc_url,
+                ABCI_HEALTH_QUERY_PATH,
+                timeout=probe_timeout,
+            )
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_error = f"{type(exc).__name__}: {exc}"
+            await asyncio.sleep(0.5)
+    raise E2EError(f"node {rpc_url} did not answer ABCI queries; last={last_error}")
+
+
 def construct_token_permit_message(
     *,
     token_contract: str,
@@ -1392,10 +1437,16 @@ class E2ERunner:
             max(target_height or 1, 1),
             timeout_seconds=90.0,
         )
+        await wait_for_abci_query_responsive(
+            session,
+            node.rpc_url,
+            timeout_seconds=90.0,
+        )
         return {
             "containers": container_names,
             "states": states,
             "ready_height": ready_height,
+            "abci_query_ready": True,
         }
 
     async def restart_node_runtime(
@@ -1434,7 +1485,16 @@ class E2ERunner:
                     target_height,
                     timeout_seconds=timeout_seconds,
                 )
-                before[node.moniker] = {"height": height, "ok": True}
+                await wait_for_abci_query_responsive(
+                    session,
+                    node.rpc_url,
+                    timeout_seconds=timeout_seconds,
+                )
+                before[node.moniker] = {
+                    "height": height,
+                    "ok": True,
+                    "abci_query_ready": True,
+                }
             except Exception as exc:  # noqa: BLE001
                 before[node.moniker] = {"ok": False, "error": str(exc)}
                 lagging.append((node, str(exc)))
@@ -1458,7 +1518,16 @@ class E2ERunner:
                     target_height,
                     timeout_seconds=timeout_seconds,
                 )
-                after[node.moniker] = {"height": height, "ok": True}
+                await wait_for_abci_query_responsive(
+                    session,
+                    node.rpc_url,
+                    timeout_seconds=timeout_seconds,
+                )
+                after[node.moniker] = {
+                    "height": height,
+                    "ok": True,
+                    "abci_query_ready": True,
+                }
 
         return {
             "target_height": target_height,
@@ -1895,7 +1964,7 @@ class E2ERunner:
         fallback_index = self.default_submission_node_index()
         preferred_index = fallback_index if preferred_index is None else preferred_index
         preferred_index %= len(self.nodes)
-        statuses: list[tuple[int, int, bool]] = []
+        statuses: list[tuple[int, int, bool, bool]] = []
         for node in self.nodes:
             try:
                 payload = await fetch_json(
@@ -1909,6 +1978,7 @@ class E2ERunner:
                         node.index,
                         int(sync_info["latest_block_height"]),
                         bool(sync_info.get("catching_up", False)),
+                        await abci_query_responsive(session, node.rpc_url),
                     )
                 )
             except Exception:  # noqa: PERF203, BLE001
@@ -1923,17 +1993,25 @@ class E2ERunner:
         if not submission_statuses:
             submission_statuses = statuses
 
-        target_height = max(height for _, height, _ in submission_statuses)
+        candidates = [
+            status
+            for status in submission_statuses
+            if not status[2] and status[3]
+        ]
+        if not candidates:
+            return fallback_index
+
+        target_height = max(height for _, height, _, _ in candidates)
         healthy = {
             index
-            for index, height, catching_up in submission_statuses
-            if not catching_up and height >= target_height
+            for index, height, _catching_up, _abci_ok in candidates
+            if height >= target_height
         }
         if preferred_index in healthy:
             return preferred_index
         if healthy:
             return min(healthy)
-        return max(submission_statuses, key=lambda item: item[1])[0]
+        return max(candidates, key=lambda item: item[1])[0]
 
     async def fund_wallets(
         self,
