@@ -5863,6 +5863,7 @@ class E2ERunner:
             self.client(alice, alice_submission_index, session) as alice_client,
             self.client(relayer, relayer_submission_index, session) as relayer_client,
             self.client(founder, founder_submission_index, session) as founder_client,
+            self.client(founder, service.index, session) as bds_client,
         ):
             deposit_payloads = [
                 alice_note_1.to_output().encrypt_for(
@@ -5904,7 +5905,7 @@ class E2ERunner:
             )
 
             records_after_deposit = await indexed_note_records(
-                founder_client,
+                bds_client,
                 minimum_count=2,
             )
             if len(records_after_deposit) < 2:
@@ -5993,7 +5994,7 @@ class E2ERunner:
             )
 
             records_after_transfer = await indexed_note_records(
-                founder_client,
+                bds_client,
                 minimum_count=4,
             )
             recovered_bob = recover_encrypted_notes(
@@ -6078,7 +6079,7 @@ class E2ERunner:
             )
 
             records_after_relay = await indexed_note_records(
-                founder_client,
+                bds_client,
                 minimum_count=6,
             )
             alice_sync_after_relay = alice_wallet.sync_records(records_after_relay)
@@ -6095,8 +6096,8 @@ class E2ERunner:
             if bob_wallet.available_balance() != 14:
                 raise E2EError("shielded relay change balance drifted")
 
-            relay_indexed_tx = await founder_client.get_indexed_tx(relay_receipt["tx_hash"])
-            relay_events = await founder_client.get_events_for_tx(relay_receipt["tx_hash"])
+            relay_indexed_tx = await bds_client.get_indexed_tx(relay_receipt["tx_hash"])
+            relay_events = await bds_client.get_events_for_tx(relay_receipt["tx_hash"])
             if relay_indexed_tx is None:
                 raise E2EError("shielded relay indexed transaction missing")
             if relay_indexed_tx.sender != relayer.public_key:
@@ -6122,6 +6123,7 @@ class E2ERunner:
         async with (
             self.client(alice, alice_submission_index, session) as alice_client,
             self.client(founder, founder_submission_index, session) as founder_client,
+            self.client(founder, service.index, session) as bds_client,
         ):
             withdraw_payloads = [
                 alice_withdraw_change.to_output().encrypt_for(
@@ -6164,7 +6166,7 @@ class E2ERunner:
                 label="shielded-withdraw",
             )
             records_after_withdraw = await indexed_note_records(
-                founder_client,
+                bds_client,
                 minimum_count=7,
             )
             if len(records_after_withdraw) < 7:
@@ -6341,7 +6343,7 @@ class E2ERunner:
                 label="shielded-recent-root-deposit",
             )
             records_after_recent_root = await indexed_note_records(
-                founder_client,
+                bds_client,
                 minimum_count=8,
             )
             alice_sync_after_recent_root = alice_wallet.sync_records(records_after_recent_root)
@@ -6575,7 +6577,7 @@ class E2ERunner:
                 raise E2EError("shielded relayer stop check did not produce a transport error")
 
             records_after_service_relay = await indexed_note_records(
-                founder_client,
+                bds_client,
                 minimum_count=10,
                 timeout_seconds=self.args.rpc_timeout_seconds,
             )
@@ -6604,12 +6606,12 @@ class E2ERunner:
             if len(bob_spent_after_service_relay) != 1:
                 raise E2EError("shielded relayer service did not mark the relay input as spent")
             if submitted_job.tx_hash is not None:
-                service_relay_indexed_tx = await founder_client.get_indexed_tx(
+                service_relay_indexed_tx = await bds_client.get_indexed_tx(
                     submitted_job.tx_hash
                 )
                 if service_relay_indexed_tx is None:
                     raise E2EError("shielded relayer service tx was not indexed")
-                service_relay_events = await founder_client.get_events_for_tx(submitted_job.tx_hash)
+                service_relay_events = await bds_client.get_events_for_tx(submitted_job.tx_hash)
                 if not any(
                     event.event == "ShieldedRelayTransfer" and event.signer == relayer.public_key
                     for event in service_relay_events
