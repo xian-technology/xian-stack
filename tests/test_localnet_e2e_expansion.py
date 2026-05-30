@@ -198,7 +198,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         runner.recover_lagging_nodes = AsyncMock(return_value={"restarts": []})
         statuses = {
             "node-0": {"ok": True, "height": 12},
-            "node-1": {"ok": True, "height": 12},
+            "node-1": {"ok": True, "height": 11},
         }
 
         with patch.object(localnet_e2e, "latest_heights_best_effort", return_value=statuses):

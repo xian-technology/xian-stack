@@ -1487,7 +1487,9 @@ class E2ERunner:
                 f"could not read any validator heights while stabilizing nodes: {reason}"
             )
 
-        target_height = max(observed_heights) + max(0, advance_blocks)
+        height_spread = len(set(observed_heights)) > 1
+        effective_advance_blocks = max(0, advance_blocks) if height_spread else 0
+        target_height = max(observed_heights) + effective_advance_blocks
         if min_target_height is not None:
             target_height = max(target_height, min_target_height)
 
@@ -1500,7 +1502,7 @@ class E2ERunner:
             "reason": reason,
             "snapshot": snapshot,
             "target_height": target_height,
-            "advance_blocks": advance_blocks,
+            "advance_blocks": effective_advance_blocks,
             "recovery": recovery,
         }
 
