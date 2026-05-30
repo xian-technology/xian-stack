@@ -110,6 +110,7 @@ import xian_py.transaction as tr  # noqa: E402
 from contracting.artifacts import build_contract_artifacts  # noqa: E402
 from xian_py.config import RetryPolicy, SubmissionConfig, XianClientConfig  # noqa: E402
 from xian_py.exception import SimulationError, TransportError, TxTimeoutError  # noqa: E402
+from xian_py.models import TransactionSubmission  # noqa: E402
 from xian_py.shielded_relayer import ShieldedRelayerAsyncClient  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.x402 import (  # noqa: E402
@@ -1191,6 +1192,212 @@ class E2ERunner:
             wait_for_tx=True,
         )
         return ensure_positive_submission(submission, label=label)
+
+    async def wait_for_tx_receipt_via_healthy_node(
+        self,
+        session: aiohttp.ClientSession,
+        wallet: Wallet,
+        tx_hash: str,
+        *,
+        preferred_index: int | None,
+        excluded_indices: set[int] | None,
+        timeout_seconds: float,
+        label: str,
+    ):
+        deadline = time.monotonic() + timeout_seconds
+        errors: list[str] = []
+        base_excluded = set(excluded_indices or set())
+        while time.monotonic() < deadline:
+            tried: set[int] = set()
+            while len(tried) < len(self.nodes) and time.monotonic() < deadline:
+                node_index = await self.healthy_submission_node_index(
+                    session,
+                    preferred_index,
+                    excluded_indices=base_excluded | tried,
+                )
+                if node_index in tried:
+                    break
+                tried.add(node_index)
+                remaining = max(0.1, deadline - time.monotonic())
+                attempt_timeout = min(5.0, remaining)
+                try:
+                    timeout = aiohttp.ClientTimeout(
+                        total=attempt_timeout + 2.0,
+                        sock_connect=2.0,
+                        sock_read=min(3.0, attempt_timeout + 1.0),
+                    )
+                    async with aiohttp.ClientSession(timeout=timeout) as receipt_session:
+                        async with self.client(wallet, node_index, receipt_session) as client:
+                            return await client.wait_for_tx(
+                                tx_hash,
+                                timeout_seconds=attempt_timeout,
+                                poll_interval_seconds=0.5,
+                            )
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{self.nodes[node_index].moniker}: {type(exc).__name__}: {exc}")
+            await asyncio.sleep(0.5)
+        raise E2EError(
+            f"{label}: transaction {tx_hash} was not found by any healthy node; "
+            f"errors={errors[-5:]}"
+        )
+
+    async def send_tx_with_broadcast_failover(
+        self,
+        session: aiohttp.ClientSession,
+        wallet: Wallet,
+        contract: str,
+        function: str,
+        kwargs: dict[str, Any],
+        *,
+        preferred_index: int | None,
+        excluded_indices: set[int] | None,
+        chi: int,
+        label: str,
+        timeout_seconds: float | None = None,
+    ) -> TransactionSubmission:
+        timeout_seconds = (
+            self.args.rpc_timeout_seconds if timeout_seconds is None else timeout_seconds
+        )
+        base_excluded = set(excluded_indices or set())
+        nonce_index = await self.healthy_submission_node_index(
+            session,
+            preferred_index,
+            excluded_indices=base_excluded,
+        )
+        async with self.client(wallet, nonce_index, session) as nonce_client:
+            nonce = await nonce_client.refresh_nonce()
+
+        payload = {
+            "chain_id": self.network["chain_id"],
+            "contract": contract,
+            "function": function,
+            "kwargs": kwargs,
+            "nonce": nonce,
+            "sender": wallet.public_key,
+            "chi_supplied": chi,
+        }
+        tx = tr.create_tx(payload, wallet)
+        tx_hash = XianAsync._local_tx_hash(tx)
+        response: dict[str, Any] = {}
+        errors: list[str] = []
+        tried: set[int] = set()
+
+        while len(tried) < len(self.nodes):
+            node_index = await self.healthy_submission_node_index(
+                session,
+                preferred_index,
+                excluded_indices=base_excluded | tried,
+            )
+            if node_index in tried:
+                break
+            tried.add(node_index)
+            try:
+                timeout = aiohttp.ClientTimeout(
+                    total=12.0,
+                    sock_connect=2.0,
+                    sock_read=10.0,
+                )
+                async with aiohttp.ClientSession(timeout=timeout) as broadcast_session:
+                    response = await tr.broadcast_tx_wait_async(
+                        self.nodes[node_index].rpc_url,
+                        tx,
+                        session=broadcast_session,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{self.nodes[node_index].moniker}: {type(exc).__name__}: {exc}")
+                try:
+                    receipt = await self.wait_for_tx_receipt_via_healthy_node(
+                        session,
+                        wallet,
+                        tx_hash,
+                        preferred_index=preferred_index,
+                        excluded_indices=base_excluded,
+                        timeout_seconds=3.0,
+                        label=label,
+                    )
+                except E2EError:
+                    continue
+                return TransactionSubmission.from_dict(
+                    {
+                        "submitted": True,
+                        "accepted": True,
+                        "finalized": True,
+                        "tx_hash": tx_hash,
+                        "mode": "checktx-failover",
+                        "nonce": nonce,
+                        "chi_supplied": chi,
+                        "chi_estimated": None,
+                        "message": "broadcast response unavailable; transaction finalized",
+                        "response": response,
+                        "receipt": receipt,
+                    }
+                )
+
+            if "error" in response:
+                message = response["error"].get("data") or response["error"].get("message")
+                accepted = XianAsync._is_duplicate_tx_log(message)
+                if not accepted:
+                    return TransactionSubmission.from_dict(
+                        {
+                            "submitted": False,
+                            "accepted": False,
+                            "finalized": False,
+                            "tx_hash": tx_hash,
+                            "mode": "checktx-failover",
+                            "nonce": nonce,
+                            "chi_supplied": chi,
+                            "chi_estimated": None,
+                            "message": message,
+                            "response": response,
+                            "receipt": None,
+                        }
+                    )
+            else:
+                checktx_result = response.get("result", {})
+                accepted = int(checktx_result.get("code", 1) or 0) == 0
+                if not accepted:
+                    return TransactionSubmission.from_dict(
+                        {
+                            "submitted": True,
+                            "accepted": False,
+                            "finalized": False,
+                            "tx_hash": tx_hash,
+                            "mode": "checktx-failover",
+                            "nonce": nonce,
+                            "chi_supplied": chi,
+                            "chi_estimated": None,
+                            "message": checktx_result.get("log") or "CheckTx failed",
+                            "response": response,
+                            "receipt": None,
+                        }
+                    )
+
+            receipt = await self.wait_for_tx_receipt_via_healthy_node(
+                session,
+                wallet,
+                tx_hash,
+                preferred_index=preferred_index,
+                excluded_indices=base_excluded,
+                timeout_seconds=timeout_seconds,
+                label=label,
+            )
+            return TransactionSubmission.from_dict(
+                {
+                    "submitted": True,
+                    "accepted": True,
+                    "finalized": True,
+                    "tx_hash": tx_hash,
+                    "mode": "checktx-failover",
+                    "nonce": nonce,
+                    "chi_supplied": chi,
+                    "chi_estimated": None,
+                    "message": None,
+                    "response": response,
+                    "receipt": receipt,
+                }
+            )
+
+        raise E2EError(f"{label}: broadcast failed on all healthy nodes; errors={errors[-5:]}")
 
     async def wait_for_governance_proposal_status(
         self,
@@ -5252,11 +5459,15 @@ class E2ERunner:
             {self.default_submission_node_index()} if len(non_bds_indices) > 2 else set()
         )
 
-        async def shielded_submission_node_index(preferred_index: int | None = None) -> int:
+        async def shielded_submission_node_index(
+            preferred_index: int | None = None,
+            *,
+            extra_excluded_indices: set[int] | None = None,
+        ) -> int:
             return await self.healthy_submission_node_index(
                 session,
                 preferred_index,
-                excluded_indices=shielded_excluded_indices,
+                excluded_indices=shielded_excluded_indices | set(extra_excluded_indices or set()),
             )
 
         shielded_submission_index = await shielded_submission_node_index(
@@ -5373,6 +5584,78 @@ class E2ERunner:
             node3_wallet,
             node4_wallet,
         ) = self.validator_wallets
+        self_runner = self
+
+        class ShieldedValidatorClient:
+            def __init__(self, wallet: Wallet, preferred_index: int):
+                self.wallet = wallet
+                self.preferred_index = preferred_index
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                return None
+
+            async def _with_read_client(self, operation):
+                tried: set[int] = set()
+                last_error: Exception | None = None
+                while len(tried) < len(self_runner.nodes):
+                    node_index = await shielded_submission_node_index(
+                        self.preferred_index,
+                        extra_excluded_indices=tried,
+                    )
+                    if node_index in tried:
+                        break
+                    tried.add(node_index)
+                    try:
+                        timeout = aiohttp.ClientTimeout(
+                            total=12.0,
+                            sock_connect=2.0,
+                            sock_read=10.0,
+                        )
+                        async with aiohttp.ClientSession(timeout=timeout) as read_session:
+                            async with self_runner.client(
+                                self.wallet,
+                                node_index,
+                                read_session,
+                            ) as client:
+                                return await operation(client)
+                    except Exception as exc:  # noqa: BLE001
+                        last_error = exc
+                raise E2EError(f"shielded validator read failed on all transports: {last_error}")
+
+            async def call(self, contract: str, function: str, kwargs: dict[str, Any]):
+                return await self._with_read_client(
+                    lambda client: client.call(contract, function, kwargs)
+                )
+
+            async def get_state(self, contract: str, variable: str, *keys):
+                return await self._with_read_client(
+                    lambda client: client.get_state(contract, variable, *keys)
+                )
+
+            async def send_tx(
+                self,
+                contract: str,
+                function: str,
+                kwargs: dict[str, Any],
+                *,
+                chi: int | None = None,
+                **_options,
+            ) -> TransactionSubmission:
+                return await self_runner.send_tx_with_broadcast_failover(
+                    session,
+                    self.wallet,
+                    contract,
+                    function,
+                    kwargs,
+                    preferred_index=self.preferred_index,
+                    excluded_indices=shielded_excluded_indices,
+                    chi=DEFAULT_TX_CHI if chi is None else chi,
+                    label=f"shielded-validator-{contract}.{function}",
+                )
+
         validator_rpc_indices = {
             "node0": await shielded_submission_node_index(0),
             "node1": await shielded_submission_node_index(1),
@@ -5396,11 +5679,11 @@ class E2ERunner:
                 )
 
         async with (
-            self.client(node0_wallet, validator_rpc_indices["node0"], session) as node0,
-            self.client(node1_wallet, validator_rpc_indices["node1"], session) as node1,
-            self.client(node2_wallet, validator_rpc_indices["node2"], session) as node2,
-            self.client(node3_wallet, validator_rpc_indices["node3"], session) as node3,
-            self.client(node4_wallet, validator_rpc_indices["node4"], session) as node4,
+            ShieldedValidatorClient(node0_wallet, validator_rpc_indices["node0"]) as node0,
+            ShieldedValidatorClient(node1_wallet, validator_rpc_indices["node1"]) as node1,
+            ShieldedValidatorClient(node2_wallet, validator_rpc_indices["node2"]) as node2,
+            ShieldedValidatorClient(node3_wallet, validator_rpc_indices["node3"]) as node3,
+            ShieldedValidatorClient(node4_wallet, validator_rpc_indices["node4"]) as node4,
         ):
             registry_entries = {
                 entry["action"]: entry for entry in registry_manifest["registry_entries"]
