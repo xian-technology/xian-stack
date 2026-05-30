@@ -1380,6 +1380,75 @@ class E2ERunner:
             "ready_height": ready_height,
         }
 
+    async def restart_node_runtime(
+        self,
+        session: aiohttp.ClientSession,
+        node: LocalnetNode,
+        *,
+        target_height: int | None = None,
+    ) -> dict[str, Any]:
+        stop = await self.stop_node_runtime(node)
+        start = await self.start_node_runtime(
+            session,
+            node,
+            target_height=target_height,
+        )
+        return {
+            "node": node.moniker,
+            "stop": stop,
+            "start": start,
+        }
+
+    async def recover_lagging_nodes(
+        self,
+        session: aiohttp.ClientSession,
+        *,
+        target_height: int,
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        before: dict[str, Any] = {}
+        lagging: list[tuple[LocalnetNode, str]] = []
+        for node in self.nodes:
+            try:
+                height = await wait_for_height(
+                    session,
+                    node.rpc_url,
+                    target_height,
+                    timeout_seconds=timeout_seconds,
+                )
+                before[node.moniker] = {"height": height, "ok": True}
+            except Exception as exc:  # noqa: BLE001
+                before[node.moniker] = {"ok": False, "error": str(exc)}
+                lagging.append((node, str(exc)))
+
+        restarts = []
+        for node, error in lagging:
+            restart = await self.restart_node_runtime(
+                session,
+                node,
+                target_height=target_height,
+            )
+            restart["reason"] = error
+            restarts.append(restart)
+
+        after: dict[str, Any] = {}
+        if restarts:
+            for node in self.nodes:
+                height = await wait_for_height(
+                    session,
+                    node.rpc_url,
+                    target_height,
+                    timeout_seconds=timeout_seconds,
+                )
+                after[node.moniker] = {"height": height, "ok": True}
+
+        return {
+            "target_height": target_height,
+            "before": before,
+            "restarts": restarts,
+            "after": after,
+        }
+
     def secondary_bds_container_name(self) -> str:
         return f"xian-localnet-postgres-secondary-{short_hash(self.run_id)}"
 
@@ -3787,12 +3856,19 @@ class E2ERunner:
 
         env = make_localnet_env(self.args)
         current_height = await latest_height(session, service.rpc_url)
+        pre_catchup_node_recovery = await self.recover_lagging_nodes(
+            session,
+            target_height=current_height,
+            timeout_seconds=15.0,
+        )
         catchup_wallets = [
             derive_wallet(self.seed, f"bds-catchup-{index}") for index in range(len(self.nodes))
         ]
         await self.fund_wallets(session, catchup_wallets, amount=5_000)
 
         secondary_bds: dict[str, Any] | None = None
+        primary_postgres_stopped = False
+        primary_postgres_cleanup: dict[str, Any] | None = None
         try:
             async with self.client(self.founder_wallet, service.index, session) as client:
                 baseline_status = await wait_for_bds_indexed(
@@ -3802,6 +3878,7 @@ class E2ERunner:
                 )
 
             run_localnet_compose("stop", LOCALNET_POSTGRES_SERVICE, env=env)
+            primary_postgres_stopped = True
             stopped_state = await wait_for_container_state(
                 LOCALNET_POSTGRES_CONTAINER,
                 expected_states={"exited"},
@@ -3847,6 +3924,7 @@ class E2ERunner:
                 expected_states={"healthy"},
                 timeout_seconds=45.0,
             )
+            primary_postgres_stopped = False
 
             async with self.client(self.founder_wallet, service.index, session) as client:
                 recovery_pressure_task = asyncio.create_task(bds_query_pressure(client, rounds=40))
@@ -3945,6 +4023,8 @@ class E2ERunner:
             return {
                 "postgres_stopped_state": stopped_state,
                 "postgres_recovered_state": healthy_state,
+                "pre_catchup_node_recovery": pre_catchup_node_recovery,
+                "primary_postgres_cleanup": primary_postgres_cleanup,
                 "baseline_status": baseline_status,
                 "lagged_status": lagged_status,
                 "recovered_status": recovered_status,
@@ -3961,6 +4041,15 @@ class E2ERunner:
                 "secondary_bds": normalize_value(secondary_bds),
             }
         finally:
+            if primary_postgres_stopped:
+                run_localnet_compose("start", LOCALNET_POSTGRES_SERVICE, env=env)
+                primary_postgres_cleanup = {
+                    "state": await wait_for_container_state(
+                        LOCALNET_POSTGRES_CONTAINER,
+                        expected_states={"healthy"},
+                        timeout_seconds=45.0,
+                    )
+                }
             self.cleanup_secondary_bds_postgres()
 
     async def retrieval_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
