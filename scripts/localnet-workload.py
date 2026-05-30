@@ -1248,6 +1248,7 @@ async def run_counter_basic(
                     kwargs={"amount": fixed(1), "to": recipient},
                     chi=COUNTER_TX_CHI,
                     expected_success=True,
+                    mode="async",
                 )
             )
         elif index % 3 == 1:
@@ -1262,6 +1263,7 @@ async def run_counter_basic(
                     kwargs={},
                     chi=COUNTER_TX_CHI,
                     expected_success=True,
+                    mode="async",
                 )
             )
         else:
@@ -1277,6 +1279,7 @@ async def run_counter_basic(
                     kwargs={"amount": amount},
                     chi=COUNTER_TX_CHI,
                     expected_success=True,
+                    mode="async",
                 )
             )
 
