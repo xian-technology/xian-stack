@@ -5326,12 +5326,19 @@ class E2ERunner:
             node3_wallet,
             node4_wallet,
         ) = self.validator_wallets
+        validator_rpc_indices = {
+            "node0": await self.healthy_submission_node_index(session, 0),
+            "node1": await self.healthy_submission_node_index(session, 1),
+            "node2": await self.healthy_submission_node_index(session, 2),
+            "node3": await self.healthy_submission_node_index(session, 3),
+            "node4": await self.healthy_submission_node_index(session, 4),
+        }
         async with (
-            self.client(node0_wallet, 0, session) as node0,
-            self.client(node1_wallet, 1, session) as node1,
-            self.client(node2_wallet, 2, session) as node2,
-            self.client(node3_wallet, 3, session) as node3,
-            self.client(node4_wallet, 4, session) as node4,
+            self.client(node0_wallet, validator_rpc_indices["node0"], session) as node0,
+            self.client(node1_wallet, validator_rpc_indices["node1"], session) as node1,
+            self.client(node2_wallet, validator_rpc_indices["node2"], session) as node2,
+            self.client(node3_wallet, validator_rpc_indices["node3"], session) as node3,
+            self.client(node4_wallet, validator_rpc_indices["node4"], session) as node4,
         ):
             registry_entries = {
                 entry["action"]: entry for entry in registry_manifest["registry_entries"]
@@ -6354,6 +6361,7 @@ class E2ERunner:
             "vk_infos": vk_infos,
             "vk_bindings": vk_bindings,
             "vk_registration_proposals": vk_registration_proposals,
+            "validator_rpc_indices": validator_rpc_indices,
             "deposit_receipt": deposit_receipt,
             "transfer_receipt": transfer_receipt,
             "relay_receipt": relay_receipt,
