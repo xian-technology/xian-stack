@@ -71,7 +71,7 @@ def test_healthy_submission_index_skips_bds_node_when_available() -> None:
     with patch.object(localnet_workload, "fetch_json", side_effect=fake_fetch_json):
         selected = asyncio.run(context.healthy_submission_index(0))
 
-    assert selected == 1
+    assert selected == 2
 
 
 def test_healthy_submission_index_uses_highest_non_bds_when_preferred_lags() -> None:

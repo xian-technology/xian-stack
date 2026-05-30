@@ -274,7 +274,7 @@ class WorkloadContext:
         healthy = {
             index
             for index, height, catching_up in submission_statuses
-            if not catching_up and height >= target_height - 1
+            if not catching_up and height >= target_height
         }
         if preferred_rpc_index in healthy:
             return preferred_rpc_index
