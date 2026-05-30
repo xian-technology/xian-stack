@@ -97,13 +97,9 @@ class LocalnetParallelPhaseTests(unittest.TestCase):
             self.assertTrue(predicate(estimated_unknown_metadata))
             self.assertFalse(predicate(legacy_speculative_metadata))
 
-        self.assertTrue(
-            legacy_expectations["non_conflicting"](legacy_speculative_metadata)
-        )
+        self.assertTrue(legacy_expectations["non_conflicting"](legacy_speculative_metadata))
         self.assertTrue(legacy_expectations["same_sender"](legacy_speculative_metadata))
-        self.assertTrue(
-            legacy_expectations["read_after_write"](legacy_speculative_metadata)
-        )
+        self.assertTrue(legacy_expectations["read_after_write"](legacy_speculative_metadata))
         self.assertTrue(legacy_expectations["prefix_scan"](legacy_speculative_metadata))
 
 

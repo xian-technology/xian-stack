@@ -109,9 +109,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
                         ValueError,
                         "Public PostGraphile exposure requires XIAN_BDS_ENABLED=1",
                     ):
-                        backend.runtime_env(
-                            **runtime_env_kwargs(public_query_enabled=True)
-                        )
+                        backend.runtime_env(**runtime_env_kwargs(public_query_enabled=True))
 
     def test_runtime_env_exposes_only_requested_surfaces(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

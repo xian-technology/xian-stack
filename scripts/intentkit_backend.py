@@ -55,9 +55,7 @@ def resolve_intentkit_repo_dir(*, env: dict[str, str] | None = None) -> Path:
     return resolve_repo_dir("xian-intentkit", "XIAN_INTENTKIT_DIR", env=env)
 
 
-def resolve_intentkit_deployment_dir(
-    *, env: dict[str, str] | None = None
-) -> Path:
+def resolve_intentkit_deployment_dir(*, env: dict[str, str] | None = None) -> Path:
     return resolve_intentkit_repo_dir(env=env) / "deployment"
 
 
@@ -94,8 +92,7 @@ def validate_intentkit_network_id(network_id: str) -> str:
     if normalized not in SUPPORTED_INTENTKIT_NETWORK_IDS:
         supported = ", ".join(SUPPORTED_INTENTKIT_NETWORK_IDS)
         raise ValueError(
-            f"unsupported xian-intentkit network id '{network_id}'; "
-            f"supported values: {supported}"
+            f"unsupported xian-intentkit network id '{network_id}'; supported values: {supported}"
         )
     return normalized
 
@@ -165,12 +162,7 @@ def _read_env_mapping(path: Path) -> dict[str, str]:
 def _render_env_value(value: str) -> str:
     if value == "":
         return ""
-    safe_chars = set(
-        "abcdefghijklmnopqrstuvwxyz"
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        "0123456789"
-        "_-./:@?&=%+,"
-    )
+    safe_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-./:@?&=%+,")
     if all(char in safe_chars for char in value):
         return value
     return json.dumps(value)
@@ -253,9 +245,7 @@ def ensure_intentkit_env(
     env_file.parent.mkdir(parents=True, exist_ok=True)
 
     template_entries = _parse_env_entries(env_example)
-    template_keys = {
-        entry[1] for entry in template_entries if entry and entry[0] == "key"
-    }
+    template_keys = {entry[1] for entry in template_entries if entry and entry[0] == "key"}
     current_values = _read_env_mapping(env_file)
     derived_values = _derived_env_values(
         network_id=network_id,
@@ -282,14 +272,10 @@ def ensure_intentkit_env(
         lines.append(f"{key}={_render_env_value(value)}")
 
     extra_keys = [
-        key
-        for key in current_values
-        if key not in template_keys and key not in resolved_keys
+        key for key in current_values if key not in template_keys and key not in resolved_keys
     ]
     derived_only_keys = [
-        key
-        for key in derived_values
-        if key not in template_keys and key not in resolved_keys
+        key for key in derived_values if key not in template_keys and key not in resolved_keys
     ]
 
     if extra_keys or derived_only_keys:
@@ -374,9 +360,7 @@ def run_intentkit_compose(
     )
 
 
-def start_intentkit_runtime(
-    *, env: dict[str, str] | None = None
-) -> dict[str, object]:
+def start_intentkit_runtime(*, env: dict[str, str] | None = None) -> dict[str, object]:
     run_intentkit_compose(
         "up",
         "-d",
@@ -387,9 +371,7 @@ def start_intentkit_runtime(
     return get_intentkit_status(env=env)
 
 
-def stop_intentkit_runtime(
-    *, env: dict[str, str] | None = None
-) -> dict[str, object]:
+def stop_intentkit_runtime(*, env: dict[str, str] | None = None) -> dict[str, object]:
     run_intentkit_compose("down", "--remove-orphans", env=env)
     return {
         "intentkit_project_name": (os.environ if env is None else env).get(
@@ -422,9 +404,7 @@ def _parse_compose_ps(output: str) -> list[dict[str, object]]:
     return []
 
 
-def get_intentkit_status(
-    *, env: dict[str, str] | None = None
-) -> dict[str, object]:
+def get_intentkit_status(*, env: dict[str, str] | None = None) -> dict[str, object]:
     result = run_intentkit_compose(
         "ps",
         "--format",

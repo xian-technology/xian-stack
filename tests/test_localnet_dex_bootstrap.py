@@ -9,9 +9,7 @@ from types import ModuleType
 
 
 def _load_bootstrap_module() -> ModuleType:
-    script_path = (
-        Path(__file__).resolve().parents[1] / "scripts" / "localnet-dex-bootstrap.py"
-    )
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "localnet-dex-bootstrap.py"
     spec = importlib.util.spec_from_file_location(
         "localnet_dex_bootstrap",
         script_path,

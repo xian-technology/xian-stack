@@ -31,9 +31,7 @@ async def compare_app_hash_window(
     heights: dict[str, int] = {}
     for node in nodes:
         payload = await fetch_json(session, f"{node.rpc_url}/status", timeout=5.0)
-        heights[node.moniker] = int(
-            payload["result"]["sync_info"]["latest_block_height"]
-        )
+        heights[node.moniker] = int(payload["result"]["sync_info"]["latest_block_height"])
 
     min_height = min(heights.values())
     start_height = max(1, min_height - max(window, 1) + 1)
@@ -49,9 +47,7 @@ async def compare_app_hash_window(
                 timeout=5.0,
                 params={"height": str(height)},
             )
-            app_hashes[node.moniker] = payload["result"]["block"]["header"][
-                "app_hash"
-            ]
+            app_hashes[node.moniker] = payload["result"]["block"]["header"]["app_hash"]
         ok = len(set(app_hashes.values())) == 1
         overall_ok = overall_ok and ok
         checks.append({"height": height, "ok": ok, "app_hashes": app_hashes})

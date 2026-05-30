@@ -11,9 +11,7 @@ from release_manifest import flatten_outputs, load_manifest, validate_manifest
 
 class ReleaseManifestTests(unittest.TestCase):
     def test_repository_manifest_includes_pinned_release_inputs(self) -> None:
-        manifest = load_manifest(
-            Path(__file__).resolve().parents[1] / "release-manifest.json"
-        )
+        manifest = load_manifest(Path(__file__).resolve().parents[1] / "release-manifest.json")
         validate_manifest(manifest)
         build = manifest["build"]
         self.assertIn("@sha256:", build["python_image"])
@@ -33,9 +31,7 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertRegex(build["s6_overlay_aarch64_sha256"], r"^[0-9a-f]{64}$")
 
     def test_flatten_outputs_exports_new_build_fields(self) -> None:
-        manifest = load_manifest(
-            Path(__file__).resolve().parents[1] / "release-manifest.json"
-        )
+        manifest = load_manifest(Path(__file__).resolve().parents[1] / "release-manifest.json")
         outputs = flatten_outputs(manifest)
         for key in (
             "python_image",
@@ -57,9 +53,7 @@ class ReleaseManifestTests(unittest.TestCase):
             self.assertIn(key, outputs)
 
     def test_validate_manifest_rejects_missing_go_image(self) -> None:
-        manifest = load_manifest(
-            Path(__file__).resolve().parents[1] / "release-manifest.json"
-        )
+        manifest = load_manifest(Path(__file__).resolve().parents[1] / "release-manifest.json")
         manifest["build"].pop("go_image")
         with self.assertRaisesRegex(SystemExit, "build.go_image"):
             validate_manifest(manifest)

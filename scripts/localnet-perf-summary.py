@@ -27,12 +27,9 @@ DEFAULT_METRICS = (
 def load_perf_files(perf_root: Path) -> dict[str, dict]:
     perf_files = sorted(perf_root.glob("node-*/.cometbft/xian-perf.json"))
     if not perf_files:
-        raise FileNotFoundError(
-            f"no xian-perf.json files found under {perf_root}"
-        )
+        raise FileNotFoundError(f"no xian-perf.json files found under {perf_root}")
     return {
-        perf_file.parent.parent.name: json.loads(perf_file.read_text())
-        for perf_file in perf_files
+        perf_file.parent.parent.name: json.loads(perf_file.read_text()) for perf_file in perf_files
     }
 
 
@@ -100,8 +97,12 @@ def summarize_recent_blocks(
                 "finalize_decode_ms": metrics.get("finalize_decode", {}).get("total_ms"),
                 "finalize_parallel_ms": metrics.get("finalize_parallel", {}).get("total_ms"),
                 "finalize_execute_ms": metrics.get("finalize_execute", {}).get("total_ms"),
-                "finalize_result_assembly_ms": metrics.get("finalize_result_assembly", {}).get("total_ms"),
-                "finalize_commit_prepare_ms": metrics.get("finalize_commit_prepare", {}).get("total_ms"),
+                "finalize_result_assembly_ms": metrics.get("finalize_result_assembly", {}).get(
+                    "total_ms"
+                ),
+                "finalize_commit_prepare_ms": metrics.get("finalize_commit_prepare", {}).get(
+                    "total_ms"
+                ),
                 "finalize_bds_enqueue_ms": metrics.get("finalize_bds_enqueue", {}).get("total_ms"),
                 "finalize_fingerprint_ms": metrics.get("finalize_fingerprint", {}).get("total_ms"),
                 "parallel_enabled": block.get("metadata", {}).get("parallel_enabled"),
@@ -112,9 +113,7 @@ def summarize_recent_blocks(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Summarize xian localnet profiling output."
-    )
+    parser = argparse.ArgumentParser(description="Summarize xian localnet profiling output.")
     parser.add_argument(
         "--perf-root",
         default=".localnet",
@@ -150,16 +149,12 @@ def main() -> None:
                     if payload.get("global_metrics", {}).get(metric_name)
                 },
                 "recent_nonempty_block_count": sum(
-                    1
-                    for block in payload.get("recent_blocks", [])
-                    if block.get("tx_count", 0) > 0
+                    1 for block in payload.get("recent_blocks", []) if block.get("tx_count", 0) > 0
                 ),
             }
             for node_name, payload in sorted(node_payloads.items())
         },
-        "aggregate_metrics": summarize_metrics(
-            node_payloads, tuple(args.metrics)
-        ),
+        "aggregate_metrics": summarize_metrics(node_payloads, tuple(args.metrics)),
         "recent_nonempty_blocks": summarize_recent_blocks(
             node_payloads,
             limit=max(0, args.block_limit),

@@ -42,9 +42,7 @@ def resolve_repo_dir(
     return (STACK_DIR.parent / name).resolve()
 
 
-def resolve_dex_automation_repo_dir(
-    *, env: dict[str, str] | None = None
-) -> Path:
+def resolve_dex_automation_repo_dir(*, env: dict[str, str] | None = None) -> Path:
     return resolve_repo_dir(
         "xian-dex-automation",
         "XIAN_DEX_AUTOMATION_DIR",
@@ -52,9 +50,7 @@ def resolve_dex_automation_repo_dir(
     )
 
 
-def resolve_dex_automation_config_path(
-    *, env: dict[str, str] | None = None
-) -> Path:
+def resolve_dex_automation_config_path(*, env: dict[str, str] | None = None) -> Path:
     source_env = os.environ if env is None else env
     explicit = source_env.get("XIAN_DEX_AUTOMATION_CONFIG")
     if explicit:
@@ -62,9 +58,7 @@ def resolve_dex_automation_config_path(
     return _CONFIG_PATH
 
 
-def resolve_dex_automation_wallet_key_path(
-    *, env: dict[str, str] | None = None
-) -> Path:
+def resolve_dex_automation_wallet_key_path(*, env: dict[str, str] | None = None) -> Path:
     source_env = os.environ if env is None else env
     explicit = source_env.get("XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE")
     if explicit:
@@ -79,8 +73,7 @@ def require_dex_automation_repo(*, env: dict[str, str] | None = None) -> Path:
     if missing:
         missing_list = ", ".join(str(path) for path in missing)
         raise FileNotFoundError(
-            "xian-dex-automation integration requires the sibling repo. "
-            f"Missing: {missing_list}"
+            f"xian-dex-automation integration requires the sibling repo. Missing: {missing_list}"
         )
     return repo_dir
 
@@ -107,7 +100,7 @@ def _read_pid(path: Path) -> int | None:
         return None
     try:
         return int(path.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 
@@ -126,7 +119,7 @@ def _probe_health(url: str, *, timeout: float = 1.5) -> bool:
         with urlopen(url, timeout=timeout) as response:
             status = getattr(response, "status", 200)
             return int(status) < 500
-    except (OSError, URLError, TimeoutError, ValueError):
+    except OSError, URLError, TimeoutError, ValueError:
         return False
 
 
@@ -171,9 +164,7 @@ def ensure_dex_automation_config(
             "wallet": {
                 "private_key_env": "XIAN_DEX_AUTOMATION_PRIVATE_KEY",
                 "private_key_file": str(wallet_key_path),
-                "private_key_file_env": (
-                    "XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE"
-                ),
+                "private_key_file_env": ("XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE"),
                 "execute": False,
                 "recipient": None,
             },
@@ -259,11 +250,7 @@ def get_dex_automation_status(
         pid = None
 
     endpoints = dex_automation_endpoints(bind_host=bind_host, port=port)
-    health_ok = (
-        _probe_health(endpoints["dex_automation_health"])
-        if running
-        else False
-    )
+    health_ok = _probe_health(endpoints["dex_automation_health"]) if running else False
     source_env = os.environ if env is None else env
 
     return {
@@ -272,9 +259,7 @@ def get_dex_automation_status(
         "dex_automation_health_ok": health_ok,
         "dex_automation_log_path": str(_LOG_PATH),
         "dex_automation_pid_path": str(_PID_PATH),
-        "dex_automation_config_path": str(
-            resolve_dex_automation_config_path(env=source_env)
-        ),
+        "dex_automation_config_path": str(resolve_dex_automation_config_path(env=source_env)),
         "dex_automation_wallet_key_path": str(
             resolve_dex_automation_wallet_key_path(env=source_env)
         ),
@@ -335,9 +320,7 @@ def start_dex_automation_runtime(
     _PID_PATH.write_text(str(process.pid), encoding="utf-8")
     try:
         _wait_for_ready(
-            dex_automation_endpoints(bind_host=bind_host, port=port)[
-                "dex_automation_health"
-            ]
+            dex_automation_endpoints(bind_host=bind_host, port=port)["dex_automation_health"]
         )
     except Exception:
         stop_dex_automation_runtime(

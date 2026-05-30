@@ -191,9 +191,7 @@ def _submission_error(submission: Any) -> str | None:
 
 def _request_fingerprint(payload: dict[str, Any]) -> str:
     return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
-            "utf-8"
-        )
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
 
 
@@ -212,11 +210,7 @@ def _is_loopback_host(value: str) -> bool:
 
 
 def _metric_escape(value: str) -> str:
-    return (
-        value.replace("\\", "\\\\")
-        .replace("\n", "\\n")
-        .replace('"', '\\"')
-    )
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
 @dataclass(frozen=True)
@@ -274,9 +268,7 @@ class ShieldedRelayerServiceConfig:
     node_url: str = "http://127.0.0.1:26657"
     relayer_private_key: str = ""
     auth_token: str | None = None
-    access_policy: ShieldedRelayerAccessPolicy = field(
-        default_factory=ShieldedRelayerAccessPolicy
-    )
+    access_policy: ShieldedRelayerAccessPolicy = field(default_factory=ShieldedRelayerAccessPolicy)
     submission_mode: Literal["async", "checktx", "commit"] = "checktx"
     wait_for_tx: bool = True
     timeout_seconds: float = 30.0
@@ -334,9 +326,7 @@ class ShieldedRelayerService:
             json.dumps(
                 {
                     "node_url": config.node_url,
-                    "access_policy": config.access_policy.as_dict(
-                        auth_scheme=self.auth_scheme
-                    ),
+                    "access_policy": config.access_policy.as_dict(auth_scheme=self.auth_scheme),
                     "submission_mode": config.submission_mode,
                     "wait_for_tx": config.wait_for_tx,
                     "policy": config.policy.as_dict(),
@@ -384,8 +374,7 @@ class ShieldedRelayerService:
         if request.path == "/metrics":
             return False
         return any(
-            request.path == prefix.rstrip("/")
-            or request.path.startswith(prefix)
+            request.path == prefix.rstrip("/") or request.path.startswith(prefix)
             for prefix in _RATE_LIMITED_PATH_PREFIXES
         )
 
@@ -443,9 +432,7 @@ class ShieldedRelayerService:
         duration_seconds: float,
     ) -> None:
         request_key = (method, path, status)
-        self._request_counts[request_key] = (
-            self._request_counts.get(request_key, 0) + 1
-        )
+        self._request_counts[request_key] = self._request_counts.get(request_key, 0) + 1
         duration_key = (method, path)
         duration = self._request_duration.setdefault(
             duration_key,
@@ -468,13 +455,9 @@ class ShieldedRelayerService:
         ]
         for (method, path, status), value in sorted(self._request_counts.items()):
             labels = (
-                f'method="{_metric_escape(method)}",'
-                f'path="{_metric_escape(path)}",'
-                f'status="{status}"'
+                f'method="{_metric_escape(method)}",path="{_metric_escape(path)}",status="{status}"'
             )
-            lines.append(
-                f"xian_shielded_relayer_requests_total{{{labels}}} {value}"
-            )
+            lines.append(f"xian_shielded_relayer_requests_total{{{labels}}} {value}")
 
         lines.extend(
             [
@@ -483,10 +466,7 @@ class ShieldedRelayerService:
             ]
         )
         for (method, path), value in sorted(self._request_duration.items()):
-            labels = (
-                f'method="{_metric_escape(method)}",'
-                f'path="{_metric_escape(path)}"'
-            )
+            labels = f'method="{_metric_escape(method)}",path="{_metric_escape(path)}"'
             lines.append(
                 "xian_shielded_relayer_request_duration_seconds_count"
                 f"{{{labels}}} {int(value['count'])}"
@@ -498,13 +478,9 @@ class ShieldedRelayerService:
             ]
         )
         for (method, path), value in sorted(self._request_duration.items()):
-            labels = (
-                f'method="{_metric_escape(method)}",'
-                f'path="{_metric_escape(path)}"'
-            )
+            labels = f'method="{_metric_escape(method)}",path="{_metric_escape(path)}"'
             lines.append(
-                "xian_shielded_relayer_request_duration_seconds_sum"
-                f"{{{labels}}} {value['sum']:.6f}"
+                f"xian_shielded_relayer_request_duration_seconds_sum{{{labels}}} {value['sum']:.6f}"
             )
 
         lines.extend(
@@ -537,10 +513,7 @@ class ShieldedRelayerService:
             ]
         )
         for (kind, status), value in sorted(current_jobs.items()):
-            labels = (
-                f'kind="{_metric_escape(kind)}",'
-                f'status="{_metric_escape(status)}"'
-            )
+            labels = f'kind="{_metric_escape(kind)}",status="{_metric_escape(status)}"'
             lines.append(f"xian_shielded_relayer_current_jobs{{{labels}}} {value}")
 
         lines.extend(
@@ -550,13 +523,8 @@ class ShieldedRelayerService:
             ]
         )
         for (kind, status), value in sorted(self._job_outcomes.items()):
-            labels = (
-                f'kind="{_metric_escape(kind)}",'
-                f'status="{_metric_escape(status)}"'
-            )
-            lines.append(
-                f"xian_shielded_relayer_job_outcomes_total{{{labels}}} {value}"
-            )
+            labels = f'kind="{_metric_escape(kind)}",status="{_metric_escape(status)}"'
+            lines.append(f"xian_shielded_relayer_job_outcomes_total{{{labels}}} {value}")
         return "\n".join(lines) + "\n"
 
     async def close(self) -> None:
@@ -603,9 +571,7 @@ class ShieldedRelayerService:
             "relayer_account": health["relayer_account"],
             "submission_mode": self.config.submission_mode,
             "wait_for_tx": self.config.wait_for_tx,
-            "auth": self.config.access_policy.as_dict(
-                auth_scheme=self.auth_scheme
-            ),
+            "auth": self.config.access_policy.as_dict(auth_scheme=self.auth_scheme),
             "capabilities": {
                 "quote": True,
                 "shielded_note_relay_transfer": True,
@@ -619,9 +585,7 @@ class ShieldedRelayerService:
                 "metrics_enabled": self.config.metrics_enabled,
                 "job_history_limit": self.config.job_history_limit,
                 "job_history_ttl_seconds": self.config.job_history_ttl_seconds,
-                "rate_limit_requests_per_minute": (
-                    self.config.rate_limit_requests_per_minute
-                ),
+                "rate_limit_requests_per_minute": (self.config.rate_limit_requests_per_minute),
                 "rate_limit_burst": self.config.rate_limit_burst,
                 "rate_limit_trust_proxy": self.config.rate_limit_trust_proxy,
             },
@@ -654,10 +618,7 @@ class ShieldedRelayerService:
                 400,
                 "requested_expires_in_seconds must be >= 0",
             )
-        if (
-            policy.max_expiry_seconds > 0
-            and requested_seconds > policy.max_expiry_seconds
-        ):
+        if policy.max_expiry_seconds > 0 and requested_seconds > policy.max_expiry_seconds:
             raise RelayerApiError(
                 400,
                 "requested_expires_in_seconds exceeds relayer policy",
@@ -745,9 +706,7 @@ class ShieldedRelayerService:
             return
         cutoff = self._now() - timedelta(seconds=ttl_seconds)
         expired_ids = [
-            job_id
-            for job_id, updated_at in self._job_updated_at.items()
-            if updated_at <= cutoff
+            job_id for job_id, updated_at in self._job_updated_at.items() if updated_at <= cutoff
         ]
         for job_id in expired_ids:
             self._evict_job(job_id)
@@ -778,9 +737,7 @@ class ShieldedRelayerService:
     ) -> dict[str, Any]:
         client_request_id = _optional_string(request_body, "client_request_id")
         fingerprint_body = {
-            key: value
-            for key, value in request_body.items()
-            if key != "client_request_id"
+            key: value for key, value in request_body.items() if key != "client_request_id"
         }
         request_fingerprint = _request_fingerprint(fingerprint_body)
         if client_request_id is not None:
@@ -874,9 +831,7 @@ class ShieldedRelayerService:
             job["chain_id"] = getattr(self._xian, "chain_id", None)
             job["status"] = "failed"
             job["error"] = str(exc)
-            self._job_outcomes[(kind, "failed")] = (
-                self._job_outcomes.get((kind, "failed"), 0) + 1
-            )
+            self._job_outcomes[(kind, "failed")] = self._job_outcomes.get((kind, "failed"), 0) + 1
         finally:
             job["updated_at"] = _format_contract_timestamp(self._now())
             self._remember_job(job)
@@ -912,9 +867,7 @@ class ShieldedRelayerService:
                 400,
                 "output_payloads length must match output_commitments length",
             )
-        expires_at = _parse_contract_timestamp(
-            _optional_string(body, "expires_at")
-        )
+        expires_at = _parse_contract_timestamp(_optional_string(body, "expires_at"))
         return {
             "contract": contract,
             "old_root": old_root,
@@ -991,10 +944,7 @@ class ShieldedRelayerService:
             configured=self.config.policy.allowed_command_targets,
             label="target_contract",
         )
-        if (
-            validated["relayer_fee"]
-            < self.config.policy.min_command_relayer_fee
-        ):
+        if validated["relayer_fee"] < self.config.policy.min_command_relayer_fee:
             raise RelayerApiError(
                 400,
                 "relayer_fee is below the minimum command relay fee",
@@ -1147,9 +1097,7 @@ def _build_app(service: ShieldedRelayerService) -> web.Application:
     async def metrics(_: web.Request) -> web.Response:
         return web.Response(
             text=service.render_metrics(),
-            headers={
-                "Content-Type": "text/plain; version=0.0.4; charset=utf-8"
-            },
+            headers={"Content-Type": "text/plain; version=0.0.4; charset=utf-8"},
         )
 
     async def quote(request: web.Request) -> web.Response:
@@ -1162,9 +1110,7 @@ def _build_app(service: ShieldedRelayerService) -> web.Application:
         body = await request.json()
         if not isinstance(body, dict):
             raise RelayerApiError(400, "request body must be a JSON object")
-        return web.json_response(
-            await service.submit_shielded_note_transfer(body)
-        )
+        return web.json_response(await service.submit_shielded_note_transfer(body))
 
     async def submit_command(request: web.Request) -> web.Response:
         body = await request.json()
@@ -1187,18 +1133,13 @@ def _build_app(service: ShieldedRelayerService) -> web.Application:
 
 
 def _load_private_key() -> str:
-    private_key = (
-        os.environ.get("XIAN_SHIELDED_RELAYER_PRIVATE_KEY") or ""
-    ).strip()
+    private_key = (os.environ.get("XIAN_SHIELDED_RELAYER_PRIVATE_KEY") or "").strip()
     if private_key:
         return private_key
-    key_file = (
-        os.environ.get("XIAN_SHIELDED_RELAYER_PRIVATE_KEY_FILE") or ""
-    ).strip()
+    key_file = (os.environ.get("XIAN_SHIELDED_RELAYER_PRIVATE_KEY_FILE") or "").strip()
     if not key_file:
         raise RuntimeError(
-            "set XIAN_SHIELDED_RELAYER_PRIVATE_KEY or "
-            "XIAN_SHIELDED_RELAYER_PRIVATE_KEY_FILE"
+            "set XIAN_SHIELDED_RELAYER_PRIVATE_KEY or XIAN_SHIELDED_RELAYER_PRIVATE_KEY_FILE"
         )
     with open(key_file, "r", encoding="utf-8") as handle:
         return handle.read().strip()
@@ -1208,41 +1149,30 @@ def _validate_config(config: ShieldedRelayerServiceConfig) -> None:
     if config.port <= 0:
         raise RuntimeError("shielded relayer port must be > 0")
     if not _is_loopback_host(config.bind_host) and not config.auth_token:
-        raise RuntimeError(
-            "shielded relayer auth token is required for non-loopback binds"
-        )
+        raise RuntimeError("shielded relayer auth token is required for non-loopback binds")
     if config.rate_limit_requests_per_minute < 0:
-        raise RuntimeError(
-            "shielded relayer rate_limit_requests_per_minute must be >= 0"
-        )
+        raise RuntimeError("shielded relayer rate_limit_requests_per_minute must be >= 0")
     if config.rate_limit_burst <= 0:
         raise RuntimeError("shielded relayer rate_limit_burst must be > 0")
     if config.job_history_limit <= 0:
         raise RuntimeError("shielded relayer job history limit must be > 0")
     if config.job_history_ttl_seconds < 0:
-        raise RuntimeError(
-            "shielded relayer job_history_ttl_seconds must be >= 0"
-        )
+        raise RuntimeError("shielded relayer job_history_ttl_seconds must be >= 0")
     if config.policy.default_expiry_seconds < 0:
         raise RuntimeError("default expiry seconds must be >= 0")
     if config.policy.max_expiry_seconds < 0:
         raise RuntimeError("max expiry seconds must be >= 0")
     if (
         config.policy.max_expiry_seconds > 0
-        and config.policy.default_expiry_seconds
-        > config.policy.max_expiry_seconds
+        and config.policy.default_expiry_seconds > config.policy.max_expiry_seconds
     ):
-        raise RuntimeError(
-            "default expiry seconds must not exceed max expiry seconds"
-        )
+        raise RuntimeError("default expiry seconds must not exceed max expiry seconds")
     if config.policy.min_note_relayer_fee < 0:
         raise RuntimeError("minimum note relayer fee must be >= 0")
     if config.policy.min_command_relayer_fee < 0:
         raise RuntimeError("minimum command relayer fee must be >= 0")
     if config.submission_mode not in {"async", "checktx", "commit"}:
-        raise RuntimeError(
-            "submission mode must be one of async, checktx, commit"
-        )
+        raise RuntimeError("submission mode must be one of async, checktx, commit")
 
 
 def load_config_from_env() -> ShieldedRelayerServiceConfig:
@@ -1254,10 +1184,7 @@ def load_config_from_env() -> ShieldedRelayerServiceConfig:
             "http://127.0.0.1:26657",
         ).rstrip("/"),
         relayer_private_key=_load_private_key(),
-        auth_token=(
-            os.environ.get("XIAN_SHIELDED_RELAYER_AUTH_TOKEN") or ""
-        ).strip()
-        or None,
+        auth_token=(os.environ.get("XIAN_SHIELDED_RELAYER_AUTH_TOKEN") or "").strip() or None,
         access_policy=ShieldedRelayerAccessPolicy(
             public_info=_env_bool(
                 "XIAN_SHIELDED_RELAYER_PUBLIC_INFO",
@@ -1345,15 +1272,9 @@ def load_config_from_env() -> ShieldedRelayerServiceConfig:
                 "XIAN_SHIELDED_RELAYER_MIN_COMMAND_RELAYER_FEE",
                 0,
             ),
-            allowed_note_contracts=_env_csv(
-                "XIAN_SHIELDED_RELAYER_ALLOWED_NOTE_CONTRACTS"
-            ),
-            allowed_command_contracts=_env_csv(
-                "XIAN_SHIELDED_RELAYER_ALLOWED_COMMAND_CONTRACTS"
-            ),
-            allowed_command_targets=_env_csv(
-                "XIAN_SHIELDED_RELAYER_ALLOWED_COMMAND_TARGETS"
-            ),
+            allowed_note_contracts=_env_csv("XIAN_SHIELDED_RELAYER_ALLOWED_NOTE_CONTRACTS"),
+            allowed_command_contracts=_env_csv("XIAN_SHIELDED_RELAYER_ALLOWED_COMMAND_CONTRACTS"),
+            allowed_command_targets=_env_csv("XIAN_SHIELDED_RELAYER_ALLOWED_COMMAND_TARGETS"),
         ),
     )
     _validate_config(config)

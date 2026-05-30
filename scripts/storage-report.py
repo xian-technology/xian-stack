@@ -56,13 +56,7 @@ def describe_path(path: Path) -> dict:
     return {
         "path": str(path),
         "exists": path.exists(),
-        "kind": (
-            "directory"
-            if path.is_dir()
-            else "file"
-            if path.is_file()
-            else "missing"
-        ),
+        "kind": ("directory" if path.is_dir() else "file" if path.is_file() else "missing"),
         "size_bytes": size_bytes,
         "file_count": file_count,
         "filesystem_mount_probe": str(existing_target),
@@ -78,9 +72,7 @@ def main() -> int:
     xian_home = cometbft_home / "xian"
     spool_dir = env_path("XIAN_BDS_SPOOL_DIR", xian_home / "bds-spool")
     bds_data_dir = env_path("XIAN_BDS_DATA_DIR", STACK_DIR / ".bds.db")
-    disk_free_warn_bytes = int(
-        os.environ.get("XIAN_STACK_DISK_FREE_WARN_BYTES", "10737418240")
-    )
+    disk_free_warn_bytes = int(os.environ.get("XIAN_STACK_DISK_FREE_WARN_BYTES", "10737418240"))
 
     paths = {
         "cometbft_home": describe_path(cometbft_home),

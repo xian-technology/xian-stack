@@ -38,9 +38,7 @@ def expected_platform_digests(image_release: dict) -> dict[tuple[str, str], str]
             raise ValueError(f"image release payload is missing images.{target}")
         platform_digests = image.get("platform_digests")
         if not isinstance(platform_digests, dict):
-            raise ValueError(
-                f"image release payload is missing images.{target}.platform_digests"
-            )
+            raise ValueError(f"image release payload is missing images.{target}.platform_digests")
         for platform in SUPPORTED_PLATFORMS:
             digest = platform_digests.get(platform)
             if not isinstance(digest, str) or not digest.startswith("sha256:"):
@@ -63,14 +61,10 @@ def expected_platform_refs(image_release: dict) -> dict[tuple[str, str], str]:
             raise ValueError(f"image release payload is missing images.{target}")
         repository = image.get("repository")
         if not isinstance(repository, str) or not repository:
-            raise ValueError(
-                f"image release payload is missing images.{target}.repository"
-            )
+            raise ValueError(f"image release payload is missing images.{target}.repository")
         platform_digests = image.get("platform_digests")
         if not isinstance(platform_digests, dict):
-            raise ValueError(
-                f"image release payload is missing images.{target}.platform_digests"
-            )
+            raise ValueError(f"image release payload is missing images.{target}.platform_digests")
         for platform in SUPPORTED_PLATFORMS:
             digest = platform_digests.get(platform)
             if not isinstance(digest, str) or not digest.startswith("sha256:"):
@@ -95,9 +89,7 @@ def expected_image_labels(image_release: dict) -> dict[str, list[str]]:
         if not isinstance(labels, list) or not labels:
             raise ValueError(f"image release payload is missing images.{target}.labels")
         if not all(isinstance(label, str) and "=" in label for label in labels):
-            raise ValueError(
-                f"image release payload has invalid labels for images.{target}"
-            )
+            raise ValueError(f"image release payload has invalid labels for images.{target}")
         expected[target] = labels
     return expected
 
@@ -139,9 +131,7 @@ def oci_image_config(archive_path: Path) -> tuple[str, dict]:
         index_payload = json.loads(index_member.read().decode("utf-8"))
     manifests = index_payload.get("manifests")
     if not isinstance(manifests, list) or len(manifests) != 1:
-        raise ValueError(
-            f"OCI archive {archive_path} must contain exactly one manifest entry"
-        )
+        raise ValueError(f"OCI archive {archive_path} must contain exactly one manifest entry")
     digest = manifests[0].get("digest")
     if not isinstance(digest, str) or not digest.startswith("sha256:"):
         raise ValueError(f"OCI archive {archive_path} has an invalid manifest digest")
@@ -151,9 +141,7 @@ def oci_image_config(archive_path: Path) -> tuple[str, dict]:
         if not isinstance(config, dict):
             raise ValueError(f"OCI archive {archive_path} has no config descriptor")
         config_digest = config.get("digest")
-        if not isinstance(config_digest, str) or not config_digest.startswith(
-            "sha256:"
-        ):
+        if not isinstance(config_digest, str) or not config_digest.startswith("sha256:"):
             raise ValueError(f"OCI archive {archive_path} has an invalid config digest")
         return digest, _read_oci_blob(archive, config_digest)
 
@@ -281,8 +269,7 @@ def verify_reproducibility(
     expected = expected_platform_digests(image_release)
     remote_refs = expected_platform_refs(image_release)
     remote_configs = {
-        key: normalized_image_config(remote_image_config(ref))
-        for key, ref in remote_refs.items()
+        key: normalized_image_config(remote_image_config(ref)) for key, ref in remote_refs.items()
     }
     observed: dict[str, dict[str, str]] = {}
     with tempfile.TemporaryDirectory(prefix="xian-release-verify-") as tmp_dir:

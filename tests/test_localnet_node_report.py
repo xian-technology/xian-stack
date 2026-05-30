@@ -26,9 +26,7 @@ class LocalnetNodeReportTests(unittest.TestCase):
         samples = parse_prometheus_text(METRICS_TEXT)
         names = {sample["name"] for sample in samples}
         self.assertIn("xian_node_info", names)
-        node_sample = next(
-            sample for sample in samples if sample["name"] == "xian_node_info"
-        )
+        node_sample = next(sample for sample in samples if sample["name"] == "xian_node_info")
         self.assertEqual(node_sample["labels"]["execution_mode"], "xian_vm_v1")
         self.assertEqual(node_sample["value"], 1.0)
 

@@ -24,9 +24,7 @@ async def wait_for_uniform_state(
 
     while time.monotonic() < deadline:
         values = await fetch_values()
-        normalized = {
-            node: str(normalize_value(value)) for node, value in values.items()
-        }
+        normalized = {node: str(normalize_value(value)) for node, value in values.items()}
         last_values = normalized
         uniform = len(set(normalized.values())) == 1
         if uniform:

@@ -48,12 +48,8 @@ LOCALNET_INIT_SCRIPT = STACK_DIR / "scripts" / "localnet-init.py"
 LOCALNET_DEX_BOOTSTRAP_SCRIPT = STACK_DIR / "scripts" / "localnet-dex-bootstrap.py"
 LOCALNET_WORKLOAD_SCRIPT = STACK_DIR / "scripts" / "localnet-workload.py"
 LOCALNET_E2E_SCRIPT = STACK_DIR / "scripts" / "localnet-e2e.py"
-LOCALNET_NODE_REPORT_SCRIPT = (
-    STACK_DIR / "scripts" / "localnet_node_report.py"
-)
-LOCALNET_VALIDATOR_GOVERNANCE_SCRIPT = (
-    STACK_DIR / "scripts" / "localnet-validator-governance.py"
-)
+LOCALNET_NODE_REPORT_SCRIPT = STACK_DIR / "scripts" / "localnet_node_report.py"
+LOCALNET_VALIDATOR_GOVERNANCE_SCRIPT = STACK_DIR / "scripts" / "localnet-validator-governance.py"
 LOCALNET_MEMWATCH_SCRIPT = STACK_DIR / "scripts" / "localnet-memwatch.py"
 LOCALNET_LEAK_HUNT_SCRIPT = STACK_DIR / "scripts" / "localnet-leak-hunt.py"
 STACK_UV_PYTHON = "3.14"
@@ -68,9 +64,7 @@ DEFAULT_GRAPHQL_URL = "http://127.0.0.1:5000/graphql"
 DEFAULT_SHIELDED_RELAYER_URL = (
     f"http://{DEFAULT_SHIELDED_RELAYER_HOST}:{DEFAULT_SHIELDED_RELAYER_PORT}"
 )
-DEFAULT_BDS_SNAPSHOT_PATH = (
-    STACK_DIR / ".cometbft" / "snapshots" / "xian-bds-snapshot.tar.gz"
-)
+DEFAULT_BDS_SNAPSHOT_PATH = STACK_DIR / ".cometbft" / "snapshots" / "xian-bds-snapshot.tar.gz"
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -112,11 +106,7 @@ def load_env_file(path: Path) -> dict[str, str]:
             continue
         key, raw_value = line.split("=", 1)
         value = raw_value.strip()
-        if (
-            len(value) >= 2
-            and value[0] == value[-1]
-            and value[0] in {"'", '"'}
-        ):
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
         values[key.strip()] = value
     return values
@@ -182,26 +172,20 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
     if not env.get("XIAN_POSTGRAPHILE_PASSWORD"):
         errors.append("XIAN_POSTGRAPHILE_PASSWORD must be set")
     elif env["XIAN_POSTGRAPHILE_PASSWORD"] == env.get("XIAN_BDS_PASSWORD"):
-        errors.append(
-            "XIAN_POSTGRAPHILE_PASSWORD must differ from XIAN_BDS_PASSWORD"
-        )
+        errors.append("XIAN_POSTGRAPHILE_PASSWORD must differ from XIAN_BDS_PASSWORD")
 
     if env.get("XIAN_POSTGRAPHILE_USER") == env.get("XIAN_BDS_USER"):
         errors.append("XIAN_POSTGRAPHILE_USER must differ from XIAN_BDS_USER")
 
-    if (
-        not is_loopback_host(env.get("XIAN_COMETBFT_RPC_HOST"))
-        and not env_truthy(env.get("XIAN_PUBLIC_RPC_ENABLED"))
+    if not is_loopback_host(env.get("XIAN_COMETBFT_RPC_HOST")) and not env_truthy(
+        env.get("XIAN_PUBLIC_RPC_ENABLED")
     ):
         errors.append("Public RPC exposure requires XIAN_PUBLIC_RPC_ENABLED=1")
 
     if (
-        (
-            not is_loopback_host(env.get("XIAN_COMETBFT_METRICS_HOST"))
-            or not is_loopback_host(env.get("XIAN_APP_METRICS_HOST"))
-        )
-        and not env_truthy(env.get("XIAN_PUBLIC_METRICS_ENABLED"))
-    ):
+        not is_loopback_host(env.get("XIAN_COMETBFT_METRICS_HOST"))
+        or not is_loopback_host(env.get("XIAN_APP_METRICS_HOST"))
+    ) and not env_truthy(env.get("XIAN_PUBLIC_METRICS_ENABLED")):
         errors.append("Public metrics exposure requires XIAN_PUBLIC_METRICS_ENABLED=1")
 
     if not is_loopback_host(env.get("XIAN_POSTGRAPHILE_HOST")):
@@ -210,9 +194,8 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
         elif not env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED")):
             errors.append("Public query exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
 
-    if (
-        not is_loopback_host(env.get("XIAN_DASHBOARD_HOST"))
-        and not env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED"))
+    if not is_loopback_host(env.get("XIAN_DASHBOARD_HOST")) and not env_truthy(
+        env.get("XIAN_PUBLIC_QUERY_ENABLED")
     ):
         errors.append("Public dashboard exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
 
@@ -221,9 +204,7 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
         and not is_loopback_host(env.get("XIAN_DEX_AUTOMATION_HOST"))
         and not env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED"))
     ):
-        errors.append(
-            "Public DEX automation exposure requires XIAN_PUBLIC_QUERY_ENABLED=1"
-        )
+        errors.append("Public DEX automation exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
 
     if errors:
         detail = "\n".join(f"  - {message}" for message in errors)
@@ -312,9 +293,7 @@ def fetch_abci_query_value(
     response = payload.get("result", {}).get("response", {})
     response_code = int(response.get("code", 0) or 0)
     if response_code != 0:
-        raise ValueError(
-            f"ABCI query {path} failed with response code {response_code}"
-        )
+        raise ValueError(f"ABCI query {path} failed with response code {response_code}")
     encoded_value = response.get("value")
     if not isinstance(encoded_value, str) or not encoded_value:
         raise ValueError(f"ABCI query {path} returned no value")
@@ -325,9 +304,7 @@ def fetch_abci_query_value(
     try:
         result = json.loads(decoded_value)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"ABCI query {path} returned invalid JSON payload"
-        ) from exc
+        raise ValueError(f"ABCI query {path} returned invalid JSON payload") from exc
     if not isinstance(result, dict):
         raise ValueError(f"ABCI query {path} returned a non-object payload")
     return result
@@ -401,9 +378,7 @@ fi
         )
         time.sleep(poll_interval)
 
-    raise TimeoutError(
-        "ABCI container runtime did not become ready in time"
-    ) from last_error
+    raise TimeoutError("ABCI container runtime did not become ready in time") from last_error
 
 
 def run_make_target(
@@ -459,7 +434,7 @@ def _docker_compose_container_id(*, service: str) -> str | None:
             capture_output=True,
             text=True,
         )
-    except (FileNotFoundError, subprocess.CalledProcessError):
+    except FileNotFoundError, subprocess.CalledProcessError:
         return None
 
     container_ids = result.stdout.strip().splitlines()
@@ -536,9 +511,7 @@ def _discover_runtime_endpoints(
     if comet_metrics_binding is not None:
         metrics_host = display_host(comet_metrics_binding[0])
         metrics_port = comet_metrics_binding[1]
-        endpoints["cometbft_metrics"] = (
-            f"http://{metrics_host}:{metrics_port}/metrics"
-        )
+        endpoints["cometbft_metrics"] = f"http://{metrics_host}:{metrics_port}/metrics"
 
     xian_metrics_binding = _docker_compose_binding(
         service="abci",
@@ -635,9 +608,7 @@ def runtime_env(
         "1" if public_query_enabled else env.get("XIAN_PUBLIC_QUERY_ENABLED", "0")
     )
     env["XIAN_PUBLIC_METRICS_ENABLED"] = (
-        "1"
-        if public_metrics_enabled
-        else env.get("XIAN_PUBLIC_METRICS_ENABLED", "0")
+        "1" if public_metrics_enabled else env.get("XIAN_PUBLIC_METRICS_ENABLED", "0")
     )
     env.setdefault("XIAN_COMETBFT_RPC_HOST", "127.0.0.1")
     env.setdefault("XIAN_COMETBFT_METRICS_HOST", "127.0.0.1")
@@ -651,9 +622,7 @@ def runtime_env(
         env["XIAN_COMETBFT_METRICS_HOST"] = "0.0.0.0"
         env["XIAN_APP_METRICS_HOST"] = "0.0.0.0"
     env["XIAN_INTENTKIT_ENABLED"] = "1" if intentkit_enabled else "0"
-    env["XIAN_INTENTKIT_DIR"] = str(
-        resolve_repo_dir("xian-intentkit", "XIAN_INTENTKIT_DIR")
-    )
+    env["XIAN_INTENTKIT_DIR"] = str(resolve_repo_dir("xian-intentkit", "XIAN_INTENTKIT_DIR"))
     env["XIAN_INTENTKIT_RELEASE"] = env.get("XIAN_INTENTKIT_RELEASE", "local")
     env["XIAN_INTENTKIT_PROJECT_NAME"] = env.get(
         "XIAN_INTENTKIT_PROJECT_NAME", "xian-intentkit-stack"
@@ -668,26 +637,18 @@ def runtime_env(
     env["XIAN_INTENTKIT_PORT"] = str(intentkit_port)
     env["XIAN_INTENTKIT_API_PORT"] = str(intentkit_api_port)
     env["XIAN_INTENTKIT_S3_PORT"] = env.get("XIAN_INTENTKIT_S3_PORT", "39000")
-    env["XIAN_DEX_AUTOMATION_ENABLED"] = (
-        "1" if dex_automation_enabled else "0"
-    )
+    env["XIAN_DEX_AUTOMATION_ENABLED"] = "1" if dex_automation_enabled else "0"
     env["XIAN_DEX_AUTOMATION_DIR"] = str(
         resolve_repo_dir("xian-dex-automation", "XIAN_DEX_AUTOMATION_DIR")
     )
     env["XIAN_DEX_AUTOMATION_HOST"] = dex_automation_host
-    env["XIAN_DEX_AUTOMATION_PUBLIC_HOST"] = display_host(
-        dex_automation_host
-    )
+    env["XIAN_DEX_AUTOMATION_PUBLIC_HOST"] = display_host(dex_automation_host)
     env["XIAN_DEX_AUTOMATION_PORT"] = str(dex_automation_port)
     if dex_automation_config is not None:
         env["XIAN_DEX_AUTOMATION_CONFIG"] = dex_automation_config
-    env["XIAN_SHIELDED_RELAYER_ENABLED"] = (
-        "1" if shielded_relayer_enabled else "0"
-    )
+    env["XIAN_SHIELDED_RELAYER_ENABLED"] = "1" if shielded_relayer_enabled else "0"
     env["XIAN_SHIELDED_RELAYER_HOST"] = shielded_relayer_host
-    env["XIAN_SHIELDED_RELAYER_PUBLIC_HOST"] = display_host(
-        shielded_relayer_host
-    )
+    env["XIAN_SHIELDED_RELAYER_PUBLIC_HOST"] = display_host(shielded_relayer_host)
     env["XIAN_SHIELDED_RELAYER_PORT"] = str(shielded_relayer_port)
     return ensure_stack_security_env(env)
 
@@ -736,8 +697,7 @@ def run_python_script(
 def load_localnet_metadata() -> dict:
     if not LOCALNET_NETWORK_PATH.exists():
         raise FileNotFoundError(
-            f"localnet metadata not found: {LOCALNET_NETWORK_PATH}; "
-            "run localnet-init first"
+            f"localnet metadata not found: {LOCALNET_NETWORK_PATH}; run localnet-init first"
         )
     return json.loads(LOCALNET_NETWORK_PATH.read_text(encoding="utf-8"))
 
@@ -787,9 +747,7 @@ def wait_for_localnet_ready(*, timeout_seconds: float) -> list[dict]:
     metadata = load_localnet_metadata()
 
     while time.monotonic() < deadline:
-        statuses = [
-            localnet_node_status(node, timeout=1.0) for node in metadata["nodes"]
-        ]
+        statuses = [localnet_node_status(node, timeout=1.0) for node in metadata["nodes"]]
         if statuses and all(
             node["up"] and node["height"] not in {None, "0", 0} for node in statuses
         ):
@@ -831,9 +789,7 @@ def backend_start(
     container_target = "abci-bds-up" if bds_enabled else "abci-up"
     node_target = "node-start-bds" if bds_enabled else "node-start"
     dashboard_target = "dashboard-bds-up" if bds_enabled else "dashboard-up"
-    monitoring_target = (
-        "monitoring-bds-up" if bds_enabled else "monitoring-up"
-    )
+    monitoring_target = "monitoring-bds-up" if bds_enabled else "monitoring-up"
     env = runtime_env(
         node_image_mode=node_image_mode,
         node_integrated_image=node_integrated_image,
@@ -882,9 +838,7 @@ def backend_start(
         "monitoring_enabled": monitoring_enabled,
         "public_rpc_enabled": env_truthy(env.get("XIAN_PUBLIC_RPC_ENABLED")),
         "public_query_enabled": env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED")),
-        "public_metrics_enabled": env_truthy(
-            env.get("XIAN_PUBLIC_METRICS_ENABLED")
-        ),
+        "public_metrics_enabled": env_truthy(env.get("XIAN_PUBLIC_METRICS_ENABLED")),
         "intentkit_enabled": intentkit_enabled,
         "dex_automation_enabled": dex_automation_enabled,
         "shielded_relayer_enabled": shielded_relayer_enabled,
@@ -892,30 +846,21 @@ def backend_start(
     }
     if dashboard_enabled:
         result["dashboard_target"] = dashboard_target
-        result["dashboard_url"] = (
-            f"http://{display_host(dashboard_host)}:{dashboard_port}"
-        )
+        result["dashboard_url"] = f"http://{display_host(dashboard_host)}:{dashboard_port}"
     if monitoring_enabled:
         result["monitoring_target"] = monitoring_target
         result["prometheus_url"] = "http://127.0.0.1:9090"
         result["grafana_url"] = "http://127.0.0.1:3000"
     if shielded_relayer_enabled:
         result["shielded_relayer_url"] = (
-            f"http://{display_host(shielded_relayer_host)}:"
-            f"{shielded_relayer_port}"
+            f"http://{display_host(shielded_relayer_host)}:{shielded_relayer_port}"
         )
     if dex_automation_enabled:
         result["dex_automation_url"] = (
-            f"http://{display_host(dex_automation_host)}:"
-            f"{dex_automation_port}"
+            f"http://{display_host(dex_automation_host)}:{dex_automation_port}"
         )
     rpc_status = None
-    if (
-        wait_for_health
-        or intentkit_enabled
-        or dex_automation_enabled
-        or shielded_relayer_enabled
-    ):
+    if wait_for_health or intentkit_enabled or dex_automation_enabled or shielded_relayer_enabled:
         rpc_status = wait_for_rpc_ready(
             rpc_url=rpc_url,
             timeout_seconds=rpc_timeout_seconds,
@@ -985,9 +930,7 @@ def backend_stop(
 ) -> dict:
     container_target = "abci-bds-down" if bds_enabled else "abci-down"
     dashboard_target = "dashboard-bds-down" if bds_enabled else "dashboard-down"
-    monitoring_target = (
-        "monitoring-bds-down" if bds_enabled else "monitoring-down"
-    )
+    monitoring_target = "monitoring-bds-down" if bds_enabled else "monitoring-down"
     env = runtime_env(
         node_image_mode=node_image_mode,
         node_integrated_image=node_integrated_image,
@@ -1045,9 +988,7 @@ def backend_stop(
         "monitoring_enabled": monitoring_enabled,
         "public_rpc_enabled": env_truthy(env.get("XIAN_PUBLIC_RPC_ENABLED")),
         "public_query_enabled": env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED")),
-        "public_metrics_enabled": env_truthy(
-            env.get("XIAN_PUBLIC_METRICS_ENABLED")
-        ),
+        "public_metrics_enabled": env_truthy(env.get("XIAN_PUBLIC_METRICS_ENABLED")),
         "intentkit_enabled": intentkit_enabled,
         "dex_automation_enabled": dex_automation_enabled,
         "shielded_relayer_enabled": shielded_relayer_enabled,
@@ -1117,12 +1058,8 @@ def backend_status(
     payload["dex_automation_enabled"] = dex_automation_enabled
     payload["shielded_relayer_enabled"] = shielded_relayer_enabled
     payload["public_rpc_enabled"] = env_truthy(env.get("XIAN_PUBLIC_RPC_ENABLED"))
-    payload["public_query_enabled"] = env_truthy(
-        env.get("XIAN_PUBLIC_QUERY_ENABLED")
-    )
-    payload["public_metrics_enabled"] = env_truthy(
-        env.get("XIAN_PUBLIC_METRICS_ENABLED")
-    )
+    payload["public_query_enabled"] = env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED"))
+    payload["public_metrics_enabled"] = env_truthy(env.get("XIAN_PUBLIC_METRICS_ENABLED"))
     payload["node_image_mode"] = node_image_mode
     payload["node_integrated_image"] = node_integrated_image
     payload["node_split_image"] = node_split_image
@@ -1213,9 +1150,7 @@ def backend_status(
         payload["intentkit_api_url"] = str(endpoints.get("intentkit_api", ""))
         try:
             payload["intentkit_status"] = get_intentkit_status(env=env)
-            payload["intentkit_running"] = payload["intentkit_status"].get(
-                "intentkit_running"
-            )
+            payload["intentkit_running"] = payload["intentkit_status"].get("intentkit_running")
         except (
             FileNotFoundError,
             subprocess.CalledProcessError,
@@ -1254,9 +1189,7 @@ def backend_status(
             payload["intentkit_api_reachable"] = False
             payload["intentkit_api_error"] = str(exc)
     if dex_automation_enabled:
-        payload["dex_automation_url"] = str(
-            endpoints.get("dex_automation", "")
-        )
+        payload["dex_automation_url"] = str(endpoints.get("dex_automation", ""))
         payload["dex_automation_status"] = get_dex_automation_status(
             bind_host=dex_automation_host,
             port=dex_automation_port,
@@ -1290,9 +1223,7 @@ def backend_status(
             env=env,
         )
         payload["shielded_relayer_running"] = bool(
-            payload["shielded_relayer_status"].get(
-                "shielded_relayer_running"
-            )
+            payload["shielded_relayer_status"].get("shielded_relayer_running")
         )
         try:
             payload["shielded_relayer_info"] = fetch_json(
@@ -1396,9 +1327,7 @@ def backend_endpoints(
         )
     if dashboard_enabled:
         display_dashboard_host = display_host(dashboard_host)
-        endpoints["dashboard"] = (
-            f"http://{display_dashboard_host}:{dashboard_port}"
-        )
+        endpoints["dashboard"] = f"http://{display_dashboard_host}:{dashboard_port}"
         endpoints["dashboard_status"] = (
             f"http://{display_dashboard_host}:{dashboard_port}/api/status"
         )
@@ -1461,9 +1390,7 @@ def backend_endpoints(
         "monitoring_enabled": monitoring_enabled,
         "public_rpc_enabled": env_truthy(env.get("XIAN_PUBLIC_RPC_ENABLED")),
         "public_query_enabled": env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED")),
-        "public_metrics_enabled": env_truthy(
-            env.get("XIAN_PUBLIC_METRICS_ENABLED")
-        ),
+        "public_metrics_enabled": env_truthy(env.get("XIAN_PUBLIC_METRICS_ENABLED")),
         "intentkit_enabled": intentkit_enabled,
         "dex_automation_enabled": dex_automation_enabled,
         "shielded_relayer_enabled": shielded_relayer_enabled,
@@ -1604,8 +1531,7 @@ def backend_health(
                 error_alerts = [
                     alert
                     for alert in alerts
-                    if isinstance(alert, dict)
-                    and str(alert.get("level", "")).lower() == "error"
+                    if isinstance(alert, dict) and str(alert.get("level", "")).lower() == "error"
                 ]
                 indexed = (
                     bds_status.get("indexed", {})
@@ -1625,26 +1551,16 @@ def backend_health(
                         "worker_running": bds_status.get("worker_running"),
                         "catchup_running": bds_status.get("catchup_running"),
                         "catching_up": bds_status.get("catching_up"),
-                        "current_block_height": bds_status.get(
-                            "current_block_height"
-                        ),
+                        "current_block_height": bds_status.get("current_block_height"),
                         "indexed_height": indexed.get("indexed_height"),
                         "height_lag": bds_status.get("height_lag"),
                         "queue_depth": bds_status.get("queue_depth"),
                         "queue_capacity": bds_status.get("queue_capacity"),
-                        "queue_utilization": bds_status.get(
-                            "queue_utilization"
-                        ),
-                        "spool_pending_count": bds_status.get(
-                            "spool_pending_count"
-                        ),
-                        "spool_total_bytes": bds_status.get(
-                            "spool_total_bytes"
-                        ),
+                        "queue_utilization": bds_status.get("queue_utilization"),
+                        "spool_pending_count": bds_status.get("spool_pending_count"),
+                        "spool_total_bytes": bds_status.get("spool_total_bytes"),
                         "storage": bds_status.get("storage"),
-                        "last_enqueue_error": bds_status.get(
-                            "last_enqueue_error"
-                        ),
+                        "last_enqueue_error": bds_status.get("last_enqueue_error"),
                         "alerts": alerts,
                     },
                 }
@@ -1684,8 +1600,7 @@ def backend_health(
             "ok": bool(status.get("intentkit_reachable")),
             "detail": {
                 "url": endpoints.get("intentkit"),
-                "error": status.get("intentkit_probe_error")
-                or status.get("intentkit_error"),
+                "error": status.get("intentkit_probe_error") or status.get("intentkit_error"),
             },
         }
         checks["intentkit_api"] = {
@@ -1904,13 +1819,9 @@ def backend_localnet_up(
     }
     if wait_for_health:
         try:
-            result["nodes"] = wait_for_localnet_ready(
-                timeout_seconds=rpc_timeout_seconds
-            )
+            result["nodes"] = wait_for_localnet_ready(timeout_seconds=rpc_timeout_seconds)
         except TimeoutError as exc:
-            raise RuntimeError(
-                f"localnet-up failed: {exc}"
-            ) from exc
+            raise RuntimeError(f"localnet-up failed: {exc}") from exc
     else:
         result["network"] = load_localnet_metadata()
     if with_dex:
@@ -1934,10 +1845,7 @@ def backend_localnet_up(
 
 def backend_localnet_status(*, timeout_seconds: float) -> dict:
     metadata = load_localnet_metadata()
-    nodes = [
-        localnet_node_status(node, timeout=timeout_seconds)
-        for node in metadata["nodes"]
-    ]
+    nodes = [localnet_node_status(node, timeout=timeout_seconds) for node in metadata["nodes"]]
     return {
         "stack_dir": str(STACK_DIR),
         "chain_id": metadata["chain_id"],
@@ -2036,9 +1944,7 @@ def backend_localnet_diagnostic(
         )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()
-        raise RuntimeError(
-            f"{script_path.name} failed: {detail}"
-        ) from exc
+        raise RuntimeError(f"{script_path.name} failed: {detail}") from exc
     payload = {
         "stack_dir": str(STACK_DIR),
         "script": str(script_path.relative_to(STACK_DIR)),
@@ -2147,9 +2053,7 @@ def backend_localnet_e2e(
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            "localnet-e2e did not return a JSON summary"
-        ) from exc
+        raise RuntimeError("localnet-e2e did not return a JSON summary") from exc
 
     if not isinstance(payload, dict):
         raise RuntimeError("localnet-e2e returned a non-object summary")
@@ -2174,14 +2078,10 @@ def backend_localnet_node_report(
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            "localnet-node-report did not return a JSON report"
-        ) from exc
+        raise RuntimeError("localnet-node-report did not return a JSON report") from exc
 
     if not isinstance(payload, dict):
-        raise RuntimeError(
-            "localnet-node-report returned a non-object report"
-        )
+        raise RuntimeError("localnet-node-report returned a non-object report")
     return payload
 
 
@@ -2512,9 +2412,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
     )
 
-    localnet_validator_governance = subparsers.add_parser(
-        "localnet-validator-governance"
-    )
+    localnet_validator_governance = subparsers.add_parser("localnet-validator-governance")
     localnet_validator_governance.add_argument(
         "--seed",
         default="xian-localnet-testnet-governance-v1",

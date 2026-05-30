@@ -69,7 +69,7 @@ def _read_pid(path: Path) -> int | None:
         return None
     try:
         return int(path.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 
@@ -88,7 +88,7 @@ def _probe_health(url: str, *, timeout: float = 1.5) -> bool:
         with urlopen(url, timeout=timeout) as response:
             status = getattr(response, "status", 200)
             return int(status) < 500
-    except (OSError, URLError, TimeoutError, ValueError):
+    except OSError, URLError, TimeoutError, ValueError:
         return False
 
 
@@ -108,11 +108,7 @@ def get_shielded_relayer_status(
         pid = None
 
     endpoints = shielded_relayer_endpoints(bind_host=bind_host, port=port)
-    health_ok = (
-        _probe_health(endpoints["shielded_relayer_health"])
-        if running
-        else False
-    )
+    health_ok = _probe_health(endpoints["shielded_relayer_health"]) if running else False
     source_env = os.environ if env is None else env
 
     return {
@@ -121,9 +117,7 @@ def get_shielded_relayer_status(
         "shielded_relayer_health_ok": health_ok,
         "shielded_relayer_log_path": str(resolve_shielded_relayer_log_path()),
         "shielded_relayer_pid_path": str(resolve_shielded_relayer_pid_path()),
-        "shielded_relayer_auth_required": bool(
-            source_env.get("XIAN_SHIELDED_RELAYER_AUTH_TOKEN")
-        ),
+        "shielded_relayer_auth_required": bool(source_env.get("XIAN_SHIELDED_RELAYER_AUTH_TOKEN")),
         **endpoints,
     }
 
@@ -151,12 +145,8 @@ def _build_runtime_env(env: dict[str, str] | None = None) -> dict[str, str]:
 
 
 def _require_relayer_credentials(env: dict[str, str]) -> None:
-    private_key = (
-        env.get("XIAN_SHIELDED_RELAYER_PRIVATE_KEY") or ""
-    ).strip()
-    key_file = (
-        env.get("XIAN_SHIELDED_RELAYER_PRIVATE_KEY_FILE") or ""
-    ).strip()
+    private_key = (env.get("XIAN_SHIELDED_RELAYER_PRIVATE_KEY") or "").strip()
+    key_file = (env.get("XIAN_SHIELDED_RELAYER_PRIVATE_KEY_FILE") or "").strip()
     if private_key or key_file:
         return
     raise RuntimeError(
@@ -223,9 +213,7 @@ def start_shielded_relayer_runtime(
     )
     try:
         _wait_for_ready(
-            shielded_relayer_endpoints(bind_host=bind_host, port=port)[
-                "shielded_relayer_health"
-            ]
+            shielded_relayer_endpoints(bind_host=bind_host, port=port)["shielded_relayer_health"]
         )
     except Exception:
         stop_shielded_relayer_runtime(

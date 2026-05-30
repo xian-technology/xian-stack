@@ -31,7 +31,9 @@ class StateConvergenceHelpersTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual({"node-0": "198", "node-1": "198"}, observed)
 
-    async def test_wait_for_uniform_state_accepts_uniform_value_without_expected_target(self) -> None:
+    async def test_wait_for_uniform_state_accepts_uniform_value_without_expected_target(
+        self,
+    ) -> None:
         async def fetch_values() -> dict[str, str]:
             return {"node-0": "ready", "node-1": "ready"}
 

@@ -49,6 +49,7 @@ import nacl.signing  # noqa: E402
 from cometbft.types.v1 import canonical_pb2  # noqa: E402
 from contracting.artifacts import build_contract_artifacts  # noqa: E402
 from google.protobuf.timestamp_pb2 import Timestamp  # noqa: E402
+from xian_py.config import RetryPolicy, SubmissionConfig, XianClientConfig  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian_async import XianAsync  # noqa: E402
 
@@ -182,9 +183,7 @@ def coerce_int(value: Any) -> int:
         try:
             decimal_value = Decimal(normalized)
         except Exception as exc:  # noqa: BLE001
-            raise RunnerError(
-                f"expected int-like value, got {normalized!r}"
-            ) from exc
+            raise RunnerError(f"expected int-like value, got {normalized!r}") from exc
         if decimal_value == decimal_value.to_integral_value():
             return int(decimal_value)
     raise RunnerError(f"expected int-like value, got {normalized!r}")
@@ -204,17 +203,13 @@ def coerce_decimal(value: Any) -> Decimal:
         try:
             return Decimal(normalized)
         except Exception as exc:  # noqa: BLE001
-            raise RunnerError(
-                f"expected decimal-like value, got {normalized!r}"
-            ) from exc
+            raise RunnerError(f"expected decimal-like value, got {normalized!r}") from exc
     raise RunnerError(f"expected decimal-like value, got {normalized!r}")
 
 
 def load_network() -> dict[str, Any]:
     if not NETWORK_PATH.exists():
-        raise RunnerError(
-            f"localnet metadata not found at {NETWORK_PATH}; bootstrap first"
-        )
+        raise RunnerError(f"localnet metadata not found at {NETWORK_PATH}; bootstrap first")
     return json.loads(NETWORK_PATH.read_text(encoding="utf-8"))
 
 
@@ -322,9 +317,7 @@ async def fetch_abci_query(
         payload = await response.json()
     abci_response = payload.get("result", {}).get("response", {})
     if int(abci_response.get("code", 0) or 0) != 0:
-        raise RunnerError(
-            f"ABCI query failed for {path}: {abci_response.get('log')}"
-        )
+        raise RunnerError(f"ABCI query failed for {path}: {abci_response.get('log')}")
     encoded_value = abci_response.get("value")
     if not encoded_value:
         return None
@@ -373,8 +366,7 @@ async def wait_for_localnet_ready(
                 break
         if len(statuses) == len(nodes):
             heights = [
-                int(payload["result"]["sync_info"]["latest_block_height"])
-                for payload in statuses
+                int(payload["result"]["sync_info"]["latest_block_height"]) for payload in statuses
             ]
             if all(height > 0 for height in heights):
                 return statuses
@@ -439,23 +431,18 @@ def submission_error_context(submission) -> str:
         parts.append(f"message={submission.message!r}")
     response = submission.response or {}
     if response:
-        parts.append(
-            "response="
-            + json.dumps(response, sort_keys=True, default=str)[:500]
-        )
+        parts.append("response=" + json.dumps(response, sort_keys=True, default=str)[:500])
     return "" if not parts else " (" + "; ".join(parts) + ")"
 
 
 def ensure_positive_submission(submission, *, label: str) -> dict[str, Any]:
     if not submission.submitted:
         raise RunnerError(
-            f"{label}: transaction was not submitted"
-            f"{submission_error_context(submission)}"
+            f"{label}: transaction was not submitted{submission_error_context(submission)}"
         )
     if submission.accepted is False:
         raise RunnerError(
-            f"{label}: CheckTx rejected: {submission.message}"
-            f"{submission_error_context(submission)}"
+            f"{label}: CheckTx rejected: {submission.message}{submission_error_context(submission)}"
         )
     if submission.receipt is None:
         if submission.mode == "commit" and submission.accepted is True and submission.finalized:
@@ -476,8 +463,7 @@ def ensure_failed_submission(
 ) -> dict[str, Any]:
     if not submission.submitted:
         raise RunnerError(
-            f"{label}: transaction was not submitted"
-            f"{submission_error_context(submission)}"
+            f"{label}: transaction was not submitted{submission_error_context(submission)}"
         )
     if submission.receipt is None:
         raise RunnerError(f"{label}: receipt missing for expected failure")
@@ -529,7 +515,25 @@ class ValidatorGovernanceRunner:
             node_url=self.nodes[node_index].rpc_url,
             chain_id=self.network["chain_id"],
             wallet=wallet,
+            config=self.client_config(),
             session=session,
+        )
+
+    @functools.lru_cache(maxsize=1)
+    def client_config(self) -> XianClientConfig:
+        return XianClientConfig(
+            retry=RetryPolicy(
+                max_attempts=6,
+                initial_delay_seconds=0.25,
+                max_delay_seconds=4.0,
+                backoff_multiplier=2.0,
+                retry_transport_errors=True,
+                retry_rpc_errors=True,
+            ),
+            submission=SubmissionConfig(
+                timeout_seconds=self.args.rpc_timeout_seconds,
+                poll_interval_seconds=0.5,
+            ),
         )
 
     def write_json(self, name: str, payload: dict[str, Any]) -> None:
@@ -722,8 +726,7 @@ class ValidatorGovernanceRunner:
                 return proposal
             await asyncio.sleep(0.5)
         raise RunnerError(
-            f"members vote {proposal_id} did not reach {expected_status!r}; "
-            f"last={last_vote}"
+            f"members vote {proposal_id} did not reach {expected_status!r}; last={last_vote}"
         )
 
     async def wait_for_members_vote_progress(
@@ -1017,9 +1020,7 @@ class ValidatorGovernanceRunner:
         )
 
     def load_priv_validator_key(self, node_index: int) -> dict[str, Any]:
-        return json.loads(
-            self.priv_validator_key_path(node_index).read_text(encoding="utf-8")
-        )
+        return json.loads(self.priv_validator_key_path(node_index).read_text(encoding="utf-8"))
 
     async def broadcast_duplicate_vote_evidence(
         self,
@@ -1061,10 +1062,7 @@ class ValidatorGovernanceRunner:
                     params={"height": str(candidate_height), "per_page": "100"},
                 )
                 validator_entries = validators_candidate["result"]["validators"]
-                if any(
-                    entry["address"] == target_consensus_address
-                    for entry in validator_entries
-                ):
+                if any(entry["address"] == target_consensus_address for entry in validator_entries):
                     chosen_height = candidate_height
                     block_result = block_candidate["result"]
                     validators_result = validators_candidate["result"]
@@ -1085,9 +1083,7 @@ class ValidatorGovernanceRunner:
             if entry["address"] == target_consensus_address
         )
         validator_power = int(validator_entries[target_validator_index]["voting_power"])
-        total_voting_power = sum(
-            int(entry["voting_power"]) for entry in validator_entries
-        )
+        total_voting_power = sum(int(entry["voting_power"]) for entry in validator_entries)
         block_id = block_result["block_id"]
         block_header = block_result["block"]["header"]
         evidence_timestamp = block_header["time"]
@@ -1208,11 +1204,13 @@ class ValidatorGovernanceRunner:
             ],
             amount=2_000_000,
         )
-        async with self.client(node0_wallet, 0, session) as node0, self.client(
-            node1_wallet, 1, session
-        ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
-            node3_wallet, 3, session
-        ) as node3, self.client(node4_wallet, 4, session) as node4:
+        async with (
+            self.client(node0_wallet, 0, session) as node0,
+            self.client(node1_wallet, 1, session) as node1,
+            self.client(node2_wallet, 2, session) as node2,
+            self.client(node3_wallet, 3, session) as node3,
+            self.client(node4_wallet, 4, session) as node4,
+        ):
             probe_contract = f"con_governance_probe_{short_hash(self.run_id)}"
             probe_code = """
 value = Variable()
@@ -1327,12 +1325,7 @@ def get_status():
 
         for node in self.nodes:
             patch_dir = (
-                STACK_DIR
-                / ".localnet"
-                / node.moniker
-                / ".cometbft"
-                / "config"
-                / "state-patches"
+                STACK_DIR / ".localnet" / node.moniker / ".cometbft" / "config" / "state-patches"
             )
             patch_dir.mkdir(parents=True, exist_ok=True)
             (patch_dir / f"{patch_id}.json").write_text(
@@ -1356,11 +1349,12 @@ def get_status():
             node3_wallet,
             _node4_wallet,
         ) = self.validator_wallets
-        async with self.client(node0_wallet, 0, session) as node0, self.client(
-            node1_wallet, 1, session
-        ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
-            node3_wallet, 3, session
-        ) as node3:
+        async with (
+            self.client(node0_wallet, 0, session) as node0,
+            self.client(node1_wallet, 1, session) as node1,
+            self.client(node2_wallet, 2, session) as node2,
+            self.client(node3_wallet, 3, session) as node3,
+        ):
             for client in (node0, node1, node2, node3):
                 await client.refresh_nonce()
             proposal = await node0.send_tx(
@@ -1395,9 +1389,7 @@ def get_status():
                     chi=GOVERNANCE_TX_CHI,
                     wait_for_tx=True,
                 )
-                vote_receipts.append(
-                    ensure_positive_submission(submission, label=label)
-                )
+                vote_receipts.append(ensure_positive_submission(submission, label=label))
             proposal_final = await self.wait_for_governance_proposal_status(
                 node0,
                 proposal_id,
@@ -1479,11 +1471,13 @@ def get_status():
             amount=500_000,
         )
 
-        async with self.client(node0_wallet, 0, session) as node0, self.client(
-            node1_wallet, 1, session
-        ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
-            node3_wallet, 3, session
-        ) as node3, self.client(node4_wallet, 4, session) as node4:
+        async with (
+            self.client(node0_wallet, 0, session) as node0,
+            self.client(node1_wallet, 1, session) as node1,
+            self.client(node2_wallet, 2, session) as node2,
+            self.client(node3_wallet, 3, session) as node3,
+            self.client(node4_wallet, 4, session) as node4,
+        ):
             set_power = await self.approve_members_vote(
                 node0,
                 [
@@ -1550,9 +1544,7 @@ def get_status():
                 label="node3 removed status",
             )
 
-            registration_fee = coerce_int(
-                await node0.get_state("masternodes", "registration_fee")
-            )
+            registration_fee = coerce_int(await node0.get_state("masternodes", "registration_fee"))
             reapprove = await self.submit_tx(
                 node3,
                 "currency",
@@ -1657,13 +1649,14 @@ def get_status():
             amount=1_000_000,
         )
 
-        async with self.client(node0_wallet, 0, session) as node0, self.client(
-            node1_wallet, 1, session
-        ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
-            node3_wallet, 3, session
-        ) as node3, self.client(node4_wallet, 4, session) as node4, self.client(
-            self.delegator_wallet, 0, session
-        ) as delegator:
+        async with (
+            self.client(node0_wallet, 0, session) as node0,
+            self.client(node1_wallet, 1, session) as node1,
+            self.client(node2_wallet, 2, session) as node2,
+            self.client(node3_wallet, 3, session) as node3,
+            self.client(node4_wallet, 4, session) as node4,
+            self.client(self.delegator_wallet, 0, session) as delegator,
+        ):
             approvals = []
             for name, client in (
                 ("node0", node0),
@@ -1753,9 +1746,7 @@ def get_status():
                 "get_active_validators",
                 {},
             )
-            active_after_policy_accounts = [
-                entry["account"] for entry in active_after_policy
-            ]
+            active_after_policy_accounts = [entry["account"] for entry in active_after_policy]
             assert_equal(
                 active_after_policy_accounts,
                 [
@@ -1826,9 +1817,7 @@ def get_status():
                 "get_active_validators",
                 {},
             )
-            active_after_rebalance_accounts = [
-                entry["account"] for entry in active_after_rebalance
-            ]
+            active_after_rebalance_accounts = [entry["account"] for entry in active_after_rebalance]
             assert_equal(
                 active_after_rebalance_accounts,
                 [
@@ -1854,9 +1843,7 @@ def get_status():
                 "get_active_validators",
                 {},
             )
-            active_after_jail_accounts = [
-                entry["account"] for entry in active_after_jail
-            ]
+            active_after_jail_accounts = [entry["account"] for entry in active_after_jail]
             assert_equal(
                 active_after_jail_accounts,
                 [
@@ -1889,9 +1876,7 @@ def get_status():
                 "get_active_validators",
                 {},
             )
-            active_after_unjail_accounts = [
-                entry["account"] for entry in active_after_unjail
-            ]
+            active_after_unjail_accounts = [entry["account"] for entry in active_after_unjail]
             assert_equal(
                 active_after_unjail_accounts,
                 [
@@ -1939,8 +1924,7 @@ def get_status():
                 label="node1 total bond after slash",
             )
             assert_equal(
-                coerce_decimal(dao_balance_after_slash)
-                - coerce_decimal(dao_balance_before_slash),
+                coerce_decimal(dao_balance_after_slash) - coerce_decimal(dao_balance_before_slash),
                 Decimal("30"),
                 label="dao balance delta after slash",
             )
@@ -2058,11 +2042,12 @@ def get_status():
         node3_wallet = self.validator_wallets[3]
         node1_key = self.nodes[1].account_public_key
 
-        async with self.client(node0_wallet, 0, session) as node0, self.client(
-            node1_wallet, 1, session
-        ) as node1, self.client(node2_wallet, 2, session) as node2, self.client(
-            node3_wallet, 3, session
-        ) as node3:
+        async with (
+            self.client(node0_wallet, 0, session) as node0,
+            self.client(node1_wallet, 1, session) as node1,
+            self.client(node2_wallet, 2, session) as node2,
+            self.client(node3_wallet, 3, session) as node3,
+        ):
             clients_by_account = {
                 self.nodes[0].account_public_key: ("node0", node0),
                 self.nodes[1].account_public_key: ("node1", node1),
@@ -2070,7 +2055,9 @@ def get_status():
                 self.nodes[3].account_public_key: ("node3", node3),
             }
 
-            def voters_for_active_set(active_validators: list[dict[str, Any]]) -> list[tuple[str, XianAsync]]:
+            def voters_for_active_set(
+                active_validators: list[dict[str, Any]],
+            ) -> list[tuple[str, XianAsync]]:
                 voters = []
                 for validator in active_validators:
                     account = validator["account"]
@@ -2121,9 +2108,7 @@ def get_status():
                 label="hybrid selection mode",
             )
 
-            registration_fee = coerce_int(
-                await node0.get_state("masternodes", "registration_fee")
-            )
+            registration_fee = coerce_int(await node0.get_state("masternodes", "registration_fee"))
             approve_registration = await self.submit_tx(
                 node1,
                 "currency",
@@ -2171,9 +2156,7 @@ def get_status():
                 "get_active_validators",
                 {},
             )
-            active_before_approval_accounts = [
-                entry["account"] for entry in active_before_approval
-            ]
+            active_before_approval_accounts = [entry["account"] for entry in active_before_approval]
             assert_true(
                 node1_key not in active_before_approval_accounts,
                 label="node1 blocked before hybrid approval",
@@ -2192,9 +2175,7 @@ def get_status():
                 "get_active_validators",
                 {},
             )
-            active_after_approval_accounts = [
-                entry["account"] for entry in active_after_approval
-            ]
+            active_after_approval_accounts = [entry["account"] for entry in active_after_approval]
             assert_true(
                 node1_key in active_after_approval_accounts,
                 label="node1 active after hybrid approval",
@@ -2355,9 +2336,10 @@ def get_status():
         node3_wallet = self.validator_wallets[3]
         node3_account = self.nodes[3].account_public_key
 
-        async with self.client(node0_wallet, 0, session) as node0, self.client(
-            node3_wallet, 3, session
-        ) as node3:
+        async with (
+            self.client(node0_wallet, 0, session) as node0,
+            self.client(node3_wallet, 3, session) as node3,
+        ):
             validator_before = await node0.call(
                 "masternodes",
                 "get_validator",
@@ -2379,8 +2361,10 @@ def get_status():
             validator_after_announce = await self.wait_for_validator_record(
                 node0,
                 node3_account,
-                predicate=lambda record: record["status"] == "leaving"
-                and record["pending_leave_at"] not in (False, None),
+                predicate=lambda record: (
+                    record["status"] == "leaving"
+                    and record["pending_leave_at"] not in (False, None)
+                ),
                 timeout_seconds=15.0,
                 label="announce_leave recorded",
             )
@@ -2478,12 +2462,19 @@ def get_status():
             summary["ended_at"] = datetime.now(UTC).isoformat()
             summary["coverage_notes"] = [
                 "Covered: generic governance contract calls and proposal voting.",
-                "Covered: bundle-backed governance state-patch approval, scheduling, activation, and on-disk patch inventory.",
+                "Covered: bundle-backed governance state-patch approval, scheduling, "
+                "activation, and on-disk patch inventory.",
                 "Covered: manual validator votes, removal, registration update, and re-addition.",
-                "Covered: self-bonding, delegation, reward-distribution getters, auto_top_n rebalancing, jail, unjail, slash, undelegate, claim_unbond, and hybrid approval gating.",
-                "Covered: real CometBFT duplicate-vote evidence broadcast and ABCI-driven slashing/jailing with active-set replacement.",
-                "Covered: announce_leave, enforced delay on immediate leave, and validator-set rebalance while leave is pending, including standby validator promotion.",
-                "Not covered: delayed leave completion after the full 7-day waiting period and real light-client-attack evidence.",
+                "Covered: self-bonding, delegation, reward-distribution getters, "
+                "auto_top_n rebalancing, jail, unjail, slash, undelegate, claim_unbond, "
+                "and hybrid approval gating.",
+                "Covered: real CometBFT duplicate-vote evidence broadcast and ABCI-driven "
+                "slashing/jailing with active-set replacement.",
+                "Covered: announce_leave, enforced delay on immediate leave, and "
+                "validator-set rebalance while leave is pending, including standby "
+                "validator promotion.",
+                "Not covered: delayed leave completion after the full 7-day waiting period "
+                "and real light-client-attack evidence.",
             ]
             self.write_json("summary", summary)
             return summary

@@ -122,12 +122,8 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
             }
         }
         resolved = expected_image_labels(payload)
-        self.assertEqual(
-            resolved["integrated"][0], "org.opencontainers.image.title=Xian Node"
-        )
-        self.assertEqual(
-            resolved["split"][1], "io.xian.release.manifest-sha=" + "b" * 64
-        )
+        self.assertEqual(resolved["integrated"][0], "org.opencontainers.image.title=Xian Node")
+        self.assertEqual(resolved["split"][1], "io.xian.release.manifest-sha=" + "b" * 64)
 
     def test_normalized_image_config_ignores_history(self) -> None:
         payload = {

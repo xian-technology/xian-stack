@@ -283,15 +283,9 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
             now_fn=now_fn,
         )
 
-        allowed_one, remaining_one, retry_one = service.enforce_rate_limit(
-            "client-1"
-        )
-        allowed_two, remaining_two, retry_two = service.enforce_rate_limit(
-            "client-1"
-        )
-        allowed_three, remaining_three, retry_three = service.enforce_rate_limit(
-            "client-1"
-        )
+        allowed_one, remaining_one, retry_one = service.enforce_rate_limit("client-1")
+        allowed_two, remaining_two, retry_two = service.enforce_rate_limit("client-1")
+        allowed_three, remaining_three, retry_three = service.enforce_rate_limit("client-1")
 
         self.assertTrue(allowed_one)
         self.assertEqual(1, remaining_one)
@@ -304,9 +298,7 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, retry_three)
 
         current_time = datetime(2026, 4, 10, 12, 0, 2)
-        allowed_four, remaining_four, retry_four = service.enforce_rate_limit(
-            "client-1"
-        )
+        allowed_four, remaining_four, retry_four = service.enforce_rate_limit("client-1")
         self.assertTrue(allowed_four)
         self.assertEqual(1, remaining_four)
         self.assertIsNone(retry_four)

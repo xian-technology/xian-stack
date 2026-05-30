@@ -90,12 +90,7 @@ CONTRACT_ORCHESTRATION_TX_CHI = {
     "dynamic_call": 50_000,
 }
 X402_CONTRACT_SOURCE = (
-    ROOT_DIR
-    / "xian-configs"
-    / "examples"
-    / "x402-exact"
-    / "contracts"
-    / "x402_settlement.s.py"
+    ROOT_DIR / "xian-configs" / "examples" / "x402-exact" / "contracts" / "x402_settlement.s.py"
 )
 X402_PAYMENT_AMOUNT = Decimal("0.001")
 X402_SETTLEMENT_TX_CHI = 15_000
@@ -110,13 +105,12 @@ sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
 sys.path.insert(0, str(XIAN_ZK_PYTHON_DIR))
 sys.path.insert(0, str(XIAN_ABCI_SRC))
 
-from contracting.artifacts import build_contract_artifacts  # noqa: E402
-from xian_py.config import RetryPolicy, XianClientConfig  # noqa: E402
 import xian_py.transaction as tr  # noqa: E402
-from xian_py.wallet import Wallet  # noqa: E402
-from xian_py.xian_async import XianAsync  # noqa: E402
+from contracting.artifacts import build_contract_artifacts  # noqa: E402
+from xian_py.config import RetryPolicy, SubmissionConfig, XianClientConfig  # noqa: E402
 from xian_py.exception import SimulationError, TransportError, TxTimeoutError  # noqa: E402
 from xian_py.shielded_relayer import ShieldedRelayerAsyncClient  # noqa: E402
+from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.x402 import (  # noqa: E402
     XianX402Facilitator,
     XianX402PaymentRequirement,
@@ -124,6 +118,7 @@ from xian_py.x402 import (  # noqa: E402
     verify_xian_x402_payment,
     xian_network_id,
 )
+from xian_py.xian_async import XianAsync  # noqa: E402
 
 try:  # noqa: SIM105
     from xian_zk import (  # noqa: E402
@@ -131,18 +126,18 @@ try:  # noqa: SIM105
         ShieldedKeyBundle,
         ShieldedNote,
         ShieldedNoteProver,
+        ShieldedOutput,
         ShieldedRelayTransferProver,
         ShieldedRelayTransferWallet,
-        note_records_from_transactions,
-        ShieldedOutput,
         ShieldedTransferRequest,
         ShieldedWallet,
         ShieldedWithdrawRequest,
+        note_records_from_transactions,
         output_payload_hashes,
         recover_encrypted_notes,
         scan_notes,
-        shielded_relay_registry_manifest,
         shielded_registry_manifest,
+        shielded_relay_registry_manifest,
         tree_state,
     )
 except Exception as exc:  # noqa: BLE001
@@ -198,9 +193,7 @@ def render_orchestration_factory_source() -> str:
         "__ORCH_CHILD_VM_IR_TEMPLATE_JSON__": json.dumps(child_artifacts["vm_ir_json"]),
         "__ORCH_CHILD_ARTIFACT_FORMAT_JSON__": json.dumps(child_artifacts["format"]),
         "__ORCH_CHILD_VM_PROFILE_JSON__": json.dumps(child_artifacts["vm_profile"]),
-        "__ORCH_CHILD_SOURCE_SHA256_JSON__": json.dumps(
-            child_artifacts["hashes"]["source_sha256"]
-        ),
+        "__ORCH_CHILD_SOURCE_SHA256_JSON__": json.dumps(child_artifacts["hashes"]["source_sha256"]),
     }
     rendered = factory_template
     for token, value in replacements.items():
@@ -211,17 +204,13 @@ def render_orchestration_factory_source() -> str:
         if token != ORCHESTRATION_TEMPLATE_MODULE
     )
     if unresolved:
-        raise E2EError(
-            "unresolved orchestration factory placeholders: " + ", ".join(unresolved)
-        )
+        raise E2EError("unresolved orchestration factory placeholders: " + ", ".join(unresolved))
     return rendered
 
 
 def load_network() -> dict[str, Any]:
     if not NETWORK_PATH.exists():
-        raise E2EError(
-            f"localnet metadata not found at {NETWORK_PATH}; bootstrap first"
-        )
+        raise E2EError(f"localnet metadata not found at {NETWORK_PATH}; bootstrap first")
     return json.loads(NETWORK_PATH.read_text(encoding="utf-8"))
 
 
@@ -429,16 +418,13 @@ async def wait_for_localnet_ready(
         statuses = []
         for node in nodes:
             try:
-                payload = await fetch_json(
-                    session, f"{node.rpc_url}/status", timeout=2.0
-                )
+                payload = await fetch_json(session, f"{node.rpc_url}/status", timeout=2.0)
                 statuses.append(payload)
             except Exception:  # noqa: BLE001
                 break
         if len(statuses) == len(nodes):
             heights = [
-                int(payload["result"]["sync_info"]["latest_block_height"])
-                for payload in statuses
+                int(payload["result"]["sync_info"]["latest_block_height"]) for payload in statuses
             ]
             if all(height > 0 for height in heights):
                 return statuses
@@ -479,9 +465,7 @@ async def latest_heights(
     session: aiohttp.ClientSession,
     nodes: list[LocalnetNode],
 ) -> dict[str, int]:
-    heights = await asyncio.gather(
-        *(latest_height(session, node.rpc_url) for node in nodes)
-    )
+    heights = await asyncio.gather(*(latest_height(session, node.rpc_url) for node in nodes))
     return {node.moniker: height for node, height in zip(nodes, heights, strict=True)}
 
 
@@ -500,9 +484,7 @@ async def wait_for_bds_indexed(
         if indexed_height is not None and indexed_height >= target_height:
             return last_status
         await asyncio.sleep(0.5)
-    raise E2EError(
-        f"BDS did not reach indexed height {target_height}; last={last_status}"
-    )
+    raise E2EError(f"BDS did not reach indexed height {target_height}; last={last_status}")
 
 
 async def wait_for_bds_backlog(
@@ -534,9 +516,7 @@ async def wait_for_bds_backlog(
             return raw
         await asyncio.sleep(0.5)
 
-    raise E2EError(
-        f"BDS did not show backlog or degradation before timeout; last={last_status}"
-    )
+    raise E2EError(f"BDS did not show backlog or degradation before timeout; last={last_status}")
 
 
 async def wait_for_bds_recovered(
@@ -629,9 +609,7 @@ async def perf_status_from_all_nodes(
     payloads = await asyncio.gather(
         *(fetch_abci_query(session, node.rpc_url, "/perf_status") for node in nodes)
     )
-    return {
-        node.moniker: payload for node, payload in zip(nodes, payloads, strict=True)
-    }
+    return {node.moniker: payload for node, payload in zip(nodes, payloads, strict=True)}
 
 
 def recent_blocks_in_window(
@@ -645,7 +623,7 @@ def recent_blocks_in_window(
     for block in recent_blocks:
         try:
             height = int(block["height"])
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             continue
         if min_height is not None and height < min_height:
             continue
@@ -658,7 +636,7 @@ def recent_blocks_in_window(
 def metadata_int(metadata: dict[str, Any], key: str) -> int:
     try:
         return int(metadata.get(key, 0) or 0)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0
 
 
@@ -771,17 +749,12 @@ def ensure_positive_submission(
     if submission.accepted is False:
         raise E2EError(f"{label}: CheckTx rejected: {submission.message}")
     if submission.receipt is None:
-        if (
-            submission.mode == "commit"
-            and submission.accepted is True
-            and submission.finalized
-        ):
+        if submission.mode == "commit" and submission.accepted is True and submission.finalized:
             return normalize_receipt(submission, label=label)
         raise E2EError(f"{label}: receipt missing")
     if submission.receipt.success is not True:
         raise E2EError(
-            f"{label}: transaction failed during execution: "
-            f"{submission.receipt.message}"
+            f"{label}: transaction failed during execution: {submission.receipt.message}"
         )
     return normalize_receipt(submission, label=label)
 
@@ -813,9 +786,7 @@ def normalize_receipt(submission, *, label: str) -> dict[str, Any]:
         state = execution.get("state", []) or []
         events = execution.get("events", []) or []
     success = None if submission.receipt is None else submission.receipt.success
-    message = (
-        submission.message if submission.receipt is None else submission.receipt.message
-    )
+    message = submission.message if submission.receipt is None else submission.receipt.message
     if submission.receipt is None and submission.mode == "commit":
         success = bool(submission.accepted and submission.finalized)
         if success and message is None:
@@ -845,9 +816,7 @@ def local_log_paths(node: LocalnetNode) -> list[Path]:
     log_dir = STACK_DIR / ".localnet" / node.moniker / ".cometbft" / "xian" / "logs"
     if not log_dir.exists():
         return []
-    return sorted(
-        log_dir.glob("xian-abci-*.log"), key=lambda path: path.stat().st_mtime
-    )
+    return sorted(log_dir.glob("xian-abci-*.log"), key=lambda path: path.stat().st_mtime)
 
 
 def log_file_positions(paths: list[Path]) -> dict[Path, int]:
@@ -882,9 +851,7 @@ def update_logging_config(
     trace_logging: bool,
     json_logging: bool,
 ) -> None:
-    for config_path in sorted(
-        (STACK_DIR / ".localnet").glob("node-*/.cometbft/config/xian.toml")
-    ):
+    for config_path in sorted((STACK_DIR / ".localnet").glob("node-*/.cometbft/config/xian.toml")):
         text = config_path.read_text(encoding="utf-8")
         replacements = {
             "transaction_trace_logging": "true" if trace_logging else "false",
@@ -992,6 +959,15 @@ class E2ERunner:
         }
 
     @functools.lru_cache(maxsize=1)
+    def default_client_config(self) -> XianClientConfig:
+        return XianClientConfig(
+            submission=SubmissionConfig(
+                timeout_seconds=self.args.rpc_timeout_seconds,
+                poll_interval_seconds=0.5,
+            ),
+        )
+
+    @functools.lru_cache(maxsize=1)
     def load_test_client_config(self) -> XianClientConfig:
         return XianClientConfig(
             retry=RetryPolicy(
@@ -1001,7 +977,11 @@ class E2ERunner:
                 backoff_multiplier=2.0,
                 retry_transport_errors=True,
                 retry_rpc_errors=True,
-            )
+            ),
+            submission=SubmissionConfig(
+                timeout_seconds=self.args.rpc_timeout_seconds,
+                poll_interval_seconds=0.5,
+            ),
         )
 
     @staticmethod
@@ -1017,9 +997,7 @@ class E2ERunner:
     def load_resume_context(self) -> None:
         network_path = self.output_dir / "network.json"
         if not network_path.exists():
-            raise E2EError(
-                f"resume directory does not contain network.json: {network_path}"
-            )
+            raise E2EError(f"resume directory does not contain network.json: {network_path}")
         self.network = json.loads(network_path.read_text(encoding="utf-8"))
         self.nodes = build_nodes(self.network)
         self.bds_node = next(
@@ -1041,9 +1019,7 @@ class E2ERunner:
                 f"{self.network.get('genesis_network')!r} does not match "
                 f"{DEFAULT_GENESIS_NETWORK!r}"
             )
-        prior_phase_names = self.phase_names()[
-            : self.phase_names().index(self.args.start_phase)
-        ]
+        prior_phase_names = self.phase_names()[: self.phase_names().index(self.args.start_phase)]
         self.phase_results = []
         for phase_name in prior_phase_names:
             path = self.output_dir / json_file_name(phase_name)
@@ -1095,9 +1071,7 @@ class E2ERunner:
             self.contracts["dex_token_b"] = contracts["token_b"]
             self.contracts["dex_pairs"] = contracts["pairs"]
             self.contracts["dex_router"] = contracts["dex"]
-            self.contracts["dex_pair_id"] = dex["details"]["scenario_summary"][
-                "pair_id"
-            ]
+            self.contracts["dex_pair_id"] = dex["details"]["scenario_summary"]["pair_id"]
 
         if "09-bds-catchup" in completed_phase_names:
             catchup = self._load_resume_json("09-bds-catchup")
@@ -1218,8 +1192,7 @@ class E2ERunner:
         )
         if proposal_pending["status"] != "pending":
             raise E2EError(
-                f"{label_prefix} expected pending proposal, got "
-                f"{proposal_pending['status']!r}"
+                f"{label_prefix} expected pending proposal, got {proposal_pending['status']!r}"
             )
 
         vote_senders = [
@@ -1279,8 +1252,7 @@ class E2ERunner:
         proposal_pending = await proposer.get_state("masternodes", "votes", proposal_id)
         if proposal_pending["status"] != "pending":
             raise E2EError(
-                f"{label_prefix} expected pending vote, got "
-                f"{proposal_pending['status']!r}"
+                f"{label_prefix} expected pending vote, got {proposal_pending['status']!r}"
             )
 
         vote_senders = [
@@ -1297,9 +1269,7 @@ class E2ERunner:
         ]
         vote_receipts, proposal_final = await cast_votes_until_status(
             vote_senders,
-            fetch_status=lambda: proposer.get_state(
-                "masternodes", "votes", proposal_id
-            ),
+            fetch_status=lambda: proposer.get_state("masternodes", "votes", proposal_id),
             completed_statuses={"approved"},
         )
         if proposal_final is None:
@@ -1334,16 +1304,13 @@ class E2ERunner:
             session,
             self.nodes,
             timeout_seconds=(
-                self.args.rpc_timeout_seconds
-                if timeout_seconds is None
-                else timeout_seconds
+                self.args.rpc_timeout_seconds if timeout_seconds is None else timeout_seconds
             ),
         )
         if require_additional_block:
             target_height = (
                 max(
-                    int(status["result"]["sync_info"]["latest_block_height"])
-                    for status in statuses
+                    int(status["result"]["sync_info"]["latest_block_height"]) for status in statuses
                 )
                 + 1
             )
@@ -1640,13 +1607,9 @@ class E2ERunner:
             Wallet(private_key=node.account_private_key) for node in self.nodes
         ]
         if self.args.nodes != DEFAULT_LOCALNET_NODES:
-            raise E2EError(
-                f"this e2e harness expects exactly {DEFAULT_LOCALNET_NODES} validators"
-            )
+            raise E2EError(f"this e2e harness expects exactly {DEFAULT_LOCALNET_NODES} validators")
         if self.args.genesis_network != DEFAULT_GENESIS_NETWORK:
-            raise E2EError(
-                f"this e2e harness expects genesis_network={DEFAULT_GENESIS_NETWORK!r}"
-            )
+            raise E2EError(f"this e2e harness expects genesis_network={DEFAULT_GENESIS_NETWORK!r}")
         if len(self.nodes) != DEFAULT_LOCALNET_NODES:
             raise E2EError(
                 f"loaded localnet has {len(self.nodes)} validators; expected "
@@ -1680,9 +1643,7 @@ class E2ERunner:
         statuses = []
         for node in self.nodes:
             status = await fetch_json(session, f"{node.rpc_url}/status", timeout=5.0)
-            net_info = await fetch_json(
-                session, f"{node.rpc_url}/net_info", timeout=5.0
-            )
+            net_info = await fetch_json(session, f"{node.rpc_url}/net_info", timeout=5.0)
             validators = await fetch_json(
                 session,
                 f"{node.rpc_url}/validators",
@@ -1705,9 +1666,7 @@ class E2ERunner:
         )
         service_bds = None
         if self.bds_node is not None:
-            async with self.client(
-                self.founder_wallet, self.bds_node.index, session
-            ) as client:
+            async with self.client(self.founder_wallet, self.bds_node.index, session) as client:
                 try:
                     service_bds = normalize_value((await client.get_bds_status()).raw)
                 except Exception as exc:  # noqa: BLE001
@@ -1733,7 +1692,7 @@ class E2ERunner:
             node_url=self.nodes[node_index].rpc_url,
             chain_id=self.network["chain_id"],
             wallet=wallet,
-            config=config,
+            config=config or self.default_client_config(),
             session=session,
         )
 
@@ -1799,9 +1758,7 @@ class E2ERunner:
 
     async def xian_py_smoke(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         founder = self.founder_wallet
-        wallets = [
-            derive_wallet(self.seed, f"e2e-wallet-{index}") for index in range(4)
-        ]
+        wallets = [derive_wallet(self.seed, f"e2e-wallet-{index}") for index in range(4)]
         funding = await self.fund_wallets(session, wallets, amount=5_000)
 
         conflict_contract = f"con_e2e_conflict_{short_hash(self.run_id)}"
@@ -1937,22 +1894,14 @@ class E2ERunner:
     ) -> dict[str, Any]:
         operator = derive_wallet(self.seed, "contract-orchestration-operator")
         spender = derive_wallet(self.seed, "contract-orchestration-spender")
-        permit_spender = derive_wallet(
-            self.seed, "contract-orchestration-permit-spender"
-        )
+        permit_spender = derive_wallet(self.seed, "contract-orchestration-permit-spender")
         invalid_permit_spender = derive_wallet(
             self.seed, "contract-orchestration-invalid-permit-spender"
         )
         recipient = derive_wallet(self.seed, "contract-orchestration-recipient")
-        permit_recipient = derive_wallet(
-            self.seed, "contract-orchestration-permit-recipient"
-        )
-        duplicate_sender = derive_wallet(
-            self.seed, "contract-orchestration-duplicate-sender"
-        )
-        duplicate_recipient = derive_wallet(
-            self.seed, "contract-orchestration-duplicate-recipient"
-        )
+        permit_recipient = derive_wallet(self.seed, "contract-orchestration-permit-recipient")
+        duplicate_sender = derive_wallet(self.seed, "contract-orchestration-duplicate-sender")
+        duplicate_recipient = derive_wallet(self.seed, "contract-orchestration-duplicate-recipient")
         await self.fund_wallets(
             session,
             [
@@ -2062,17 +2011,11 @@ class E2ERunner:
             if family_info["first"] != alpha_name or family_info["second"] != beta_name:
                 raise E2EError("factory returned unexpected child contract names")
             if alpha_construct[0] != factory_name or beta_construct[0] != factory_name:
-                raise E2EError(
-                    "child constructor caller did not resolve to the factory contract"
-                )
+                raise E2EError("child constructor caller did not resolve to the factory contract")
             if alpha_construct[1] != operator.public_key:
-                raise E2EError(
-                    "child constructor signer drifted from the external caller"
-                )
+                raise E2EError("child constructor signer drifted from the external caller")
             if alpha_construct[2] != alpha_name:
-                raise E2EError(
-                    "child constructor submission_name did not match the child contract"
-                )
+                raise E2EError("child constructor submission_name did not match the child contract")
             if (
                 alpha_developer != factory_name
                 or alpha_deployer != factory_name
@@ -2126,9 +2069,7 @@ class E2ERunner:
             bad_artifact_source = await client.get_contract_source(bad_artifact_name)
             bad_artifact_absent = bad_artifact_source is None
             if not bad_artifact_absent:
-                raise E2EError(
-                    "tampered deployment_artifacts unexpectedly persisted a contract"
-                )
+                raise E2EError("tampered deployment_artifacts unexpectedly persisted a contract")
 
         async with self.client(operator, 2, session) as client:
             touch_submission = await client.send_tx(
@@ -2569,18 +2510,14 @@ class E2ERunner:
         if Decimal(str(duplicate_sender_balance_after)) >= Decimal(
             str(duplicate_sender_balance_before or 0)
         ):
-            raise E2EError(
-                "duplicate submission did not reduce the sender balance at all"
-            )
+            raise E2EError("duplicate submission did not reduce the sender balance at all")
         duplicate_nonce_after = await tr.get_nonce_async(
             self.nodes[2].rpc_url,
             duplicate_sender.public_key,
             session=session,
         )
         if duplicate_nonce_after != duplicate_nonce_before + 1:
-            raise E2EError(
-                "duplicate submission advanced the sender nonce by more than one"
-            )
+            raise E2EError("duplicate submission advanced the sender nonce by more than one")
 
         async with self.client(operator, 4, session) as client:
             private_submission = await client.send_tx(
@@ -2597,10 +2534,7 @@ class E2ERunner:
                 private_submission,
                 label="orchestration-private-probe",
             )
-            if (
-                private_receipt["accepted"] is not False
-                and private_receipt["success"] is not False
-            ):
+            if private_receipt["accepted"] is not False and private_receipt["success"] is not False:
                 raise E2EError("private dynamic probe unexpectedly succeeded")
 
             failed_submission = await client.send_tx(
@@ -2614,10 +2548,7 @@ class E2ERunner:
                 failed_submission,
                 label="orchestration-failed-family",
             )
-            if (
-                failed_receipt["accepted"] is not False
-                and failed_receipt["success"] is not False
-            ):
+            if failed_receipt["accepted"] is not False and failed_receipt["success"] is not False:
                 raise E2EError("factory batch failure probe unexpectedly succeeded")
             failed_good_source = await client.get_contract_source(failed_good_name)
             failed_bad_source = await client.get_contract_source(failed_bad_name)
@@ -2700,9 +2631,7 @@ class E2ERunner:
                         name=contract_name,
                         **self.contract_submission_kwargs(
                             name=contract_name,
-                            code=read_text(
-                                WORKLOADS_DIR / "e2e" / "atomic_rollback.py"
-                            ),
+                            code=read_text(WORKLOADS_DIR / "e2e" / "atomic_rollback.py"),
                         ),
                         chi=120_000,
                         wait_for_tx=True,
@@ -2893,9 +2822,9 @@ class E2ERunner:
         self.contracts["x402_settlement"] = contract_name
         resource = f"https://e2e.xian.local/x402/{self.run_id}/data"
         payment_id = f"pay_{short_hash(f'{self.run_id}:x402:payment')}{'0' * 16}"
-        deadline = (
-            datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=15)
-        ).strftime("%Y-%m-%d %H:%M:%S")
+        deadline = (datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=15)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
 
         buyer_balance_before = Decimal(
             str(
@@ -3083,8 +3012,7 @@ class E2ERunner:
                     (
                         normalize_value(event.raw)
                         for event in events
-                        if (event.data_indexed or {}).get("payment_id")
-                        == payload.payment_id
+                        if (event.data_indexed or {}).get("payment_id") == payload.payment_id
                     ),
                     None,
                 )
@@ -3125,13 +3053,10 @@ class E2ERunner:
 
         if not (INTENTKIT_DIR / "pyproject.toml").exists():
             raise E2EError(
-                "IntentKit x402 phase requires the xian-intentkit sibling repo at "
-                f"{INTENTKIT_DIR}"
+                f"IntentKit x402 phase requires the xian-intentkit sibling repo at {INTENTKIT_DIR}"
             )
         if not INTENTKIT_X402_SMOKE_SCRIPT.exists():
-            raise E2EError(
-                f"IntentKit x402 smoke script not found: {INTENTKIT_X402_SMOKE_SCRIPT}"
-            )
+            raise E2EError(f"IntentKit x402 smoke script not found: {INTENTKIT_X402_SMOKE_SCRIPT}")
 
         contract_name = self.contracts.get("x402_settlement")
         if not contract_name:
@@ -3319,9 +3244,7 @@ class E2ERunner:
         }
 
     async def periodic_load(self, session: aiohttp.ClientSession) -> dict[str, Any]:
-        wallets = [
-            derive_wallet(self.seed, f"periodic-wallet-{index}") for index in range(4)
-        ]
+        wallets = [derive_wallet(self.seed, f"periodic-wallet-{index}") for index in range(4)]
         await self.fund_wallets(session, wallets, amount=3_000)
         streams = []
         tx_records = []
@@ -3351,9 +3274,7 @@ class E2ERunner:
         started = time.monotonic()
         for index, wallet in enumerate(wallets):
             recipient = wallets[(index + 1) % len(wallets)].public_key
-            streams.append(
-                send_periodic(wallet, index % len(self.nodes), recipient, index)
-            )
+            streams.append(send_periodic(wallet, index % len(self.nodes), recipient, index))
         await asyncio.gather(*streams)
         elapsed = time.monotonic() - started
         return {
@@ -3463,11 +3384,7 @@ class E2ERunner:
                     for block in window
                 ]
                 matched_block = next(
-                    (
-                        block
-                        for block in window
-                        if predicate(block.get("metadata") or {})
-                    ),
+                    (block for block in window if predicate(block.get("metadata") or {})),
                     None,
                 )
                 if matched_block is not None:
@@ -3504,9 +3421,7 @@ class E2ERunner:
 
     async def conflict_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         conflict_contract = self.contracts["conflict"]
-        wallets = [
-            derive_wallet(self.seed, f"conflict-wallet-{index}") for index in range(2)
-        ]
+        wallets = [derive_wallet(self.seed, f"conflict-wallet-{index}") for index in range(2)]
         await self.fund_wallets(session, wallets, amount=5_000)
 
         async def claim_once(wallet: Wallet, node_index: int, slot: str, label: str):
@@ -3632,9 +3547,7 @@ class E2ERunner:
             "contract_heavy": contract_heavy,
             "total_transactions": total_transactions,
             "elapsed_seconds": round(elapsed, 3),
-            "approx_tps": round(total_transactions / elapsed, 3)
-            if elapsed > 0
-            else None,
+            "approx_tps": round(total_transactions / elapsed, 3) if elapsed > 0 else None,
         }
 
     async def simulator_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
@@ -3693,9 +3606,7 @@ class E2ERunner:
         baseline = await asyncio.gather(
             *(one_simulation(index) for index in range(len(self.nodes)))
         )
-        baseline_failures = [
-            item for item in baseline if item["status"] not in (None, 0)
-        ]
+        baseline_failures = [item for item in baseline if item["status"] not in (None, 0)]
         if baseline_failures:
             raise E2EError("baseline simulator checks failed before burst load")
 
@@ -3746,15 +3657,10 @@ class E2ERunner:
         unexpected_failures = [
             item
             for item in failures
-            if not any(
-                marker in str(item.get("result", ""))
-                for marker in allowed_failure_markers
-            )
+            if not any(marker in str(item.get("result", "")) for marker in allowed_failure_markers)
         ]
         if unexpected_failures:
-            raise E2EError(
-                f"simulator phase had {len(unexpected_failures)} unexpected failures"
-            )
+            raise E2EError(f"simulator phase had {len(unexpected_failures)} unexpected failures")
         if not successes:
             raise E2EError("simulator phase had no successful simulations under load")
 
@@ -3829,8 +3735,7 @@ class E2ERunner:
                 if len(bucket["samples"]) < 3:
                     if isinstance(result, list):
                         sample_result = [
-                            normalize_value(getattr(item, "raw", item))
-                            for item in result[:3]
+                            normalize_value(getattr(item, "raw", item)) for item in result[:3]
                         ]
                     else:
                         sample_result = normalize_value(getattr(result, "raw", result))
@@ -3883,16 +3788,13 @@ class E2ERunner:
         env = make_localnet_env(self.args)
         current_height = await latest_height(session, service.rpc_url)
         catchup_wallets = [
-            derive_wallet(self.seed, f"bds-catchup-{index}")
-            for index in range(len(self.nodes))
+            derive_wallet(self.seed, f"bds-catchup-{index}") for index in range(len(self.nodes))
         ]
         await self.fund_wallets(session, catchup_wallets, amount=5_000)
 
         secondary_bds: dict[str, Any] | None = None
         try:
-            async with self.client(
-                self.founder_wallet, service.index, session
-            ) as client:
+            async with self.client(self.founder_wallet, service.index, session) as client:
                 baseline_status = await wait_for_bds_indexed(
                     client,
                     target_height=current_height,
@@ -3927,12 +3829,8 @@ class E2ERunner:
 
             catchup_height = await latest_height(session, service.rpc_url)
 
-            async with self.client(
-                self.founder_wallet, service.index, session
-            ) as client:
-                outage_pressure_task = asyncio.create_task(
-                    bds_query_pressure(client, rounds=12)
-                )
+            async with self.client(self.founder_wallet, service.index, session) as client:
+                outage_pressure_task = asyncio.create_task(bds_query_pressure(client, rounds=12))
                 lagged_status = await wait_for_bds_backlog(
                     client,
                     target_height=catchup_height,
@@ -3941,9 +3839,7 @@ class E2ERunner:
                 outage_pressure = await outage_pressure_task
                 for name in ("list_blocks", "list_events", "state_history"):
                     if outage_pressure.get(name, {}).get("failure", 0) == 0:
-                        raise E2EError(
-                            f"BDS outage pressure did not surface a failure for {name}"
-                        )
+                        raise E2EError(f"BDS outage pressure did not surface a failure for {name}")
 
             run_localnet_compose("start", LOCALNET_POSTGRES_SERVICE, env=env)
             healthy_state = await wait_for_container_state(
@@ -3952,12 +3848,8 @@ class E2ERunner:
                 timeout_seconds=45.0,
             )
 
-            async with self.client(
-                self.founder_wallet, service.index, session
-            ) as client:
-                recovery_pressure_task = asyncio.create_task(
-                    bds_query_pressure(client, rounds=40)
-                )
+            async with self.client(self.founder_wallet, service.index, session) as client:
+                recovery_pressure_task = asyncio.create_task(bds_query_pressure(client, rounds=40))
                 recovered_status = await wait_for_bds_recovered(
                     client,
                     target_height=catchup_height,
@@ -3973,16 +3865,10 @@ class E2ERunner:
                 for record in catchup_records[-3:]:
                     indexed_tx = await client.get_indexed_tx(record["tx_hash"])
                     if indexed_tx is None:
-                        raise E2EError(
-                            "BDS catch-up did not index a lagged transaction"
-                        )
+                        raise E2EError("BDS catch-up did not index a lagged transaction")
                     indexed_txs.append(normalize_value(indexed_tx.raw))
-                indexed_events = await client.get_events_for_tx(
-                    catchup_records[-1]["tx_hash"]
-                )
-                indexed_state = await client.get_state_for_tx(
-                    catchup_records[-1]["tx_hash"]
-                )
+                indexed_events = await client.get_events_for_tx(catchup_records[-1]["tx_hash"])
+                indexed_state = await client.get_state_for_tx(catchup_records[-1]["tx_hash"])
                 if not indexed_events or not indexed_state:
                     raise E2EError("BDS catch-up did not restore indexed tx details")
 
@@ -3992,15 +3878,11 @@ class E2ERunner:
                 reset=True,
             )
             secondary_initial_height = int(
-                self.query_secondary_bds_scalar(
-                    "SELECT COALESCE(MAX(height), 0) FROM blocks;"
-                )
+                self.query_secondary_bds_scalar("SELECT COALESCE(MAX(height), 0) FROM blocks;")
                 or "0"
             )
             if secondary_initial_height < catchup_height:
-                raise E2EError(
-                    "secondary BDS initial sync did not reach the current chain height"
-                )
+                raise E2EError("secondary BDS initial sync did not reach the current chain height")
 
             secondary_outage_state = await self.stop_secondary_bds_postgres()
 
@@ -4030,27 +3912,20 @@ class E2ERunner:
                 reset=False,
             )
             secondary_resumed_height = int(
-                self.query_secondary_bds_scalar(
-                    "SELECT COALESCE(MAX(height), 0) FROM blocks;"
-                )
+                self.query_secondary_bds_scalar("SELECT COALESCE(MAX(height), 0) FROM blocks;")
                 or "0"
             )
             if secondary_resumed_height < secondary_target_height:
-                raise E2EError(
-                    "secondary BDS resume sync did not catch up to the latest height"
-                )
+                raise E2EError("secondary BDS resume sync did not catch up to the latest height")
             latest_secondary_tx_hash = secondary_catchup_records[-1]["tx_hash"]
             secondary_tx_count = int(
                 self.query_secondary_bds_scalar(
-                    "SELECT COUNT(*) FROM transactions "
-                    f"WHERE hash = '{latest_secondary_tx_hash}';"
+                    f"SELECT COUNT(*) FROM transactions WHERE hash = '{latest_secondary_tx_hash}';"
                 )
                 or "0"
             )
             if secondary_tx_count == 0:
-                raise E2EError(
-                    "secondary BDS did not index the lagged transaction after restart"
-                )
+                raise E2EError("secondary BDS did not index the lagged transaction after restart")
 
             secondary_bds = {
                 "start": secondary_start,
@@ -4061,9 +3936,7 @@ class E2ERunner:
                 "restarted_state": secondary_restarted_state,
                 "resumed_indexed_height": secondary_resumed_height,
                 "target_height": secondary_target_height,
-                "lagged_tx_hashes": [
-                    record["tx_hash"] for record in secondary_catchup_records
-                ],
+                "lagged_tx_hashes": [record["tx_hash"] for record in secondary_catchup_records],
                 "lagged_receipts": secondary_catchup_records,
                 "lagged_tx_count": secondary_tx_count,
             }
@@ -4084,9 +3957,7 @@ class E2ERunner:
                 "indexed_events_for_last_tx": normalize_value(
                     [item.raw for item in indexed_events]
                 ),
-                "indexed_state_for_last_tx": normalize_value(
-                    [item.raw for item in indexed_state]
-                ),
+                "indexed_state_for_last_tx": normalize_value([item.raw for item in indexed_state]),
                 "secondary_bds": normalize_value(secondary_bds),
             }
         finally:
@@ -4125,9 +3996,7 @@ class E2ERunner:
                 if self.sample_event_tx_hash
                 else []
             )
-            current_state = await client.get_state(
-                self.contracts["conflict"], "counter"
-            )
+            current_state = await client.get_state(self.contracts["conflict"], "counter")
             current_events = await client.list_events(
                 self.contracts["conflict"],
                 "Claimed",
@@ -4156,8 +4025,7 @@ class E2ERunner:
             if keys_page_one.get("has_more") and not next_after:
                 raise E2EError("/keys response reported more results without a cursor")
             if next_after and (
-                not isinstance(keys_page_two, dict)
-                or len(keys_page_two.get("items", [])) == 0
+                not isinstance(keys_page_two, dict) or len(keys_page_two.get("items", [])) == 0
             ):
                 raise E2EError("/keys pagination did not return the follow-up page")
             after_event_id = None
@@ -4375,10 +4243,7 @@ class E2ERunner:
                 if execution is None:
                     continue
                 execution_hash = execution.get("hash")
-                if (
-                    isinstance(execution_hash, str)
-                    and execution_hash.lower() == expected_tx_hash
-                ):
+                if isinstance(execution_hash, str) and execution_hash.lower() == expected_tx_hash:
                     return payload
                 if expected_slot is None:
                     continue
@@ -4409,9 +4274,7 @@ class E2ERunner:
             )
             return {"tx_hash": trigger_receipt["tx_hash"], "slot": slot}
 
-    async def validator_governance_phase(
-        self, session: aiohttp.ClientSession
-    ) -> dict[str, Any]:
+    async def validator_governance_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         (
             node0_wallet,
             node1_wallet,
@@ -4473,9 +4336,7 @@ class E2ERunner:
                     {"account": node3_key},
                 )
             if node4_power_record["power"] != 15:
-                raise E2EError(
-                    "restarted validator did not converge to the updated member power"
-                )
+                raise E2EError("restarted validator did not converge to the updated member power")
 
             async with self.client(node4_wallet, 4, session) as node4_client:
                 remove_vote = await self.approve_members_vote(
@@ -4516,13 +4377,9 @@ class E2ERunner:
                     timeout=5.0,
                 )
                 if len(validators_after_remove["result"]["validators"]) != 4:
-                    raise E2EError(
-                        "validator removal did not reduce the validator set to 4"
-                    )
+                    raise E2EError("validator removal did not reduce the validator set to 4")
 
-                registration_fee = await node0.get_state(
-                    "masternodes", "registration_fee"
-                )
+                registration_fee = await node0.get_state("masternodes", "registration_fee")
                 approval_submission = await node3.send_tx(
                     "currency",
                     "approve",
@@ -4546,9 +4403,7 @@ class E2ERunner:
                     chi=GOVERNANCE_TX_CHI,
                     wait_for_tx=True,
                 )
-                ensure_positive_submission(
-                    register_submission, label="re-register-node3"
-                )
+                ensure_positive_submission(register_submission, label="re-register-node3")
                 add_vote = await self.approve_members_vote(
                     node0,
                     [
@@ -4586,9 +4441,7 @@ class E2ERunner:
                     timeout=5.0,
                 )
                 if len(validators_after_add["result"]["validators"]) != 5:
-                    raise E2EError(
-                        "validator add-back did not restore the validator set to 5"
-                    )
+                    raise E2EError("validator add-back did not restore the validator set to 5")
                 validator_record = await node0.call(
                     "masternodes",
                     "get_validator",
@@ -4683,12 +4536,7 @@ class E2ERunner:
 
         for node in self.nodes:
             patch_dir = (
-                STACK_DIR
-                / ".localnet"
-                / node.moniker
-                / ".cometbft"
-                / "config"
-                / "state-patches"
+                STACK_DIR / ".localnet" / node.moniker / ".cometbft" / "config" / "state-patches"
             )
             patch_dir.mkdir(parents=True, exist_ok=True)
             (patch_dir / f"{patch_id}.json").write_text(
@@ -4767,9 +4615,7 @@ class E2ERunner:
                 target_height=activation_height,
                 timeout_seconds=60.0,
             )
-            patch_status = await client.call(
-                "governance", "get_patch", {"patch_id": patch_id}
-            )
+            patch_status = await client.call("governance", "get_patch", {"patch_id": patch_id})
             contract_status = await client.call(
                 self.contracts["patch_target"],
                 "get_status",
@@ -4811,9 +4657,7 @@ class E2ERunner:
                 "get_status",
                 {},
             )
-        if normalize_value(restarted_contract_status) != normalize_value(
-            contract_status
-        ):
+        if normalize_value(restarted_contract_status) != normalize_value(contract_status):
             raise E2EError(
                 "restarted validator did not converge to the activated state patch state"
             )
@@ -4830,24 +4674,19 @@ class E2ERunner:
             "governance_min_patch_delay": governance_min_patch_delay,
             "activation_wait_timeout_seconds": activation_wait_timeout,
             "proposal_receipt": proposal_receipt,
-            "proposal_vote": normalize_value(proposal_vote)
-            if existing_patch is None
-            else None,
+            "proposal_vote": normalize_value(proposal_vote) if existing_patch is None else None,
             "governance_patch": normalize_value(patch_status),
             "patch_target_status": normalize_value(contract_status),
             "local_bundle_inventory": normalize_value(local_bundles),
             "scheduled_inventory": normalize_value(scheduled),
             "indexed_state_patches": normalize_value(indexed_state_patches),
-            "indexed_state_patches_for_block": normalize_value(
-                indexed_state_patches_for_block
-            ),
+            "indexed_state_patches_for_block": normalize_value(indexed_state_patches_for_block),
             "indexed_status": indexed_status,
         }
 
     async def logging_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         initial_log_positions = {
-            node.moniker: log_file_positions(local_log_paths(node))
-            for node in self.nodes
+            node.moniker: log_file_positions(local_log_paths(node)) for node in self.nodes
         }
         initial_logs = {
             moniker: [str(path) for path in positions]
@@ -4875,9 +4714,7 @@ class E2ERunner:
                 chi=DEFAULT_TRANSFER_CHI,
                 wait_for_tx=True,
             )
-            debug_receipt = ensure_positive_submission(
-                debug_submission, label="debug-log-trigger"
-            )
+            debug_receipt = ensure_positive_submission(debug_submission, label="debug-log-trigger")
 
         update_logging_config(level="TRACE", trace_logging=True, json_logging=False)
         await self.restart_localnet_and_wait_ready(session)
@@ -4889,9 +4726,7 @@ class E2ERunner:
                 chi=DEFAULT_TRANSFER_CHI,
                 wait_for_tx=True,
             )
-            trace_receipt = ensure_positive_submission(
-                trace_submission, label="trace-log-trigger"
-            )
+            trace_receipt = ensure_positive_submission(trace_submission, label="trace-log-trigger")
 
         debug_lines: dict[str, list[str]] = {}
         checktx_lines: dict[str, list[str]] = {}
@@ -4916,19 +4751,13 @@ class E2ERunner:
                 line for line in text.splitlines() if "stage=finalize_tx_result" in line
             ][-3:]
             if not debug_lines[node.moniker]:
-                raise E2EError(
-                    f"DEBUG logs missing stage=execute_tx for {node.moniker}"
-                )
+                raise E2EError(f"DEBUG logs missing stage=execute_tx for {node.moniker}")
             if not trace_lines[node.moniker]:
-                raise E2EError(
-                    f"TRACE logs missing stage=finalize_tx_result for {node.moniker}"
-                )
+                raise E2EError(f"TRACE logs missing stage=finalize_tx_result for {node.moniker}")
         if not any(checktx_lines.values()):
             raise E2EError("WARNING logs missing stage=check_tx rejection probe")
 
-        update_logging_config(
-            level=self.args.log_level, trace_logging=False, json_logging=False
-        )
+        update_logging_config(level=self.args.log_level, trace_logging=False, json_logging=False)
         await self.restart_localnet_and_wait_ready(session)
 
         return {
@@ -5097,7 +4926,8 @@ class E2ERunner:
             raise E2EError("shielded proof config zero_root drifted from contract root")
         if proof_config["root_history_window"] != 32:
             raise E2EError(
-                f"shielded token root history window drifted: {proof_config['root_history_window']!r}"
+                "shielded token root history window drifted: "
+                f"{proof_config['root_history_window']!r}"
             )
         if proof_config["circuit_family"] != "shielded_note_v3":
             raise E2EError("shielded token circuit family drifted")
@@ -5105,10 +4935,7 @@ class E2ERunner:
             raise E2EError("shielded relay circuit family drifted")
         if relay_proof_config["statement_version"] != "4":
             raise E2EError("shielded relay statement version drifted")
-        if (
-            initial_tree_state["root"] != zero_root
-            or initial_tree_state["note_count"] != 0
-        ):
+        if initial_tree_state["root"] != zero_root or initial_tree_state["note_count"] != 0:
             raise E2EError("shielded token did not start from the zero root")
 
         (
@@ -5126,14 +4953,10 @@ class E2ERunner:
             self.client(node4_wallet, 4, session) as node4,
         ):
             registry_entries = {
-                entry["action"]: entry
-                for entry in registry_manifest["registry_entries"]
+                entry["action"]: entry for entry in registry_manifest["registry_entries"]
             }
             registry_entries.update(
-                {
-                    entry["action"]: entry
-                    for entry in relay_registry_manifest["registry_entries"]
-                }
+                {entry["action"]: entry for entry in relay_registry_manifest["registry_entries"]}
             )
             for action in ("deposit", "transfer", "withdraw", "relay_transfer"):
                 vk_entry = registry_entries[action]
@@ -5161,9 +4984,7 @@ class E2ERunner:
                                 "vk_hex": vk_entry["vk_hex"],
                                 "circuit_name": vk_entry["circuit_name"],
                                 "version": vk_entry["version"],
-                                "artifact_contract_name": vk_entry[
-                                    "artifact_contract_name"
-                                ],
+                                "artifact_contract_name": vk_entry["artifact_contract_name"],
                                 "circuit_family": vk_entry["circuit_family"],
                                 "statement_version": vk_entry["statement_version"],
                                 "tree_depth": vk_entry["tree_depth"],
@@ -5176,9 +4997,7 @@ class E2ERunner:
                                 "artifact_hash": vk_entry["artifact_hash"],
                                 "warning": vk_entry["warning"],
                             },
-                            "summary": (
-                                f"register {action} vk for localnet shielded e2e"
-                            ),
+                            "summary": (f"register {action} vk for localnet shielded e2e"),
                         },
                         expected_final_status="executed",
                         label_prefix=f"register-vk-{action}",
@@ -5365,9 +5184,7 @@ class E2ERunner:
             alice_wallet_snapshot = ShieldedWallet.from_json(alice_wallet.to_json())
             if alice_wallet_snapshot.available_balance() != 70:
                 raise E2EError("shielded wallet snapshot restore drifted")
-            alice_wallet_seed = ShieldedWallet.from_seed_json(
-                alice_wallet.export_seed_json()
-            )
+            alice_wallet_seed = ShieldedWallet.from_seed_json(alice_wallet.export_seed_json())
             if alice_wallet_seed.owner_secret != alice_wallet.owner_secret:
                 raise E2EError("shielded wallet seed export/import drifted")
             recovered_alice = recover_encrypted_notes(
@@ -5445,23 +5262,17 @@ class E2ERunner:
                 owner_secret=bob_keys.owner_secret,
                 viewing_private_key=bob_keys.viewing_private_key,
             )
-            alice_sync_after_transfer = alice_wallet.sync_records(
-                records_after_transfer
-            )
+            alice_sync_after_transfer = alice_wallet.sync_records(records_after_transfer)
             bob_sync_after_transfer = bob_wallet.sync_records(records_after_transfer)
             if len(alice_sync_after_transfer.discovered_notes) != 1:
-                raise E2EError(
-                    "shielded wallet did not discover the transfer change note"
-                )
+                raise E2EError("shielded wallet did not discover the transfer change note")
             if len(bob_sync_after_transfer.discovered_notes) != 1:
                 raise E2EError("shielded wallet did not discover Bob's transfer note")
             alice_spent_after_transfer = alice_wallet.apply_spent_nullifiers(
                 transfer.input_nullifiers
             )
             if len(alice_spent_after_transfer) != 2:
-                raise E2EError(
-                    "shielded wallet did not mark both transfer inputs spent"
-                )
+                raise E2EError("shielded wallet did not mark both transfer inputs spent")
             if alice_wallet.available_balance() != 45:
                 raise E2EError("shielded wallet transfer balance drifted")
             if bob_wallet.available_balance() != 25:
@@ -5534,27 +5345,17 @@ class E2ERunner:
             if len(alice_sync_after_relay.discovered_notes) != 1:
                 raise E2EError("shielded wallet did not discover Alice's relayed note")
             if len(bob_sync_after_relay.discovered_notes) != 1:
-                raise E2EError(
-                    "shielded wallet did not discover Bob's relay change note"
-                )
-            bob_spent_after_relay = bob_wallet.apply_spent_nullifiers(
-                relay_proof.input_nullifiers
-            )
+                raise E2EError("shielded wallet did not discover Bob's relay change note")
+            bob_spent_after_relay = bob_wallet.apply_spent_nullifiers(relay_proof.input_nullifiers)
             if len(bob_spent_after_relay) != 1:
-                raise E2EError(
-                    "shielded wallet did not mark the relay transfer input spent"
-                )
+                raise E2EError("shielded wallet did not mark the relay transfer input spent")
             if alice_wallet.available_balance() != 54:
                 raise E2EError("shielded relay recipient balance drifted")
             if bob_wallet.available_balance() != 14:
                 raise E2EError("shielded relay change balance drifted")
 
-            relay_indexed_tx = await founder_client.get_indexed_tx(
-                relay_receipt["tx_hash"]
-            )
-            relay_events = await founder_client.get_events_for_tx(
-                relay_receipt["tx_hash"]
-            )
+            relay_indexed_tx = await founder_client.get_indexed_tx(relay_receipt["tx_hash"])
+            relay_events = await founder_client.get_events_for_tx(relay_receipt["tx_hash"])
             if relay_indexed_tx is None:
                 raise E2EError("shielded relay indexed transaction missing")
             if relay_indexed_tx.sender != relayer.public_key:
@@ -5566,8 +5367,7 @@ class E2ERunner:
                 (
                     event
                     for event in relay_events
-                    if event.event == "ShieldedRelayTransfer"
-                    and event.signer == relayer.public_key
+                    if event.event == "ShieldedRelayTransfer" and event.signer == relayer.public_key
                 ),
                 None,
             )
@@ -5627,20 +5427,14 @@ class E2ERunner:
                     "shielded withdraw did not leave the expected note count "
                     f"(saw {len(records_after_withdraw)})"
                 )
-            alice_sync_after_withdraw = alice_wallet.sync_records(
-                records_after_withdraw
-            )
+            alice_sync_after_withdraw = alice_wallet.sync_records(records_after_withdraw)
             if len(alice_sync_after_withdraw.discovered_notes) != 1:
-                raise E2EError(
-                    "shielded wallet did not discover the withdraw change note"
-                )
+                raise E2EError("shielded wallet did not discover the withdraw change note")
             alice_spent_after_withdraw = alice_wallet.apply_spent_nullifiers(
                 withdraw.input_nullifiers
             )
             if len(alice_spent_after_withdraw) != 1:
-                raise E2EError(
-                    "shielded wallet did not mark the withdraw input as spent"
-                )
+                raise E2EError("shielded wallet did not mark the withdraw input as spent")
             if alice_wallet.available_balance() != 34:
                 raise E2EError("shielded wallet withdraw balance drifted")
             alice_public = await founder_client.call(
@@ -5734,16 +5528,12 @@ class E2ERunner:
                 label="shielded-exact-withdraw",
             )
             if exact_withdraw.output_commitments != []:
-                raise E2EError(
-                    "shielded exact withdraw proof unexpectedly produced commitments"
-                )
+                raise E2EError("shielded exact withdraw proof unexpectedly produced commitments")
             alice_spent_after_exact_withdraw = alice_wallet.apply_spent_nullifiers(
                 exact_withdraw.input_nullifiers
             )
             if len(alice_spent_after_exact_withdraw) != 1:
-                raise E2EError(
-                    "shielded wallet did not mark the exact withdraw input as spent"
-                )
+                raise E2EError("shielded wallet did not mark the exact withdraw input as spent")
             if alice_wallet.available_balance() != 9:
                 raise E2EError("shielded wallet exact withdraw balance drifted")
             alice_public_after_exact = await founder_client.call(
@@ -5767,13 +5557,9 @@ class E2ERunner:
                 {"root": zero_root},
             )
             if current_root_before_recent == zero_root:
-                raise E2EError(
-                    "shielded recent-root probe did not start from a non-current root"
-                )
+                raise E2EError("shielded recent-root probe did not start from a non-current root")
             if not zero_root_still_accepted:
-                raise E2EError(
-                    "shielded token no longer accepts the zero root in-window"
-                )
+                raise E2EError("shielded token no longer accepts the zero root in-window")
 
             recent_root_deposit_payloads = [
                 recent_root_note.to_output().encrypt_for(
@@ -5781,9 +5567,7 @@ class E2ERunner:
                     viewing_public_key=alice_keys.viewing_public_key,
                 )
             ]
-            recent_root_deposit_payload_hashes = output_payload_hashes(
-                recent_root_deposit_payloads
-            )
+            recent_root_deposit_payload_hashes = output_payload_hashes(recent_root_deposit_payloads)
             recent_root_deposit = prover.prove_deposit(
                 ShieldedDepositRequest(
                     asset_id=asset_id,
@@ -5815,20 +5599,14 @@ class E2ERunner:
                 founder_client,
                 minimum_count=8,
             )
-            alice_sync_after_recent_root = alice_wallet.sync_records(
-                records_after_recent_root
-            )
+            alice_sync_after_recent_root = alice_wallet.sync_records(records_after_recent_root)
             if len(alice_sync_after_recent_root.discovered_notes) != 1:
-                raise E2EError(
-                    "shielded wallet did not discover the recent-root deposit note"
-                )
+                raise E2EError("shielded wallet did not discover the recent-root deposit note")
             if alice_wallet.available_balance() != 14:
                 raise E2EError("shielded wallet recent-root balance drifted")
             alice_wallet_restored = ShieldedWallet.from_json(alice_wallet.to_json())
             if alice_wallet_restored.available_balance() != 14:
-                raise E2EError(
-                    "shielded wallet restore drifted after recent-root deposit"
-                )
+                raise E2EError("shielded wallet restore drifted after recent-root deposit")
             bob_wallet.sync_records(records_after_recent_root)
 
             service_relay_plan = bob_wallet.build_relay_transfer(
@@ -5838,9 +5616,7 @@ class E2ERunner:
                 chain_id=self.network["chain_id"],
                 fee=1,
             )
-            service_relay_proof = relay_prover.prove_relay_transfer(
-                service_relay_plan.request
-            )
+            service_relay_proof = relay_prover.prove_relay_transfer(service_relay_plan.request)
             service_relay_hashes = await founder_client.call(
                 token_name,
                 "hash_relay_transfer",
@@ -5850,10 +5626,7 @@ class E2ERunner:
                     "relayer_fee": service_relay_proof.relayer_fee,
                 },
             )
-            if (
-                service_relay_hashes["relay_binding"]
-                != service_relay_proof.relay_binding
-            ):
+            if service_relay_hashes["relay_binding"] != service_relay_proof.relay_binding:
                 raise E2EError(
                     "shielded relayer-service binding drifted before submission: "
                     f"chain_id={self.network['chain_id']!r} "
@@ -5862,10 +5635,7 @@ class E2ERunner:
                     f"proof={service_relay_proof.relay_binding!r} "
                     f"contract={service_relay_hashes['relay_binding']!r}"
                 )
-            if (
-                service_relay_hashes["execution_tag"]
-                != service_relay_proof.execution_tag
-            ):
+            if service_relay_hashes["execution_tag"] != service_relay_proof.execution_tag:
                 raise E2EError(
                     "shielded relayer-service execution tag drifted before "
                     "submission: "
@@ -5917,13 +5687,8 @@ class E2ERunner:
                     relayer_service_info = normalize_value(relayer_info.raw)
                     if relayer_info.raw.get("auth", {}).get("scheme") != "bearer":
                         raise E2EError("shielded relayer info auth scheme drifted")
-                    if (
-                        relayer_info.raw.get("auth", {}).get("public_quote")
-                        is not False
-                    ):
-                        raise E2EError(
-                            "shielded relayer quote unexpectedly became public"
-                        )
+                    if relayer_info.raw.get("auth", {}).get("public_quote") is not False:
+                        raise E2EError("shielded relayer quote unexpectedly became public")
 
                     try:
                         await public_relayer_client.get_quote(
@@ -5934,15 +5699,9 @@ class E2ERunner:
                     except TransportError as exc:
                         relayer_unauth_quote_error = str(exc)
                     else:
-                        raise E2EError(
-                            "shielded relayer accepted an unauthenticated quote request"
-                        )
-                    if "missing or invalid bearer token" not in (
-                        relayer_unauth_quote_error or ""
-                    ):
-                        raise E2EError(
-                            "shielded relayer unauthenticated quote failure drifted"
-                        )
+                        raise E2EError("shielded relayer accepted an unauthenticated quote request")
+                    if "missing or invalid bearer token" not in (relayer_unauth_quote_error or ""):
+                        raise E2EError("shielded relayer unauthenticated quote failure drifted")
 
                     try:
                         await authed_relayer_client.get_quote(
@@ -5984,9 +5743,7 @@ class E2ERunner:
                     except TransportError as exc:
                         relayer_low_fee_error = str(exc)
                     else:
-                        raise E2EError(
-                            "shielded relayer accepted a below-minimum relay fee"
-                        )
+                        raise E2EError("shielded relayer accepted a below-minimum relay fee")
                     if "minimum note relay fee" not in (relayer_low_fee_error or ""):
                         raise E2EError("shielded relayer low-fee rejection drifted")
 
@@ -6009,17 +5766,15 @@ class E2ERunner:
                                 )
                             await asyncio.sleep(0.5)
 
-                    submitted_job = (
-                        await authed_relayer_client.submit_shielded_note_relay_transfer(
-                            contract=token_name,
-                            old_root=service_relay_proof.old_root,
-                            input_nullifiers=service_relay_proof.input_nullifiers,
-                            output_commitments=service_relay_proof.output_commitments,
-                            proof_hex=service_relay_proof.proof_hex,
-                            relayer_fee=service_relay_proof.relayer_fee,
-                            output_payloads=service_relay_plan.output_payloads,
-                            client_request_id=f"{self.run_id}-service-relay",
-                        )
+                    submitted_job = await authed_relayer_client.submit_shielded_note_relay_transfer(
+                        contract=token_name,
+                        old_root=service_relay_proof.old_root,
+                        input_nullifiers=service_relay_proof.input_nullifiers,
+                        output_commitments=service_relay_proof.output_commitments,
+                        proof_hex=service_relay_proof.proof_hex,
+                        relayer_fee=service_relay_proof.relayer_fee,
+                        output_payloads=service_relay_plan.output_payloads,
+                        client_request_id=f"{self.run_id}-service-relay",
                     )
                     service_relay_job = normalize_value(submitted_job.raw)
                     if submitted_job.status == "failed":
@@ -6027,14 +5782,10 @@ class E2ERunner:
                             "shielded relayer service relay failed: "
                             f"{submitted_job.error or submitted_job.raw}"
                         )
-                    submitted_job = await wait_for_relayer_job_finalized(
-                        submitted_job.job_id
-                    )
+                    submitted_job = await wait_for_relayer_job_finalized(submitted_job.job_id)
                     service_relay_job = normalize_value(submitted_job.raw)
 
-                    fetched_job = await authed_relayer_client.get_job(
-                        submitted_job.job_id
-                    )
+                    fetched_job = await authed_relayer_client.get_job(submitted_job.job_id)
                     if fetched_job.job_id != submitted_job.job_id:
                         raise E2EError("shielded relayer job lookup job_id drifted")
                     if fetched_job.status == "failed":
@@ -6053,15 +5804,9 @@ class E2ERunner:
                     except TransportError as exc:
                         relayer_job_unauth_error = str(exc)
                     else:
-                        raise E2EError(
-                            "shielded relayer allowed unauthenticated job lookup"
-                        )
-                    if "missing or invalid bearer token" not in (
-                        relayer_job_unauth_error or ""
-                    ):
-                        raise E2EError(
-                            "shielded relayer unauthenticated job lookup drifted"
-                        )
+                        raise E2EError("shielded relayer allowed unauthenticated job lookup")
+                    if "missing or invalid bearer token" not in (relayer_job_unauth_error or ""):
+                        raise E2EError("shielded relayer unauthenticated job lookup drifted")
             finally:
                 relayer_shutdown_status = stop_shielded_relayer_runtime(
                     bind_host=DEFAULT_SHIELDED_RELAYER_HOST,
@@ -6082,9 +5827,7 @@ class E2ERunner:
                         "shielded relayer info still responded after the runtime was stopped"
                     )
             if not relayer_down_error:
-                raise E2EError(
-                    "shielded relayer stop check did not produce a transport error"
-                )
+                raise E2EError("shielded relayer stop check did not produce a transport error")
 
             records_after_service_relay = await indexed_note_records(
                 founder_client,
@@ -6096,12 +5839,8 @@ class E2ERunner:
                     "shielded relayer service tx was not indexed into enough note "
                     f"records before timeout: {len(records_after_service_relay)}"
                 )
-            alice_sync_after_service_relay = alice_wallet.sync_records(
-                records_after_service_relay
-            )
-            bob_sync_after_service_relay = bob_wallet.sync_records(
-                records_after_service_relay
-            )
+            alice_sync_after_service_relay = alice_wallet.sync_records(records_after_service_relay)
+            bob_sync_after_service_relay = bob_wallet.sync_records(records_after_service_relay)
             if len(alice_sync_after_service_relay.discovered_notes) != 1:
                 raise E2EError(
                     "shielded relayer service did not deliver Alice's relayed note "
@@ -6118,21 +5857,16 @@ class E2ERunner:
                 service_relay_proof.input_nullifiers
             )
             if len(bob_spent_after_service_relay) != 1:
-                raise E2EError(
-                    "shielded relayer service did not mark the relay input as spent"
-                )
+                raise E2EError("shielded relayer service did not mark the relay input as spent")
             if submitted_job.tx_hash is not None:
                 service_relay_indexed_tx = await founder_client.get_indexed_tx(
                     submitted_job.tx_hash
                 )
                 if service_relay_indexed_tx is None:
                     raise E2EError("shielded relayer service tx was not indexed")
-                service_relay_events = await founder_client.get_events_for_tx(
-                    submitted_job.tx_hash
-                )
+                service_relay_events = await founder_client.get_events_for_tx(submitted_job.tx_hash)
                 if not any(
-                    event.event == "ShieldedRelayTransfer"
-                    and event.signer == relayer.public_key
+                    event.event == "ShieldedRelayTransfer" and event.signer == relayer.public_key
                     for event in service_relay_events
                 ):
                     raise E2EError("shielded relayer service event stream drifted")
@@ -6201,9 +5935,7 @@ class E2ERunner:
         if bob_public != 20:
             raise E2EError(f"shielded Bob public balance drifted: {bob_public!r}")
         if relayer_public != 3:
-            raise E2EError(
-                f"shielded relayer public balance drifted: {relayer_public!r}"
-            )
+            raise E2EError(f"shielded relayer public balance drifted: {relayer_public!r}")
         expected_supply_state = {
             "total_supply": 100,
             "public_supply": 73,
@@ -6211,10 +5943,7 @@ class E2ERunner:
         }
         if normalize_value(supply_state) != expected_supply_state:
             raise E2EError(f"shielded supply state drifted: {supply_state!r}")
-        if (
-            alice_wallet.available_balance() != 18
-            or bob_wallet.available_balance() != 9
-        ):
+        if alice_wallet.available_balance() != 18 or bob_wallet.available_balance() != 9:
             raise E2EError("shielded wallet final balances drifted")
         if final_note_count != 10:
             raise E2EError(f"shielded note count drifted: {final_note_count!r}")
@@ -6275,30 +6004,18 @@ class E2ERunner:
             "wallet_checks": {
                 "alice_available_balance": alice_wallet.available_balance(),
                 "bob_available_balance": bob_wallet.available_balance(),
-                "alice_discovered_after_deposit": len(
-                    alice_sync_after_deposit.discovered_notes
-                ),
-                "alice_discovered_after_transfer": len(
-                    alice_sync_after_transfer.discovered_notes
-                ),
-                "alice_discovered_after_relay": len(
-                    alice_sync_after_relay.discovered_notes
-                ),
-                "alice_discovered_after_withdraw": len(
-                    alice_sync_after_withdraw.discovered_notes
-                ),
+                "alice_discovered_after_deposit": len(alice_sync_after_deposit.discovered_notes),
+                "alice_discovered_after_transfer": len(alice_sync_after_transfer.discovered_notes),
+                "alice_discovered_after_relay": len(alice_sync_after_relay.discovered_notes),
+                "alice_discovered_after_withdraw": len(alice_sync_after_withdraw.discovered_notes),
                 "alice_discovered_after_recent_root": len(
                     alice_sync_after_recent_root.discovered_notes
                 ),
                 "alice_discovered_after_service_relay": len(
                     alice_sync_after_service_relay.discovered_notes
                 ),
-                "bob_discovered_after_transfer": len(
-                    bob_sync_after_transfer.discovered_notes
-                ),
-                "bob_discovered_after_relay": len(
-                    bob_sync_after_relay.discovered_notes
-                ),
+                "bob_discovered_after_transfer": len(bob_sync_after_transfer.discovered_notes),
+                "bob_discovered_after_relay": len(bob_sync_after_relay.discovered_notes),
                 "bob_discovered_after_service_relay": len(
                     bob_sync_after_service_relay.discovered_notes
                 ),
@@ -6335,9 +6052,7 @@ class E2ERunner:
                         "nullifier_digest": relay_event.data.get("nullifier_digest")
                         if relay_event.data
                         else None,
-                        "old_root": relay_event.data.get("old_root")
-                        if relay_event.data
-                        else None,
+                        "old_root": relay_event.data.get("old_root") if relay_event.data else None,
                         "new_root": relay_event.data_indexed.get("new_root")
                         if relay_event.data_indexed
                         else None,
@@ -6347,9 +6062,7 @@ class E2ERunner:
                         "output_count": relay_event.data.get("output_count")
                         if relay_event.data
                         else None,
-                        "fee": relay_event.data.get("fee")
-                        if relay_event.data
-                        else None,
+                        "fee": relay_event.data.get("fee") if relay_event.data else None,
                         "expires_at": relay_event.data.get("expires_at")
                         if relay_event.data
                         else None,
@@ -6370,15 +6083,9 @@ class E2ERunner:
             "records_sample": normalize_value(
                 {
                     "after_deposit": normalize_note_records(records_after_deposit),
-                    "after_transfer_tail": normalize_note_records(
-                        records_after_transfer[-2:]
-                    ),
-                    "after_relay_tail": normalize_note_records(
-                        records_after_relay[-2:]
-                    ),
-                    "after_withdraw_tail": normalize_note_records(
-                        records_after_withdraw[-2:]
-                    ),
+                    "after_transfer_tail": normalize_note_records(records_after_transfer[-2:]),
+                    "after_relay_tail": normalize_note_records(records_after_relay[-2:]),
+                    "after_withdraw_tail": normalize_note_records(records_after_withdraw[-2:]),
                     "after_recent_root_tail": normalize_note_records(
                         records_after_recent_root[-2:]
                     ),
@@ -6453,16 +6160,10 @@ class E2ERunner:
 
         for node in self.nodes:
             status = perf_statuses[node.moniker]
-            access_estimates_enabled = status.get(
-                "parallel_execution_access_estimates_enabled"
-            )
+            access_estimates_enabled = status.get("parallel_execution_access_estimates_enabled")
             node_config = {
-                "parallel_execution_enabled": bool(
-                    status.get("parallel_execution_enabled")
-                ),
-                "parallel_execution_workers": int(
-                    status.get("parallel_execution_workers", 0) or 0
-                ),
+                "parallel_execution_enabled": bool(status.get("parallel_execution_enabled")),
+                "parallel_execution_workers": int(status.get("parallel_execution_workers", 0) or 0),
                 "parallel_execution_min_transactions": int(
                     status.get("parallel_execution_min_transactions", 0) or 0
                 ),
@@ -6470,17 +6171,13 @@ class E2ERunner:
                     status.get("parallel_execution_max_speculative_waves", 0) or 0
                 ),
                 "parallel_execution_min_wave_acceptance_ratio": float(
-                    status.get("parallel_execution_min_wave_acceptance_ratio", 0.0)
-                    or 0.0
+                    status.get("parallel_execution_min_wave_acceptance_ratio", 0.0) or 0.0
                 ),
                 "parallel_execution_low_acceptance_min_wave_size": int(
-                    status.get("parallel_execution_low_acceptance_min_wave_size", 0)
-                    or 0
+                    status.get("parallel_execution_low_acceptance_min_wave_size", 0) or 0
                 ),
                 "parallel_execution_access_estimates_enabled": (
-                    None
-                    if access_estimates_enabled is None
-                    else bool(access_estimates_enabled)
+                    None if access_estimates_enabled is None else bool(access_estimates_enabled)
                 ),
             }
             perf_config[node.moniker] = node_config
@@ -6503,8 +6200,7 @@ class E2ERunner:
 
         if len(observed_access_estimates_enabled) > 1:
             raise E2EError(
-                "parallel execution access-estimate config differs across nodes: "
-                f"{perf_config}"
+                f"parallel execution access-estimate config differs across nodes: {perf_config}"
             )
         access_estimates_enabled = (
             next(iter(observed_access_estimates_enabled))
@@ -6532,9 +6228,7 @@ class E2ERunner:
                 if matched:
                     unexpected[node.moniker] = matched
             if unexpected:
-                raise E2EError(
-                    f"parallel execution metadata appeared while disabled: {unexpected}"
-                )
+                raise E2EError(f"parallel execution metadata appeared while disabled: {unexpected}")
             return {
                 "parallel_config": parallel_config,
                 "perf_config": perf_config,
@@ -6552,9 +6246,7 @@ class E2ERunner:
         custom_metadata_matches = {}
         for batch_name, predicate in batch_expectations:
             batch = custom_summary["batches"][batch_name]
-            custom_metadata_matches[
-                batch_name
-            ] = await self.wait_for_parallel_metadata_match(
+            custom_metadata_matches[batch_name] = await self.wait_for_parallel_metadata_match(
                 session,
                 label=f"parallel batch {batch_name}",
                 min_height=batch.get("min_height"),
@@ -6581,9 +6273,7 @@ class E2ERunner:
                 known_transfer_window.get("min_height") is None
                 or known_transfer_window.get("max_height") is None
             ):
-                raise E2EError(
-                    "parallel transfer_fanout did not report a committed height window"
-                )
+                raise E2EError("parallel transfer_fanout did not report a committed height window")
             known_transfer_max_height = known_transfer_window.get("max_height")
             if known_transfer_max_height is not None:
                 await asyncio.gather(
@@ -6717,14 +6407,10 @@ class E2ERunner:
                 "reason": "chaos_cycles <= 0",
             }
 
-        wallets = [
-            derive_wallet(self.seed, f"chaos-wallet-{index}") for index in range(6)
-        ]
+        wallets = [derive_wallet(self.seed, f"chaos-wallet-{index}") for index in range(6)]
         await self.fund_wallets(session, wallets, amount=10_000)
 
-        candidate_nodes = [
-            node for node in self.nodes if node.index != 0 and not node.bds_node
-        ]
+        candidate_nodes = [node for node in self.nodes if node.index != 0 and not node.bds_node]
         if not candidate_nodes:
             candidate_nodes = [node for node in self.nodes if node.index != 0]
         if not candidate_nodes:
@@ -6788,9 +6474,7 @@ class E2ERunner:
                 window=self.args.app_hash_window,
             )
             if not app_hash["ok"]:
-                raise E2EError(
-                    f"app hash mismatch detected during chaos cycle {cycle_index}"
-                )
+                raise E2EError(f"app hash mismatch detected during chaos cycle {cycle_index}")
 
             cycles.append(
                 {
@@ -6959,9 +6643,7 @@ class E2ERunner:
                     window=self.args.app_hash_window,
                 )
                 if not app_hash["ok"]:
-                    raise E2EError(
-                        f"app hash mismatch detected during soak batch {batch_index}"
-                    )
+                    raise E2EError(f"app hash mismatch detected during soak batch {batch_index}")
                 progress_checks.append(
                     {
                         "batch": batch_index,
@@ -7027,12 +6709,14 @@ class E2ERunner:
         if start_phase not in valid_phase_names:
             raise E2EError(f"unknown start phase: {start_phase}")
         if start_phase != "00-bootstrap" and self.args.resume_dir is None:
-            raise E2EError(
-                "--resume-dir is required when --start-phase is not 00-bootstrap"
-            )
+            raise E2EError("--resume-dir is required when --start-phase is not 00-bootstrap")
 
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=30, sock_connect=5, sock_read=25),
+            timeout=aiohttp.ClientTimeout(
+                total=max(60.0, self.args.rpc_timeout_seconds),
+                sock_connect=5,
+                sock_read=60,
+            ),
             connector=aiohttp.TCPConnector(limit=256, ttl_dns_cache=300),
         ) as session:
             phase_sequence = bind_phase_sequence(self, session)
@@ -7067,14 +6751,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run a layered 5-validator testnet-shaped localnet end-to-end program",
     )
-    parser.add_argument(
-        "--bootstrap", action=argparse.BooleanOptionalAction, default=True
-    )
+    parser.add_argument("--bootstrap", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--build", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--nodes", type=int, default=DEFAULT_LOCALNET_NODES)
-    parser.add_argument(
-        "--topology", choices=("integrated", "fidelity"), default="integrated"
-    )
+    parser.add_argument("--topology", choices=("integrated", "fidelity"), default="integrated")
     parser.add_argument("--genesis-network", default=DEFAULT_GENESIS_NETWORK)
     parser.add_argument("--bds-node-index", type=int, default=0)
     parser.add_argument("--port-offset", type=int, default=1000)
@@ -7087,9 +6767,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the optional IntentKit-backed Xian x402 payment phase.",
     )
     parser.add_argument("--rpc-timeout-seconds", type=float, default=180.0)
-    parser.add_argument(
-        "--state-sample-nodes", type=int, default=DEFAULT_LOCALNET_NODES
-    )
+    parser.add_argument("--state-sample-nodes", type=int, default=DEFAULT_LOCALNET_NODES)
     parser.add_argument("--app-hash-window", type=int, default=DEFAULT_LOCALNET_NODES)
     parser.add_argument("--receipt-workers", type=int, default=24)
     parser.add_argument("--periodic-rounds", type=int, default=8)

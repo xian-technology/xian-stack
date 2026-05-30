@@ -31,7 +31,8 @@ def sample_memory(network: dict) -> dict[str, float]:
     """Return memory in MiB per logical node."""
     result = subprocess.run(
         ["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.MemUsage}}"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     container_mem = {}
     for line in result.stdout.strip().split("\n"):
@@ -112,7 +113,12 @@ def main():
             elif r == 1:
                 xian.send_tx(contract="con_counter", function="increment", kwargs={}, chi=100)
             else:
-                xian.send_tx(contract="con_counter", function="add", kwargs={"amount": tx_count % 100}, chi=100)
+                xian.send_tx(
+                    contract="con_counter",
+                    function="add",
+                    kwargs={"amount": tx_count % 100},
+                    chi=100,
+                )
             tx_count += 1
         except Exception:
             errors += 1
@@ -148,7 +154,9 @@ def main():
         xs = [i * sample_interval / 60 for i in range(n)]
         x_mean = sum(xs) / n
         y_mean = sum(values) / n
-        slope = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, values)) / max(sum((x - x_mean) ** 2 for x in xs), 1e-9)
+        slope = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, values)) / max(
+            sum((x - x_mean) ** 2 for x in xs), 1e-9
+        )
 
         if abs(slope) < 0.5:
             verdict = "STABLE"

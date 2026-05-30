@@ -229,12 +229,8 @@ def write_node_config(
                 workers=parallel_execution_workers,
                 min_transactions=parallel_execution_min_transactions,
                 max_speculative_waves=parallel_execution_max_speculative_waves,
-                min_wave_acceptance_ratio=(
-                    parallel_execution_min_wave_acceptance_ratio
-                ),
-                low_acceptance_min_wave_size=(
-                    parallel_execution_low_acceptance_min_wave_size
-                ),
+                min_wave_acceptance_ratio=(parallel_execution_min_wave_acceptance_ratio),
+                low_acceptance_min_wave_size=(parallel_execution_low_acceptance_min_wave_size),
                 warm_workers=parallel_execution_warm_workers,
                 access_estimates_enabled=(parallel_execution_access_estimates_enabled),
             ),
@@ -244,9 +240,7 @@ def write_node_config(
                 database="xian",
                 user="xian",
                 password="xian",
-                rpc_url=bds_runtime_rpc_url(node, topology)
-                if bds_enabled
-                else "",
+                rpc_url=bds_runtime_rpc_url(node, topology) if bds_enabled else "",
             ),
         )
     )
@@ -261,27 +255,19 @@ def write_node_config(
     if consensus_timeout_propose is not None:
         config["consensus"]["timeout_propose"] = consensus_timeout_propose
     if consensus_timeout_propose_delta is not None:
-        config["consensus"][
-            "timeout_propose_delta"
-        ] = consensus_timeout_propose_delta
+        config["consensus"]["timeout_propose_delta"] = consensus_timeout_propose_delta
     if consensus_timeout_prevote is not None:
         config["consensus"]["timeout_prevote"] = consensus_timeout_prevote
     if consensus_timeout_prevote_delta is not None:
-        config["consensus"][
-            "timeout_prevote_delta"
-        ] = consensus_timeout_prevote_delta
+        config["consensus"]["timeout_prevote_delta"] = consensus_timeout_prevote_delta
     if consensus_timeout_precommit is not None:
         config["consensus"]["timeout_precommit"] = consensus_timeout_precommit
     if consensus_timeout_precommit_delta is not None:
-        config["consensus"][
-            "timeout_precommit_delta"
-        ] = consensus_timeout_precommit_delta
+        config["consensus"]["timeout_precommit_delta"] = consensus_timeout_precommit_delta
     if consensus_timeout_commit is not None:
         config["consensus"]["timeout_commit"] = consensus_timeout_commit
     if consensus_skip_timeout_commit is not None:
-        config["consensus"][
-            "skip_timeout_commit"
-        ] = consensus_skip_timeout_commit
+        config["consensus"]["skip_timeout_commit"] = consensus_skip_timeout_commit
     if mempool_size is not None:
         config["mempool"]["size"] = mempool_size
     if mempool_cache_size is not None:
@@ -301,11 +287,15 @@ def main():
     global BASE_P2P_PORT, BASE_RPC_PORT, BASE_METRICS_PORT, BASE_XIAN_METRICS_PORT
     parser = argparse.ArgumentParser(description="Initialize a local N-node network")
     parser.add_argument(
-        "--nodes", "-n", type=int, default=4,
+        "--nodes",
+        "-n",
+        type=int,
+        default=4,
         help="Number of validator nodes (minimum 4)",
     )
     parser.add_argument(
-        "--chain-id", default="xian-localnet-1",
+        "--chain-id",
+        default="xian-localnet-1",
         help="Chain ID for the network",
     )
     parser.add_argument(
@@ -317,7 +307,8 @@ def main():
         ),
     )
     parser.add_argument(
-        "--clean", action="store_true",
+        "--clean",
+        action="store_true",
         help="Remove existing .localnet directory before init",
     )
     parser.add_argument(
@@ -390,17 +381,11 @@ def main():
         "XIAN_LOCALNET_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED",
         DEFAULT_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED,
     )
-    transaction_trace_logging = env_bool(
-        "XIAN_LOCALNET_TRANSACTION_TRACE_LOGGING", False
-    )
+    transaction_trace_logging = env_bool("XIAN_LOCALNET_TRANSACTION_TRACE_LOGGING", False)
     app_log_level = env_str("XIAN_LOCALNET_APP_LOG_LEVEL", "INFO")
     app_log_json = env_bool("XIAN_LOCALNET_APP_LOG_JSON", False)
-    app_log_rotation_hours = env_int(
-        "XIAN_LOCALNET_APP_LOG_ROTATION_HOURS", 1
-    )
-    app_log_retention_days = env_int(
-        "XIAN_LOCALNET_APP_LOG_RETENTION_DAYS", 7
-    )
+    app_log_rotation_hours = env_int("XIAN_LOCALNET_APP_LOG_ROTATION_HOURS", 1)
+    app_log_retention_days = env_int("XIAN_LOCALNET_APP_LOG_RETENTION_DAYS", 7)
     profiling_enabled = env_bool(
         "XIAN_LOCALNET_PROFILE_ENABLED",
         env_bool("XIAN_PERF_ENABLED", False),
@@ -419,30 +404,20 @@ def main():
 
     block_policy_mode = env_optional_str("XIAN_LOCALNET_BLOCK_POLICY_MODE")
     block_policy_interval = env_optional_str("XIAN_LOCALNET_BLOCK_POLICY_INTERVAL")
-    consensus_timeout_propose = env_optional_str(
-        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE"
-    )
+    consensus_timeout_propose = env_optional_str("XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE")
     consensus_timeout_propose_delta = env_optional_str(
         "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE_DELTA"
     )
-    consensus_timeout_prevote = env_optional_str(
-        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PREVOTE"
-    )
+    consensus_timeout_prevote = env_optional_str("XIAN_LOCALNET_CONSENSUS_TIMEOUT_PREVOTE")
     consensus_timeout_prevote_delta = env_optional_str(
         "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PREVOTE_DELTA"
     )
-    consensus_timeout_precommit = env_optional_str(
-        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PRECOMMIT"
-    )
+    consensus_timeout_precommit = env_optional_str("XIAN_LOCALNET_CONSENSUS_TIMEOUT_PRECOMMIT")
     consensus_timeout_precommit_delta = env_optional_str(
         "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PRECOMMIT_DELTA"
     )
-    consensus_timeout_commit = env_optional_str(
-        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_COMMIT"
-    )
-    consensus_skip_timeout_commit = env_optional_bool(
-        "XIAN_LOCALNET_SKIP_TIMEOUT_COMMIT"
-    )
+    consensus_timeout_commit = env_optional_str("XIAN_LOCALNET_CONSENSUS_TIMEOUT_COMMIT")
+    consensus_skip_timeout_commit = env_optional_bool("XIAN_LOCALNET_SKIP_TIMEOUT_COMMIT")
     mempool_size = env_optional_int("XIAN_LOCALNET_MEMPOOL_SIZE")
     mempool_cache_size = env_optional_int("XIAN_LOCALNET_MEMPOOL_CACHE_SIZE")
 
@@ -450,17 +425,11 @@ def main():
         block_policy_mode = block_policy_mode or "on_demand"
         block_policy_interval = block_policy_interval or "0s"
         consensus_timeout_propose = consensus_timeout_propose or "500ms"
-        consensus_timeout_propose_delta = (
-            consensus_timeout_propose_delta or "100ms"
-        )
+        consensus_timeout_propose_delta = consensus_timeout_propose_delta or "100ms"
         consensus_timeout_prevote = consensus_timeout_prevote or "200ms"
-        consensus_timeout_prevote_delta = (
-            consensus_timeout_prevote_delta or "50ms"
-        )
+        consensus_timeout_prevote_delta = consensus_timeout_prevote_delta or "50ms"
         consensus_timeout_precommit = consensus_timeout_precommit or "200ms"
-        consensus_timeout_precommit_delta = (
-            consensus_timeout_precommit_delta or "50ms"
-        )
+        consensus_timeout_precommit_delta = consensus_timeout_precommit_delta or "50ms"
         consensus_timeout_commit = consensus_timeout_commit or "200ms"
         if consensus_skip_timeout_commit is None:
             consensus_skip_timeout_commit = True
@@ -482,17 +451,12 @@ def main():
             "account_public_key": n["account_public_key"],
             "name": n["moniker"],
             "power": 10,
-            "priv_validator_key": n["validator_material"][
-                "priv_validator_key"
-            ],
+            "priv_validator_key": n["validator_material"]["priv_validator_key"],
         }
         for n in nodes
     ]
 
-    print(
-        "Building genesis block "
-        f"(submitting {args.genesis_network} system contracts)..."
-    )
+    print(f"Building genesis block (submitting {args.genesis_network} system contracts)...")
     genesis = build_local_network_genesis(
         chain_id=args.chain_id,
         founder_private_key=founder_key,
@@ -516,9 +480,7 @@ def main():
             consensus_timeout_prevote=consensus_timeout_prevote,
             consensus_timeout_prevote_delta=consensus_timeout_prevote_delta,
             consensus_timeout_precommit=consensus_timeout_precommit,
-            consensus_timeout_precommit_delta=(
-                consensus_timeout_precommit_delta
-            ),
+            consensus_timeout_precommit_delta=(consensus_timeout_precommit_delta),
             consensus_timeout_commit=consensus_timeout_commit,
             consensus_skip_timeout_commit=consensus_skip_timeout_commit,
             mempool_size=mempool_size,
@@ -527,12 +489,8 @@ def main():
             topology=args.topology,
             parallel_execution_enabled=parallel_execution_enabled,
             parallel_execution_workers=parallel_execution_workers,
-            parallel_execution_min_transactions=(
-                parallel_execution_min_transactions
-            ),
-            parallel_execution_max_speculative_waves=(
-                parallel_execution_max_speculative_waves
-            ),
+            parallel_execution_min_transactions=(parallel_execution_min_transactions),
+            parallel_execution_max_speculative_waves=(parallel_execution_max_speculative_waves),
             parallel_execution_min_wave_acceptance_ratio=(
                 parallel_execution_min_wave_acceptance_ratio
             ),
@@ -553,7 +511,9 @@ def main():
         idx = node["index"]
         host_p2p = BASE_P2P_PORT + idx * PORT_STRIDE
         host_rpc = BASE_RPC_PORT + idx * PORT_STRIDE
-        print(f"  {node['moniker']}: RPC=:{host_rpc} P2P=:{host_p2p} id={node['node_key']['node_id'][:12]}...")
+        print(
+            f"  {node['moniker']}: RPC=:{host_rpc} P2P=:{host_p2p} id={node['node_key']['node_id'][:12]}..."
+        )
 
     # 4. Write docker-compose-localnet.yml
     write_compose_file(
@@ -580,9 +540,7 @@ def main():
                 "host_rpc_port": BASE_RPC_PORT + n["index"] * PORT_STRIDE,
                 "host_p2p_port": BASE_P2P_PORT + n["index"] * PORT_STRIDE,
                 "host_metrics_port": BASE_METRICS_PORT + n["index"] * PORT_STRIDE,
-                "host_xian_metrics_port": (
-                    BASE_XIAN_METRICS_PORT + n["index"] * PORT_STRIDE
-                ),
+                "host_xian_metrics_port": (BASE_XIAN_METRICS_PORT + n["index"] * PORT_STRIDE),
                 "abci_container": (
                     f"xian-{n['moniker']}"
                     if args.topology == "integrated"
@@ -590,9 +548,7 @@ def main():
                 ),
                 "cometbft_container": f"xian-{n['moniker']}",
                 "account_public_key": n["account_public_key"],
-                "account_private_key": n["validator_material"][
-                    "validator_private_key_hex"
-                ],
+                "account_private_key": n["validator_material"]["validator_private_key_hex"],
                 "bds_enabled": bds_enabled and n["index"] == bds_node_index,
             }
             for n in nodes
@@ -603,16 +559,10 @@ def main():
             "workers": parallel_execution_workers,
             "min_transactions": parallel_execution_min_transactions,
             "max_speculative_waves": parallel_execution_max_speculative_waves,
-            "min_wave_acceptance_ratio": (
-                parallel_execution_min_wave_acceptance_ratio
-            ),
-            "low_acceptance_min_wave_size": (
-                parallel_execution_low_acceptance_min_wave_size
-            ),
+            "min_wave_acceptance_ratio": (parallel_execution_min_wave_acceptance_ratio),
+            "low_acceptance_min_wave_size": (parallel_execution_low_acceptance_min_wave_size),
             "warm_workers": parallel_execution_warm_workers,
-            "access_estimates_enabled": (
-                parallel_execution_access_estimates_enabled
-            ),
+            "access_estimates_enabled": (parallel_execution_access_estimates_enabled),
         },
         "profiling": {
             "enabled": profiling_enabled,
@@ -763,9 +713,7 @@ def write_compose_file(
                     f"{host_xian_metrics}:9108",
                 ],
             }
-            services[moniker] = {
-                key: value for key, value in service.items()
-            }
+            services[moniker] = {key: value for key, value in service.items()}
             if bds_enabled and idx == bds_node_index:
                 services[moniker]["depends_on"] = {
                     LOCALNET_POSTGRES_SERVICE: {

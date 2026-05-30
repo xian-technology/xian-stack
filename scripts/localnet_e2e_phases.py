@@ -57,7 +57,4 @@ def bind_phase_sequence(
     runner: Any,
     session: Any,
 ) -> list[tuple[str, PhaseCallable]]:
-    return [
-        (phase.name, bind_phase(runner, phase, session))
-        for phase in PHASE_SPECS
-    ]
+    return [(phase.name, bind_phase(runner, phase, session)) for phase in PHASE_SPECS]

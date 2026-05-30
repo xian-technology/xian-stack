@@ -50,18 +50,14 @@ class StackBdsWiringTests(unittest.TestCase):
         self.assertIn("bds_catchup_flag='--bds-catchup-enabled'", makefile)
 
     def test_stack_env_exports_bds_runtime_options(self) -> None:
-        stack_env = (STACK_ROOT / "scripts" / "stack-env.sh").read_text(
-            encoding="utf-8"
-        )
+        stack_env = (STACK_ROOT / "scripts" / "stack-env.sh").read_text(encoding="utf-8")
 
         for env_key in BDS_RUNTIME_ENV_KEYS:
             with self.subTest(env_key=env_key):
                 self.assertIn(f"export {env_key}=", stack_env)
 
     def test_compose_overlay_passes_bds_runtime_environment(self) -> None:
-        compose = (STACK_ROOT / "docker-compose-abci-bds.yml").read_text(
-            encoding="utf-8"
-        )
+        compose = (STACK_ROOT / "docker-compose-abci-bds.yml").read_text(encoding="utf-8")
 
         for env_key in BDS_RUNTIME_ENV_KEYS:
             with self.subTest(env_key=env_key):

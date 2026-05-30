@@ -19,9 +19,7 @@ sys.modules[SPEC.name] = localnet_e2e
 SPEC.loader.exec_module(localnet_e2e)
 
 SMOKE_MODULE_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "scripts"
-    / "intentkit-x402-localnet-smoke.py"
+    Path(__file__).resolve().parents[1] / "scripts" / "intentkit-x402-localnet-smoke.py"
 )
 SMOKE_SPEC = importlib.util.spec_from_file_location(
     "intentkit_x402_localnet_smoke",
@@ -88,9 +86,7 @@ class LocalnetX402PhaseTests(unittest.TestCase):
         self.assertEqual({"ok": True, "value": 42}, payload)
 
     def test_normalize_value_sorts_nested_dicts_for_stable_state_comparison(self) -> None:
-        normalized = localnet_e2e.normalize_value(
-            {"outer": {"b": Decimal("2"), "a": Decimal("1")}}
-        )
+        normalized = localnet_e2e.normalize_value({"outer": {"b": Decimal("2"), "a": Decimal("1")}})
 
         self.assertEqual(["outer"], list(normalized))
         self.assertEqual(["a", "b"], list(normalized["outer"]))
@@ -123,9 +119,7 @@ class LocalnetX402PhaseTests(unittest.TestCase):
             )
 
             args = intentkit_x402_smoke.resolve_args(
-                intentkit_x402_smoke.build_parser().parse_args(
-                    ["--config", str(config_path)]
-                )
+                intentkit_x402_smoke.build_parser().parse_args(["--config", str(config_path)])
             )
 
         self.assertEqual("buyer-test-key", args.buyer_private_key)

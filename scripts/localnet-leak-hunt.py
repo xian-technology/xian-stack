@@ -84,6 +84,7 @@ def get_process_memory(node: dict) -> dict[str, float]:
     cometbft_rss = _process_rss(cometbft_container, "cometbft node")
     return {"python": python_rss, "cometbft": cometbft_rss}
 
+
 def main():
     duration_minutes = int(sys.argv[1]) if len(sys.argv) > 1 else 10
     sample_interval = 15  # seconds — more granular than the memwatch
@@ -105,7 +106,7 @@ def main():
     hdr = f"{'Time':>5} {'TXs':>6}"
     for node in nodes:
         short = node["moniker"]
-        hdr += f"  {short+'-py':>10} {short+'-cb':>10}"
+        hdr += f"  {short + '-py':>10} {short + '-cb':>10}"
     print(hdr)
     print("-" * len(hdr))
 
@@ -140,7 +141,12 @@ def main():
             elif r == 1:
                 xian.send_tx(contract="con_counter", function="increment", kwargs={}, chi=100)
             else:
-                xian.send_tx(contract="con_counter", function="add", kwargs={"amount": tx_count % 100}, chi=100)
+                xian.send_tx(
+                    contract="con_counter",
+                    function="add",
+                    kwargs={"amount": tx_count % 100},
+                    chi=100,
+                )
             tx_count += 1
         except Exception:
             errors += 1
@@ -174,9 +180,8 @@ def main():
             xs = [s["time"] / 60 for s in all_samples]
             x_mean = sum(xs) / n
             y_mean = sum(values) / n
-            slope = (
-                sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, values))
-                / max(sum((x - x_mean) ** 2 for x in xs), 1e-9)
+            slope = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, values)) / max(
+                sum((x - x_mean) ** 2 for x in xs), 1e-9
             )
 
             if abs(slope) < 0.3:

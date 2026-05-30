@@ -208,18 +208,10 @@ class WorkloadContext:
                         f"{node.rpc_url}/status",
                         timeout=2.0,
                     )
-                    latest_height = int(
-                        payload["result"]["sync_info"][
-                            "latest_block_height"
-                        ]
-                    )
+                    latest_height = int(payload["result"]["sync_info"]["latest_block_height"])
                     if latest_height < 1:
-                        raise WorkloadError(
-                            f"{node.moniker} has not produced a block yet"
-                        )
-                    await self.client(
-                        self.founder_wallet, index
-                    ).refresh_nonce()
+                        raise WorkloadError(f"{node.moniker} has not produced a block yet")
+                    await self.client(self.founder_wallet, index).refresh_nonce()
                     ready_count += 1
                 except Exception as exc:  # noqa: PERF203
                     last_error = exc
@@ -294,11 +286,7 @@ class WorkloadContext:
             function=function,
             kwargs=kwargs,
             chi=chi,
-            nonce=(
-                nonce
-                if nonce is not None
-                else await self.next_nonce(wallet, submission_index)
-            ),
+            nonce=(nonce if nonce is not None else await self.next_nonce(wallet, submission_index)),
             chain_id=self.chain_id,
             mode=mode,
             wait_for_tx=False,
@@ -360,14 +348,8 @@ class WorkloadContext:
         if not record.tx_hash:
             raise WorkloadError(f"{record.label}: missing tx hash")
 
-        ordered_nodes = [
-            node
-            for node in self.nodes
-            if node.rpc_url == record.rpc_url
-        ] + [
-            node
-            for node in self.nodes
-            if node.rpc_url != record.rpc_url
+        ordered_nodes = [node for node in self.nodes if node.rpc_url == record.rpc_url] + [
+            node for node in self.nodes if node.rpc_url != record.rpc_url
         ]
         clients = [
             XianAsync(
@@ -426,6 +408,7 @@ class WorkloadContext:
         founder = self.founder_wallet
 
         for query in queries:
+
             async def fetch_node_state(node: LocalnetNode) -> tuple[str, Any]:
                 client = XianAsync(
                     node_url=node.rpc_url,
@@ -441,14 +424,9 @@ class WorkloadContext:
                 return node.moniker, normalize_value(value)
 
             values = dict(
-                await asyncio.gather(
-                    *(fetch_node_state(node) for node in self.sample_nodes)
-                )
+                await asyncio.gather(*(fetch_node_state(node) for node in self.sample_nodes))
             )
-            canonical = {
-                moniker: canonical_json(value)
-                for moniker, value in values.items()
-            }
+            canonical = {moniker: canonical_json(value) for moniker, value in values.items()}
             unique = set(canonical.values())
             ok = len(unique) == 1
             all_match = all_match and ok
@@ -506,9 +484,7 @@ def coerce_numeric(value: Any) -> int | float | Decimal:
         try:
             return Decimal(value)
         except Exception as exc:  # noqa: BLE001
-            raise WorkloadError(
-                f"expected numeric workload value, got {value!r}"
-            ) from exc
+            raise WorkloadError(f"expected numeric workload value, got {value!r}") from exc
     raise WorkloadError(f"expected numeric workload value, got {value!r}")
 
 
@@ -671,43 +647,27 @@ def require_all_admitted(
             not record.response.submitted
             or (
                 record.response.accepted is False
-                and not WorkloadContext._is_duplicate_tx_message(
-                    record.response.message
-                )
+                and not WorkloadContext._is_duplicate_tx_message(record.response.message)
             )
         )
     ]
     failures = [record.label for record in failed_records]
     if failures:
-        reasons = Counter(
-            str(record.response.message or "unknown")
-            for record in failed_records
-        )
+        reasons = Counter(str(record.response.message or "unknown") for record in failed_records)
         raise WorkloadError(
-            f"{label}: broadcast admission failed: {failures}; "
-            f"reasons={dict(reasons)}"
+            f"{label}: broadcast admission failed: {failures}; reasons={dict(reasons)}"
         )
 
 
 def summarize_records(records: list[BroadcastRecord]) -> dict[str, Any]:
-    heights = [
-        int(record.height)
-        for record in records
-        if record.height is not None
-    ]
+    heights = [int(record.height) for record in records if record.height is not None]
     return {
         "transaction_count": len(records),
-        "successful_transactions": sum(
-            1 for record in records if record.final_success
-        ),
-        "failed_transactions": sum(
-            1 for record in records if record.final_success is False
-        ),
+        "successful_transactions": sum(1 for record in records if record.final_success),
+        "failed_transactions": sum(1 for record in records if record.final_success is False),
         "min_height": min(heights) if heights else None,
         "max_height": max(heights) if heights else None,
-        "tx_hashes": [
-            record.tx_hash for record in records if record.tx_hash is not None
-        ],
+        "tx_hashes": [record.tx_hash for record in records if record.tx_hash is not None],
     }
 
 
@@ -763,17 +723,13 @@ async def summarize_committed_window_for_range(
                 "height": height,
                 "tx_count": tx_count,
                 "time": block["header"]["time"],
-                "instant_tps": (
-                    round(instant_tps, 3) if instant_tps is not None else None
-                ),
+                "instant_tps": (round(instant_tps, 3) if instant_tps is not None else None),
             }
         )
 
     window_seconds = (
         (last_time - first_time).total_seconds()
-        if first_time is not None
-        and last_time is not None
-        and last_time > first_time
+        if first_time is not None and last_time is not None and last_time > first_time
         else fallback_elapsed_seconds
     )
     if window_seconds <= 0:
@@ -786,18 +742,10 @@ async def summarize_committed_window_for_range(
         "chain_transactions": chain_transactions,
         "workload_transactions": workload_transactions,
         "window_seconds": round(window_seconds, 3),
-        "committed_workload_tps": round(
-            workload_transactions / window_seconds, 3
-        ),
+        "committed_workload_tps": round(workload_transactions / window_seconds, 3),
         "committed_chain_tps": round(chain_transactions / window_seconds, 3),
-        "peak_block_tps": (
-            round(max(per_block_tps), 3) if per_block_tps else None
-        ),
-        "median_block_tps": (
-            round(statistics.median(per_block_tps), 3)
-            if per_block_tps
-            else None
-        ),
+        "peak_block_tps": (round(max(per_block_tps), 3) if per_block_tps else None),
+        "median_block_tps": (round(statistics.median(per_block_tps), 3) if per_block_tps else None),
         "blocks": blocks,
     }
 
@@ -844,10 +792,7 @@ async def wait_for_query_predicate(
             return
         await asyncio.sleep(poll_interval_seconds)
 
-    raise WorkloadError(
-        "state predicate did not converge before timeout: "
-        f"{last_snapshot}"
-    )
+    raise WorkloadError(f"state predicate did not converge before timeout: {last_snapshot}")
 
 
 async def wait_for_contract_visibility(
@@ -873,9 +818,7 @@ async def wait_for_contract_visibility(
         all_visible = True
         for node, client in zip(context.sample_nodes, clients, strict=True):
             source = await context._retry_read(
-                lambda client=client: client.get_contract_source(
-                    contract_name
-                ),
+                lambda client=client: client.get_contract_source(contract_name),
                 max_attempts=3,
                 initial_delay_seconds=0.05,
                 max_delay_seconds=0.5,
@@ -889,8 +832,7 @@ async def wait_for_contract_visibility(
         await asyncio.sleep(poll_interval_seconds)
 
     raise WorkloadError(
-        f"contract {contract_name!r} did not become visible before timeout: "
-        f"{last_snapshot}"
+        f"contract {contract_name!r} did not become visible before timeout: {last_snapshot}"
     )
 
 
@@ -937,17 +879,12 @@ async def wait_for_mempool_drain(
             consecutive_clean_polls = 0
         await asyncio.sleep(poll_interval_seconds)
 
-    raise WorkloadError(
-        "mempool did not drain before timeout: "
-        f"{last_counts}"
-    )
+    raise WorkloadError(f"mempool did not drain before timeout: {last_counts}")
 
 
 def canonical_record_position(record: BroadcastRecord) -> tuple[int, int]:
     if record.height is None or record.tx_index is None:
-        raise WorkloadError(
-            f"{record.label}: missing canonical transaction position metadata"
-        )
+        raise WorkloadError(f"{record.label}: missing canonical transaction position metadata")
     return int(record.height), int(record.tx_index)
 
 
@@ -1045,9 +982,7 @@ async def broadcast_plans(
         for index, plan in lane_entries:
             await broadcast_one(index, plan)
 
-    await asyncio.gather(
-        *(broadcast_lane(lane_entries) for lane_entries in plan_lanes.values())
-    )
+    await asyncio.gather(*(broadcast_lane(lane_entries) for lane_entries in plan_lanes.values()))
     return [record for record in records if record is not None]
 
 
@@ -1057,13 +992,7 @@ async def summarize_committed_window(
     *,
     fallback_elapsed_seconds: float,
 ) -> dict[str, Any]:
-    heights = sorted(
-        {
-            int(record.height)
-            for record in records
-            if record.height is not None
-        }
-    )
+    heights = sorted({int(record.height) for record in records if record.height is not None})
     if not heights:
         return {}
 
@@ -1090,9 +1019,7 @@ async def summarize_committed_window(
                 "height": height,
                 "tx_count": tx_count,
                 "time": block["header"]["time"],
-                "instant_tps": (
-                    round(instant_tps, 3) if instant_tps is not None else None
-                ),
+                "instant_tps": (round(instant_tps, 3) if instant_tps is not None else None),
             }
         )
         previous_time = block_time
@@ -1112,16 +1039,10 @@ async def summarize_committed_window(
         "chain_transactions": chain_transactions,
         "workload_transactions": workload_transactions,
         "window_seconds": round(window_seconds, 3),
-        "committed_workload_tps": round(
-            workload_transactions / window_seconds, 3
-        ),
+        "committed_workload_tps": round(workload_transactions / window_seconds, 3),
         "committed_chain_tps": round(chain_transactions / window_seconds, 3),
-        "peak_block_tps": round(max(per_block_tps), 3)
-        if per_block_tps
-        else None,
-        "median_block_tps": round(statistics.median(per_block_tps), 3)
-        if per_block_tps
-        else None,
+        "peak_block_tps": round(max(per_block_tps), 3) if per_block_tps else None,
+        "median_block_tps": round(statistics.median(per_block_tps), 3) if per_block_tps else None,
         "blocks": blocks,
     }
 
@@ -1205,7 +1126,9 @@ async def run_counter_basic(
     receipt_workers: int,
 ) -> dict[str, Any]:
     founder = context.founder_wallet
-    worker_wallets = [derive_wallet(seed, f"counter-worker-{index}") for index in range(len(context.nodes))]
+    worker_wallets = [
+        derive_wallet(seed, f"counter-worker-{index}") for index in range(len(context.nodes))
+    ]
     suffix = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8]
     contract_name = f"con_counter_{suffix}"
     contract_code = read_fixture("counter_basic/con_counter.py")
@@ -1344,9 +1267,7 @@ def render_dex_contract(
     needle = 'DEX_PAIRS = "con_pairs"'
     replacement = f'DEX_PAIRS = "{dex_pairs_contract}"'
     if needle not in source:
-        raise WorkloadError(
-            "DEX workload template no longer contains the expected pair constant"
-        )
+        raise WorkloadError("DEX workload template no longer contains the expected pair constant")
     return source.replace(needle, replacement, 1)
 
 
@@ -1807,9 +1728,7 @@ async def run_dex_mixed(
         "workload_transactions": len(plan_records),
         "successful_transactions": len(successful_records),
         "failed_transactions": len(failed_records),
-        "expected_failures": sum(
-            1 for record in plan_records if not record.expected_success
-        ),
+        "expected_failures": sum(1 for record in plan_records if not record.expected_success),
         "event_counts": dict(sorted(event_counter.items())),
         "state": state,
         "failures": [
@@ -1831,14 +1750,10 @@ async def run_parallel_probe(
 ) -> dict[str, Any]:
     founder = context.founder_wallet
     parallel_config = context.network.get("parallel_execution", {})
-    configured_min_transactions = int(
-        parallel_config.get("min_transactions", 8) or 8
-    )
+    configured_min_transactions = int(parallel_config.get("min_transactions", 8) or 8)
     parallel_batch_size = max(configured_min_transactions + 2, len(context.nodes) * 2)
 
-    suffix = hashlib.sha256(
-        f"parallel:{seed}:{time.time_ns()}".encode("utf-8")
-    ).hexdigest()[:8]
+    suffix = hashlib.sha256(f"parallel:{seed}:{time.time_ns()}".encode("utf-8")).hexdigest()[:8]
     contract_name = f"con_parallel_probe_{suffix}"
     contract_code = read_fixture("parallel_probe/con_parallel_probe.py")
     writer_wallets = [
@@ -1881,9 +1796,7 @@ async def run_parallel_probe(
             )
         )
 
-    print(
-        f"Broadcasting parallel_probe batches ({parallel_batch_size} tx per batch)..."
-    )
+    print(f"Broadcasting parallel_probe batches ({parallel_batch_size} tx per batch)...")
 
     non_conflicting_group = f"unique-{suffix}"
     non_conflicting_records: list[BroadcastRecord] = []
@@ -2030,9 +1943,7 @@ async def run_parallel_probe(
                 "tag": attempt_result["tag"],
                 "observed_observation": attempt_result["observed_observation"],
                 "expected_observation": attempt_result["expected_observation"],
-                "exercised_conflict_path": attempt_result[
-                    "exercised_conflict_path"
-                ],
+                "exercised_conflict_path": attempt_result["exercised_conflict_path"],
                 "records": summarize_records(attempt_result["records"]),
             }
         )
@@ -2047,12 +1958,8 @@ async def run_parallel_probe(
 
     read_after_write_records = read_after_write_result["records"]
     read_after_write_tag = read_after_write_result["tag"]
-    read_after_write_observation = read_after_write_result[
-        "observed_observation"
-    ]
-    expected_read_after_write_observation = read_after_write_result[
-        "expected_observation"
-    ]
+    read_after_write_observation = read_after_write_result["observed_observation"]
+    expected_read_after_write_observation = read_after_write_result["expected_observation"]
 
     async def execute_prefix_scan_attempt(attempt: int) -> dict[str, Any]:
         group = f"prefix-{suffix}-{attempt}"
@@ -2121,9 +2028,7 @@ async def run_parallel_probe(
             observation_tag,
         )
         expected = sum(
-            value
-            for record, value in value_records
-            if record_precedes(record, snapshot_record)
+            value for record, value in value_records if record_precedes(record, snapshot_record)
         )
         if observed != expected:
             raise WorkloadError(
@@ -2154,9 +2059,7 @@ async def run_parallel_probe(
                 "tag": attempt_result["tag"],
                 "observed_observation": attempt_result["observed_observation"],
                 "expected_observation": attempt_result["expected_observation"],
-                "exercised_conflict_path": attempt_result[
-                    "exercised_conflict_path"
-                ],
+                "exercised_conflict_path": attempt_result["exercised_conflict_path"],
                 "records": summarize_records(attempt_result["records"]),
             }
         )
@@ -2206,9 +2109,7 @@ async def run_parallel_probe(
             read_after_write_records,
             prefix_scan_records,
         )
-        for height in (
-            int(record.height) for record in batch if record.height is not None
-        )
+        for height in (int(record.height) for record in batch if record.height is not None)
     ]
 
     return {
@@ -2219,9 +2120,7 @@ async def run_parallel_probe(
             "enabled": bool(parallel_config.get("enabled")),
             "workers": int(parallel_config.get("workers", 0) or 0),
             "min_transactions": configured_min_transactions,
-            "access_estimates_enabled": bool(
-                parallel_config.get("access_estimates_enabled", True)
-            ),
+            "access_estimates_enabled": bool(parallel_config.get("access_estimates_enabled", True)),
         },
         "funding_transactions": len(funding_records),
         "batches": {
@@ -2266,12 +2165,10 @@ async def run_transfer_fanout(
     broadcast_mode: str,
 ) -> dict[str, Any]:
     sender_wallets = [
-        derive_wallet(seed, f"transfer-fanout-sender-{index}")
-        for index in range(wallet_count)
+        derive_wallet(seed, f"transfer-fanout-sender-{index}") for index in range(wallet_count)
     ]
     recipient_wallets = [
-        derive_wallet(seed, f"transfer-fanout-recipient-{index}")
-        for index in range(wallet_count)
+        derive_wallet(seed, f"transfer-fanout-recipient-{index}") for index in range(wallet_count)
     ]
     counts = distribute_operation_counts(operations, wallet_count)
     funding_amount = fixed(max(5_000, max(counts) * 4 + 1_000))
@@ -2347,17 +2244,13 @@ async def run_transfer_fanout(
         if counts[index] > 0
     ]
     expected_balances = {
-        f"recipient balance {index}": counts[index]
-        for index in sample_indices
-        if counts[index] > 0
+        f"recipient balance {index}": counts[index] for index in sample_indices if counts[index] > 0
     }
     await wait_for_query_predicate(
         context,
         verification_queries,
         timeout_seconds=receipt_timeout_seconds,
-        predicate=lambda query, value: (
-            coerce_numeric(value) == expected_balances[query["label"]]
-        ),
+        predicate=lambda query, value: coerce_numeric(value) == expected_balances[query["label"]],
     )
     await wait_for_mempool_drain(
         context,
@@ -2393,9 +2286,7 @@ async def run_transfer_fanout(
         "funding_transactions": len(funding_records),
         "transaction_count": len(records),
         "successful_transactions": sum(1 for record in records if record.final_success),
-        "failed_transactions": sum(
-            1 for record in records if record.final_success is False
-        ),
+        "failed_transactions": sum(1 for record in records if record.final_success is False),
         "elapsed_workload_seconds": round(elapsed, 3),
         "committed_window": await summarize_committed_window_for_range(
             context,
@@ -2421,9 +2312,7 @@ async def run_contract_heavy(
     broadcast_mode: str,
     rounds: int,
 ) -> dict[str, Any]:
-    suffix = hashlib.sha256(
-        f"{seed}:contract-heavy".encode("utf-8")
-    ).hexdigest()[:8]
+    suffix = hashlib.sha256(f"{seed}:contract-heavy".encode("utf-8")).hexdigest()[:8]
     contract_name = f"con_hash_stress_{suffix}"
     contract_code = read_fixture("throughput/con_hash_stress.py")
     deploy_record = await context.broadcast_tx(
@@ -2455,8 +2344,7 @@ async def run_contract_heavy(
     )
 
     worker_wallets = [
-        derive_wallet(seed, f"contract-heavy-worker-{index}")
-        for index in range(wallet_count)
+        derive_wallet(seed, f"contract-heavy-worker-{index}") for index in range(wallet_count)
     ]
     counts = distribute_operation_counts(operations, wallet_count)
     funding_amount = fixed(max(5_000, max(counts) * 2 + 1_000))
@@ -2582,9 +2470,7 @@ async def run_contract_heavy(
         "funding_transactions": len(funding_records),
         "transaction_count": len(records),
         "successful_transactions": sum(1 for record in records if record.final_success),
-        "failed_transactions": sum(
-            1 for record in records if record.final_success is False
-        ),
+        "failed_transactions": sum(1 for record in records if record.final_success is False),
         "elapsed_workload_seconds": round(elapsed, 3),
         "committed_window": await summarize_committed_window_for_range(
             context,
@@ -2787,9 +2673,7 @@ async def async_main(argv: list[str] | None = None) -> int:
     async with context:
         print(f"Localnet workload scenario: {args.scenario}")
         print(f"Chain ID: {context.chain_id}")
-        print(
-            f"Sample nodes: {', '.join(node.moniker for node in context.sample_nodes)}"
-        )
+        print(f"Sample nodes: {', '.join(node.moniker for node in context.sample_nodes)}")
 
         started_at = time.monotonic()
         scenario_summary = await run_scenario(args, context)
@@ -2813,11 +2697,7 @@ async def async_main(argv: list[str] | None = None) -> int:
             "seed": args.seed,
             "consensus": consensus_summary,
             "scenario_summary": normalize_value(scenario_summary),
-            "memory": (
-                collect_container_memory(context.nodes)
-                if args.measure_memory
-                else {}
-            ),
+            "memory": (collect_container_memory(context.nodes) if args.measure_memory else {}),
             "receipt_resolution": args.receipt_resolution,
         }
 

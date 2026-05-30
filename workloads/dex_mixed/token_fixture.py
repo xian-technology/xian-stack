@@ -50,9 +50,7 @@ def approve(amount: float, to: str):
 @export
 def transfer_from(amount: float, to: str, main_account: str):
     assert amount > 0, "Amount must be positive"
-    assert approvals[main_account, ctx.caller] >= amount, (
-        "Not enough coins approved to send!"
-    )
+    assert approvals[main_account, ctx.caller] >= amount, "Not enough coins approved to send!"
     assert balances[main_account] >= amount, "Insufficient balance"
 
     approvals[main_account, ctx.caller] -= amount

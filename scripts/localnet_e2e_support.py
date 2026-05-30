@@ -44,9 +44,7 @@ def parse_json_stdout(stdout: str, *, label: str) -> Any:
         pass
 
     decoder = json.JSONDecoder()
-    for start in reversed(
-        [index for index, char in enumerate(stripped) if char == "{"]
-    ):
+    for start in reversed([index for index, char in enumerate(stripped) if char == "{"]):
         try:
             payload, end = decoder.raw_decode(stripped[start:])
         except json.JSONDecodeError:

@@ -70,18 +70,10 @@ def _median(values: list[float]) -> float | None:
 def load_perf_payloads(network: dict[str, Any]) -> dict[str, dict[str, Any]]:
     payloads = {}
     for node in network.get("nodes", []):
-        perf_path = (
-            STACK_DIR
-            / ".localnet"
-            / str(node["moniker"])
-            / ".cometbft"
-            / "xian-perf.json"
-        )
+        perf_path = STACK_DIR / ".localnet" / str(node["moniker"]) / ".cometbft" / "xian-perf.json"
         if not perf_path.exists():
             continue
-        payloads[str(node["moniker"])] = json.loads(
-            perf_path.read_text(encoding="utf-8")
-        )
+        payloads[str(node["moniker"])] = json.loads(perf_path.read_text(encoding="utf-8"))
     return payloads
 
 
@@ -107,9 +99,7 @@ def summarize_perf_payloads(
     for node_name, payload in sorted(node_payloads.items()):
         global_metrics = payload.get("global_metrics", {})
         recent_blocks = [
-            block
-            for block in payload.get("recent_blocks", [])
-            if int(block.get("tx_count", 0)) > 0
+            block for block in payload.get("recent_blocks", []) if int(block.get("tx_count", 0)) > 0
         ]
         if recent_block_limit > 0:
             recent_blocks = recent_blocks[-recent_block_limit:]
@@ -127,14 +117,9 @@ def summarize_perf_payloads(
                     "duration_ms": recent_blocks[-1]["duration_ms"],
                     "metadata": recent_blocks[-1].get("metadata", {}),
                     "metrics": {
-                        metric_name: recent_blocks[-1]
-                        .get("metrics", {})
-                        .get(metric_name)
+                        metric_name: recent_blocks[-1].get("metrics", {}).get(metric_name)
                         for metric_name in PERF_BLOCK_METRICS
-                        if recent_blocks[-1]
-                        .get("metrics", {})
-                        .get(metric_name)
-                        is not None
+                        if recent_blocks[-1].get("metrics", {}).get(metric_name) is not None
                     },
                 }
                 if recent_blocks
@@ -188,8 +173,7 @@ def summarize_perf_payloads(
                             for block in payload.get("recent_blocks", [])
                             if int(block.get("height", -1)) == height
                             for metric in [block.get("metrics", {}).get(metric_name)]
-                            if metric is not None
-                            and metric.get("total_ms") is not None
+                            if metric is not None and metric.get("total_ms") is not None
                         ]
                     )
                     for metric_name in PERF_BLOCK_METRICS
@@ -283,9 +267,7 @@ def run_workload(
         "elapsed_seconds": elapsed_seconds,
         "workload_transactions": workload_transactions,
         "setup_transactions": setup_transactions,
-        "successful_transactions": int(
-            scenario_summary["successful_transactions"]
-        ),
+        "successful_transactions": int(scenario_summary["successful_transactions"]),
         "workload_tps": round(workload_transactions / elapsed_seconds, 3),
         "full_scenario_tps": round(
             (workload_transactions + setup_transactions) / elapsed_seconds, 3
@@ -342,9 +324,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     network = load_network()
     scenarios = (
-        ["transfer_fanout", "contract_heavy"]
-        if args.scenario == "both"
-        else [args.scenario]
+        ["transfer_fanout", "contract_heavy"] if args.scenario == "both" else [args.scenario]
     )
 
     runs = []
@@ -368,15 +348,11 @@ def main(argv: list[str] | None = None) -> int:
 
     best_by_scenario = {}
     for scenario in scenarios:
-        successful = [
-            run for run in runs if run["ok"] and run["scenario"] == scenario
-        ]
+        successful = [run for run in runs if run["ok"] and run["scenario"] == scenario]
         if successful:
             best_by_scenario[scenario] = max(
                 successful,
-                key=lambda run: float(
-                    run["committed_workload_tps"] or run["workload_tps"]
-                ),
+                key=lambda run: float(run["committed_workload_tps"] or run["workload_tps"]),
             )
 
     summary = {

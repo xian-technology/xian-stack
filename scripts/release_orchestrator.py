@@ -252,7 +252,9 @@ def get_repo_state(repo: RepoConfig) -> RepoState:
     clean = run_git(repo, "status", "--porcelain") == ""
     head_sha = run_git(repo, "rev-parse", "HEAD")
     origin_sha = run_git(repo, "rev-parse", "origin/main")
-    ahead_raw, behind_raw = run_git(repo, "rev-list", "--left-right", "--count", "HEAD...origin/main").split()
+    ahead_raw, behind_raw = run_git(
+        repo, "rev-list", "--left-right", "--count", "HEAD...origin/main"
+    ).split()
     return RepoState(
         branch=branch,
         clean=clean,
@@ -266,7 +268,9 @@ def get_repo_state(repo: RepoConfig) -> RepoState:
 def latest_tag_for_unit(unit: ReleaseUnit) -> str | None:
     repo = REPOS[unit.repo]
     try:
-        return run_git(repo, "describe", "--tags", "--abbrev=0", "--match", unit.tag_glob, "origin/main")
+        return run_git(
+            repo, "describe", "--tags", "--abbrev=0", "--match", unit.tag_glob, "origin/main"
+        )
     except ReleaseError:
         return None
 
@@ -299,7 +303,9 @@ def relevant_changed_files(unit: ReleaseUnit, latest_tag: str | None) -> list[st
     files = list_changed_files(REPOS[unit.repo], latest_tag)
     selected: list[str] = []
     for path in files:
-        if unit.include_prefixes and not any(path_matches_prefix(path, prefix) for prefix in unit.include_prefixes):
+        if unit.include_prefixes and not any(
+            path_matches_prefix(path, prefix) for prefix in unit.include_prefixes
+        ):
             continue
         if any(path_matches_prefix(path, prefix) for prefix in unit.exclude_prefixes):
             continue
@@ -433,7 +439,12 @@ def update_package_lock(
         entry = packages.get(package_path)
         if not isinstance(entry, dict):
             continue
-        for field in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+        for field in (
+            "dependencies",
+            "devDependencies",
+            "peerDependencies",
+            "optionalDependencies",
+        ):
             values = entry.get(field)
             if not isinstance(values, dict):
                 continue
@@ -472,12 +483,18 @@ def read_source_version(unit: ReleaseUnit) -> str | None:
             "xian-js",
             {
                 "package.json": read_json(repo_path / "package.json")["version"],
-                "examples/browser-dapp/package.json": read_json(repo_path / "examples/browser-dapp/package.json")[
+                "examples/browser-dapp/package.json": read_json(
+                    repo_path / "examples/browser-dapp/package.json"
+                )["version"],
+                "packages/client/package.json": read_json(
+                    repo_path / "packages/client/package.json"
+                )["version"],
+                "packages/provider/package.json": read_json(
+                    repo_path / "packages/provider/package.json"
+                )["version"],
+                "packages/types/package.json": read_json(repo_path / "packages/types/package.json")[
                     "version"
                 ],
-                "packages/client/package.json": read_json(repo_path / "packages/client/package.json")["version"],
-                "packages/provider/package.json": read_json(repo_path / "packages/provider/package.json")["version"],
-                "packages/types/package.json": read_json(repo_path / "packages/types/package.json")["version"],
             },
         )
     if unit.key == "xian-wallet-browser":
@@ -485,8 +502,12 @@ def read_source_version(unit: ReleaseUnit) -> str | None:
             "xian-wallet-browser",
             {
                 "package.json": read_json(repo_path / "package.json")["version"],
-                "packages/wallet-core/package.json": read_json(repo_path / "packages/wallet-core/package.json")["version"],
-                "apps/wallet-extension/package.json": read_json(repo_path / "apps/wallet-extension/package.json")["version"],
+                "packages/wallet-core/package.json": read_json(
+                    repo_path / "packages/wallet-core/package.json"
+                )["version"],
+                "apps/wallet-extension/package.json": read_json(
+                    repo_path / "apps/wallet-extension/package.json"
+                )["version"],
             },
         )
     if unit.key == "xian-stack":
@@ -699,22 +720,27 @@ def plan_releases(
             )
             reason_parts: list[str] = []
             if direct_changes:
-                reason_parts.append(f"{len(direct_changes)} repo file(s) changed since {latest_tag}")
+                reason_parts.append(
+                    f"{len(direct_changes)} repo file(s) changed since {latest_tag}"
+                )
             if manifest_updates:
                 reason_parts.append(
                     "release-manifest.json will advance "
-                    + ", ".join(f"{name}@{sha[:12]}" for name, sha in sorted(manifest_updates.items()))
+                    + ", ".join(
+                        f"{name}@{sha[:12]}" for name, sha in sorted(manifest_updates.items())
+                    )
                 )
             if future_component_releases:
                 reason_parts.append(
-                    "upstream release commits will advance "
-                    + ", ".join(future_component_releases)
+                    "upstream release commits will advance " + ", ".join(future_component_releases)
                 )
             if not reason_parts:
                 continue
             target_version, version_mode = choose_target_version(unit, latest_version, None, bump)
             if tag_exists(REPOS[unit.repo], f"{unit.tag_prefix}{target_version}"):
-                raise ReleaseError(f"{unit.key}: tag {unit.tag_prefix}{target_version} already exists")
+                raise ReleaseError(
+                    f"{unit.key}: tag {unit.tag_prefix}{target_version} already exists"
+                )
             plan = ReleasePlan(
                 unit=unit,
                 latest_tag=latest_tag,
@@ -734,7 +760,9 @@ def plan_releases(
         reason_parts = []
         if changed_files:
             if latest_tag is None:
-                reason_parts.append(f"{len(changed_files)} tracked file(s) present for initial release")
+                reason_parts.append(
+                    f"{len(changed_files)} tracked file(s) present for initial release"
+                )
             else:
                 reason_parts.append(f"{len(changed_files)} file(s) changed since {latest_tag}")
         for dependency in unit.trigger_units:
@@ -745,7 +773,9 @@ def plan_releases(
             continue
 
         source_version = read_source_version(unit)
-        target_version, version_mode = choose_target_version(unit, latest_version, source_version, bump)
+        target_version, version_mode = choose_target_version(
+            unit, latest_version, source_version, bump
+        )
         if tag_exists(REPOS[unit.repo], f"{unit.tag_prefix}{target_version}"):
             raise ReleaseError(f"{unit.key}: tag {unit.tag_prefix}{target_version} already exists")
 
@@ -776,15 +806,35 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
     version = plan.target_version
 
     if plan.unit.key == "xian-abci":
-        record_change(changed_paths, repo_path / "src/abci/__init__.py", set_module_version(repo_path / "src/abci/__init__.py", version))
+        record_change(
+            changed_paths,
+            repo_path / "src/abci/__init__.py",
+            set_module_version(repo_path / "src/abci/__init__.py", version),
+        )
     elif plan.unit.key == "xian-intentkit":
-        record_change(changed_paths, repo_path / "pyproject.toml", set_pyproject_version(repo_path / "pyproject.toml", version))
-        record_change(changed_paths, repo_path / "intentkit/__init__.py", set_module_version(repo_path / "intentkit/__init__.py", version))
+        record_change(
+            changed_paths,
+            repo_path / "pyproject.toml",
+            set_pyproject_version(repo_path / "pyproject.toml", version),
+        )
+        record_change(
+            changed_paths,
+            repo_path / "intentkit/__init__.py",
+            set_module_version(repo_path / "intentkit/__init__.py", version),
+        )
         lock_path = repo_path / "uv.lock"
         if lock_path.exists():
-            record_change(changed_paths, lock_path, update_uv_lock_version(lock_path, "xian-tech-intentkit", version))
+            record_change(
+                changed_paths,
+                lock_path,
+                update_uv_lock_version(lock_path, "xian-tech-intentkit", version),
+            )
     elif plan.unit.key == "xian-js":
-        record_change(changed_paths, repo_path / "package.json", set_json_version(repo_path / "package.json", version))
+        record_change(
+            changed_paths,
+            repo_path / "package.json",
+            set_json_version(repo_path / "package.json", version),
+        )
         record_change(
             changed_paths,
             repo_path / "examples/browser-dapp/package.json",
@@ -861,7 +911,11 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
             if xian_js_version is not None
             else read_source_version(UNITS["xian-js"])
         )
-        record_change(changed_paths, repo_path / "package.json", set_json_version(repo_path / "package.json", version))
+        record_change(
+            changed_paths,
+            repo_path / "package.json",
+            set_json_version(repo_path / "package.json", version),
+        )
         record_change(
             changed_paths,
             repo_path / "packages/wallet-core/package.json",
@@ -963,7 +1017,11 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
         target_path = repo_path / package_dir / "pyproject.toml"
         record_change(changed_paths, target_path, set_pyproject_version(target_path, version))
     else:
-        record_change(changed_paths, repo_path / "pyproject.toml", set_pyproject_version(repo_path / "pyproject.toml", version))
+        record_change(
+            changed_paths,
+            repo_path / "pyproject.toml",
+            set_pyproject_version(repo_path / "pyproject.toml", version),
+        )
 
     return sorted(changed_paths)
 
@@ -1038,7 +1096,9 @@ def print_plan(plans: list[ReleasePlan]) -> None:
             mode_suffix = " (uses pre-bumped source version)"
         elif plan.version_mode == "initial":
             mode_suffix = " (initial release)"
-        print(f"{index}. {plan.unit.key}: {plan.tag} [{previous} -> {plan.target_version}]{mode_suffix}")
+        print(
+            f"{index}. {plan.unit.key}: {plan.tag} [{previous} -> {plan.target_version}]{mode_suffix}"
+        )
         print(f"   reason: {plan.reason}")
         if plan.changed_files:
             preview = ", ".join(plan.changed_files[:4])
@@ -1056,13 +1116,26 @@ def apply_plan(plans: list[ReleasePlan], repo_states: dict[str, RepoState]) -> N
         changed_paths = sync_unit_files(plan, plans_by_key)
 
         if changed_paths:
-            run_git(repo, "add", *[str(path.relative_to(repo.path)) for path in changed_paths], capture=False)
+            run_git(
+                repo,
+                "add",
+                *[str(path.relative_to(repo.path)) for path in changed_paths],
+                capture=False,
+            )
             run_git(repo, "commit", "-m", commit_message(plan), capture=False)
             run_git(repo, "push", "origin", "main", capture=False)
 
         if tag_exists(repo, plan.tag):
             raise ReleaseError(f"{repo.name}: tag {plan.tag} already exists")
-        run_git(repo, "tag", "-a", plan.tag, "-m", f"{plan.unit.display_name} {plan.target_version}", capture=False)
+        run_git(
+            repo,
+            "tag",
+            "-a",
+            plan.tag,
+            "-m",
+            f"{plan.unit.display_name} {plan.target_version}",
+            capture=False,
+        )
         run_git(repo, "push", "origin", plan.tag, capture=False)
 
 
@@ -1098,7 +1171,9 @@ def parse_args() -> argparse.Namespace:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    plan_parser = subparsers.add_parser("plan", help="Print the release plan without changing any repo.")
+    plan_parser = subparsers.add_parser(
+        "plan", help="Print the release plan without changing any repo."
+    )
     plan_parser.add_argument(
         "--no-fetch",
         action="store_true",

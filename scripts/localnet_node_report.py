@@ -15,9 +15,7 @@ _PROMETHEUS_LINE_RE = re.compile(
     r"^(?P<name>[a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(?P<labels>.*)\})?\s+"
     r"(?P<value>[-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)$"
 )
-_PROMETHEUS_LABEL_RE = re.compile(
-    r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:\\.|[^"])*)"'
-)
+_PROMETHEUS_LABEL_RE = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:\\.|[^"])*)"')
 
 
 def fetch_text(url: str, *, timeout_seconds: float) -> str:
@@ -63,12 +61,8 @@ def collect_node_capability_status(
     timeout_seconds: float,
 ) -> dict[str, Any]:
     rpc_url = f"http://127.0.0.1:{node['host_rpc_port']}/status"
-    comet_metrics_url = (
-        f"http://127.0.0.1:{node['host_metrics_port']}/metrics"
-    )
-    xian_metrics_port = int(
-        node.get("host_xian_metrics_port", node["host_metrics_port"])
-    )
+    comet_metrics_url = f"http://127.0.0.1:{node['host_metrics_port']}/metrics"
+    xian_metrics_port = int(node.get("host_xian_metrics_port", node["host_metrics_port"]))
     metrics_url = f"http://127.0.0.1:{xian_metrics_port}/metrics"
     rpc_payload = json.loads(fetch_text(rpc_url, timeout_seconds=timeout_seconds))
     metrics_text = fetch_text(metrics_url, timeout_seconds=timeout_seconds)
@@ -84,9 +78,7 @@ def collect_node_capability_status(
         "metrics_url": metrics_url,
         "comet_metrics_url": comet_metrics_url,
         "height": int(
-            rpc_payload.get("result", {})
-            .get("sync_info", {})
-            .get("latest_block_height", 0)
+            rpc_payload.get("result", {}).get("sync_info", {}).get("latest_block_height", 0)
         ),
         "node_info": node_info,
     }
@@ -114,22 +106,13 @@ def collect_localnet_node_report(
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{node['moniker']}: {exc}")
 
-    reported_modes = [
-        str(node["node_info"].get("execution_mode", "")) for node in nodes
-    ]
+    reported_modes = [str(node["node_info"].get("execution_mode", "")) for node in nodes]
     uniform_execution_mode = len(set(reported_modes)) <= 1 if reported_modes else False
     all_nodes_report_xian_vm = (
-        all(mode == EXPECTED_EXECUTION_MODE for mode in reported_modes)
-        if reported_modes
-        else False
+        all(mode == EXPECTED_EXECUTION_MODE for mode in reported_modes) if reported_modes else False
     )
 
-    ok = (
-        not errors
-        and bool(nodes)
-        and uniform_execution_mode
-        and all_nodes_report_xian_vm
-    )
+    ok = not errors and bool(nodes) and uniform_execution_mode and all_nodes_report_xian_vm
 
     return {
         "ok": ok,
@@ -149,9 +132,7 @@ def collect_localnet_node_report(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Collect a node report from a running localnet"
-    )
+    parser = argparse.ArgumentParser(description="Collect a node report from a running localnet")
     parser.add_argument(
         "--network-json",
         default=str(LOCALNET_NETWORK_PATH),

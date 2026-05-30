@@ -44,8 +44,7 @@ def strip_local_editables(exported: str) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Export a lock-backed Python runtime requirements file for "
-            "xian-stack node images."
+            "Export a lock-backed Python runtime requirements file for xian-stack node images."
         )
     )
     parser.add_argument(
@@ -57,9 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).resolve().parents[1]
-        / "docker"
-        / "python-runtime-requirements.txt",
+        default=Path(__file__).resolve().parents[1] / "docker" / "python-runtime-requirements.txt",
         help="Path to the generated requirements file.",
     )
     return parser

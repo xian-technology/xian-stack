@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -53,11 +54,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                 "07-dex-mixed",
                 "08-throughput-mix",
             },
-            {
-                phase.name
-                for phase in localnet_e2e_phases.PHASE_SPECS
-                if not phase.uses_session
-            },
+            {phase.name for phase in localnet_e2e_phases.PHASE_SPECS if not phase.uses_session},
         )
         for phase in localnet_e2e_phases.PHASE_SPECS:
             self.assertTrue(
@@ -93,6 +90,22 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertEqual(3, args.throughput_wallet_count)
         self.assertEqual(4, args.throughput_submit_workers)
         self.assertEqual(5, args.contract_heavy_rounds)
+
+    def test_default_client_config_uses_localnet_rpc_timeout(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(
+            [
+                "--rpc-timeout-seconds",
+                "123",
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+
+        config = runner.default_client_config()
+
+        self.assertEqual(123, config.submission.timeout_seconds)
+        self.assertEqual(0.5, config.submission.poll_interval_seconds)
 
 
 if __name__ == "__main__":

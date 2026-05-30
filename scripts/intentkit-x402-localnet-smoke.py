@@ -49,8 +49,7 @@ def normalize(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, dict):
         return {
-            str(key): normalize(value[key])
-            for key in sorted(value, key=lambda item: str(item))
+            str(key): normalize(value[key]) for key in sorted(value, key=lambda item: str(item))
         }
     if isinstance(value, list):
         return [normalize(item) for item in value]
@@ -76,9 +75,7 @@ def normalize_submission(submission: Any) -> dict[str, Any] | None:
             "submitted": getattr(submission, "submitted", None),
             "accepted": getattr(submission, "accepted", None),
             "finalized": getattr(submission, "finalized", None),
-            "success": getattr(receipt, "success", None)
-            if receipt is not None
-            else None,
+            "success": getattr(receipt, "success", None) if receipt is not None else None,
             "message": getattr(receipt, "message", None)
             if receipt is not None
             else getattr(submission, "message", None),

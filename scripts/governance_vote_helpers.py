@@ -27,9 +27,7 @@ async def wait_for_status(
         if status["status"] == expected_status:
             return status
         await asyncio.sleep(poll_interval_seconds)
-    raise RuntimeError(
-        f"{label} did not reach {expected_status!r}; last={last_status}"
-    )
+    raise RuntimeError(f"{label} did not reach {expected_status!r}; last={last_status}")
 
 
 async def cast_votes_until_status(
