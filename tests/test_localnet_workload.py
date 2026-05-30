@@ -298,3 +298,49 @@ def test_resolve_record_rebroadcasts_signed_tx_after_receipt_timeout() -> None:
         {"signed": "payload"},
         session=context.session,
     )
+
+
+def test_wait_for_mempool_drain_flushes_stale_pending_tx() -> None:
+    context = localnet_workload.WorkloadContext(
+        _network(),
+        sample_nodes=3,
+        submit_node_index=0,
+        round_robin_submission=True,
+    )
+    context._session = object()
+    call_count = 0
+    flush_record = localnet_workload.BroadcastRecord(
+        label="mempool flush",
+        contract="currency",
+        function="transfer",
+        rpc_url=context.nodes[1].rpc_url,
+        sender="founder",
+        expected_success=True,
+        expected_message=None,
+        response=SimpleNamespace(submitted=True, accepted=True, message=None),
+        tx_hash="flush-hash",
+        final_success=True,
+    )
+    context.broadcast_tx = AsyncMock(return_value=flush_record)
+    context.resolve_records = AsyncMock()
+
+    async def fake_fetch_json(_session, url: str, *, timeout: float):
+        nonlocal call_count
+        port = int(url.rsplit(":", 1)[1].split("/", 1)[0])
+        round_index = call_count // len(context.nodes)
+        call_count += 1
+        pending = 1 if round_index == 0 and port == 27757 else 0
+        return {"result": {"n_txs": str(pending)}}
+
+    with patch.object(localnet_workload, "fetch_json", side_effect=fake_fetch_json):
+        asyncio.run(
+            localnet_workload.wait_for_mempool_drain(
+                context,
+                timeout_seconds=2.0,
+                stable_polls=2,
+                poll_interval_seconds=0.01,
+            )
+        )
+
+    context.broadcast_tx.assert_awaited_once()
+    context.resolve_records.assert_awaited_once_with([flush_record], timeout_seconds=2.0)

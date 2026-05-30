@@ -1099,6 +1099,8 @@ async def wait_for_mempool_drain(
     deadline = time.monotonic() + timeout_seconds
     last_counts: dict[str, int] = {}
     consecutive_clean_polls = 0
+    flush_submitted = False
+    flush_errors: list[str] = []
 
     async def fetch_unconfirmed_count(node: LocalnetNode) -> int:
         payload = await fetch_json(
@@ -1130,9 +1132,38 @@ async def wait_for_mempool_drain(
                 return
         else:
             consecutive_clean_polls = 0
+            if not flush_submitted and any(count > 0 for count in last_counts.values()):
+                flush_submitted = True
+                try:
+                    await submit_mempool_flush_tx(context, timeout_seconds=timeout_seconds)
+                except Exception as exc:  # noqa: BLE001
+                    flush_errors.append(f"{type(exc).__name__}: {exc}")
         await asyncio.sleep(poll_interval_seconds)
 
-    raise WorkloadError(f"mempool did not drain before timeout: {last_counts}")
+    error_suffix = f"; flush_errors={flush_errors[-3:]}" if flush_errors else ""
+    raise WorkloadError(f"mempool did not drain before timeout: {last_counts}{error_suffix}")
+
+
+async def submit_mempool_flush_tx(
+    context: WorkloadContext,
+    *,
+    timeout_seconds: float,
+) -> None:
+    record = await context.broadcast_tx(
+        label="mempool flush",
+        wallet=context.founder_wallet,
+        rpc_index=context.submit_node_index,
+        contract="currency",
+        function="transfer",
+        kwargs={"amount": fixed(1), "to": context.founder_wallet.public_key},
+        chi=THROUGHPUT_TRANSFER_TX_CHI,
+        expected_success=True,
+    )
+    await context.resolve_records(
+        [record],
+        timeout_seconds=min(timeout_seconds, 30.0),
+    )
+    require_successful(record)
 
 
 def canonical_record_position(record: BroadcastRecord) -> tuple[int, int]:
