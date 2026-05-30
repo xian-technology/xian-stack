@@ -2289,22 +2289,27 @@ class E2ERunner:
             if delta > 0:
                 wallets_to_fund.append((wallet, delta))
 
-        async with self.client(founder, node_index, session) as client:
-            for wallet, delta in wallets_to_fund:
-                send_amount = int(delta) if delta == int(delta) else float(delta)
-                submission = await client.send(
-                    amount=send_amount,
-                    to_address=wallet.public_key,
-                    chi=DEFAULT_TRANSFER_CHI,
-                    mode="checktx",
-                    wait_for_tx=True,
+        for wallet, delta in wallets_to_fund:
+            send_amount = int(delta) if delta == int(delta) else float(delta)
+            label = f"fund {wallet.public_key[:12]} (+{send_amount})"
+            submission = await self.send_tx_with_broadcast_failover(
+                session,
+                founder,
+                "currency",
+                "transfer",
+                {"amount": send_amount, "to": wallet.public_key},
+                preferred_index=node_index,
+                excluded_indices=None,
+                chi=DEFAULT_TRANSFER_CHI,
+                label=label,
+                timeout_seconds=self.args.rpc_timeout_seconds,
+            )
+            receipts.append(
+                ensure_positive_submission(
+                    submission,
+                    label=label,
                 )
-                receipts.append(
-                    ensure_positive_submission(
-                        submission,
-                        label=f"fund {wallet.public_key[:12]} (+{send_amount})",
-                    )
-                )
+            )
         if wallets_to_fund:
             await self.stabilize_nodes(
                 session,
@@ -2312,6 +2317,11 @@ class E2ERunner:
                 timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
                 advance_blocks=1,
             )
+            node_index = await self.healthy_submission_node_index(
+                session,
+                node_index,
+            )
+            rpc_url = self.nodes[node_index].rpc_url
         for wallet in wallets:
             expected_balance = await fetch_abci_query(
                 session,

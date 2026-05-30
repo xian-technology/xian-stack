@@ -554,7 +554,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         )
         self.assertEqual(2, wait_for_state.await_count)
 
-    def test_fund_wallets_uses_checktx_with_receipt_polling(self) -> None:
+    def test_fund_wallets_uses_broadcast_failover(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
         with tempfile.TemporaryDirectory() as tmpdir:
             args.resume_dir = tmpdir
@@ -564,42 +564,41 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         runner.network = {"chain_id": "test-chain"}
         runner.stabilize_nodes = AsyncMock(return_value={"recovery": {"restarts": []}})
         runner.wait_for_uniform_node_state = AsyncMock(return_value={"node-0": "3000"})
-        send_calls = []
-
-        class FakeClient:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, exc_type, exc, traceback):
-                return None
-
-            async def send(self, **kwargs):
-                send_calls.append(kwargs)
-                return SimpleNamespace(
-                    submitted=True,
-                    accepted=True,
-                    finalized=True,
-                    message=None,
-                    tx_hash="tx-hash",
-                    mode=kwargs["mode"],
-                    nonce=1,
-                    chi_supplied=kwargs["chi"],
-                    receipt=SimpleNamespace(
-                        success=True,
-                        message="ok",
-                        execution={"state": [], "events": [], "chi_used": 10},
-                    ),
-                )
-
-        runner.client = lambda *_args, **_kwargs: FakeClient()
+        runner.send_tx_with_broadcast_failover = AsyncMock(
+            return_value=SimpleNamespace(
+                submitted=True,
+                accepted=True,
+                finalized=True,
+                message=None,
+                tx_hash="tx-hash",
+                mode="checktx-failover",
+                nonce=1,
+                chi_supplied=localnet_e2e.DEFAULT_TRANSFER_CHI,
+                receipt=SimpleNamespace(
+                    success=True,
+                    message="ok",
+                    execution={"state": [], "events": [], "chi_used": 10},
+                ),
+            )
+        )
         wallet = SimpleNamespace(public_key="wallet-0")
 
         with patch.object(localnet_e2e, "fetch_abci_query", AsyncMock(return_value="0")):
             receipts = asyncio.run(runner.fund_wallets(None, [wallet], amount=3_000))
 
         self.assertEqual(1, len(receipts))
-        self.assertEqual("checktx", send_calls[0]["mode"])
-        self.assertTrue(send_calls[0]["wait_for_tx"])
+        runner.send_tx_with_broadcast_failover.assert_awaited_once_with(
+            None,
+            runner.founder_wallet,
+            "currency",
+            "transfer",
+            {"amount": 3000, "to": "wallet-0"},
+            preferred_index=0,
+            excluded_indices=None,
+            chi=localnet_e2e.DEFAULT_TRANSFER_CHI,
+            label="fund wallet-0 (+3000)",
+            timeout_seconds=30.0,
+        )
 
 
 if __name__ == "__main__":
