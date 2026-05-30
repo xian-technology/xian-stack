@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -1238,6 +1239,8 @@ class E2ERunner:
         proposal_kwargs: dict[str, Any],
         expected_final_status: str,
         label_prefix: str,
+        proposal_count_reader: Callable[[], Awaitable[int]] | None = None,
+        proposal_status_reader: Callable[[int], Awaitable[dict[str, Any]]] | None = None,
     ) -> dict[str, Any]:
         proposal_receipt = await self.submit_tx(
             proposer,
@@ -1247,12 +1250,23 @@ class E2ERunner:
             label=f"{label_prefix}-propose",
             chi=GOVERNANCE_TX_CHI,
         )
-        proposal_id = int(await proposer.get_state("governance", "proposal_count"))
-        proposal_pending = await proposer.call(
-            "governance",
-            "get_proposal",
-            {"proposal_id": proposal_id},
-        )
+
+        async def read_proposal_count() -> int:
+            if proposal_count_reader is not None:
+                return int(await proposal_count_reader())
+            return int(await proposer.get_state("governance", "proposal_count"))
+
+        async def read_proposal_status(proposal_id: int) -> dict[str, Any]:
+            if proposal_status_reader is not None:
+                return await proposal_status_reader(proposal_id)
+            return await proposer.call(
+                "governance",
+                "get_proposal",
+                {"proposal_id": proposal_id},
+            )
+
+        proposal_id = await read_proposal_count()
+        proposal_pending = await read_proposal_status(proposal_id)
         if proposal_pending["status"] != "pending":
             raise E2EError(
                 f"{label_prefix} expected pending proposal, got {proposal_pending['status']!r}"
@@ -1272,19 +1286,25 @@ class E2ERunner:
         ]
         vote_receipts, proposal_final = await cast_votes_until_status(
             vote_senders,
-            fetch_status=lambda: proposer.call(
-                "governance",
-                "get_proposal",
-                {"proposal_id": proposal_id},
-            ),
+            fetch_status=lambda: read_proposal_status(proposal_id),
             completed_statuses={expected_final_status},
         )
         if proposal_final is None:
-            proposal_final = await self.wait_for_governance_proposal_status(
-                proposer,
-                proposal_id,
-                expected_status=expected_final_status,
-            )
+            if proposal_status_reader is None:
+                proposal_final = await self.wait_for_governance_proposal_status(
+                    proposer,
+                    proposal_id,
+                    expected_status=expected_final_status,
+                )
+            else:
+                try:
+                    proposal_final = await wait_for_status(
+                        lambda: read_proposal_status(proposal_id),
+                        expected_status=expected_final_status,
+                        label=f"governance proposal {proposal_id}",
+                    )
+                except RuntimeError as exc:
+                    raise E2EError(str(exc)) from exc
 
         return {
             "proposal_id": proposal_id,
@@ -5333,6 +5353,27 @@ class E2ERunner:
             "node3": await self.healthy_submission_node_index(session, 3),
             "node4": await self.healthy_submission_node_index(session, 4),
         }
+
+        async def read_governance_proposal_count() -> int:
+            node_index = await self.healthy_submission_node_index(
+                session,
+                self.default_submission_node_index(),
+            )
+            async with self.client(founder, node_index, session) as status_client:
+                return int(await status_client.get_state("governance", "proposal_count"))
+
+        async def read_governance_proposal(proposal_id: int) -> dict[str, Any]:
+            node_index = await self.healthy_submission_node_index(
+                session,
+                self.default_submission_node_index(),
+            )
+            async with self.client(founder, node_index, session) as status_client:
+                return await status_client.call(
+                    "governance",
+                    "get_proposal",
+                    {"proposal_id": proposal_id},
+                )
+
         async with (
             self.client(node0_wallet, validator_rpc_indices["node0"], session) as node0,
             self.client(node1_wallet, validator_rpc_indices["node1"], session) as node1,
@@ -5389,6 +5430,8 @@ class E2ERunner:
                         },
                         expected_final_status="executed",
                         label_prefix=f"register-vk-{action}",
+                        proposal_count_reader=read_governance_proposal_count,
+                        proposal_status_reader=read_governance_proposal,
                     )
                     vk_registration_proposals.append(normalize_value(vk_vote))
                     vk_info = await node0.call(

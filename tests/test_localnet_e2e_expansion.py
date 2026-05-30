@@ -341,6 +341,68 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertFalse(result["before"]["node-1"]["ok"])
         self.assertTrue(result["after"]["node-1"]["abci_query_ready"])
 
+    def test_governance_approval_can_use_custom_status_readers(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        send_labels = []
+        status_reads = []
+
+        class FakeClient:
+            async def send_tx(self, contract, function, kwargs, **options):
+                send_labels.append((contract, function, kwargs, options))
+                return SimpleNamespace(
+                    submitted=True,
+                    accepted=True,
+                    finalized=True,
+                    message=None,
+                    tx_hash=f"tx-{function}-{len(send_labels)}",
+                    mode="checktx",
+                    nonce=len(send_labels),
+                    chi_supplied=options["chi"],
+                    receipt=SimpleNamespace(
+                        success=True,
+                        message="ok",
+                        execution={"state": [], "events": [], "chi_used": 10},
+                    ),
+                )
+
+            async def get_state(self, *_args, **_kwargs):
+                raise AssertionError("custom proposal_count_reader should be used")
+
+            async def call(self, *_args, **_kwargs):
+                raise AssertionError("custom proposal_status_reader should be used")
+
+        async def proposal_count_reader():
+            return 7
+
+        async def proposal_status_reader(proposal_id: int):
+            status_reads.append(proposal_id)
+            if len(status_reads) >= 4:
+                return {"status": "executed"}
+            return {"status": "pending"}
+
+        result = asyncio.run(
+            runner.approve_governance_proposal(
+                FakeClient(),
+                [("node1", FakeClient())],
+                proposal_function="propose_contract_call",
+                proposal_kwargs={"target_contract": "demo"},
+                expected_final_status="executed",
+                label_prefix="demo",
+                proposal_count_reader=proposal_count_reader,
+                proposal_status_reader=proposal_status_reader,
+            )
+        )
+
+        self.assertEqual(7, result["proposal_id"])
+        self.assertEqual("executed", result["proposal_final"]["status"])
+        self.assertEqual(
+            [("governance", "propose_contract_call"), ("governance", "vote")],
+            [(contract, function) for contract, function, *_rest in send_labels],
+        )
+
     def test_uniform_state_wait_recovers_nodes_before_retry(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
         with tempfile.TemporaryDirectory() as tmpdir:
