@@ -5131,7 +5131,11 @@ class E2ERunner:
                 for record in records
             ]
 
-        async with self.client(founder, 0, session) as client:
+        shielded_submission_index = await self.healthy_submission_node_index(
+            session,
+            self.default_submission_node_index(),
+        )
+        async with self.client(founder, shielded_submission_index, session) as client:
             for wallet in (alice, bob, relayer):
                 current_balance = await client.get_balance(wallet.public_key)
                 delta = shielded_wallet_balance_target - int(current_balance)
@@ -5415,10 +5419,16 @@ class E2ERunner:
         relay_hashes: dict[str, Any] | None = None
         service_relay_hashes: dict[str, Any] | None = None
 
+        alice_submission_index = await self.healthy_submission_node_index(session, 1)
+        relayer_submission_index = await self.healthy_submission_node_index(session, 3)
+        founder_submission_index = await self.healthy_submission_node_index(
+            session,
+            self.default_submission_node_index(),
+        )
         async with (
-            self.client(alice, 1, session) as alice_client,
-            self.client(relayer, 3, session) as relayer_client,
-            self.client(founder, 0, session) as founder_client,
+            self.client(alice, alice_submission_index, session) as alice_client,
+            self.client(relayer, relayer_submission_index, session) as relayer_client,
+            self.client(founder, founder_submission_index, session) as founder_client,
         ):
             deposit_payloads = [
                 alice_note_1.to_output().encrypt_for(
@@ -5671,9 +5681,14 @@ class E2ERunner:
             if relay_event is None:
                 raise E2EError("shielded relay event stream drifted")
 
+        alice_submission_index = await self.healthy_submission_node_index(session, 1)
+        founder_submission_index = await self.healthy_submission_node_index(
+            session,
+            self.default_submission_node_index(),
+        )
         async with (
-            self.client(alice, 1, session) as alice_client,
-            self.client(founder, 0, session) as founder_client,
+            self.client(alice, alice_submission_index, session) as alice_client,
+            self.client(founder, founder_submission_index, session) as founder_client,
         ):
             withdraw_payloads = [
                 alice_withdraw_change.to_output().encrypt_for(
