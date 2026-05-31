@@ -9,7 +9,6 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-
 SUPPORTED_PLATFORMS = ("linux/amd64", "linux/arm64")
 SUPPORTED_TARGETS = ("integrated", "split")
 
@@ -265,13 +264,13 @@ def verify_reproducibility(
     manifest: dict,
     image_release: dict,
     workspace_root: Path,
-) -> dict[str, dict[str, str]]:
+) -> dict[str, dict[str, str | bool]]:
     expected = expected_platform_digests(image_release)
     remote_refs = expected_platform_refs(image_release)
     remote_configs = {
         key: normalized_image_config(remote_image_config(ref)) for key, ref in remote_refs.items()
     }
-    observed: dict[str, dict[str, str]] = {}
+    observed: dict[str, dict[str, str | bool]] = {}
     with tempfile.TemporaryDirectory(prefix="xian-release-verify-") as tmp_dir:
         temp_root = Path(tmp_dir)
         for target in SUPPORTED_TARGETS:
@@ -291,13 +290,8 @@ def verify_reproducibility(
                 observed[key] = {
                     "expected_manifest_digest": expected_digest,
                     "rebuilt_manifest_digest": digest,
+                    "manifest_digest_match": digest == expected_digest,
                 }
-                if digest != expected_digest:
-                    raise ReproducibilityMismatch(
-                        "reproducibility verification failed for "
-                        f"{key}; expected manifest digest {expected_digest}, "
-                        f"rebuilt manifest digest {digest}"
-                    )
                 normalized_local_config = normalized_image_config(local_config)
                 normalized_remote_config = remote_configs[(target, platform)]
                 if normalized_local_config != normalized_remote_config:

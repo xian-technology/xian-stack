@@ -7,19 +7,34 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import verify_release_reproducibility as repro
 from verify_release_reproducibility import (
+    expected_image_labels,
     expected_platform_digests,
     expected_platform_refs,
-    expected_image_labels,
-    oci_manifest_digest,
     normalized_image_config,
+    oci_manifest_digest,
 )
 
 
 class VerifyReleaseReproducibilityTests(unittest.TestCase):
+    def _single_platform_release(self) -> dict:
+        return {
+            "images": {
+                "integrated": {
+                    "repository": "ghcr.io/xian-technology/xian-node",
+                    "labels": ["org.opencontainers.image.title=Xian Node"],
+                    "platform_digests": {
+                        "linux/amd64": "sha256:" + "1" * 64,
+                    },
+                }
+            }
+        }
+
     def test_expected_platform_digests_requires_both_targets(self) -> None:
         payload = {
             "images": {
@@ -144,6 +159,63 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
                 "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "c" * 64]},
             },
         )
+
+    def test_reproducibility_allows_manifest_digest_drift_when_content_matches(self) -> None:
+        image_config = {
+            "architecture": "amd64",
+            "config": {"Env": ["PYTHONUNBUFFERED=1"]},
+            "created": "2024-01-01T00:00:00Z",
+            "os": "linux",
+            "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "c" * 64]},
+        }
+        with (
+            mock.patch.object(repro, "SUPPORTED_TARGETS", ("integrated",)),
+            mock.patch.object(repro, "SUPPORTED_PLATFORMS", ("linux/amd64",)),
+            mock.patch.object(repro, "remote_image_config", return_value=image_config),
+            mock.patch.object(repro, "build_platform_archive"),
+            mock.patch.object(
+                repro,
+                "oci_image_config",
+                return_value=("sha256:" + "2" * 64, image_config),
+            ),
+        ):
+            observed = repro.verify_reproducibility(
+                manifest={"build": {}},
+                image_release=self._single_platform_release(),
+                workspace_root=Path("/workspace"),
+            )
+
+        self.assertFalse(observed["integrated:linux/amd64"]["manifest_digest_match"])
+
+    def test_reproducibility_still_fails_when_content_differs(self) -> None:
+        remote_config = {
+            "architecture": "amd64",
+            "config": {"Env": ["PYTHONUNBUFFERED=1"]},
+            "created": "2024-01-01T00:00:00Z",
+            "os": "linux",
+            "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "c" * 64]},
+        }
+        local_config = {
+            **remote_config,
+            "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "d" * 64]},
+        }
+        with (
+            mock.patch.object(repro, "SUPPORTED_TARGETS", ("integrated",)),
+            mock.patch.object(repro, "SUPPORTED_PLATFORMS", ("linux/amd64",)),
+            mock.patch.object(repro, "remote_image_config", return_value=remote_config),
+            mock.patch.object(repro, "build_platform_archive"),
+            mock.patch.object(
+                repro,
+                "oci_image_config",
+                return_value=("sha256:" + "1" * 64, local_config),
+            ),
+        ):
+            with self.assertRaisesRegex(repro.ReproducibilityMismatch, "content/config"):
+                repro.verify_reproducibility(
+                    manifest={"build": {}},
+                    image_release=self._single_platform_release(),
+                    workspace_root=Path("/workspace"),
+                )
 
 
 if __name__ == "__main__":
