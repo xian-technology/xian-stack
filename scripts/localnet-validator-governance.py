@@ -2606,8 +2606,9 @@ def get_status():
         node1_account = self.nodes[1].account_public_key
         node2_account = self.nodes[2].account_public_key
         node3_account = self.nodes[3].account_public_key
+        node4_account = self.nodes[4].account_public_key
         node1_consensus_address = self.load_priv_validator_key(1)["address"]
-        node2_consensus_address = self.load_priv_validator_key(2)["address"]
+        node4_consensus_address = self.load_priv_validator_key(4)["address"]
         phase_recovery = await self.restart_primary_at_current_height(
             session,
             timeout_seconds=15.0,
@@ -2657,9 +2658,9 @@ def get_status():
             active_after = await self.wait_for_active_validators(
                 node0,
                 expected_accounts=[
-                    self.nodes[0].account_public_key,
                     node3_account,
                     node2_account,
+                    node4_account,
                 ],
                 timeout_seconds=30.0,
                 label="evidence active-set rebalance",
@@ -2679,7 +2680,7 @@ def get_status():
             live_replacement_present = await self.wait_for_live_validator_address(
                 session,
                 rpc_url=self.nodes[0].rpc_url,
-                validator_address=node2_consensus_address,
+                validator_address=node4_consensus_address,
                 expected_present=True,
                 timeout_seconds=30.0,
                 label="replacement validator entered live validator set",
