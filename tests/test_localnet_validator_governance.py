@@ -62,6 +62,33 @@ class LocalnetValidatorGovernanceTests(unittest.TestCase):
         self.assertEqual(0.5, config.submission.poll_interval_seconds)
         self.assertEqual(6, config.retry.max_attempts)
 
+    def test_xian_client_owns_bounded_session(self) -> None:
+        args = localnet_validator_governance.build_parser().parse_args([])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.object(
+                localnet_validator_governance,
+                "OUTPUT_ROOT",
+                Path(tmpdir),
+            ):
+                runner = localnet_validator_governance.ValidatorGovernanceRunner(args)
+        runner.network = {"chain_id": "test-chain"}
+        runner.nodes = [self._node(0, "http://node-0")]
+
+        client = runner.client(
+            localnet_validator_governance.Wallet(),
+            0,
+            session=object(),
+        )
+
+        self.assertIsNone(client._external_session)
+        self.assertIsNone(client._session)
+        self.assertEqual("http://node-0", client.node_url)
+        self.assertEqual(
+            runner.client_config().transport.total_timeout_seconds,
+            client._timeout.total,
+        )
+
     def test_recover_lagging_nodes_restarts_abci_unresponsive_node(self) -> None:
         args = localnet_validator_governance.build_parser().parse_args(
             ["--rpc-timeout-seconds", "30"]

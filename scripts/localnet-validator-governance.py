@@ -605,14 +605,15 @@ class ValidatorGovernanceRunner:
         node_index: int,
         session: aiohttp.ClientSession,
     ) -> XianAsync:
+        del session
         if self.network is None:
             raise RunnerError("network is not initialized")
+        # Let XianAsync own its session so its transport timeouts apply to RPC calls.
         return XianAsync(
             node_url=self.nodes[node_index].rpc_url,
             chain_id=self.network["chain_id"],
             wallet=wallet,
             config=self.client_config(),
-            session=session,
         )
 
     @functools.lru_cache(maxsize=1)
