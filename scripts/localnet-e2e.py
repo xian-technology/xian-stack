@@ -932,6 +932,61 @@ def read_logs_since(paths: list[Path], positions: dict[Path, int]) -> str:
     return "\n".join(chunk for chunk in chunks if chunk)
 
 
+def log_positions_by_node(nodes: list[LocalnetNode]) -> dict[str, dict[Path, int]]:
+    return {node.moniker: log_file_positions(local_log_paths(node)) for node in nodes}
+
+
+def find_matching_log_lines(
+    text: str,
+    matcher: Callable[[str], bool],
+    *,
+    limit: int = 3,
+) -> list[str]:
+    return [line for line in text.splitlines() if matcher(line)][-limit:]
+
+
+def collect_log_matches(
+    nodes: list[LocalnetNode],
+    positions_by_node: dict[str, dict[Path, int]],
+    matcher: Callable[[str], bool],
+    *,
+    limit: int = 3,
+) -> dict[str, list[str]]:
+    matches: dict[str, list[str]] = {}
+    for node in nodes:
+        logs = local_log_paths(node)
+        if not logs:
+            matches[node.moniker] = []
+            continue
+        text = read_logs_since(logs, positions_by_node.get(node.moniker, {}))
+        matches[node.moniker] = find_matching_log_lines(text, matcher, limit=limit)
+    return matches
+
+
+async def wait_for_log_matches(
+    nodes: list[LocalnetNode],
+    positions_by_node: dict[str, dict[Path, int]],
+    matcher: Callable[[str], bool],
+    *,
+    label: str,
+    timeout_seconds: float,
+    poll_interval_seconds: float = 0.5,
+) -> dict[str, list[str]]:
+    deadline = time.monotonic() + timeout_seconds
+    last_matches: dict[str, list[str]] = {}
+    while True:
+        last_matches = collect_log_matches(nodes, positions_by_node, matcher)
+        missing = [node.moniker for node in nodes if not last_matches[node.moniker]]
+        if not missing:
+            return last_matches
+        if time.monotonic() >= deadline:
+            matched = [node.moniker for node in nodes if last_matches[node.moniker]]
+            raise E2EError(
+                f"{label} logs missing for nodes: {missing}; matched nodes: {matched}"
+            )
+        await asyncio.sleep(poll_interval_seconds)
+
+
 def update_logging_config(
     *,
     level: str,
@@ -5341,15 +5396,14 @@ class E2ERunner:
         }
 
     async def logging_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
-        initial_log_positions = {
-            node.moniker: log_file_positions(local_log_paths(node)) for node in self.nodes
-        }
+        initial_log_positions = log_positions_by_node(self.nodes)
         initial_logs = {
             moniker: [str(path) for path in positions]
             for moniker, positions in initial_log_positions.items()
         }
-        update_logging_config(level="DEBUG", trace_logging=False, json_logging=False)
+        update_logging_config(level="DEBUG", trace_logging=True, json_logging=False)
         await self.restart_localnet_and_wait_ready(session)
+        debug_log_positions = log_positions_by_node(self.nodes)
 
         trigger_wallet = derive_wallet(self.seed, "logging-trigger")
         rejected_wallet = derive_wallet(self.seed, "logging-checktx-reject")
@@ -5363,53 +5417,72 @@ class E2ERunner:
             )
             if rejected_submission.accepted:
                 raise E2EError("logging checktx rejection probe unexpectedly succeeded")
-        async with self.client(trigger_wallet, 0, session) as client:
-            debug_submission = await client.send(
-                amount=1,
-                to_address=self.founder_wallet.public_key,
-                chi=DEFAULT_TRANSFER_CHI,
-                wait_for_tx=True,
-            )
-            debug_receipt = ensure_positive_submission(debug_submission, label="debug-log-trigger")
+
+        async def send_log_trigger(label: str) -> dict[str, Any]:
+            async with self.client(trigger_wallet, 0, session) as client:
+                submission = await client.send(
+                    amount=1,
+                    to_address=self.founder_wallet.public_key,
+                    chi=DEFAULT_TRANSFER_CHI,
+                    wait_for_tx=True,
+                )
+            return ensure_positive_submission(submission, label=label)
+
+        async def trigger_until_all_nodes_log(
+            *,
+            label: str,
+            positions: dict[str, dict[Path, int]],
+            matcher: Callable[[str], bool],
+            receipt_prefix: str,
+        ) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
+            receipts = []
+            last_error: E2EError | None = None
+            for attempt in range(1, 4):
+                receipts.append(await send_log_trigger(f"{receipt_prefix}-{attempt}"))
+                try:
+                    matches = await wait_for_log_matches(
+                        self.nodes,
+                        positions,
+                        matcher,
+                        label=label,
+                        timeout_seconds=10.0,
+                    )
+                    return receipts, matches
+                except E2EError as exc:
+                    last_error = exc
+                    if attempt == 3:
+                        break
+                    await self.stabilize_nodes(
+                        session,
+                        reason=f"while waiting for {label} logs",
+                        timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
+                        advance_blocks=1,
+                    )
+            raise E2EError(f"{label} logs did not reach every node after retries: {last_error}")
+
+        debug_receipts, debug_lines = await trigger_until_all_nodes_log(
+            label="DEBUG stage=execute_tx",
+            positions=debug_log_positions,
+            matcher=lambda line: "DEBUG" in line and "stage=execute_tx" in line,
+            receipt_prefix="debug-log-trigger",
+        )
 
         update_logging_config(level="TRACE", trace_logging=True, json_logging=False)
         await self.restart_localnet_and_wait_ready(session)
+        trace_log_positions = log_positions_by_node(self.nodes)
 
-        async with self.client(trigger_wallet, 0, session) as client:
-            trace_submission = await client.send(
-                amount=1,
-                to_address=self.founder_wallet.public_key,
-                chi=DEFAULT_TRANSFER_CHI,
-                wait_for_tx=True,
-            )
-            trace_receipt = ensure_positive_submission(trace_submission, label="trace-log-trigger")
+        trace_receipts, trace_lines = await trigger_until_all_nodes_log(
+            label="TRACE stage=finalize_tx_result",
+            positions=trace_log_positions,
+            matcher=lambda line: "TRACE" in line and "stage=finalize_tx_result" in line,
+            receipt_prefix="trace-log-trigger",
+        )
 
-        debug_lines: dict[str, list[str]] = {}
-        checktx_lines: dict[str, list[str]] = {}
-        trace_lines: dict[str, list[str]] = {}
-        for node in self.nodes:
-            logs = local_log_paths(node)
-            if not logs:
-                raise E2EError(f"no logs found for {node.moniker}")
-            text = read_logs_since(
-                logs,
-                initial_log_positions.get(node.moniker, {}),
-            )
-            debug_lines[node.moniker] = [
-                line for line in text.splitlines() if "stage=execute_tx" in line
-            ][-3:]
-            checktx_lines[node.moniker] = [
-                line
-                for line in text.splitlines()
-                if rejected_wallet.public_key in line and "stage=check_tx" in line
-            ][-3:]
-            trace_lines[node.moniker] = [
-                line for line in text.splitlines() if "stage=finalize_tx_result" in line
-            ][-3:]
-            if not debug_lines[node.moniker]:
-                raise E2EError(f"DEBUG logs missing stage=execute_tx for {node.moniker}")
-            if not trace_lines[node.moniker]:
-                raise E2EError(f"TRACE logs missing stage=finalize_tx_result for {node.moniker}")
+        checktx_lines = collect_log_matches(
+            self.nodes,
+            debug_log_positions,
+            lambda line: rejected_wallet.public_key in line and "stage=check_tx" in line,
+        )
         if not any(checktx_lines.values()):
             raise E2EError("WARNING logs missing stage=check_tx rejection probe")
 
@@ -5419,8 +5492,8 @@ class E2ERunner:
         return {
             "initial_logs": initial_logs,
             "rejected_submission": rejected_submission,
-            "debug_receipt": debug_receipt,
-            "trace_receipt": trace_receipt,
+            "debug_receipts": debug_receipts,
+            "trace_receipts": trace_receipts,
             "checktx_matches": checktx_lines,
             "debug_matches": debug_lines,
             "trace_matches": trace_lines,

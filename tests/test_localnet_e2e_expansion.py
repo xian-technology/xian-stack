@@ -645,6 +645,81 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertEqual("wallet-0", kwargs["to"])
         self.assertEqual("fund wallet-0 (+2.5)", call.kwargs["label"])
 
+    def test_find_matching_log_lines_keeps_tail_matches(self) -> None:
+        text = "\n".join(
+            [
+                "INFO startup",
+                "DEBUG stage=execute_tx tx=1",
+                "DEBUG unrelated",
+                "DEBUG stage=execute_tx tx=2",
+                "TRACE stage=finalize_tx_result tx=2",
+            ]
+        )
+
+        matches = localnet_e2e.find_matching_log_lines(
+            text,
+            lambda line: "stage=execute_tx" in line,
+            limit=1,
+        )
+
+        self.assertEqual(["DEBUG stage=execute_tx tx=2"], matches)
+
+    def test_wait_for_log_matches_waits_until_every_node_has_a_match(self) -> None:
+        nodes = [
+            self._node(0, "http://node-0"),
+            self._node(1, "http://node-1"),
+        ]
+        observed = [
+            {"node-0": ["DEBUG stage=execute_tx"], "node-1": []},
+            {
+                "node-0": ["DEBUG stage=execute_tx"],
+                "node-1": ["DEBUG stage=execute_tx"],
+            },
+        ]
+
+        with patch.object(
+            localnet_e2e,
+            "collect_log_matches",
+            side_effect=lambda *_args, **_kwargs: observed.pop(0),
+        ):
+            matches = asyncio.run(
+                localnet_e2e.wait_for_log_matches(
+                    nodes,
+                    {},
+                    lambda _line: True,
+                    label="DEBUG stage=execute_tx",
+                    timeout_seconds=1.0,
+                    poll_interval_seconds=0.0,
+                )
+            )
+
+        self.assertEqual(["DEBUG stage=execute_tx"], matches["node-1"])
+
+    def test_wait_for_log_matches_reports_missing_nodes(self) -> None:
+        nodes = [
+            self._node(0, "http://node-0"),
+            self._node(1, "http://node-1"),
+        ]
+
+        with (
+            patch.object(
+                localnet_e2e,
+                "collect_log_matches",
+                return_value={"node-0": ["TRACE stage=finalize_tx_result"], "node-1": []},
+            ),
+            self.assertRaisesRegex(localnet_e2e.E2EError, "node-1"),
+        ):
+            asyncio.run(
+                localnet_e2e.wait_for_log_matches(
+                    nodes,
+                    {},
+                    lambda _line: True,
+                    label="TRACE stage=finalize_tx_result",
+                    timeout_seconds=0.0,
+                    poll_interval_seconds=0.0,
+                )
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
