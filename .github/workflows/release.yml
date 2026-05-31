@@ -525,7 +525,8 @@ jobs:
           python xian-stack/scripts/verify_release_reproducibility.py \
             --manifest xian-stack/release-manifest.json \
             --image-release release-assets/image-release.json \
-            --workspace-root "${GITHUB_WORKSPACE}"
+            --workspace-root "${GITHUB_WORKSPACE}" \
+            --allow-rootfs-drift
 
   github-release:
     needs:

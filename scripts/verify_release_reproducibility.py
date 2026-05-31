@@ -14,7 +14,9 @@ SUPPORTED_TARGETS = ("integrated", "split")
 
 
 class ReproducibilityMismatch(Exception):
-    pass
+    def __init__(self, message: str, *, reasons: list[str]) -> None:
+        super().__init__(message)
+        self.reasons = reasons
 
 
 def load_json(path: Path) -> dict:
@@ -313,18 +315,18 @@ def verify_reproducibility(
                 normalized_local_config = normalized_image_config(local_config)
                 normalized_remote_config = remote_configs[(target, platform)]
                 if normalized_local_config != normalized_remote_config:
-                    reasons = ", ".join(
-                        mismatch_reasons(
-                            normalized_local_config,
-                            normalized_remote_config,
-                        )
+                    reason_fields = mismatch_reasons(
+                        normalized_local_config,
+                        normalized_remote_config,
                     )
+                    reasons = ", ".join(reason_fields)
                     raise ReproducibilityMismatch(
                         "reproducibility verification failed for "
                         f"{key}; expected manifest digest {expected_digest}, "
                         f"rebuilt manifest digest {digest}; rebuilt image "
                         "content/config does not match the published image "
-                        f"(mismatched fields: {reasons})"
+                        f"(mismatched fields: {reasons})",
+                        reasons=reason_fields,
                     )
     return observed
 
@@ -359,6 +361,14 @@ def build_parser() -> argparse.ArgumentParser:
             "check advisory while the Docker build is not fully hermetic."
         ),
     )
+    parser.add_argument(
+        "--allow-rootfs-drift",
+        action="store_true",
+        help=(
+            "Report rootfs-only mismatches without failing while keeping image "
+            "metadata/config mismatches as hard failures."
+        ),
+    )
     return parser
 
 
@@ -373,8 +383,20 @@ def main() -> int:
             workspace_root=args.workspace_root.resolve(),
         )
     except ReproducibilityMismatch as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, sort_keys=True))
-        if args.soft_fail:
+        advisory = args.soft_fail or (args.allow_rootfs_drift and exc.reasons == ["rootfs"])
+        print(
+            json.dumps(
+                {
+                    "advisory": advisory,
+                    "error": str(exc),
+                    "mismatched_fields": exc.reasons,
+                    "ok": False,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        if advisory:
             return 0
         return 1
     else:

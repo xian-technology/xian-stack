@@ -6,6 +6,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -255,6 +256,77 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
                     image_release=self._single_platform_release(),
                     workspace_root=Path("/workspace"),
                 )
+
+    def test_main_allows_rootfs_drift_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manifest_path = Path(tmp_dir) / "manifest.json"
+            image_release_path = Path(tmp_dir) / "image-release.json"
+            manifest_path.write_text("{}", encoding="utf-8")
+            image_release_path.write_text("{}", encoding="utf-8")
+            output = io.StringIO()
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "verify_release_reproducibility.py",
+                        "--manifest",
+                        str(manifest_path),
+                        "--image-release",
+                        str(image_release_path),
+                        "--allow-rootfs-drift",
+                    ],
+                ),
+                mock.patch.object(
+                    repro,
+                    "verify_reproducibility",
+                    side_effect=repro.ReproducibilityMismatch(
+                        "rootfs differs",
+                        reasons=["rootfs"],
+                    ),
+                ),
+                redirect_stdout(output),
+            ):
+                exit_code = repro.main()
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["advisory"])
+        self.assertEqual(payload["mismatched_fields"], ["rootfs"])
+
+    def test_main_still_fails_config_drift_with_rootfs_drift_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manifest_path = Path(tmp_dir) / "manifest.json"
+            image_release_path = Path(tmp_dir) / "image-release.json"
+            manifest_path.write_text("{}", encoding="utf-8")
+            image_release_path.write_text("{}", encoding="utf-8")
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "verify_release_reproducibility.py",
+                        "--manifest",
+                        str(manifest_path),
+                        "--image-release",
+                        str(image_release_path),
+                        "--allow-rootfs-drift",
+                    ],
+                ),
+                mock.patch.object(
+                    repro,
+                    "verify_reproducibility",
+                    side_effect=repro.ReproducibilityMismatch(
+                        "config differs",
+                        reasons=["config"],
+                    ),
+                ),
+                redirect_stdout(io.StringIO()),
+            ):
+                exit_code = repro.main()
+
+        self.assertEqual(exit_code, 1)
 
 
 if __name__ == "__main__":
