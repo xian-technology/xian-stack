@@ -170,6 +170,16 @@ def remote_image_config(ref: str) -> dict:
     return payload
 
 
+def normalized_runtime_config(config: dict) -> dict:
+    """Compare meaningful runtime config and ignore OCI/Docker default noise."""
+    normalized: dict[str, object] = {}
+    for key, value in sorted(config.items()):
+        if value in (None, [], {}):
+            continue
+        normalized[key] = value
+    return normalized
+
+
 def normalized_image_config(config: dict) -> dict:
     runtime_config = config.get("config")
     rootfs = config.get("rootfs")
@@ -179,11 +189,19 @@ def normalized_image_config(config: dict) -> dict:
         raise ValueError("image config is missing rootfs object")
     return {
         "architecture": config.get("architecture"),
-        "config": runtime_config,
+        "config": normalized_runtime_config(runtime_config),
         "created": config.get("created"),
         "os": config.get("os"),
         "rootfs": rootfs,
     }
+
+
+def mismatch_reasons(local_config: dict, remote_config: dict) -> list[str]:
+    reasons: list[str] = []
+    for key in ("architecture", "created", "os", "config", "rootfs"):
+        if local_config.get(key) != remote_config.get(key):
+            reasons.append(key)
+    return reasons
 
 
 def build_platform_archive(
@@ -295,11 +313,18 @@ def verify_reproducibility(
                 normalized_local_config = normalized_image_config(local_config)
                 normalized_remote_config = remote_configs[(target, platform)]
                 if normalized_local_config != normalized_remote_config:
+                    reasons = ", ".join(
+                        mismatch_reasons(
+                            normalized_local_config,
+                            normalized_remote_config,
+                        )
+                    )
                     raise ReproducibilityMismatch(
                         "reproducibility verification failed for "
                         f"{key}; expected manifest digest {expected_digest}, "
                         f"rebuilt manifest digest {digest}; rebuilt image "
-                        "content/config does not match the published image"
+                        "content/config does not match the published image "
+                        f"(mismatched fields: {reasons})"
                     )
     return observed
 

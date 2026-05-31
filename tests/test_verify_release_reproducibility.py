@@ -16,6 +16,7 @@ from verify_release_reproducibility import (
     expected_image_labels,
     expected_platform_digests,
     expected_platform_refs,
+    mismatch_reasons,
     normalized_image_config,
     oci_manifest_digest,
 )
@@ -159,6 +160,44 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
                 "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "c" * 64]},
             },
         )
+
+    def test_normalized_image_config_ignores_empty_runtime_defaults(self) -> None:
+        payload = {
+            "architecture": "amd64",
+            "config": {
+                "Cmd": None,
+                "Entrypoint": ["/init"],
+                "Env": ["PYTHONUNBUFFERED=1"],
+                "Labels": {"name": "xian"},
+                "OnBuild": [],
+                "Volumes": {},
+            },
+            "created": "2024-01-01T00:00:00Z",
+            "os": "linux",
+            "rootfs": {"type": "layers", "diff_ids": []},
+        }
+        self.assertEqual(
+            normalized_image_config(payload)["config"],
+            {
+                "Entrypoint": ["/init"],
+                "Env": ["PYTHONUNBUFFERED=1"],
+                "Labels": {"name": "xian"},
+            },
+        )
+
+    def test_mismatch_reasons_names_changed_sections(self) -> None:
+        remote = {
+            "architecture": "amd64",
+            "config": {"Env": ["PYTHONUNBUFFERED=1"]},
+            "created": "2024-01-01T00:00:00Z",
+            "os": "linux",
+            "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "c" * 64]},
+        }
+        local = {
+            **remote,
+            "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "d" * 64]},
+        }
+        self.assertEqual(mismatch_reasons(local, remote), ["rootfs"])
 
     def test_reproducibility_allows_manifest_digest_drift_when_content_matches(self) -> None:
         image_config = {
