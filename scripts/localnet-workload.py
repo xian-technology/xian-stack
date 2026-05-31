@@ -464,7 +464,9 @@ class WorkloadContext:
             expected_message=expected_message,
             response=response,
             tx=tx,
-            tx_hash=response.tx_hash or local_tx_hash,
+            tx_hash=response.tx_hash
+            or broadcast_response_tx_hash(getattr(response, "response", None))
+            or local_tx_hash,
         )
 
     async def resolve_records(
@@ -576,6 +578,7 @@ class WorkloadContext:
                 errors.append(f"{node.moniker}: {type(exc).__name__}: {exc}")
                 continue
 
+            rebroadcast_tx_hash = broadcast_response_tx_hash(response)
             if "error" in response:
                 message = response["error"].get("data") or response["error"].get("message")
                 if not self._is_duplicate_tx_message(message):
@@ -591,6 +594,8 @@ class WorkloadContext:
                     )
                     continue
 
+            if rebroadcast_tx_hash is not None:
+                record.tx_hash = rebroadcast_tx_hash
             try:
                 return await wait_for_tx_receipt(
                     clients=clients,
@@ -840,6 +845,18 @@ def deadline_value(*, seconds_from_now: int) -> dict[str, list[int]]:
             future.microsecond,
         ]
     }
+
+
+def broadcast_response_tx_hash(response: Any) -> str | None:
+    if not isinstance(response, dict):
+        return None
+    result = response.get("result")
+    if not isinstance(result, dict):
+        return None
+    tx_hash = result.get("hash")
+    if not isinstance(tx_hash, str) or not tx_hash:
+        return None
+    return tx_hash.upper()
 
 
 def parse_rfc3339_utc(value: str) -> datetime:
@@ -1300,10 +1317,12 @@ def record_precedes(left: BroadcastRecord, right: BroadcastRecord) -> bool:
 
 async def broadcast_and_confirm(
     context: WorkloadContext,
+    *,
+    timeout_seconds: float = RECEIPT_TIMEOUT_SECONDS,
     **kwargs: Any,
 ) -> BroadcastRecord:
     record = await context.broadcast_tx(**kwargs)
-    await context.resolve_records([record])
+    await context.resolve_records([record], timeout_seconds=timeout_seconds)
     require_successful(record)
     return record
 
@@ -1327,6 +1346,7 @@ async def fund_wallets(
     amount: ContractingDecimal,
     chi: int,
     label_prefix: str,
+    timeout_seconds: float = RECEIPT_TIMEOUT_SECONDS,
 ) -> list[BroadcastRecord]:
     records: list[BroadcastRecord] = []
     seed_rpc_index = context.submit_node_index
@@ -1342,6 +1362,7 @@ async def fund_wallets(
                 kwargs={"amount": amount, "to": wallet.public_key},
                 chi=chi,
                 expected_success=True,
+                timeout_seconds=timeout_seconds,
             )
         )
     return records
@@ -1464,6 +1485,7 @@ async def broadcast_funding_record(
     token_amount: ContractingDecimal,
     token_a: str,
     token_b: str,
+    timeout_seconds: float = RECEIPT_TIMEOUT_SECONDS,
 ) -> list[BroadcastRecord]:
     rpc_index = index % len(context.nodes)
     return [
@@ -1477,6 +1499,7 @@ async def broadcast_funding_record(
             kwargs={"amount": gas_amount, "to": wallet.public_key},
             chi=TOKEN_TX_CHI,
             expected_success=True,
+            timeout_seconds=timeout_seconds,
         ),
         await broadcast_and_confirm(
             context,
@@ -1488,6 +1511,7 @@ async def broadcast_funding_record(
             kwargs={"amount": token_amount, "to": wallet.public_key},
             chi=TOKEN_TX_CHI,
             expected_success=True,
+            timeout_seconds=timeout_seconds,
         ),
         await broadcast_and_confirm(
             context,
@@ -1499,6 +1523,7 @@ async def broadcast_funding_record(
             kwargs={"amount": token_amount, "to": wallet.public_key},
             chi=TOKEN_TX_CHI,
             expected_success=True,
+            timeout_seconds=timeout_seconds,
         ),
     ]
 
@@ -1510,6 +1535,7 @@ async def broadcast_approval_record(
     wallet_index: int,
     dex_contract: str,
     token_name: str,
+    timeout_seconds: float = RECEIPT_TIMEOUT_SECONDS,
 ) -> BroadcastRecord:
     return await broadcast_and_confirm(
         context,
@@ -1521,6 +1547,7 @@ async def broadcast_approval_record(
         kwargs={"amount": fixed(1_000_000), "to": dex_contract},
         chi=TOKEN_TX_CHI,
         expected_success=True,
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -1531,6 +1558,7 @@ async def run_counter_basic(
     operations: int,
     receipt_resolution: str,
     receipt_workers: int,
+    receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
     founder = context.founder_wallet
     worker_wallets = [
@@ -1554,7 +1582,7 @@ async def run_counter_basic(
         chi=COUNTER_DEPLOY_CHI,
         expected_success=True,
     )
-    await context.resolve_records([deploy_record])
+    await context.resolve_records([deploy_record], timeout_seconds=receipt_timeout_seconds)
     require_successful(deploy_record)
 
     funding_records = []
@@ -1570,6 +1598,7 @@ async def run_counter_basic(
                 kwargs={"amount": fixed(5_000), "to": wallet.public_key},
                 chi=COUNTER_TX_CHI,
                 expected_success=True,
+                timeout_seconds=receipt_timeout_seconds,
             )
         )
 
@@ -1583,6 +1612,7 @@ async def run_counter_basic(
             return
         await context.resolve_records(
             pending_records,
+            timeout_seconds=receipt_timeout_seconds,
             concurrent=receipt_resolution == "concurrent",
             max_workers=receipt_workers,
         )
@@ -1695,6 +1725,7 @@ async def run_dex_mixed(
     rounds: int,
     receipt_resolution: str,
     receipt_workers: int,
+    receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
     founder = context.founder_wallet
     suffix = hashlib.sha256(f"dex:{seed}".encode("utf-8")).hexdigest()[:8]
@@ -1727,6 +1758,7 @@ async def run_dex_mixed(
             ),
             chi=TOKEN_DEPLOY_CHI,
             expected_success=True,
+            timeout_seconds=receipt_timeout_seconds,
         ),
         await broadcast_and_confirm(
             context,
@@ -1747,6 +1779,7 @@ async def run_dex_mixed(
             ),
             chi=TOKEN_DEPLOY_CHI,
             expected_success=True,
+            timeout_seconds=receipt_timeout_seconds,
         ),
         await broadcast_and_confirm(
             context,
@@ -1761,6 +1794,7 @@ async def run_dex_mixed(
             ),
             chi=PAIR_DEPLOY_CHI,
             expected_success=True,
+            timeout_seconds=receipt_timeout_seconds,
         ),
         await broadcast_and_confirm(
             context,
@@ -1775,6 +1809,7 @@ async def run_dex_mixed(
             ),
             chi=DEX_DEPLOY_CHI,
             expected_success=True,
+            timeout_seconds=receipt_timeout_seconds,
         ),
     ]
 
@@ -1792,6 +1827,7 @@ async def run_dex_mixed(
                 token_amount=fixed(25_000),
                 token_a=token_a,
                 token_b=token_b,
+                timeout_seconds=receipt_timeout_seconds,
             )
         )
 
@@ -1804,6 +1840,7 @@ async def run_dex_mixed(
                 wallet_index=wallet_index,
                 dex_contract=dex_contract,
                 token_name=token_a,
+                timeout_seconds=receipt_timeout_seconds,
             )
         )
         approval_records.append(
@@ -1813,6 +1850,7 @@ async def run_dex_mixed(
                 wallet_index=wallet_index + len(context.nodes),
                 dex_contract=dex_contract,
                 token_name=token_b,
+                timeout_seconds=receipt_timeout_seconds,
             )
         )
 
@@ -1836,7 +1874,10 @@ async def run_dex_mixed(
         chi=DEX_TX_CHI,
         expected_success=True,
     )
-    await context.resolve_records([initial_liquidity])
+    await context.resolve_records(
+        [initial_liquidity],
+        timeout_seconds=receipt_timeout_seconds,
+    )
     require_successful(initial_liquidity)
 
     token0, token1 = sorted((token_a, token_b))
@@ -1860,6 +1901,7 @@ async def run_dex_mixed(
         kwargs={"pair": pair_id, "amount": fixed(10_000), "to": dex_contract},
         chi=DEX_TX_CHI,
         expected_success=True,
+        timeout_seconds=receipt_timeout_seconds,
     )
 
     print(f"Broadcasting dex_mixed workload plan ({rounds} rounds)...")
@@ -1951,6 +1993,7 @@ async def run_dex_mixed(
         ]
         await context.resolve_records(
             round_records,
+            timeout_seconds=receipt_timeout_seconds,
             concurrent=receipt_resolution == "concurrent",
             max_workers=receipt_workers,
         )
@@ -2017,7 +2060,10 @@ async def run_dex_mixed(
         )
     )
 
-    await context.resolve_records(plan_records[-3:])
+    await context.resolve_records(
+        plan_records[-3:],
+        timeout_seconds=receipt_timeout_seconds,
+    )
 
     successful_records = [record for record in plan_records if record.final_success]
     failed_records = [record for record in plan_records if not record.final_success]
@@ -2165,6 +2211,7 @@ async def run_parallel_probe(
     seed: str,
     receipt_resolution: str,
     receipt_workers: int,
+    receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
     founder = context.founder_wallet
     parallel_config = context.network.get("parallel_execution", {})
@@ -2195,7 +2242,7 @@ async def run_parallel_probe(
         chi=PARALLEL_PROBE_DEPLOY_CHI,
         expected_success=True,
     )
-    await context.resolve_records([deploy_record])
+    await context.resolve_records([deploy_record], timeout_seconds=receipt_timeout_seconds)
     require_successful(deploy_record)
 
     funding_records = []
@@ -2211,6 +2258,7 @@ async def run_parallel_probe(
                 kwargs={"amount": fixed(5_000), "to": wallet.public_key},
                 chi=PARALLEL_PROBE_TX_CHI,
                 expected_success=True,
+                timeout_seconds=receipt_timeout_seconds,
             )
         )
 
@@ -2238,6 +2286,7 @@ async def run_parallel_probe(
         )
     await context.resolve_records(
         non_conflicting_records,
+        timeout_seconds=receipt_timeout_seconds,
         concurrent=receipt_resolution == "concurrent",
         max_workers=receipt_workers,
     )
@@ -2265,6 +2314,7 @@ async def run_parallel_probe(
         )
     await context.resolve_records(
         same_sender_records,
+        timeout_seconds=receipt_timeout_seconds,
         concurrent=receipt_resolution == "concurrent",
         max_workers=receipt_workers,
     )
@@ -2318,6 +2368,7 @@ async def run_parallel_probe(
             )
         await context.resolve_records(
             records,
+            timeout_seconds=receipt_timeout_seconds,
             concurrent=receipt_resolution == "concurrent",
             max_workers=receipt_workers,
         )
@@ -2433,6 +2484,7 @@ async def run_parallel_probe(
             value_records.append((record, value))
         await context.resolve_records(
             records,
+            timeout_seconds=receipt_timeout_seconds,
             concurrent=receipt_resolution == "concurrent",
             max_workers=receipt_workers,
         )
@@ -2599,6 +2651,7 @@ async def run_transfer_fanout(
         amount=funding_amount,
         chi=THROUGHPUT_TRANSFER_TX_CHI,
         label_prefix="fund throughput sender",
+        timeout_seconds=receipt_timeout_seconds,
     )
 
     plans: list[dict[str, Any]] = []
@@ -2776,6 +2829,7 @@ async def run_contract_heavy(
         amount=funding_amount,
         chi=THROUGHPUT_TRANSFER_TX_CHI,
         label_prefix="fund heavy worker",
+        timeout_seconds=receipt_timeout_seconds,
     )
 
     sample_slots: dict[int, str] = {}
@@ -2916,6 +2970,7 @@ async def run_scenario(
             operations=args.counter_ops,
             receipt_resolution=args.receipt_resolution,
             receipt_workers=args.receipt_workers,
+            receipt_timeout_seconds=args.receipt_timeout_seconds,
         )
     if args.scenario == "dex_mixed":
         return await run_dex_mixed(
@@ -2924,6 +2979,7 @@ async def run_scenario(
             rounds=args.dex_rounds,
             receipt_resolution=args.receipt_resolution,
             receipt_workers=args.receipt_workers,
+            receipt_timeout_seconds=args.receipt_timeout_seconds,
         )
     if args.scenario == "parallel_probe":
         return await run_parallel_probe(
@@ -2931,6 +2987,7 @@ async def run_scenario(
             seed=args.seed,
             receipt_resolution=args.receipt_resolution,
             receipt_workers=args.receipt_workers,
+            receipt_timeout_seconds=args.receipt_timeout_seconds,
         )
     if args.scenario == "transfer_fanout":
         return await run_transfer_fanout(

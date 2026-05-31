@@ -456,6 +456,122 @@ def test_resolve_record_rebroadcasts_signed_tx_after_receipt_timeout() -> None:
     )
 
 
+def test_resolve_record_waits_for_rebroadcast_response_hash() -> None:
+    context = localnet_workload.WorkloadContext(
+        _network(),
+        sample_nodes=3,
+        submit_node_index=0,
+        round_robin_submission=True,
+    )
+    context._session = object()
+    context.healthy_submission_index = AsyncMock(return_value=1)
+    record = localnet_workload.BroadcastRecord(
+        label="recover missing tx",
+        contract="currency",
+        function="transfer",
+        rpc_url=context.nodes[2].rpc_url,
+        sender="sender",
+        expected_success=True,
+        expected_message=None,
+        response=SimpleNamespace(submitted=True, accepted=True, message=None),
+        tx={"signed": "payload"},
+        tx_hash="initial-hash",
+    )
+    receipt = {
+        "height": 12,
+        "tx_index": 0,
+        "success": True,
+        "result": None,
+        "events": [],
+        "chi_used": 20,
+    }
+    wait_for_receipt = AsyncMock(
+        side_effect=[
+            localnet_workload.WorkloadError("missing before rebroadcast"),
+            receipt,
+        ]
+    )
+    rebroadcast = AsyncMock(return_value={"result": {"code": 0, "hash": "rebroadcast-hash"}})
+
+    with (
+        patch.object(localnet_workload, "wait_for_tx_receipt", wait_for_receipt),
+        patch.object(localnet_workload.tr, "broadcast_tx_wait_async", rebroadcast),
+    ):
+        asyncio.run(context._resolve_record(record, timeout_seconds=1.0))
+
+    assert record.tx_hash == "REBROADCAST-HASH"
+    assert [call.kwargs["tx_hash"] for call in wait_for_receipt.await_args_list] == [
+        "initial-hash",
+        "REBROADCAST-HASH",
+    ]
+
+
+def test_broadcast_and_confirm_uses_configured_receipt_timeout() -> None:
+    record = localnet_workload.BroadcastRecord(
+        label="confirmed tx",
+        contract="currency",
+        function="transfer",
+        rpc_url="http://node",
+        sender="sender",
+        expected_success=True,
+        expected_message=None,
+        response=SimpleNamespace(submitted=True, accepted=True, message=None),
+        tx_hash="tx-hash",
+        final_success=True,
+    )
+    context = SimpleNamespace(
+        broadcast_tx=AsyncMock(return_value=record),
+        resolve_records=AsyncMock(),
+    )
+
+    result = asyncio.run(
+        localnet_workload.broadcast_and_confirm(
+            context,
+            label="confirmed tx",
+            wallet=object(),
+            rpc_index=0,
+            contract="currency",
+            function="transfer",
+            kwargs={"amount": "1", "to": "receiver"},
+            chi=1_500,
+            expected_success=True,
+            timeout_seconds=123.0,
+        )
+    )
+
+    assert result is record
+    context.resolve_records.assert_awaited_once_with(
+        [record],
+        timeout_seconds=123.0,
+    )
+
+
+def test_run_scenario_passes_receipt_timeout_to_dex_mixed() -> None:
+    args = SimpleNamespace(
+        scenario="dex_mixed",
+        seed="seed",
+        dex_rounds=8,
+        receipt_resolution="concurrent",
+        receipt_workers=24,
+        receipt_timeout_seconds=180.0,
+    )
+    run_dex_mixed = AsyncMock(return_value={"scenario": "dex_mixed"})
+    context = object()
+
+    with patch.object(localnet_workload, "run_dex_mixed", run_dex_mixed):
+        result = asyncio.run(localnet_workload.run_scenario(args, context))
+
+    assert result == {"scenario": "dex_mixed"}
+    run_dex_mixed.assert_awaited_once_with(
+        context,
+        seed="seed",
+        rounds=8,
+        receipt_resolution="concurrent",
+        receipt_workers=24,
+        receipt_timeout_seconds=180.0,
+    )
+
+
 def test_wait_for_tx_receipt_scans_wide_recent_blocks_after_timeout() -> None:
     session = object()
     scan_args = {}
