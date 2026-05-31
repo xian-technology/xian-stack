@@ -847,6 +847,19 @@ class ValidatorGovernanceRunner:
             "after": after,
         }
 
+    async def recover_current_height(
+        self,
+        session: aiohttp.ClientSession,
+        *,
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        reference_node = self.nodes[1] if len(self.nodes) > 1 else self.nodes[0]
+        return await self.recover_lagging_nodes(
+            session,
+            target_height=await latest_height(session, reference_node.rpc_url),
+            timeout_seconds=timeout_seconds,
+        )
+
     async def fund_wallets(
         self,
         session: aiohttp.ClientSession,
@@ -2377,6 +2390,10 @@ def get_status():
         node2_wallet = self.validator_wallets[2]
         node3_wallet = self.validator_wallets[3]
         node1_key = self.nodes[1].account_public_key
+        phase_recovery = await self.recover_current_height(
+            session,
+            timeout_seconds=15.0,
+        )
 
         async with (
             self.client(node0_wallet, 0, session) as node0,
@@ -2523,6 +2540,7 @@ def get_status():
             )
 
         return {
+            "phase_recovery": phase_recovery,
             "remove_candidate": remove_candidate,
             "validator_after_remove": validator_after_remove,
             "active_after_remove": active_after_remove,
@@ -2546,6 +2564,10 @@ def get_status():
         node3_account = self.nodes[3].account_public_key
         node1_consensus_address = self.load_priv_validator_key(1)["address"]
         node2_consensus_address = self.load_priv_validator_key(2)["address"]
+        phase_recovery = await self.recover_current_height(
+            session,
+            timeout_seconds=15.0,
+        )
 
         async with self.client(node0_wallet, 0, session) as node0:
             policy = await node0.call("masternodes", "get_policy_config", {})
@@ -2649,6 +2671,7 @@ def get_status():
         )
 
         return {
+            "phase_recovery": phase_recovery,
             "policy": policy,
             "validator_before": validator_before,
             "active_before": active_before,
@@ -2671,6 +2694,10 @@ def get_status():
         node0_wallet = self.validator_wallets[0]
         node3_wallet = self.validator_wallets[3]
         node3_account = self.nodes[3].account_public_key
+        phase_recovery = await self.recover_current_height(
+            session,
+            timeout_seconds=15.0,
+        )
 
         async with (
             self.client(node0_wallet, 0, session) as node0,
@@ -2760,6 +2787,7 @@ def get_status():
         )
 
         return {
+            "phase_recovery": phase_recovery,
             "validator_before": validator_before,
             "active_before": active_before,
             "announce_leave": announce_leave_receipt,
