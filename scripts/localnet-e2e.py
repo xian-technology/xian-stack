@@ -512,14 +512,16 @@ async def wait_for_height(
     while time.monotonic() < deadline:
         try:
             payload = await fetch_json(session, f"{rpc_url}/status", timeout=5.0)
-            height = int(payload["result"]["sync_info"]["latest_block_height"])
+            sync_info = payload["result"]["sync_info"]
+            height = int(sync_info["latest_block_height"])
+            catching_up = bool(sync_info.get("catching_up", False))
         except Exception:  # noqa: BLE001
             await asyncio.sleep(0.5)
             continue
-        if height >= target_height:
+        if height >= target_height and not catching_up:
             return height
         await asyncio.sleep(0.5)
-    raise E2EError(f"node {rpc_url} did not reach height {target_height}")
+    raise E2EError(f"node {rpc_url} did not reach height {target_height} ready")
 
 
 async def latest_height(
@@ -832,9 +834,14 @@ def ensure_positive_submission(
     label: str,
 ) -> dict[str, Any]:
     if not submission.submitted:
-        raise E2EError(f"{label}: transaction was not submitted")
+        raise E2EError(
+            f"{label}: transaction was not submitted{submission_error_context(submission)}"
+        )
     if submission.accepted is False:
-        raise E2EError(f"{label}: CheckTx rejected: {submission.message}")
+        raise E2EError(
+            f"{label}: CheckTx rejected: {submission.message}"
+            f"{submission_error_context(submission)}"
+        )
     if submission.receipt is None:
         if submission.mode == "commit" and submission.accepted is True and submission.finalized:
             return normalize_receipt(submission, label=label)
@@ -844,6 +851,16 @@ def ensure_positive_submission(
             f"{label}: transaction failed during execution: {submission.receipt.message}"
         )
     return normalize_receipt(submission, label=label)
+
+
+def submission_error_context(submission) -> str:
+    parts = []
+    if submission.message:
+        parts.append(f"message={submission.message!r}")
+    response = submission.response or {}
+    if response:
+        parts.append("response=" + json.dumps(response, sort_keys=True, default=str)[:500])
+    return "" if not parts else " (" + "; ".join(parts) + ")"
 
 
 def ensure_failed_submission(
@@ -2319,8 +2336,12 @@ class E2ERunner:
         preferred_index %= len(self.nodes)
         if preferred_index in excluded_indices:
             preferred_index = fallback_index
+        status_nodes = [node for node in available_nodes if not node.bds_node]
+        if not status_nodes:
+            status_nodes = available_nodes
+
         statuses: list[tuple[int, int, bool, bool]] = []
-        for node in available_nodes:
+        for node in status_nodes:
             try:
                 payload = await fetch_json(
                     session,
@@ -2342,15 +2363,9 @@ class E2ERunner:
         if not statuses:
             return fallback_index
 
-        submission_statuses = [
-            status for status in statuses if not self.nodes[status[0]].bds_node
-        ]
-        if not submission_statuses:
-            submission_statuses = statuses
-
         candidates = [
             status
-            for status in submission_statuses
+            for status in statuses
             if not status[2] and status[3]
         ]
         if not candidates:
@@ -2784,23 +2799,29 @@ class E2ERunner:
             )
         )
 
-        async with self.client(operator, 2, session) as client:
-            touch_submission = await client.send_tx(
-                router_name,
-                "dynamic_touch",
-                {
-                    "target_contract": alpha_name,
-                    "function_name": "touch",
-                    "account": operator.public_key,
-                    "amount": 3,
-                },
-                chi=CONTRACT_ORCHESTRATION_TX_CHI["dynamic_call"],
-                mode="commit",
-            )
-            touch_receipt = ensure_positive_submission(
-                touch_submission,
-                label="orchestration-dynamic-touch",
-            )
+        touch_submission = await self.send_tx_with_broadcast_failover(
+            session,
+            operator,
+            router_name,
+            "dynamic_touch",
+            {
+                "target_contract": alpha_name,
+                "function_name": "touch",
+                "account": operator.public_key,
+                "amount": 3,
+            },
+            preferred_index=2,
+            excluded_indices=None,
+            chi=CONTRACT_ORCHESTRATION_TX_CHI["dynamic_call"],
+            label="orchestration-dynamic-touch",
+            timeout_seconds=self.args.rpc_timeout_seconds,
+        )
+        touch_receipt = ensure_positive_submission(
+            touch_submission,
+            label="orchestration-dynamic-touch",
+        )
+        read_index = await self.healthy_submission_node_index(session, preferred_index=2)
+        async with self.client(operator, read_index, session) as client:
             alpha_touch_total = await client.call(alpha_name, "get_touch_total", {})
 
         node_recoveries.append(
