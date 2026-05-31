@@ -2433,7 +2433,7 @@ def get_status():
 
         async with (
             self.client(node1_wallet, 1, session) as node1,
-            self.client(node2_wallet, 2, session) as node2,
+            self.client(node2_wallet, 1, session) as node2,
             self.client(node3_wallet, 3, session) as node3,
             self.client(node4_wallet, 4, session) as node4,
         ):
