@@ -44,7 +44,7 @@ RUN wget -O /tmp/cometbft.tar.gz "${COMETBFT_SOURCE_URL}" \
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" GOBIN=/out \
-    go build -trimpath -buildvcs=false -ldflags="-s -w" \
+    go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" \
     -o /out/cometbft ./cmd/cometbft
 
 FROM ${RUST_IMAGE} AS rust-toolchain
