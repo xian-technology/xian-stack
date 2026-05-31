@@ -2421,10 +2421,10 @@ def get_status():
         }
 
     async def hybrid_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
-        node0_wallet = self.validator_wallets[0]
         node1_wallet = self.validator_wallets[1]
         node2_wallet = self.validator_wallets[2]
         node3_wallet = self.validator_wallets[3]
+        node4_wallet = self.validator_wallets[4]
         node1_key = self.nodes[1].account_public_key
         phase_recovery = await self.restart_primary_at_current_height(
             session,
@@ -2432,38 +2432,40 @@ def get_status():
         )
 
         async with (
-            self.client(node0_wallet, 0, session) as node0,
             self.client(node1_wallet, 1, session) as node1,
             self.client(node2_wallet, 2, session) as node2,
             self.client(node3_wallet, 3, session) as node3,
+            self.client(node4_wallet, 4, session) as node4,
         ):
             clients_by_account = {
-                self.nodes[0].account_public_key: ("node0", node0),
                 self.nodes[1].account_public_key: ("node1", node1),
                 self.nodes[2].account_public_key: ("node2", node2),
                 self.nodes[3].account_public_key: ("node3", node3),
+                self.nodes[4].account_public_key: ("node4", node4),
             }
 
             def voters_for_active_set(
                 active_validators: list[dict[str, Any]],
+                *,
+                exclude_account: str,
             ) -> list[tuple[str, XianAsync]]:
                 voters = []
                 for validator in active_validators:
                     account = validator["account"]
-                    if account == self.nodes[0].account_public_key:
+                    if account == exclude_account:
                         continue
                     if account in clients_by_account:
                         voters.append(clients_by_account[account])
                 return voters
 
             remove_candidate = await self.approve_members_vote(
-                node0,
-                [("node3", node3), ("node1", node1)],
+                node3,
+                [("node1", node1), ("node2", node2)],
                 type_of_vote="remove_member",
                 arg=node1_key,
                 label_prefix="hybrid-remove-candidate",
             )
-            validator_after_remove = await node0.call(
+            validator_after_remove = await node3.call(
                 "masternodes",
                 "get_validator",
                 {"account": node1_key},
@@ -2473,20 +2475,23 @@ def get_status():
                 "removed",
                 label="node1 removed before hybrid re-register",
             )
-            active_after_remove = await node0.call(
+            active_after_remove = await node3.call(
                 "masternodes",
                 "get_active_validators",
                 {},
             )
 
             switch_to_hybrid = await self.approve_members_vote(
-                node0,
-                voters_for_active_set(active_after_remove),
+                node3,
+                voters_for_active_set(
+                    active_after_remove,
+                    exclude_account=self.nodes[3].account_public_key,
+                ),
                 type_of_vote="update_policy",
                 arg={"selection_mode": "hybrid"},
                 label_prefix="hybrid-update-policy",
             )
-            policy_after_switch = await node0.call(
+            policy_after_switch = await node3.call(
                 "masternodes",
                 "get_policy_config",
                 {},
@@ -2497,7 +2502,7 @@ def get_status():
                 label="hybrid selection mode",
             )
 
-            registration_fee = coerce_int(await node0.get_state("masternodes", "registration_fee"))
+            registration_fee = coerce_int(await node3.get_state("masternodes", "registration_fee"))
             approve_registration = await self.submit_tx(
                 node1,
                 "currency",
@@ -2533,14 +2538,14 @@ def get_status():
             )
 
             rebalance_pending = await self.submit_tx(
-                node0,
+                node3,
                 "masternodes",
                 "rebalance",
                 {},
                 label="hybrid-rebalance-before-approval",
                 chi=GOVERNANCE_TX_CHI,
             )
-            active_before_approval = await node0.call(
+            active_before_approval = await node3.call(
                 "masternodes",
                 "get_active_validators",
                 {},
@@ -2551,15 +2556,18 @@ def get_status():
                 label="node1 blocked before hybrid approval",
             )
 
-            active_before_approval_voters = voters_for_active_set(active_before_approval)
+            active_before_approval_voters = voters_for_active_set(
+                active_before_approval,
+                exclude_account=self.nodes[3].account_public_key,
+            )
             add_member = await self.approve_members_vote(
-                node0,
+                node3,
                 active_before_approval_voters,
                 type_of_vote="add_member",
                 arg=node1_key,
                 label_prefix="hybrid-add-member",
             )
-            active_after_approval = await node0.call(
+            active_after_approval = await node3.call(
                 "masternodes",
                 "get_active_validators",
                 {},
