@@ -2212,8 +2212,8 @@ def get_status():
             )
 
             jail_vote = await self.approve_members_vote(
-                node0,
-                [("node3", node3), ("node1", node1)],
+                node3,
+                [("node1", node1), ("node2", node2)],
                 type_of_vote="jail_member",
                 arg={
                     "member": self.nodes[1].account_public_key,
@@ -2248,8 +2248,8 @@ def get_status():
             )
 
             unjail_vote = await self.approve_members_vote(
-                node0,
-                [("node3", node3), ("node2", node2)],
+                node3,
+                [("node2", node2), ("node4", node4)],
                 type_of_vote="unjail_member",
                 arg=self.nodes[1].account_public_key,
                 label_prefix="auto-unjail-member",
@@ -2276,8 +2276,8 @@ def get_status():
                 "dao",
             )
             slash_vote = await self.approve_members_vote(
-                node0,
-                [("node3", node3), ("node1", node1)],
+                node3,
+                [("node1", node1), ("node2", node2)],
                 type_of_vote="slash_member",
                 arg={
                     "member": self.nodes[1].account_public_key,
