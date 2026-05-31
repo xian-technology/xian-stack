@@ -1497,6 +1497,11 @@ class E2ERunner:
                     }
                 )
 
+            response_result = response.get("result", {}) if isinstance(response, dict) else {}
+            if not isinstance(response_result, dict):
+                response_result = {}
+            response_tx_hash = response_result.get("hash") or tx_hash
+
             if "error" in response:
                 message = response["error"].get("data") or response["error"].get("message")
                 accepted = XianAsync._is_duplicate_tx_log(message)
@@ -1506,7 +1511,7 @@ class E2ERunner:
                             "submitted": False,
                             "accepted": False,
                             "finalized": False,
-                            "tx_hash": tx_hash,
+                            "tx_hash": response_tx_hash,
                             "mode": "checktx-failover",
                             "nonce": nonce,
                             "chi_supplied": chi,
@@ -1517,7 +1522,7 @@ class E2ERunner:
                         }
                     )
             else:
-                checktx_result = response.get("result", {})
+                checktx_result = response_result
                 accepted = int(checktx_result.get("code", 1) or 0) == 0
                 if not accepted:
                     return TransactionSubmission.from_dict(
@@ -1525,7 +1530,7 @@ class E2ERunner:
                             "submitted": True,
                             "accepted": False,
                             "finalized": False,
-                            "tx_hash": tx_hash,
+                            "tx_hash": response_tx_hash,
                             "mode": "checktx-failover",
                             "nonce": nonce,
                             "chi_supplied": chi,
@@ -1539,7 +1544,7 @@ class E2ERunner:
             receipt = await self.wait_for_tx_receipt_via_healthy_node(
                 session,
                 wallet,
-                tx_hash,
+                response_tx_hash,
                 preferred_index=preferred_index,
                 excluded_indices=base_excluded,
                 timeout_seconds=timeout_seconds,
@@ -1550,7 +1555,7 @@ class E2ERunner:
                     "submitted": True,
                     "accepted": True,
                     "finalized": True,
-                    "tx_hash": tx_hash,
+                    "tx_hash": response_tx_hash,
                     "mode": "checktx-failover",
                     "nonce": nonce,
                     "chi_supplied": chi,

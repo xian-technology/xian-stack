@@ -510,6 +510,53 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertEqual({0}, calls[0].kwargs["excluded_indices"])
         self.assertEqual({0, 1}, calls[1].kwargs["excluded_indices"])
 
+    def test_broadcast_failover_uses_broadcast_response_hash(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.nodes = [self._node(0, "http://node-0")]
+        runner.network = {"chain_id": "test-chain"}
+        runner.next_nonce_with_rpc_failover = AsyncMock(return_value=(7, 0))
+        runner.healthy_submission_node_index = AsyncMock(return_value=0)
+        runner.wait_for_tx_receipt_via_healthy_node = AsyncMock(
+            return_value={
+                "success": True,
+                "message": None,
+                "execution": {"state": [], "events": [], "chi_used": 10},
+                "result": {"height": "12", "index": "0", "hash": "broadcast-hash"},
+            }
+        )
+        wallet = SimpleNamespace(public_key="wallet-0")
+
+        with (
+            patch.object(localnet_e2e.tr, "create_tx", return_value={"signed": "tx"}),
+            patch.object(localnet_e2e.XianAsync, "_local_tx_hash", return_value="local-hash"),
+            patch.object(
+                localnet_e2e.tr,
+                "broadcast_tx_wait_async",
+                AsyncMock(return_value={"result": {"code": 0, "hash": "broadcast-hash"}}),
+            ),
+        ):
+            submission = asyncio.run(
+                runner.send_tx_with_broadcast_failover(
+                    None,
+                    wallet,
+                    "currency",
+                    "transfer",
+                    {"amount": 1, "to": "recipient"},
+                    preferred_index=0,
+                    excluded_indices=None,
+                    chi=localnet_e2e.DEFAULT_TRANSFER_CHI,
+                    label="transfer",
+                    timeout_seconds=30,
+                )
+            )
+
+        self.assertEqual("broadcast-hash", submission.tx_hash)
+        receipt_call = runner.wait_for_tx_receipt_via_healthy_node.await_args
+        self.assertEqual("broadcast-hash", receipt_call.args[2])
+
     def test_recover_lagging_nodes_restarts_abci_unresponsive_node(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
         with tempfile.TemporaryDirectory() as tmpdir:
