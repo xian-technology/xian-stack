@@ -261,10 +261,16 @@ class WorkloadContext:
             return requested_rpc_index % len(self.nodes)
         return self.submit_node_index
 
-    async def node_statuses(self) -> list[tuple[int, int, bool, bool]]:
+    async def node_statuses(
+        self,
+        *,
+        include_bds: bool = True,
+    ) -> list[tuple[int, int, bool, bool]]:
         statuses: list[tuple[int, int, bool, bool]] = []
 
         for index, node in enumerate(self.nodes):
+            if node.bds_node and not include_bds:
+                continue
             try:
                 payload = await fetch_json(
                     self.session,
@@ -287,23 +293,19 @@ class WorkloadContext:
 
     async def healthy_submission_indices(self, preferred_rpc_index: int) -> list[int]:
         preferred_rpc_index %= len(self.nodes)
-        statuses = await self.node_statuses()
+        statuses = await self.node_statuses(include_bds=False)
+        if not statuses:
+            statuses = await self.node_statuses()
         if not statuses:
             return [preferred_rpc_index]
 
-        submission_statuses = [
-            status for status in statuses if not self.nodes[status[0]].bds_node
-        ]
-        if not submission_statuses:
-            submission_statuses = statuses
-
         candidates = [
             status
-            for status in submission_statuses
+            for status in statuses
             if not status[2] and status[3]
         ]
         if not candidates:
-            return [max(submission_statuses, key=lambda item: item[1])[0]]
+            return [max(statuses, key=lambda item: item[1])[0]]
 
         target_height = max(height for _, height, _, _ in candidates)
         healthy = {
@@ -317,6 +319,15 @@ class WorkloadContext:
 
     async def healthy_submission_index(self, preferred_rpc_index: int) -> int:
         return (await self.healthy_submission_indices(preferred_rpc_index))[0]
+
+    async def healthy_read_node(self) -> LocalnetNode:
+        sample_nodes, _skipped_nodes = await self.healthy_state_sample_nodes()
+        non_bds_nodes = [node for node in sample_nodes if not node.bds_node]
+        if non_bds_nodes:
+            return non_bds_nodes[0]
+        if sample_nodes:
+            return sample_nodes[0]
+        return self.nodes[0]
 
     async def next_nonce(self, wallet: Wallet, rpc_index: int) -> int:
         return (await self.reserve_nonces(wallet, rpc_index, count=1))[0]
@@ -1007,9 +1018,10 @@ def summarize_records(records: list[BroadcastRecord]) -> dict[str, Any]:
 
 
 async def latest_block_height(context: WorkloadContext) -> int:
+    node = await context.healthy_read_node()
     payload = await fetch_json(
         context.session,
-        f"{context.nodes[0].rpc_url}/status",
+        f"{node.rpc_url}/status",
         timeout=5.0,
     )
     return int(payload["result"]["sync_info"]["latest_block_height"])
@@ -1033,9 +1045,10 @@ async def summarize_committed_window_for_range(
     per_block_tps: list[float] = []
     chain_transactions = 0
 
+    read_node = await context.healthy_read_node()
     for height in range(start_height + 1, end_height + 1):
         payload = await tr.get_block_async(
-            context.nodes[0].rpc_url,
+            read_node.rpc_url,
             height,
             session=context.session,
         )
@@ -1096,8 +1109,9 @@ async def wait_for_query_predicate(
     if not queries:
         return
 
+    poll_node = await context.healthy_read_node()
     poll_client = XianAsync(
-        node_url=context.sample_nodes[0].rpc_url,
+        node_url=poll_node.rpc_url,
         chain_id=context.chain_id,
         wallet=context.founder_wallet,
         session=context.session,
@@ -1137,6 +1151,7 @@ async def wait_for_contract_visibility(
     timeout_seconds: float,
     poll_interval_seconds: float = 0.5,
 ) -> None:
+    sample_nodes, skipped_nodes = await context.healthy_state_sample_nodes()
     clients = [
         XianAsync(
             node_url=node.rpc_url,
@@ -1144,14 +1159,14 @@ async def wait_for_contract_visibility(
             wallet=context.founder_wallet,
             session=context.session,
         )
-        for node in context.sample_nodes
+        for node in sample_nodes
     ]
     deadline = time.monotonic() + timeout_seconds
     last_snapshot: dict[str, bool] = {}
 
     while time.monotonic() < deadline:
         all_visible = True
-        for node, client in zip(context.sample_nodes, clients, strict=True):
+        for node, client in zip(sample_nodes, clients, strict=True):
             source = await context._retry_read(
                 lambda client=client: client.get_contract_source(contract_name),
                 max_attempts=3,
@@ -1167,7 +1182,8 @@ async def wait_for_contract_visibility(
         await asyncio.sleep(poll_interval_seconds)
 
     raise WorkloadError(
-        f"contract {contract_name!r} did not become visible before timeout: {last_snapshot}"
+        f"contract {contract_name!r} did not become visible before timeout: "
+        f"{last_snapshot}; skipped={skipped_nodes}"
     )
 
 
@@ -1198,7 +1214,11 @@ async def wait_for_mempool_drain(
 
     while time.monotonic() < deadline:
         all_clean = True
-        for node in context.nodes:
+        drain_nodes = [node for node in context.nodes if not node.bds_node]
+        if not drain_nodes:
+            drain_nodes = list(context.nodes)
+
+        for node in drain_nodes:
             count = await context._retry_read(
                 lambda node=node: fetch_unconfirmed_count(node),
                 max_attempts=3,
@@ -1365,9 +1385,10 @@ async def summarize_committed_window(
     blocks = []
     previous_time: datetime | None = None
     per_block_tps: list[float] = []
+    read_node = await context.healthy_read_node()
     for height in range(heights[0], heights[-1] + 1):
         payload = await tr.get_block_async(
-            context.nodes[0].rpc_url,
+            read_node.rpc_url,
             height,
             session=context.session,
         )

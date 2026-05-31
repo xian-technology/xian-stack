@@ -74,6 +74,49 @@ def test_healthy_submission_index_skips_bds_node_when_available() -> None:
     assert selected == 2
 
 
+def test_healthy_submission_index_does_not_probe_bds_abci() -> None:
+    context = localnet_workload.WorkloadContext(
+        _network(),
+        sample_nodes=3,
+        submit_node_index=0,
+        round_robin_submission=True,
+    )
+    context._session = object()
+    status_ports = []
+    abci_ports = []
+
+    async def fake_fetch_json(_session, url: str, *, timeout: float):
+        port = int(url.rsplit(":", 1)[1].split("/", 1)[0])
+        status_ports.append(port)
+        return {
+            "result": {
+                "sync_info": {
+                    "latest_block_height": "100",
+                    "catching_up": False,
+                }
+            }
+        }
+
+    async def fake_abci_query_responsive(_session, url: str, *, timeout: float = 2.0):
+        port = int(url.rsplit(":", 1)[1])
+        abci_ports.append(port)
+        return True
+
+    with (
+        patch.object(localnet_workload, "fetch_json", side_effect=fake_fetch_json),
+        patch.object(
+            localnet_workload,
+            "abci_query_responsive",
+            side_effect=fake_abci_query_responsive,
+        ),
+    ):
+        selected = asyncio.run(context.healthy_submission_index(0))
+
+    assert selected == 1
+    assert status_ports == [27757, 27857]
+    assert abci_ports == [27757, 27857]
+
+
 def test_healthy_submission_index_uses_highest_non_bds_when_preferred_lags() -> None:
     context = localnet_workload.WorkloadContext(
         _network(),
@@ -428,11 +471,13 @@ def test_wait_for_mempool_drain_flushes_stale_pending_tx() -> None:
     )
     context.broadcast_tx = AsyncMock(return_value=flush_record)
     context.resolve_records = AsyncMock()
+    polls_by_port = {}
 
     async def fake_fetch_json(_session, url: str, *, timeout: float):
         nonlocal call_count
         port = int(url.rsplit(":", 1)[1].split("/", 1)[0])
-        round_index = call_count // len(context.nodes)
+        round_index = polls_by_port.get(port, 0)
+        polls_by_port[port] = round_index + 1
         call_count += 1
         pending = 1 if round_index == 0 and port == 27757 else 0
         return {"result": {"n_txs": str(pending)}}
@@ -449,3 +494,4 @@ def test_wait_for_mempool_drain_flushes_stale_pending_tx() -> None:
 
     context.broadcast_tx.assert_awaited_once()
     context.resolve_records.assert_awaited_once_with([flush_record], timeout_seconds=2.0)
+    assert 27657 not in polls_by_port
