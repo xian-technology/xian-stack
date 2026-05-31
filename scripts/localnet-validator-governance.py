@@ -2070,6 +2070,7 @@ def get_status():
                 target_height=await latest_height(session, self.nodes[1].rpc_url),
                 timeout_seconds=15.0,
             )
+            await node0.refresh_nonce()
             live_after_policy = await self.wait_for_validator_count(
                 session,
                 expected_count=3,
