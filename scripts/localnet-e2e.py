@@ -2025,6 +2025,7 @@ class E2ERunner:
         deadline = time.monotonic() + timeout_seconds
         last_error: E2EError | None = None
         recovery_attempts: list[dict[str, Any]] = []
+        max_recovery_attempts = 3
 
         while time.monotonic() < deadline:
             remaining = deadline - time.monotonic()
@@ -2044,6 +2045,9 @@ class E2ERunner:
                 last_error = exc
                 if time.monotonic() >= deadline:
                     break
+                if len(recovery_attempts) >= max_recovery_attempts:
+                    await asyncio.sleep(0.25)
+                    continue
                 try:
                     recovery_attempts.append(
                         await self.stabilize_nodes(
@@ -2053,6 +2057,7 @@ class E2ERunner:
                             advance_blocks=1,
                         )
                     )
+                    deadline = max(deadline, time.monotonic() + timeout_seconds)
                 except E2EError as recovery_error:
                     last_error = recovery_error
                     await asyncio.sleep(0.25)

@@ -761,6 +761,53 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         )
         self.assertEqual(2, wait_for_state.await_count)
 
+    def test_uniform_state_wait_extends_deadline_after_recovery(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.nodes = [
+            self._node(0, "http://node-0"),
+            self._node(1, "http://node-1"),
+        ]
+        now = 0.0
+
+        async def stabilize(*_args, **_kwargs):
+            nonlocal now
+            now = 11.0
+            return {"recovery": {"restarts": [{"node": "node-1"}]}}
+
+        runner.stabilize_nodes = AsyncMock(side_effect=stabilize)
+
+        with (
+            patch.object(localnet_e2e.time, "monotonic", side_effect=lambda: now),
+            patch.object(
+                localnet_e2e,
+                "wait_for_uniform_node_state",
+                AsyncMock(
+                    side_effect=[
+                        localnet_e2e.E2EError("node-1 timed out"),
+                        {"node-0": "ready", "node-1": "ready"},
+                    ]
+                ),
+            ) as wait_for_state,
+        ):
+            result = asyncio.run(
+                runner.wait_for_uniform_node_state(
+                    None,
+                    runner.nodes,
+                    contract="con_demo",
+                    variable="value",
+                    expected="ready",
+                    label="demo state",
+                    timeout_seconds=10,
+                )
+            )
+
+        self.assertEqual({"node-0": "ready", "node-1": "ready"}, result)
+        runner.stabilize_nodes.assert_awaited_once()
+        self.assertEqual(2, wait_for_state.await_count)
+
     def test_fund_wallets_uses_broadcast_failover(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
         with tempfile.TemporaryDirectory() as tmpdir:
