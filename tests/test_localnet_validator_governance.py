@@ -143,6 +143,35 @@ class LocalnetValidatorGovernanceTests(unittest.TestCase):
 
         self.assertEqual({"status": "approved"}, result)
 
+    def test_read_contract_state_falls_back_to_next_client(self) -> None:
+        args = localnet_validator_governance.build_parser().parse_args([])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.object(
+                localnet_validator_governance,
+                "OUTPUT_ROOT",
+                Path(tmpdir),
+            ):
+                runner = localnet_validator_governance.ValidatorGovernanceRunner(args)
+
+        class FailingClient:
+            async def get_state(self, *_args):
+                raise TimeoutError("stalled")
+
+        class HealthyClient:
+            async def get_state(self, *_args):
+                return 7
+
+        result = localnet_validator_governance.asyncio.run(
+            runner.read_contract_state(
+                [FailingClient(), HealthyClient()],
+                "masternodes",
+                "total_votes",
+                timeout_seconds=1,
+            )
+        )
+
+        self.assertEqual(7, result)
+
 
 if __name__ == "__main__":
     unittest.main()

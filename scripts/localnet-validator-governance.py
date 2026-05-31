@@ -993,17 +993,33 @@ class ValidatorGovernanceRunner:
         *,
         timeout_seconds: float = 5.0,
     ) -> dict[str, Any]:
+        return await self.read_contract_state(
+            clients,
+            "masternodes",
+            "votes",
+            proposal_id,
+            timeout_seconds=timeout_seconds,
+        )
+
+    async def read_contract_state(
+        self,
+        clients: list[XianAsync],
+        contract: str,
+        variable: str,
+        *keys: Any,
+        timeout_seconds: float = 5.0,
+    ) -> Any:
         last_error: str | None = None
         for client in clients:
             try:
                 return await asyncio.wait_for(
-                    client.get_state("masternodes", "votes", proposal_id),
+                    client.get_state(contract, variable, *keys),
                     timeout=timeout_seconds,
                 )
             except Exception as exc:  # noqa: BLE001
                 last_error = f"{type(exc).__name__}: {exc}"
         raise RunnerError(
-            f"members vote {proposal_id} could not be read from any node; last={last_error}"
+            f"{contract}.{variable} could not be read from any node; last={last_error}"
         )
 
     async def approve_governance_contract_call(
@@ -1104,7 +1120,13 @@ class ValidatorGovernanceRunner:
             label=f"{label_prefix}-propose",
             chi=GOVERNANCE_TX_CHI,
         )
-        proposal_id = coerce_int(await proposer.get_state("masternodes", "total_votes"))
+        proposal_id = coerce_int(
+            await self.read_contract_state(
+                [proposer, *status_readers],
+                "masternodes",
+                "total_votes",
+            )
+        )
         proposal_pending = await self.read_members_vote(
             [proposer, *status_readers],
             proposal_id,
