@@ -330,6 +330,31 @@ async def fetch_abci_query(
         return decoded
 
 
+async def fetch_json_fresh(
+    url: str,
+    *,
+    timeout: float,
+    params: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    client_timeout = aiohttp.ClientTimeout(total=timeout)
+    connector = aiohttp.TCPConnector(force_close=True)
+    async with aiohttp.ClientSession(timeout=client_timeout, connector=connector) as session:
+        async with session.get(url, params=params) as response:
+            return await response.json()
+
+
+async def fetch_abci_query_fresh(
+    rpc_url: str,
+    path: str,
+    *,
+    timeout: float,
+) -> Any:
+    client_timeout = aiohttp.ClientTimeout(total=timeout)
+    connector = aiohttp.TCPConnector(force_close=True)
+    async with aiohttp.ClientSession(timeout=client_timeout, connector=connector) as session:
+        return await fetch_abci_query(session, rpc_url, path, timeout=timeout)
+
+
 def build_nodes(network: dict[str, Any]) -> list[LocalnetNode]:
     nodes: list[LocalnetNode] = []
     for index, node in enumerate(network["nodes"]):
@@ -377,7 +402,8 @@ async def wait_for_localnet_ready(
 
 
 async def latest_height(session: aiohttp.ClientSession, rpc_url: str) -> int:
-    payload = await fetch_json(session, f"{rpc_url}/status", timeout=5.0)
+    del session
+    payload = await fetch_json_fresh(f"{rpc_url}/status", timeout=5.0)
     return int(payload["result"]["sync_info"]["latest_block_height"])
 
 
@@ -412,13 +438,13 @@ async def wait_for_abci_query_responsive(
     timeout_seconds: float,
     probe_timeout: float = 2.0,
 ) -> None:
+    del session
     deadline = time.monotonic() + timeout_seconds
     last_error: str | None = None
     while time.monotonic() < deadline:
         try:
             await asyncio.wait_for(
-                fetch_abci_query(
-                    session,
+                fetch_abci_query_fresh(
                     rpc_url,
                     ABCI_HEALTH_QUERY_PATH,
                     timeout=probe_timeout,
