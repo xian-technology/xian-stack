@@ -828,7 +828,8 @@ class ValidatorGovernanceRunner:
         if self.founder_wallet is None:
             raise RunnerError("founder wallet is not initialized")
         receipts = []
-        async with self.client(self.founder_wallet, 0, session) as client:
+        funding_node_index = 1 if len(self.nodes) > 1 else 0
+        async with self.client(self.founder_wallet, funding_node_index, session) as client:
             for wallet in wallets:
                 submission = await client.send(
                     amount=amount,
@@ -1931,6 +1932,12 @@ def get_status():
             node3_wallet,
             node4_wallet,
         ) = self.validator_wallets
+        recovery_reference_node = self.nodes[1] if len(self.nodes) > 1 else self.nodes[0]
+        pre_policy_recovery = await self.recover_lagging_nodes(
+            session,
+            target_height=await latest_height(session, recovery_reference_node.rpc_url),
+            timeout_seconds=15.0,
+        )
         await self.fund_wallets(
             session,
             [self.delegator_wallet],
@@ -2306,6 +2313,7 @@ def get_status():
         return {
             "approvals": approvals,
             "bond_self": bond_receipts,
+            "pre_policy_recovery": pre_policy_recovery,
             "policy_update": policy_update,
             "policy_recovery": policy_recovery,
             "live_after_policy": live_after_policy,
