@@ -121,6 +121,7 @@ from xian_py.x402 import (  # noqa: E402
     xian_network_id,
 )
 from xian_py.xian_async import XianAsync  # noqa: E402
+from xian_runtime_types.decimal import ContractingDecimal  # noqa: E402
 
 try:  # noqa: SIM105
     from xian_zk import (  # noqa: E402
@@ -431,6 +432,27 @@ def construct_token_permit_message(
             f"nonce:{int(nonce)}",
         ]
     )
+
+
+def tx_amount_from_decimal(value: Decimal) -> int | ContractingDecimal:
+    if value == value.to_integral_value():
+        return int(value)
+    return ContractingDecimal(format(value, "f"))
+
+
+def display_decimal(value: Decimal) -> str:
+    text = format(value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def state_decimal(value: Any) -> Decimal:
+    if value is None:
+        return Decimal("0")
+    if isinstance(value, dict) and "__fixed__" in value:
+        return Decimal(str(value["__fixed__"]))
+    return Decimal(str(value))
 
 
 def build_nodes(network: dict[str, Any]) -> list[LocalnetNode]:
@@ -2282,7 +2304,7 @@ class E2ERunner:
                 f"/get/currency.balances:{wallet.public_key}",
             )
             try:
-                current_amount = Decimal(str(current_balance or 0))
+                current_amount = state_decimal(current_balance)
             except Exception:  # noqa: BLE001
                 current_amount = Decimal("0")
             delta = minimum_amount - current_amount
@@ -2290,8 +2312,8 @@ class E2ERunner:
                 wallets_to_fund.append((wallet, delta))
 
         for wallet, delta in wallets_to_fund:
-            send_amount = int(delta) if delta == int(delta) else float(delta)
-            label = f"fund {wallet.public_key[:12]} (+{send_amount})"
+            send_amount = tx_amount_from_decimal(delta)
+            label = f"fund {wallet.public_key[:12]} (+{display_decimal(delta)})"
             submission = await self.send_tx_with_broadcast_failover(
                 session,
                 founder,

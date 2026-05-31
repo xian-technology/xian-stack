@@ -600,6 +600,51 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             timeout_seconds=30.0,
         )
 
+    def test_fund_wallets_uses_fixed_decimal_for_fractional_topup(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.nodes = [self._node(0, "http://node-0")]
+        runner.founder_wallet = SimpleNamespace(public_key="founder")
+        runner.network = {"chain_id": "test-chain"}
+        runner.stabilize_nodes = AsyncMock(return_value={"recovery": {"restarts": []}})
+        runner.wait_for_uniform_node_state = AsyncMock(return_value={"node-0": "3"})
+        runner.send_tx_with_broadcast_failover = AsyncMock(
+            return_value=SimpleNamespace(
+                submitted=True,
+                accepted=True,
+                finalized=True,
+                message=None,
+                tx_hash="tx-hash",
+                mode="checktx-failover",
+                nonce=1,
+                chi_supplied=localnet_e2e.DEFAULT_TRANSFER_CHI,
+                receipt=SimpleNamespace(
+                    success=True,
+                    message="ok",
+                    execution={"state": [], "events": [], "chi_used": 10},
+                ),
+            )
+        )
+        wallet = SimpleNamespace(public_key="wallet-0")
+
+        with patch.object(
+            localnet_e2e,
+            "fetch_abci_query",
+            AsyncMock(return_value={"__fixed__": "0.5"}),
+        ):
+            receipts = asyncio.run(runner.fund_wallets(None, [wallet], amount=3))
+
+        self.assertEqual(1, len(receipts))
+        call = runner.send_tx_with_broadcast_failover.await_args
+        self.assertIsNotNone(call)
+        kwargs = call.args[4]
+        self.assertIsInstance(kwargs["amount"], localnet_e2e.ContractingDecimal)
+        self.assertEqual("2.5", str(kwargs["amount"]))
+        self.assertEqual("wallet-0", kwargs["to"])
+        self.assertEqual("fund wallet-0 (+2.5)", call.kwargs["label"])
+
 
 if __name__ == "__main__":
     unittest.main()
