@@ -416,11 +416,14 @@ async def wait_for_abci_query_responsive(
     last_error: str | None = None
     while time.monotonic() < deadline:
         try:
-            await fetch_abci_query(
-                session,
-                rpc_url,
-                ABCI_HEALTH_QUERY_PATH,
-                timeout=probe_timeout,
+            await asyncio.wait_for(
+                fetch_abci_query(
+                    session,
+                    rpc_url,
+                    ABCI_HEALTH_QUERY_PATH,
+                    timeout=probe_timeout,
+                ),
+                timeout=probe_timeout + 0.5,
             )
             return
         except Exception as exc:  # noqa: BLE001
