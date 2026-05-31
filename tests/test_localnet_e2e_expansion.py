@@ -645,6 +645,47 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertEqual("wallet-0", kwargs["to"])
         self.assertEqual("fund wallet-0 (+2.5)", call.kwargs["label"])
 
+    def test_submit_contract_with_broadcast_failover_uses_submission_contract(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.send_tx_with_broadcast_failover = AsyncMock(return_value="submission")
+        wallet = SimpleNamespace(public_key="wallet-0")
+
+        result = asyncio.run(
+            runner.submit_contract_with_broadcast_failover(
+                None,
+                wallet,
+                name="con_demo",
+                deployment_artifacts={"module": "demo"},
+                args={"owner": "wallet-0"},
+                preferred_index=2,
+                excluded_indices={0},
+                chi=123,
+                label="deploy-demo",
+                timeout_seconds=45,
+            )
+        )
+
+        self.assertEqual("submission", result)
+        runner.send_tx_with_broadcast_failover.assert_awaited_once_with(
+            None,
+            wallet,
+            "submission",
+            "submit_contract",
+            {
+                "name": "con_demo",
+                "deployment_artifacts": {"module": "demo"},
+                "constructor_args": {"owner": "wallet-0"},
+            },
+            preferred_index=2,
+            excluded_indices={0},
+            chi=123,
+            label="deploy-demo",
+            timeout_seconds=45,
+        )
+
     def test_find_matching_log_lines_keeps_tail_matches(self) -> None:
         text = "\n".join(
             [

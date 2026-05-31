@@ -1476,6 +1476,39 @@ class E2ERunner:
 
         raise E2EError(f"{label}: broadcast failed on all healthy nodes; errors={errors[-5:]}")
 
+    async def submit_contract_with_broadcast_failover(
+        self,
+        session: aiohttp.ClientSession,
+        wallet: Wallet,
+        *,
+        name: str,
+        deployment_artifacts: dict[str, Any],
+        args: dict[str, Any] | None = None,
+        preferred_index: int | None,
+        excluded_indices: set[int] | None,
+        chi: int,
+        label: str,
+        timeout_seconds: float | None = None,
+    ) -> TransactionSubmission:
+        kwargs: dict[str, Any] = {
+            "name": name,
+            "deployment_artifacts": deployment_artifacts,
+        }
+        if args:
+            kwargs["constructor_args"] = args
+        return await self.send_tx_with_broadcast_failover(
+            session,
+            wallet,
+            "submission",
+            "submit_contract",
+            kwargs,
+            preferred_index=preferred_index,
+            excluded_indices=excluded_indices,
+            chi=chi,
+            label=label,
+            timeout_seconds=timeout_seconds,
+        )
+
     async def wait_for_governance_proposal_status(
         self,
         client: XianAsync,
@@ -5588,20 +5621,21 @@ class E2ERunner:
                 delta = shielded_wallet_balance_target - int(current_balance)
                 if delta <= 0:
                     continue
-                funding = await client.send(
-                    amount=delta,
-                    to_address=wallet.public_key,
+                funding = await self.send_tx_with_broadcast_failover(
+                    session,
+                    founder,
+                    "currency",
+                    "transfer",
+                    {"amount": delta, "to": wallet.public_key},
+                    preferred_index=shielded_submission_index,
+                    excluded_indices=shielded_excluded_indices,
                     chi=DEFAULT_TRANSFER_CHI,
-                    wait_for_tx=True,
+                    label=f"shielded-topup-{wallet.public_key[:12]}",
                 )
                 ensure_positive_submission(
                     funding,
                     label=f"shielded-topup-{wallet.public_key[:12]}",
                 )
-            # The shielded deployment is large enough that we want a fresh nonce
-            # from chain state instead of carrying the local reservation window
-            # across the funding sequence.
-            await client.refresh_nonce()
             registry_owner = await client.call(registry_name, "owner", {})
             if registry_owner != "governance":
                 raise E2EError(
@@ -5614,9 +5648,11 @@ class E2ERunner:
                 token_source = await client.get_contract_source(token_name)
                 token_suffix += 1
             if token_source is None:
-                token_submission = await client.submit_contract(
+                token_submission = await self.submit_contract_with_broadcast_failover(
+                    session,
+                    founder,
                     name=token_name,
-                    **self.contract_submission_kwargs(
+                    deployment_artifacts=self.contract_submission_kwargs(
                         name=token_name,
                         code=read_text(
                             CONTRACTS_DIR
@@ -5624,19 +5660,27 @@ class E2ERunner:
                             / "src"
                             / "con_shielded_note_token.py"
                         ),
-                    ),
+                    )["deployment_artifacts"],
                     args={
                         "token_name": "Local Private USD",
                         "token_symbol": "lpUSD",
                         "operator_address": founder.public_key,
                         "root_window_size": 32,
                     },
+                    preferred_index=shielded_submission_index,
+                    excluded_indices=shielded_excluded_indices,
                     chi=25_000_000,
-                    wait_for_tx=True,
+                    label="deploy-shielded-token",
                 )
                 ensure_positive_submission(
                     token_submission,
                     label="deploy-shielded-token",
+                )
+                await self.stabilize_nodes(
+                    session,
+                    reason="after shielded token deployment",
+                    timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+                    advance_blocks=1,
                 )
             prover = ShieldedNoteProver.build_insecure_dev_bundle()
             relay_prover = ShieldedRelayTransferProver.build_insecure_dev_bundle()
@@ -5655,16 +5699,26 @@ class E2ERunner:
             )
             mint_amount = max(100 - int(alice_public_balance or 0), 0)
             if mint_amount > 0:
-                mint_submission = await client.send_tx(
+                mint_submission = await self.send_tx_with_broadcast_failover(
+                    session,
+                    founder,
                     token_name,
                     "mint_public",
                     {"amount": mint_amount, "to": alice.public_key},
+                    preferred_index=shielded_submission_index,
+                    excluded_indices=shielded_excluded_indices,
                     chi=500_000,
-                    wait_for_tx=True,
+                    label="shielded-mint-public",
                 )
                 ensure_positive_submission(
                     mint_submission,
                     label="shielded-mint-public",
+                )
+                await self.stabilize_nodes(
+                    session,
+                    reason="after shielded public mint",
+                    timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+                    advance_blocks=1,
                 )
             asset_id = await client.call(token_name, "asset_id", {})
             zero_root = await client.call(token_name, "zero_shielded_root", {})
