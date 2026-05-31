@@ -305,9 +305,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             patch.object(localnet_e2e, "fetch_json", side_effect=fake_fetch_json),
             patch.object(localnet_e2e, "abci_query_responsive", AsyncMock(return_value=True)),
         ):
-            selected = asyncio.run(
-                runner.healthy_submission_node_index(None, preferred_index=0)
-            )
+            selected = asyncio.run(runner.healthy_submission_node_index(None, preferred_index=0))
 
         self.assertEqual(2, selected)
 
@@ -347,9 +345,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                 side_effect=fake_abci_query_responsive,
             ),
         ):
-            selected = asyncio.run(
-                runner.healthy_submission_node_index(None, preferred_index=0)
-            )
+            selected = asyncio.run(runner.healthy_submission_node_index(None, preferred_index=0))
 
         self.assertEqual(1, selected)
         self.assertEqual(["http://node-1/status", "http://node-2/status"], status_urls)
@@ -392,9 +388,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                 side_effect=fake_abci_query_responsive,
             ),
         ):
-            selected = asyncio.run(
-                runner.healthy_submission_node_index(None, preferred_index=1)
-            )
+            selected = asyncio.run(runner.healthy_submission_node_index(None, preferred_index=1))
 
         self.assertEqual(2, selected)
 
@@ -432,6 +426,58 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             )
 
         self.assertEqual(2, selected)
+
+    def test_next_nonce_with_rpc_failover_retries_on_read_timeout(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.nodes = [
+            self._node(0, "http://node-0", bds_node=True),
+            self._node(1, "http://node-1"),
+            self._node(2, "http://node-2"),
+        ]
+        runner.healthy_submission_node_index = AsyncMock(side_effect=[1, 2])
+        wallet = SimpleNamespace(public_key="wallet-0")
+        refresh_attempts = []
+
+        class FakeClient:
+            def __init__(self, node_index: int):
+                self.node_index = node_index
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def refresh_nonce(self):
+                refresh_attempts.append(self.node_index)
+                if self.node_index == 1:
+                    raise TimeoutError("nonce read stalled")
+                return 17
+
+        def fake_client(_wallet, node_index: int, _session):
+            return FakeClient(node_index)
+
+        runner.client = fake_client
+
+        nonce, node_index = asyncio.run(
+            runner.next_nonce_with_rpc_failover(
+                None,
+                wallet,
+                preferred_index=1,
+                excluded_indices={0},
+                label="secondary-bds-claim-0",
+            )
+        )
+
+        self.assertEqual(17, nonce)
+        self.assertEqual(2, node_index)
+        self.assertEqual([1, 2], refresh_attempts)
+        calls = runner.healthy_submission_node_index.await_args_list
+        self.assertEqual({0}, calls[0].kwargs["excluded_indices"])
+        self.assertEqual({0, 1}, calls[1].kwargs["excluded_indices"])
 
     def test_recover_lagging_nodes_restarts_abci_unresponsive_node(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])

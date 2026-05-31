@@ -839,8 +839,7 @@ def ensure_positive_submission(
         )
     if submission.accepted is False:
         raise E2EError(
-            f"{label}: CheckTx rejected: {submission.message}"
-            f"{submission_error_context(submission)}"
+            f"{label}: CheckTx rejected: {submission.message}{submission_error_context(submission)}"
         )
     if submission.receipt is None:
         if submission.mode == "commit" and submission.accepted is True and submission.finalized:
@@ -998,9 +997,7 @@ async def wait_for_log_matches(
             return last_matches
         if time.monotonic() >= deadline:
             matched = [node.moniker for node in nodes if last_matches[node.moniker]]
-            raise E2EError(
-                f"{label} logs missing for nodes: {missing}; matched nodes: {matched}"
-            )
+            raise E2EError(f"{label} logs missing for nodes: {missing}; matched nodes: {matched}")
         await asyncio.sleep(poll_interval_seconds)
 
 
@@ -1335,6 +1332,42 @@ class E2ERunner:
             f"errors={errors[-5:]}"
         )
 
+    async def next_nonce_with_rpc_failover(
+        self,
+        session: aiohttp.ClientSession,
+        wallet: Wallet,
+        *,
+        preferred_index: int | None,
+        excluded_indices: set[int] | None,
+        label: str,
+    ) -> tuple[int, int]:
+        base_excluded = set(excluded_indices or set())
+        errors: list[str] = []
+        tried: set[int] = set()
+
+        while len(tried) < len(self.nodes):
+            node_index = await self.healthy_submission_node_index(
+                session,
+                preferred_index,
+                excluded_indices=base_excluded | tried,
+            )
+            if node_index in tried:
+                break
+            tried.add(node_index)
+            try:
+                timeout = aiohttp.ClientTimeout(
+                    total=8.0,
+                    sock_connect=2.0,
+                    sock_read=5.0,
+                )
+                async with aiohttp.ClientSession(timeout=timeout) as nonce_session:
+                    async with self.client(wallet, node_index, nonce_session) as client:
+                        return await client.refresh_nonce(), node_index
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{self.nodes[node_index].moniker}: {type(exc).__name__}: {exc}")
+
+        raise E2EError(f"{label}: nonce read failed on all healthy nodes; errors={errors[-5:]}")
+
     async def send_tx_with_broadcast_failover(
         self,
         session: aiohttp.ClientSession,
@@ -1353,13 +1386,13 @@ class E2ERunner:
             self.args.rpc_timeout_seconds if timeout_seconds is None else timeout_seconds
         )
         base_excluded = set(excluded_indices or set())
-        nonce_index = await self.healthy_submission_node_index(
+        nonce, _nonce_index = await self.next_nonce_with_rpc_failover(
             session,
-            preferred_index,
+            wallet,
+            preferred_index=preferred_index,
             excluded_indices=base_excluded,
+            label=label,
         )
-        async with self.client(wallet, nonce_index, session) as nonce_client:
-            nonce = await nonce_client.refresh_nonce()
 
         payload = {
             "chain_id": self.network["chain_id"],
@@ -2363,19 +2396,13 @@ class E2ERunner:
         if not statuses:
             return fallback_index
 
-        candidates = [
-            status
-            for status in statuses
-            if not status[2] and status[3]
-        ]
+        candidates = [status for status in statuses if not status[2] and status[3]]
         if not candidates:
             return fallback_index
 
         target_height = max(height for _, height, _, _ in candidates)
         healthy = {
-            index
-            for index, height, _catching_up, _abci_ok in candidates
-            if height >= target_height
+            index for index, height, _catching_up, _abci_ok in candidates if height >= target_height
         }
         if preferred_index in healthy:
             return preferred_index
@@ -4561,24 +4588,27 @@ class E2ERunner:
                 timeout_seconds=30.0,
             )
 
+            submission_excluded_indices = {service.index}
             catchup_records = []
             for index, wallet in enumerate(catchup_wallets * 2):
                 node_index = index % len(self.nodes)
                 slot = f"bds-catchup-{short_hash(f'{self.run_id}:{index}')}"
-                async with self.client(wallet, node_index, session) as client:
-                    submission = await client.send_tx(
-                        self.contracts["conflict"],
-                        "claim",
-                        {"slot": slot, "amount": 1},
-                        chi=DEFAULT_TX_CHI,
-                        wait_for_tx=True,
-                    )
-                    receipt = ensure_positive_submission(
-                        submission,
-                        label=f"bds-catchup-claim-{index}",
-                    )
-                    receipt["slot"] = slot
-                    catchup_records.append(receipt)
+                label = f"bds-catchup-claim-{index}"
+                submission = await self.send_tx_with_broadcast_failover(
+                    session,
+                    wallet,
+                    self.contracts["conflict"],
+                    "claim",
+                    {"slot": slot, "amount": 1},
+                    preferred_index=node_index,
+                    excluded_indices=submission_excluded_indices,
+                    chi=DEFAULT_TX_CHI,
+                    label=label,
+                    timeout_seconds=self.args.rpc_timeout_seconds,
+                )
+                receipt = ensure_positive_submission(submission, label=label)
+                receipt["slot"] = slot
+                catchup_records.append(receipt)
 
             catchup_height = await latest_height(session, service.rpc_url)
 
@@ -4644,20 +4674,22 @@ class E2ERunner:
             for index, wallet in enumerate(catchup_wallets[:3]):
                 node_index = (index + 1) % len(self.nodes)
                 slot = f"secondary-bds-{short_hash(f'{self.run_id}:{index}')}"
-                async with self.client(wallet, node_index, session) as client:
-                    submission = await client.send_tx(
-                        self.contracts["conflict"],
-                        "claim",
-                        {"slot": slot, "amount": 1},
-                        chi=DEFAULT_TX_CHI,
-                        wait_for_tx=True,
-                    )
-                    receipt = ensure_positive_submission(
-                        submission,
-                        label=f"secondary-bds-claim-{index}",
-                    )
-                    receipt["slot"] = slot
-                    secondary_catchup_records.append(receipt)
+                label = f"secondary-bds-claim-{index}"
+                submission = await self.send_tx_with_broadcast_failover(
+                    session,
+                    wallet,
+                    self.contracts["conflict"],
+                    "claim",
+                    {"slot": slot, "amount": 1},
+                    preferred_index=node_index,
+                    excluded_indices=submission_excluded_indices,
+                    chi=DEFAULT_TX_CHI,
+                    label=label,
+                    timeout_seconds=self.args.rpc_timeout_seconds,
+                )
+                receipt = ensure_positive_submission(submission, label=label)
+                receipt["slot"] = slot
+                secondary_catchup_records.append(receipt)
 
             secondary_target_height = await latest_height(session, service.rpc_url)
             secondary_restarted_state = await self.restart_secondary_bds_postgres()
@@ -6790,9 +6822,7 @@ class E2ERunner:
             if len(bob_spent_after_service_relay) != 1:
                 raise E2EError("shielded relayer service did not mark the relay input as spent")
             if submitted_job.tx_hash is not None:
-                service_relay_indexed_tx = await bds_client.get_indexed_tx(
-                    submitted_job.tx_hash
-                )
+                service_relay_indexed_tx = await bds_client.get_indexed_tx(submitted_job.tx_hash)
                 if service_relay_indexed_tx is None:
                     raise E2EError("shielded relayer service tx was not indexed")
                 service_relay_events = await bds_client.get_events_for_tx(submitted_job.tx_hash)
