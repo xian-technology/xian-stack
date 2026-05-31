@@ -860,6 +860,29 @@ class ValidatorGovernanceRunner:
             timeout_seconds=timeout_seconds,
         )
 
+    async def restart_primary_at_current_height(
+        self,
+        session: aiohttp.ClientSession,
+        *,
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        reference_node = self.nodes[1] if len(self.nodes) > 1 else self.nodes[0]
+        target_height = await latest_height(session, reference_node.rpc_url)
+        restart = await self.restart_node_runtime(
+            session,
+            self.nodes[0],
+            target_height=target_height,
+        )
+        recovery = await self.recover_current_height(
+            session,
+            timeout_seconds=timeout_seconds,
+        )
+        return {
+            "target_height": target_height,
+            "restart": restart,
+            "recovery": recovery,
+        }
+
     async def fund_wallets(
         self,
         session: aiohttp.ClientSession,
@@ -1974,10 +1997,8 @@ def get_status():
             node3_wallet,
             node4_wallet,
         ) = self.validator_wallets
-        recovery_reference_node = self.nodes[1] if len(self.nodes) > 1 else self.nodes[0]
-        pre_policy_recovery = await self.recover_lagging_nodes(
+        pre_policy_recovery = await self.restart_primary_at_current_height(
             session,
-            target_height=await latest_height(session, recovery_reference_node.rpc_url),
             timeout_seconds=15.0,
         )
         await self.fund_wallets(
@@ -2390,7 +2411,7 @@ def get_status():
         node2_wallet = self.validator_wallets[2]
         node3_wallet = self.validator_wallets[3]
         node1_key = self.nodes[1].account_public_key
-        phase_recovery = await self.recover_current_height(
+        phase_recovery = await self.restart_primary_at_current_height(
             session,
             timeout_seconds=15.0,
         )
@@ -2564,7 +2585,7 @@ def get_status():
         node3_account = self.nodes[3].account_public_key
         node1_consensus_address = self.load_priv_validator_key(1)["address"]
         node2_consensus_address = self.load_priv_validator_key(2)["address"]
-        phase_recovery = await self.recover_current_height(
+        phase_recovery = await self.restart_primary_at_current_height(
             session,
             timeout_seconds=15.0,
         )
@@ -2694,7 +2715,7 @@ def get_status():
         node0_wallet = self.validator_wallets[0]
         node3_wallet = self.validator_wallets[3]
         node3_account = self.nodes[3].account_public_key
-        phase_recovery = await self.recover_current_height(
+        phase_recovery = await self.restart_primary_at_current_height(
             session,
             timeout_seconds=15.0,
         )
