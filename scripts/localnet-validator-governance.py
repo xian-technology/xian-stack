@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import time
+import traceback
 from dataclasses import dataclass
 from datetime import UTC, datetime, timezone
 from decimal import Decimal
@@ -35,6 +36,7 @@ DEFAULT_TX_CHI = 200_000
 GOVERNANCE_TX_CHI = 2_000_000
 DEFAULT_LOCALNET_NODES = 5
 DEFAULT_GENESIS_NETWORK = "testnet"
+ABCI_HEALTH_QUERY_PATH = "/get/currency.balances:__xian_localnet_governance_health_probe__"
 STATE_PATCH_DELAY_BLOCKS = 8
 STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS = 8
 LOCALNET_IMAGE_BY_TOPOLOGY = {
@@ -387,12 +389,77 @@ async def wait_for_height(
     timeout_seconds: float,
 ) -> int:
     deadline = time.monotonic() + timeout_seconds
+    last_error: str | None = None
     while time.monotonic() < deadline:
-        height = await latest_height(session, rpc_url)
+        try:
+            height = await latest_height(session, rpc_url)
+        except Exception as exc:  # noqa: BLE001
+            last_error = f"{type(exc).__name__}: {exc}"
+            await asyncio.sleep(0.5)
+            continue
         if height >= target_height:
             return height
         await asyncio.sleep(0.5)
-    raise RunnerError(f"node {rpc_url} did not reach height {target_height}")
+    raise RunnerError(
+        f"node {rpc_url} did not reach height {target_height}; last_error={last_error}"
+    )
+
+
+async def wait_for_abci_query_responsive(
+    session: aiohttp.ClientSession,
+    rpc_url: str,
+    *,
+    timeout_seconds: float,
+    probe_timeout: float = 2.0,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    last_error: str | None = None
+    while time.monotonic() < deadline:
+        try:
+            await fetch_abci_query(
+                session,
+                rpc_url,
+                ABCI_HEALTH_QUERY_PATH,
+                timeout=probe_timeout,
+            )
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_error = f"{type(exc).__name__}: {exc}"
+            await asyncio.sleep(0.5)
+    raise RunnerError(f"node {rpc_url} did not answer ABCI queries; last={last_error}")
+
+
+async def wait_for_container_state(
+    container_name: str,
+    *,
+    expected_states: set[str],
+    timeout_seconds: float,
+) -> str:
+    deadline = time.monotonic() + timeout_seconds
+    last_state: str | None = None
+    while time.monotonic() < deadline:
+        result = run_cmd(
+            [
+                "docker",
+                "inspect",
+                "-f",
+                "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}",
+                container_name,
+            ],
+            cwd=STACK_DIR,
+        )
+        state_status, _, health_status = result.stdout.strip().partition("|")
+        candidates = [state_status.strip(), health_status.strip()]
+        last_state = next((state for state in candidates if state), None)
+        for candidate in candidates:
+            if candidate in expected_states:
+                return candidate
+        await asyncio.sleep(1.0)
+
+    raise RunnerError(
+        f"container {container_name} did not reach state {sorted(expected_states)}; "
+        f"last={last_state!r}"
+    )
 
 
 def normalize_receipt(submission, *, label: str) -> dict[str, Any]:
@@ -602,6 +669,155 @@ class ValidatorGovernanceRunner:
             timeout_seconds=self.args.rpc_timeout_seconds,
         )
 
+    @staticmethod
+    def node_container_names(node: LocalnetNode) -> list[str]:
+        ordered = [node.abci_container, node.cometbft_container]
+        unique: list[str] = []
+        for name in ordered:
+            if name and name not in unique:
+                unique.append(name)
+        return unique
+
+    async def stop_node_runtime(self, node: LocalnetNode) -> dict[str, Any]:
+        container_names = self.node_container_names(node)
+        if not container_names:
+            raise RunnerError(f"node {node.moniker} has no containers to stop")
+        run_cmd(["docker", "stop", *container_names], cwd=STACK_DIR)
+        states: dict[str, str] = {}
+        for container_name in container_names:
+            states[container_name] = await wait_for_container_state(
+                container_name,
+                expected_states={"exited"},
+                timeout_seconds=30.0,
+            )
+        return {"containers": container_names, "states": states}
+
+    async def start_node_runtime(
+        self,
+        session: aiohttp.ClientSession,
+        node: LocalnetNode,
+        *,
+        target_height: int | None = None,
+    ) -> dict[str, Any]:
+        container_names = self.node_container_names(node)
+        if not container_names:
+            raise RunnerError(f"node {node.moniker} has no containers to start")
+        run_cmd(["docker", "start", *container_names], cwd=STACK_DIR)
+        states: dict[str, str] = {}
+        for container_name in container_names:
+            states[container_name] = await wait_for_container_state(
+                container_name,
+                expected_states={"running", "healthy"},
+                timeout_seconds=45.0,
+            )
+        ready_height = await wait_for_height(
+            session,
+            node.rpc_url,
+            max(target_height or 1, 1),
+            timeout_seconds=90.0,
+        )
+        await wait_for_abci_query_responsive(
+            session,
+            node.rpc_url,
+            timeout_seconds=90.0,
+        )
+        return {
+            "containers": container_names,
+            "states": states,
+            "ready_height": ready_height,
+            "abci_query_ready": True,
+        }
+
+    async def restart_node_runtime(
+        self,
+        session: aiohttp.ClientSession,
+        node: LocalnetNode,
+        *,
+        target_height: int | None = None,
+    ) -> dict[str, Any]:
+        stop = await self.stop_node_runtime(node)
+        start = await self.start_node_runtime(
+            session,
+            node,
+            target_height=target_height,
+        )
+        return {
+            "node": node.moniker,
+            "stop": stop,
+            "start": start,
+        }
+
+    async def recover_lagging_nodes(
+        self,
+        session: aiohttp.ClientSession,
+        *,
+        target_height: int,
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        before: dict[str, Any] = {}
+        lagging: list[tuple[LocalnetNode, str]] = []
+        for node in self.nodes:
+            try:
+                height = await wait_for_height(
+                    session,
+                    node.rpc_url,
+                    target_height,
+                    timeout_seconds=timeout_seconds,
+                )
+                await wait_for_abci_query_responsive(
+                    session,
+                    node.rpc_url,
+                    timeout_seconds=timeout_seconds,
+                )
+                before[node.moniker] = {
+                    "height": height,
+                    "ok": True,
+                    "abci_query_ready": True,
+                }
+            except Exception as exc:  # noqa: BLE001
+                before[node.moniker] = {
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+                lagging.append((node, f"{type(exc).__name__}: {exc}"))
+
+        restarts = []
+        for node, error in lagging:
+            restart = await self.restart_node_runtime(
+                session,
+                node,
+                target_height=target_height,
+            )
+            restart["reason"] = error
+            restarts.append(restart)
+
+        after: dict[str, Any] = {}
+        if restarts:
+            for node in self.nodes:
+                height = await wait_for_height(
+                    session,
+                    node.rpc_url,
+                    target_height,
+                    timeout_seconds=timeout_seconds,
+                )
+                await wait_for_abci_query_responsive(
+                    session,
+                    node.rpc_url,
+                    timeout_seconds=timeout_seconds,
+                )
+                after[node.moniker] = {
+                    "height": height,
+                    "ok": True,
+                    "abci_query_ready": True,
+                }
+
+        return {
+            "target_height": target_height,
+            "before": before,
+            "restarts": restarts,
+            "after": after,
+        }
+
     async def fund_wallets(
         self,
         session: aiohttp.ClientSession,
@@ -716,11 +932,17 @@ class ValidatorGovernanceRunner:
         *,
         expected_status: str,
         timeout_seconds: float = 15.0,
+        fallback_clients: list[XianAsync] | None = None,
     ) -> dict[str, Any]:
+        readers = [client, *(fallback_clients or [])]
         deadline = time.monotonic() + timeout_seconds
         last_vote = None
         while time.monotonic() < deadline:
-            proposal = await client.get_state("masternodes", "votes", proposal_id)
+            proposal = await self.read_members_vote(
+                readers,
+                proposal_id,
+                timeout_seconds=min(5.0, max(deadline - time.monotonic(), 0.1)),
+            )
             last_vote = proposal
             if proposal["status"] == expected_status:
                 return proposal
@@ -736,7 +958,9 @@ class ValidatorGovernanceRunner:
         *,
         previous_vote: dict[str, Any],
         timeout_seconds: float = 5.0,
+        fallback_clients: list[XianAsync] | None = None,
     ) -> dict[str, Any]:
+        readers = [client, *(fallback_clients or [])]
         deadline = time.monotonic() + timeout_seconds
         last_vote = previous_vote
         previous_status = previous_vote.get("status")
@@ -745,7 +969,11 @@ class ValidatorGovernanceRunner:
         previous_voters = tuple(previous_vote.get("voters") or [])
 
         while time.monotonic() < deadline:
-            proposal = await client.get_state("masternodes", "votes", proposal_id)
+            proposal = await self.read_members_vote(
+                readers,
+                proposal_id,
+                timeout_seconds=min(5.0, max(deadline - time.monotonic(), 0.1)),
+            )
             last_vote = proposal
             if (
                 proposal.get("status") != previous_status
@@ -757,6 +985,26 @@ class ValidatorGovernanceRunner:
             await asyncio.sleep(0.25)
 
         return last_vote
+
+    async def read_members_vote(
+        self,
+        clients: list[XianAsync],
+        proposal_id: int,
+        *,
+        timeout_seconds: float = 5.0,
+    ) -> dict[str, Any]:
+        last_error: str | None = None
+        for client in clients:
+            try:
+                return await asyncio.wait_for(
+                    client.get_state("masternodes", "votes", proposal_id),
+                    timeout=timeout_seconds,
+                )
+            except Exception as exc:  # noqa: BLE001
+                last_error = f"{type(exc).__name__}: {exc}"
+        raise RunnerError(
+            f"members vote {proposal_id} could not be read from any node; last={last_error}"
+        )
 
     async def approve_governance_contract_call(
         self,
@@ -847,6 +1095,7 @@ class ValidatorGovernanceRunner:
         arg: Any,
         label_prefix: str,
     ) -> dict[str, Any]:
+        status_readers = [voter for _name, voter in voters]
         proposal_receipt = await self.submit_tx(
             proposer,
             "masternodes",
@@ -856,7 +1105,10 @@ class ValidatorGovernanceRunner:
             chi=GOVERNANCE_TX_CHI,
         )
         proposal_id = coerce_int(await proposer.get_state("masternodes", "total_votes"))
-        proposal_pending = await proposer.get_state("masternodes", "votes", proposal_id)
+        proposal_pending = await self.read_members_vote(
+            [proposer, *status_readers],
+            proposal_id,
+        )
         assert_equal(
             proposal_pending["status"],
             "pending",
@@ -866,7 +1118,10 @@ class ValidatorGovernanceRunner:
         vote_receipts = []
         proposal_final = None
         for index, (name, voter) in enumerate(voters, start=1):
-            current_vote = await proposer.get_state("masternodes", "votes", proposal_id)
+            current_vote = await self.read_members_vote(
+                [proposer, *status_readers],
+                proposal_id,
+            )
             if current_vote["status"] == "approved":
                 proposal_final = current_vote
                 break
@@ -884,6 +1139,7 @@ class ValidatorGovernanceRunner:
                 proposer,
                 proposal_id,
                 previous_vote=current_vote,
+                fallback_clients=status_readers,
             )
             if current_vote["status"] == "approved":
                 proposal_final = current_vote
@@ -894,6 +1150,7 @@ class ValidatorGovernanceRunner:
                 proposer,
                 proposal_id,
                 expected_status="approved",
+                fallback_clients=status_readers,
             )
         return {
             "proposal_id": proposal_id,
@@ -1349,11 +1606,14 @@ def get_status():
             node3_wallet,
             _node4_wallet,
         ) = self.validator_wallets
+        # Route state-patch votes through one healthy RPC while preserving signer identity.
+        # A validator can briefly lag during patch activation; waiting on that same node's
+        # RPC makes the harness hang even when the transaction finalizes on the network.
         async with (
             self.client(node0_wallet, 0, session) as node0,
-            self.client(node1_wallet, 1, session) as node1,
-            self.client(node2_wallet, 2, session) as node2,
-            self.client(node3_wallet, 3, session) as node3,
+            self.client(node1_wallet, 0, session) as node1,
+            self.client(node2_wallet, 0, session) as node2,
+            self.client(node3_wallet, 0, session) as node3,
         ):
             for client in (node0, node1, node2, node3):
                 await client.refresh_nonce()
@@ -1407,6 +1667,11 @@ def get_status():
             activation_height + 1,
             timeout_seconds=activation_wait_timeout,
         )
+        node_recovery = await self.recover_lagging_nodes(
+            session,
+            target_height=activation_height + 1,
+            timeout_seconds=15.0,
+        )
 
         async with self.client(node0_wallet, 0, session) as node0:
             patch_status = await node0.call(
@@ -1446,6 +1711,7 @@ def get_status():
             "bundle": bundle_payload,
             "governance_min_patch_delay": governance_min_patch_delay,
             "activation_wait_timeout_seconds": activation_wait_timeout,
+            "node_recovery": node_recovery,
             "proposal_receipt": proposal_receipt,
             "vote_receipts": vote_receipts,
             "proposal_final": proposal_final,
@@ -1737,6 +2003,11 @@ def get_status():
                 },
                 label_prefix="auto-update-policy",
             )
+            policy_recovery = await self.recover_lagging_nodes(
+                session,
+                target_height=await latest_height(session, self.nodes[1].rpc_url) + 1,
+                timeout_seconds=15.0,
+            )
             live_after_policy = await self.wait_for_validator_count(
                 session,
                 expected_count=3,
@@ -2010,6 +2281,7 @@ def get_status():
             "approvals": approvals,
             "bond_self": bond_receipts,
             "policy_update": policy_update,
+            "policy_recovery": policy_recovery,
             "live_after_policy": live_after_policy,
             "active_after_policy": active_after_policy,
             "delegator_approval": delegator_approval,
@@ -2532,7 +2804,8 @@ def main() -> int:
         print("Interrupted.", file=sys.stderr)
         return 130
     except Exception as exc:  # noqa: BLE001
-        print(f"ERROR: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 
 
