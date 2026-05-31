@@ -54,6 +54,7 @@ THROUGHPUT_TRANSFER_TX_CHI = 1_500
 THROUGHPUT_CONTRACT_DEPLOY_CHI = 120_000
 THROUGHPUT_CONTRACT_TX_CHI = 6_000
 RECEIPT_TIMEOUT_SECONDS = 45.0
+RECEIPT_FALLBACK_BLOCK_SCAN_WINDOW = 1_200
 ABCI_HEALTH_QUERY_PATH = "/get/currency.balances:__xian_localnet_workload_health_probe__"
 
 
@@ -847,31 +848,80 @@ async def wait_for_tx_receipt(
                     poll_interval_seconds=0.25,
                 )
                 result = receipt.raw.get("result")
-                if not isinstance(result, dict):
-                    raise WorkloadError(f"tx {tx_hash} returned no result")
-                if isinstance(receipt.execution, dict):
-                    return {
-                        "height": int(result["height"]),
-                        "tx_index": int(result["index"]),
-                        "success": receipt.success,
-                        "result": receipt.message,
-                        "events": receipt.execution.get("events", []),
-                        "chi_used": receipt.execution.get("chi_used"),
-                    }
-                return {
-                    "height": int(result["height"]),
-                    "tx_index": int(result["index"]),
-                    "success": receipt.success,
-                    "result": receipt.message,
-                    "events": [],
-                    "chi_used": None,
-                }
+                return receipt_to_workload_result(tx_hash, result, receipt)
             except Exception as exc:  # noqa: PERF203
                 last_error = exc
         client_index = (client_index + 1) % len(clients)
         await asyncio.sleep(0.5)
 
+    fallback_receipt = await lookup_tx_receipt_in_recent_blocks(
+        clients=clients,
+        tx_hash=tx_hash,
+        block_scan_window=RECEIPT_FALLBACK_BLOCK_SCAN_WINDOW,
+    )
+    if fallback_receipt is not None:
+        return fallback_receipt
+
     raise WorkloadError(f"timed out waiting for tx {tx_hash}") from last_error
+
+
+def receipt_to_workload_result(
+    tx_hash: str,
+    result: Any,
+    receipt,
+) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        raise WorkloadError(f"tx {tx_hash} returned no result")
+    if isinstance(receipt.execution, dict):
+        return {
+            "height": int(result["height"]),
+            "tx_index": int(result["index"]),
+            "success": receipt.success,
+            "result": receipt.message,
+            "events": receipt.execution.get("events", []),
+            "chi_used": receipt.execution.get("chi_used"),
+        }
+    return {
+        "height": int(result["height"]),
+        "tx_index": int(result["index"]),
+        "success": receipt.success,
+        "result": receipt.message,
+        "events": [],
+        "chi_used": None,
+    }
+
+
+async def lookup_tx_receipt_in_recent_blocks(
+    *,
+    clients: list[XianAsync],
+    tx_hash: str,
+    block_scan_window: int,
+) -> dict[str, Any] | None:
+    for client in clients:
+        try:
+            status = await tr.get_status_async(client.node_url, session=client.session)
+            latest_height_raw = (
+                status.get("result", {}).get("sync_info", {}).get("latest_block_height")
+            )
+            latest_height = int(latest_height_raw)
+            lookup = await tr._lookup_tx_in_recent_blocks_async(  # noqa: SLF001
+                client.node_url,
+                tx_hash,
+                start_height=max(1, latest_height - block_scan_window + 1),
+                end_height=latest_height,
+                session=client.session,
+            )
+            if lookup is None:
+                continue
+            receipt = client._normalize_tx_lookup(lookup)  # noqa: SLF001
+            return receipt_to_workload_result(
+                tx_hash,
+                lookup.get("result"),
+                receipt,
+            )
+        except Exception:  # noqa: BLE001, PERF203
+            continue
+    return None
 
 
 def collect_container_memory(nodes: list[LocalnetNode]) -> dict[str, str]:

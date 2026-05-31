@@ -344,6 +344,67 @@ def test_resolve_record_rebroadcasts_signed_tx_after_receipt_timeout() -> None:
     )
 
 
+def test_wait_for_tx_receipt_scans_wide_recent_blocks_after_timeout() -> None:
+    session = object()
+    scan_args = {}
+
+    class Client:
+        node_url = "http://node-1"
+
+        async def wait_for_tx(self, *_args, **_kwargs):
+            raise TimeoutError("not indexed")
+
+        def _normalize_tx_lookup(self, lookup):
+            return SimpleNamespace(
+                raw=lookup,
+                execution={"events": [{"event": "Transfer"}], "chi_used": 11},
+                success=True,
+                message=None,
+            )
+
+    client = Client()
+    client.session = session
+
+    async def fake_status(_node_url: str, *, session):
+        return {"result": {"sync_info": {"latest_block_height": "1500"}}}
+
+    async def fake_lookup(node_url: str, tx_hash: str, **kwargs):
+        scan_args.update({"node_url": node_url, "tx_hash": tx_hash, **kwargs})
+        return {"result": {"height": "1200", "index": "3"}}
+
+    with (
+        patch.object(localnet_workload.tr, "get_status_async", side_effect=fake_status),
+        patch.object(
+            localnet_workload.tr,
+            "_lookup_tx_in_recent_blocks_async",
+            side_effect=fake_lookup,
+        ),
+    ):
+        receipt = asyncio.run(
+            localnet_workload.wait_for_tx_receipt(
+                clients=[client],
+                tx_hash="tx-hash",
+                timeout_seconds=0.0,
+            )
+        )
+
+    assert receipt == {
+        "height": 1200,
+        "tx_index": 3,
+        "success": True,
+        "result": None,
+        "events": [{"event": "Transfer"}],
+        "chi_used": 11,
+    }
+    assert scan_args == {
+        "node_url": "http://node-1",
+        "tx_hash": "tx-hash",
+        "start_height": 301,
+        "end_height": 1500,
+        "session": session,
+    }
+
+
 def test_wait_for_mempool_drain_flushes_stale_pending_tx() -> None:
     context = localnet_workload.WorkloadContext(
         _network(),
