@@ -1939,6 +1939,7 @@ def get_status():
 
         async with (
             self.client(node0_wallet, 0, session) as node0,
+            self.client(node0_wallet, 1, session) as node0_policy,
             self.client(node1_wallet, 1, session) as node1,
             self.client(node2_wallet, 2, session) as node2,
             self.client(node3_wallet, 3, session) as node3,
@@ -2001,8 +2002,11 @@ def get_status():
                 ),
             ]
 
+            # The auto_top_n policy can temporarily stall node-0's ABCI app while
+            # node-0 remains in the active validator set. Sign as node-0, but submit
+            # through node-1 so the harness can reach the recovery step.
             policy_update = await self.approve_members_vote(
-                node0,
+                node0_policy,
                 [
                     ("node1", node1),
                     ("node2", node2),
@@ -2027,7 +2031,7 @@ def get_status():
             )
             policy_recovery = await self.recover_lagging_nodes(
                 session,
-                target_height=await latest_height(session, self.nodes[1].rpc_url) + 1,
+                target_height=await latest_height(session, self.nodes[1].rpc_url),
                 timeout_seconds=15.0,
             )
             live_after_policy = await self.wait_for_validator_count(
