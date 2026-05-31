@@ -299,19 +299,13 @@ class WorkloadContext:
         if not statuses:
             return [preferred_rpc_index]
 
-        candidates = [
-            status
-            for status in statuses
-            if not status[2] and status[3]
-        ]
+        candidates = [status for status in statuses if not status[2] and status[3]]
         if not candidates:
             return [max(statuses, key=lambda item: item[1])[0]]
 
         target_height = max(height for _, height, _, _ in candidates)
         healthy = {
-            index
-            for index, height, _catching_up, _abci_ok in candidates
-            if height >= target_height
+            index for index, height, _catching_up, _abci_ok in candidates if height >= target_height
         }
         if healthy:
             return sorted(healthy, key=lambda index: (index != preferred_rpc_index, index))
@@ -321,13 +315,43 @@ class WorkloadContext:
         return (await self.healthy_submission_indices(preferred_rpc_index))[0]
 
     async def healthy_read_node(self) -> LocalnetNode:
+        return (await self.healthy_read_nodes())[0]
+
+    async def healthy_read_nodes(self) -> list[LocalnetNode]:
         sample_nodes, _skipped_nodes = await self.healthy_state_sample_nodes()
         non_bds_nodes = [node for node in sample_nodes if not node.bds_node]
         if non_bds_nodes:
-            return non_bds_nodes[0]
+            return non_bds_nodes
         if sample_nodes:
-            return sample_nodes[0]
-        return self.nodes[0]
+            return sample_nodes
+        return list(self.nodes)
+
+    async def get_state_from_healthy_node(
+        self,
+        wallet: Wallet,
+        contract: str,
+        variable: str,
+        *keys: Any,
+    ) -> Any:
+        errors: list[str] = []
+        for node in await self.healthy_read_nodes():
+            node_index = self.nodes.index(node)
+            try:
+                return await self._retry_read(
+                    lambda node_index=node_index: self.client(wallet, node_index).get_state(
+                        contract,
+                        variable,
+                        *keys,
+                    ),
+                    max_attempts=2,
+                    initial_delay_seconds=0.05,
+                    max_delay_seconds=0.2,
+                )
+            except Exception as exc:  # noqa: PERF203, BLE001
+                errors.append(f"{node.moniker}: {type(exc).__name__}: {exc}")
+        raise WorkloadError(
+            f"could not read {contract}.{variable} from healthy nodes: {errors[-5:]}"
+        )
 
     async def next_nonce(self, wallet: Wallet, rpc_index: int) -> int:
         return (await self.reserve_nonces(wallet, rpc_index, count=1))[0]
@@ -410,9 +434,7 @@ class WorkloadContext:
         last_error: TransportError | None = None
 
         for attempt in range(max(1, len(self.nodes))):
-            submission_index = await self.healthy_submission_index(
-                preferred_index + attempt
-            )
+            submission_index = await self.healthy_submission_index(preferred_index + attempt)
             client = self.client(wallet, submission_index)
             try:
                 response = await client.send_tx(
@@ -720,9 +742,7 @@ def canonical_json(value: Any) -> str:
 def require_matching_state(scenario: str, state: dict[str, Any]) -> None:
     if state.get("ok") is True:
         return
-    raise WorkloadError(
-        f"{scenario}: state comparison failed: {json.dumps(state, sort_keys=True)}"
-    )
+    raise WorkloadError(f"{scenario}: state comparison failed: {json.dumps(state, sort_keys=True)}")
 
 
 def compared_state_value(
@@ -1820,7 +1840,8 @@ async def run_dex_mixed(
     require_successful(initial_liquidity)
 
     token0, token1 = sorted((token_a, token_b))
-    pair_id = await context.client(founder, 0).get_state(
+    pair_id = await context.get_state_from_healthy_node(
+        founder,
         pairs_contract,
         "toks_to_pair",
         token0,
@@ -2305,7 +2326,8 @@ async def run_parallel_probe(
             records,
         )
 
-        observed = await context.client(founder, 0).get_state(
+        observed = await context.get_state_from_healthy_node(
+            founder,
             contract_name,
             "observations",
             observation_tag,
@@ -2419,7 +2441,8 @@ async def run_parallel_probe(
             records,
         )
 
-        observed = await context.client(founder, 0).get_state(
+        observed = await context.get_state_from_healthy_node(
+            founder,
             contract_name,
             "observations",
             observation_tag,

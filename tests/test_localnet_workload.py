@@ -216,6 +216,78 @@ def test_healthy_state_sample_nodes_skip_lagging_nodes() -> None:
     assert skipped == ["node-1: height=90, catching_up=False, target=120"]
 
 
+def test_healthy_read_nodes_prefer_non_bds_samples() -> None:
+    context = localnet_workload.WorkloadContext(
+        _network(),
+        sample_nodes=3,
+        submit_node_index=0,
+        round_robin_submission=True,
+    )
+    context._session = object()
+
+    async def fake_fetch_json(_session, url: str, *, timeout: float):
+        port = int(url.rsplit(":", 1)[1].split("/", 1)[0])
+        heights = {
+            27657: 120,
+            27757: 90,
+            27857: 120,
+        }
+        return {
+            "result": {
+                "sync_info": {
+                    "latest_block_height": str(heights[port]),
+                    "catching_up": False,
+                }
+            }
+        }
+
+    with patch.object(localnet_workload, "fetch_json", side_effect=fake_fetch_json):
+        nodes = asyncio.run(context.healthy_read_nodes())
+
+    assert [node.moniker for node in nodes] == ["node-2"]
+
+
+def test_get_state_from_healthy_node_fails_over_after_read_timeout() -> None:
+    context = localnet_workload.WorkloadContext(
+        _network(),
+        sample_nodes=3,
+        submit_node_index=0,
+        round_robin_submission=True,
+    )
+    context._session = object()
+    context.healthy_read_nodes = AsyncMock(return_value=[context.nodes[1], context.nodes[2]])
+    reads = []
+
+    class FakeClient:
+        def __init__(self, node_index: int):
+            self.node_index = node_index
+
+        async def get_state(self, contract, variable, *keys):
+            reads.append((self.node_index, contract, variable, keys))
+            if self.node_index == 1:
+                raise localnet_workload.TransportError("read timeout")
+            return "pair-17"
+
+    context.client = lambda _wallet, node_index: FakeClient(node_index)
+
+    value = asyncio.run(
+        context.get_state_from_healthy_node(
+            localnet_workload.Wallet(),
+            "con_pairs",
+            "toks_to_pair",
+            "token_a",
+            "token_b",
+        )
+    )
+
+    assert value == "pair-17"
+    assert reads == [
+        (1, "con_pairs", "toks_to_pair", ("token_a", "token_b")),
+        (1, "con_pairs", "toks_to_pair", ("token_a", "token_b")),
+        (2, "con_pairs", "toks_to_pair", ("token_a", "token_b")),
+    ]
+
+
 def test_compared_state_value_uses_returned_sample_nodes() -> None:
     state = {
         "ok": True,
@@ -231,10 +303,7 @@ def test_compared_state_value_uses_returned_sample_nodes() -> None:
     }
 
     localnet_workload.require_matching_state("counter_basic", state)
-    assert (
-        localnet_workload.compared_state_value(state, 0, scenario="counter_basic")
-        == "17"
-    )
+    assert localnet_workload.compared_state_value(state, 0, scenario="counter_basic") == "17"
 
 
 def test_require_matching_state_reports_mismatched_samples() -> None:
