@@ -2432,11 +2432,14 @@ def get_status():
             timeout_seconds=15.0,
         )
 
+        # Keep hybrid governance traffic on node-3's active RPC. Node-1 is
+        # deliberately removed before re-approval, so its RPC is not a reliable
+        # broadcast path for the add-member proposal.
         async with (
-            self.client(node1_wallet, 1, session) as node1,
-            self.client(node2_wallet, 1, session) as node2,
+            self.client(node1_wallet, 3, session) as node1,
+            self.client(node2_wallet, 3, session) as node2,
             self.client(node3_wallet, 3, session) as node3,
-            self.client(node4_wallet, 4, session) as node4,
+            self.client(node4_wallet, 3, session) as node4,
         ):
             clients_by_account = {
                 self.nodes[1].account_public_key: ("node1", node1),
@@ -2460,13 +2463,13 @@ def get_status():
                 return voters
 
             remove_candidate = await self.approve_members_vote(
-                node2,
-                [("node3", node3), ("node1", node1)],
+                node3,
+                [("node2", node2), ("node1", node1)],
                 type_of_vote="remove_member",
                 arg=node1_key,
                 label_prefix="hybrid-remove-candidate",
             )
-            validator_after_remove = await node2.call(
+            validator_after_remove = await node3.call(
                 "masternodes",
                 "get_validator",
                 {"account": node1_key},
@@ -2476,23 +2479,23 @@ def get_status():
                 "removed",
                 label="node1 removed before hybrid re-register",
             )
-            active_after_remove = await node2.call(
+            active_after_remove = await node3.call(
                 "masternodes",
                 "get_active_validators",
                 {},
             )
 
             switch_to_hybrid = await self.approve_members_vote(
-                node2,
+                node3,
                 voters_for_active_set(
                     active_after_remove,
-                    exclude_account=self.nodes[2].account_public_key,
+                    exclude_account=self.nodes[3].account_public_key,
                 ),
                 type_of_vote="update_policy",
                 arg={"selection_mode": "hybrid"},
                 label_prefix="hybrid-update-policy",
             )
-            policy_after_switch = await node2.call(
+            policy_after_switch = await node3.call(
                 "masternodes",
                 "get_policy_config",
                 {},
@@ -2503,7 +2506,7 @@ def get_status():
                 label="hybrid selection mode",
             )
 
-            registration_fee = coerce_int(await node2.get_state("masternodes", "registration_fee"))
+            registration_fee = coerce_int(await node3.get_state("masternodes", "registration_fee"))
             approve_registration = await self.submit_tx(
                 node1,
                 "currency",
@@ -2539,14 +2542,14 @@ def get_status():
             )
 
             rebalance_pending = await self.submit_tx(
-                node2,
+                node3,
                 "masternodes",
                 "rebalance",
                 {},
                 label="hybrid-rebalance-before-approval",
                 chi=GOVERNANCE_TX_CHI,
             )
-            active_before_approval = await node2.call(
+            active_before_approval = await node3.call(
                 "masternodes",
                 "get_active_validators",
                 {},
@@ -2559,16 +2562,16 @@ def get_status():
 
             active_before_approval_voters = voters_for_active_set(
                 active_before_approval,
-                exclude_account=self.nodes[2].account_public_key,
+                exclude_account=self.nodes[3].account_public_key,
             )
             add_member = await self.approve_members_vote(
-                node2,
+                node3,
                 active_before_approval_voters,
                 type_of_vote="add_member",
                 arg=node1_key,
                 label_prefix="hybrid-add-member",
             )
-            active_after_approval = await node2.call(
+            active_after_approval = await node3.call(
                 "masternodes",
                 "get_active_validators",
                 {},
