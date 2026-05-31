@@ -1255,23 +1255,39 @@ class ValidatorGovernanceRunner:
         expected_count: int,
         timeout_seconds: float = 45.0,
     ) -> list[dict[str, Any]]:
-        deadline = time.monotonic() + timeout_seconds
-        while time.monotonic() < deadline:
-            snapshots = []
-            for node in self.nodes:
-                validators = await fetch_json(session, f"{node.rpc_url}/validators", timeout=5.0)
-                entries = validators["result"]["validators"]
-                snapshots.append(
-                    {
-                        "moniker": node.moniker,
-                        "count": len(entries),
-                        "powers": sorted(int(entry["voting_power"]) for entry in entries),
-                    }
+        last_snapshots: list[dict[str, Any]] = []
+        last_recovery: dict[str, Any] | None = None
+        for attempt in range(2):
+            deadline = time.monotonic() + timeout_seconds
+            while time.monotonic() < deadline:
+                snapshots = []
+                for node in self.nodes:
+                    validators = await fetch_json(
+                        session,
+                        f"{node.rpc_url}/validators",
+                        timeout=5.0,
+                    )
+                    entries = validators["result"]["validators"]
+                    snapshots.append(
+                        {
+                            "moniker": node.moniker,
+                            "count": len(entries),
+                            "powers": sorted(int(entry["voting_power"]) for entry in entries),
+                        }
+                    )
+                last_snapshots = snapshots
+                if all(snapshot["count"] == expected_count for snapshot in snapshots):
+                    return snapshots
+                await asyncio.sleep(1.0)
+            if attempt == 0:
+                last_recovery = await self.recover_current_height(
+                    session,
+                    timeout_seconds=15.0,
                 )
-            if all(snapshot["count"] == expected_count for snapshot in snapshots):
-                return snapshots
-            await asyncio.sleep(1.0)
-        raise RunnerError(f"live validator count did not converge to {expected_count}")
+        raise RunnerError(
+            f"live validator count did not converge to {expected_count}; "
+            f"last={last_snapshots}; recovery={last_recovery}"
+        )
 
     async def wait_for_live_validator_address(
         self,
