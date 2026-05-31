@@ -131,6 +131,37 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertEqual(123, config.submission.timeout_seconds)
         self.assertEqual(0.5, config.submission.poll_interval_seconds)
 
+    def test_normalize_receipt_keeps_lookup_height(self) -> None:
+        submission = SimpleNamespace(
+            submitted=True,
+            accepted=True,
+            finalized=True,
+            message=None,
+            tx_hash="tx-hash",
+            nonce=7,
+            chi_supplied=123,
+            receipt=SimpleNamespace(
+                success=True,
+                message=None,
+                execution={"state": [], "events": [], "chi_used": 11},
+                raw={"result": {"height": "42", "index": "3"}},
+            ),
+        )
+
+        receipt = localnet_e2e.normalize_receipt(submission, label="demo")
+
+        self.assertEqual(42, receipt["height"])
+        self.assertEqual(3, receipt["tx_index"])
+
+    def test_max_receipt_height_uses_lagged_transaction_heights(self) -> None:
+        self.assertEqual(
+            57,
+            localnet_e2e.max_receipt_height(
+                [{"height": "41"}, {"height": 57}, {"height": None}],
+                fallback=50,
+            ),
+        )
+
     def test_workload_subprocess_inherits_localnet_rpc_timeout(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "123"])
         with tempfile.TemporaryDirectory() as tmpdir:

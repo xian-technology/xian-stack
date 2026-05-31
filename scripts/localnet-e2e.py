@@ -641,6 +641,21 @@ async def wait_for_bds_recovered(
     raise E2EError(f"BDS did not recover to height {target_height}; last={last_status}")
 
 
+async def wait_for_bds_indexed_tx(
+    client: XianAsync,
+    tx_hash: str,
+    *,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        indexed_tx = await client.get_indexed_tx(tx_hash)
+        if indexed_tx is not None:
+            return normalize_value(indexed_tx.raw)
+        await asyncio.sleep(0.5)
+    raise E2EError(f"BDS did not index transaction {tx_hash} before timeout")
+
+
 async def wait_for_container_state(
     container_name: str,
     *,
@@ -881,6 +896,22 @@ def ensure_failed_submission(
     return receipt
 
 
+def optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except TypeError, ValueError:
+        return None
+
+
+def max_receipt_height(records: list[dict[str, Any]], *, fallback: int) -> int:
+    heights = [height for record in records if (height := optional_int(record.get("height")))]
+    if not heights:
+        return fallback
+    return max(fallback, max(heights))
+
+
 def normalize_receipt(submission, *, label: str) -> dict[str, Any]:
     execution = submission.receipt.execution if submission.receipt else None
     state = []
@@ -890,6 +921,10 @@ def normalize_receipt(submission, *, label: str) -> dict[str, Any]:
         events = execution.get("events", []) or []
     success = None if submission.receipt is None else submission.receipt.success
     message = submission.message if submission.receipt is None else submission.receipt.message
+    raw_receipt = getattr(submission.receipt, "raw", {}) if submission.receipt else {}
+    raw_result = raw_receipt.get("result", {}) if isinstance(raw_receipt, dict) else {}
+    height = optional_int(raw_result.get("height") or raw_receipt.get("height"))
+    tx_index = optional_int(raw_result.get("index") or raw_receipt.get("index"))
     if submission.receipt is None and submission.mode == "commit":
         success = bool(submission.accepted and submission.finalized)
         if success and message is None:
@@ -902,6 +937,8 @@ def normalize_receipt(submission, *, label: str) -> dict[str, Any]:
         "success": success,
         "message": message,
         "tx_hash": submission.tx_hash,
+        "height": height,
+        "tx_index": tx_index,
         "nonce": submission.nonce,
         "chi_supplied": submission.chi_supplied,
         "chi_used": None if execution is None else execution.get("chi_used"),
@@ -4610,7 +4647,10 @@ class E2ERunner:
                 receipt["slot"] = slot
                 catchup_records.append(receipt)
 
-            catchup_height = await latest_height(session, service.rpc_url)
+            catchup_height = max_receipt_height(
+                catchup_records,
+                fallback=await latest_height(session, service.rpc_url),
+            )
 
             async with self.client(self.founder_wallet, service.index, session) as client:
                 outage_pressure_task = asyncio.create_task(bds_query_pressure(client, rounds=12))
@@ -4647,10 +4687,13 @@ class E2ERunner:
                         )
                 indexed_txs = []
                 for record in catchup_records[-3:]:
-                    indexed_tx = await client.get_indexed_tx(record["tx_hash"])
-                    if indexed_tx is None:
-                        raise E2EError("BDS catch-up did not index a lagged transaction")
-                    indexed_txs.append(normalize_value(indexed_tx.raw))
+                    indexed_txs.append(
+                        await wait_for_bds_indexed_tx(
+                            client,
+                            record["tx_hash"],
+                            timeout_seconds=15.0,
+                        )
+                    )
                 indexed_events = await client.get_events_for_tx(catchup_records[-1]["tx_hash"])
                 indexed_state = await client.get_state_for_tx(catchup_records[-1]["tx_hash"])
                 if not indexed_events or not indexed_state:
@@ -4691,7 +4734,10 @@ class E2ERunner:
                 receipt["slot"] = slot
                 secondary_catchup_records.append(receipt)
 
-            secondary_target_height = await latest_height(session, service.rpc_url)
+            secondary_target_height = max_receipt_height(
+                secondary_catchup_records,
+                fallback=await latest_height(session, service.rpc_url),
+            )
             secondary_restarted_state = await self.restart_secondary_bds_postgres()
             secondary_resume_sync = self.run_secondary_bds_reindex(
                 source_node=service,
