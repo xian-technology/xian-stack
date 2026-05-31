@@ -2799,9 +2799,9 @@ def get_status():
             active_after_rebalance = await self.wait_for_active_validators(
                 node0,
                 expected_accounts=[
-                    self.nodes[0].account_public_key,
                     self.nodes[2].account_public_key,
                     self.nodes[4].account_public_key,
+                    self.nodes[0].account_public_key,
                 ],
                 timeout_seconds=30.0,
                 label="active set after announce_leave rebalance",
