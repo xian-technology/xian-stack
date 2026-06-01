@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import subprocess
 import time
@@ -17,7 +18,7 @@ STACK_DIR = SCRIPT_DIR.parent
 WORKLOAD_SCRIPT = SCRIPT_DIR / "localnet-workload.py"
 NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 ARTIFACTS_DIR = STACK_DIR / ".artifacts" / "tps-bench"
-DEFAULT_PYTHON = "3.14"
+WORKLOAD_PYTHON = os.environ.get("XIAN_STACK_PYTHON", "3.14")
 PERF_GLOBAL_METRICS = (
     "finalize_block",
     "finalize_parallel",
@@ -211,7 +212,7 @@ def run_workload(
         "--project",
         str(STACK_DIR.parent / "xian-py"),
         "--python",
-        DEFAULT_PYTHON,
+        WORKLOAD_PYTHON,
         "python3",
         str(WORKLOAD_SCRIPT),
         "--scenario",

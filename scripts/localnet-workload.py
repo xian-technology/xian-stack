@@ -142,6 +142,7 @@ class WorkloadContext:
         self.submit_node_index = submit_node_index % len(self.nodes)
         self.round_robin_submission = round_robin_submission
         self._next_nonce: dict[str, int] = {}
+        self._submission_affinity: dict[str, int] = {}
         self._nonce_lock = asyncio.Lock()
         self._session: aiohttp.ClientSession | None = None
 
@@ -314,6 +315,14 @@ class WorkloadContext:
     async def healthy_submission_index(self, preferred_rpc_index: int) -> int:
         return (await self.healthy_submission_indices(preferred_rpc_index))[0]
 
+    async def sticky_submission_index(self, wallet: Wallet, preferred_rpc_index: int) -> int:
+        public_key = wallet.public_key
+        if public_key not in self._submission_affinity:
+            self._submission_affinity[public_key] = await self.healthy_submission_index(
+                preferred_rpc_index
+            )
+        return self._submission_affinity[public_key]
+
     async def healthy_read_node(self) -> LocalnetNode:
         return (await self.healthy_read_nodes())[0]
 
@@ -433,8 +442,15 @@ class WorkloadContext:
         response: TransactionSubmission | None = None
         last_error: TransportError | None = None
 
+        tried: set[int] = set()
         for attempt in range(max(1, len(self.nodes))):
-            submission_index = await self.healthy_submission_index(preferred_index + attempt)
+            if nonce is not None and attempt == 0:
+                submission_index = await self.sticky_submission_index(wallet, preferred_index)
+            else:
+                submission_index = await self.healthy_submission_index(preferred_index + attempt)
+            if submission_index in tried:
+                continue
+            tried.add(submission_index)
             client = self.client(wallet, submission_index)
             try:
                 response = await client.send_tx(
@@ -447,6 +463,8 @@ class WorkloadContext:
                     mode=mode,
                     wait_for_tx=False,
                 )
+                if nonce is not None:
+                    self._submission_affinity[wallet.public_key] = submission_index
                 break
             except TransportError as exc:
                 last_error = exc

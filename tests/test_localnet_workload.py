@@ -380,6 +380,66 @@ def test_broadcast_tx_retries_transport_timeout_on_next_healthy_node() -> None:
     ]
 
 
+def test_broadcast_tx_reuses_sticky_node_for_explicit_nonce_stream() -> None:
+    context = localnet_workload.WorkloadContext(
+        _network(),
+        sample_nodes=3,
+        submit_node_index=0,
+        round_robin_submission=True,
+    )
+    context._session = object()
+    context.healthy_submission_index = AsyncMock(side_effect=[2, 1])
+    sends = []
+
+    class FakeClient:
+        def __init__(self, node_index: int):
+            self.node_index = node_index
+
+        async def send_tx(self, **kwargs):
+            sends.append((self.node_index, kwargs["nonce"]))
+            return SimpleNamespace(
+                submitted=True,
+                accepted=True,
+                message=None,
+                tx_hash=f"tx-hash-{kwargs['nonce']}",
+            )
+
+    context.client = lambda _wallet, node_index: FakeClient(node_index)
+    wallet = localnet_workload.Wallet()
+
+    first = asyncio.run(
+        context.broadcast_tx(
+            label="stream nonce 4",
+            wallet=wallet,
+            rpc_index=0,
+            contract="currency",
+            function="transfer",
+            kwargs={"amount": "1", "to": wallet.public_key},
+            chi=1_500,
+            expected_success=True,
+            nonce=4,
+        )
+    )
+    second = asyncio.run(
+        context.broadcast_tx(
+            label="stream nonce 5",
+            wallet=wallet,
+            rpc_index=0,
+            contract="currency",
+            function="transfer",
+            kwargs={"amount": "1", "to": wallet.public_key},
+            chi=1_500,
+            expected_success=True,
+            nonce=5,
+        )
+    )
+
+    assert first.rpc_url == context.nodes[2].rpc_url
+    assert second.rpc_url == context.nodes[2].rpc_url
+    assert sends == [(2, 4), (2, 5)]
+    assert context.healthy_submission_index.await_count == 1
+
+
 def test_reserve_nonces_uses_highest_nonce_from_healthy_nodes() -> None:
     context = localnet_workload.WorkloadContext(
         _network(),
