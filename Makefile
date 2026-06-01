@@ -20,7 +20,9 @@ XIAN_DEX_BOOTSTRAP_CHAIN_ID ?=
 XIAN_DEX_DEPLOYER_PRIVATE_KEY ?=
 XIAN_DEX_VALIDATOR_KEY_PATH ?= ./.cometbft/config/priv_validator_key.json
 XIAN_STACK_PYTHON ?= 3.14
+FALSE_VALUES := 0 false FALSE False no NO No off OFF Off
 XIAN_BDS_ENABLED ?= 0
+XIAN_BDS_ENABLED_FLAG = $(if $(filter $(FALSE_VALUES),$(XIAN_BDS_ENABLED)),--no-bds-enabled,--bds-enabled)
 XIAN_COMETBFT_HOME ?= ./.cometbft
 XIAN_BDS_DATA_DIR ?= ./.bds.db
 XIAN_BDS_DSN ?=
@@ -36,6 +38,7 @@ XIAN_BDS_ACQUIRE_TIMEOUT_MS ?= 10000
 XIAN_BDS_APPLICATION_NAME ?= xian-bds
 XIAN_BDS_QUEUE_MAX_SIZE ?= 128
 XIAN_BDS_CATCHUP_ENABLED ?= 1
+XIAN_BDS_CATCHUP_ENABLED_FLAG = $(if $(filter $(FALSE_VALUES),$(XIAN_BDS_CATCHUP_ENABLED)),--no-bds-catchup-enabled,--bds-catchup-enabled)
 XIAN_BDS_CATCHUP_POLL_SECONDS ?= 1.0
 XIAN_BDS_RPC_URL ?= http://127.0.0.1:26657
 XIAN_BDS_SPOOL_DIR ?=
@@ -63,6 +66,7 @@ XIAN_COMETBFT_P2P_PORT ?= 26656
 XIAN_COMETBFT_METRICS_HOST ?= 127.0.0.1
 XIAN_COMETBFT_METRICS_PORT ?= 26660
 XIAN_APP_METRICS_ENABLED ?= 1
+XIAN_APP_METRICS_ENABLED_FLAG = $(if $(filter $(FALSE_VALUES),$(XIAN_APP_METRICS_ENABLED)),--no-metrics-enabled,--metrics-enabled)
 XIAN_APP_METRICS_LISTEN_HOST ?= 0.0.0.0
 XIAN_APP_METRICS_HOST ?= 127.0.0.1
 XIAN_APP_METRICS_PORT ?= 9108
@@ -786,7 +790,7 @@ node-init:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci init
 
 node-configure: guard-stack-security
-	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "bds_flag='--bds-enabled'; case '$(XIAN_BDS_ENABLED)' in 0|false|FALSE|False|no|NO|No|off|OFF|Off) bds_flag='--no-bds-enabled';; esac; metrics_flag='--metrics-enabled'; case '$(XIAN_APP_METRICS_ENABLED)' in 0|false|FALSE|False|no|NO|No|off|OFF|Off) metrics_flag='--no-metrics-enabled';; esac; bds_catchup_flag='--bds-catchup-enabled'; case '$(XIAN_BDS_CATCHUP_ENABLED)' in 0|false|FALSE|False|no|NO|No|off|OFF|Off) bds_catchup_flag='--no-bds-catchup-enabled';; esac; xian-configure-node $$bds_flag $$metrics_flag --metrics-host $(XIAN_APP_METRICS_LISTEN_HOST) --metrics-port $(XIAN_APP_METRICS_PORT) --metrics-bds-refresh-seconds $(XIAN_APP_METRICS_BDS_REFRESH_SECONDS) $(if $(XIAN_BDS_DSN),--bds-dsn $(XIAN_BDS_DSN),) --bds-host $(XIAN_BDS_HOST) --bds-port $(XIAN_BDS_PORT) --bds-database $(XIAN_BDS_DATABASE) --bds-user $(XIAN_BDS_USER) --bds-password $(XIAN_BDS_PASSWORD) --bds-pool-min-size $(XIAN_BDS_POOL_MIN_SIZE) --bds-pool-max-size $(XIAN_BDS_POOL_MAX_SIZE) --bds-statement-timeout-ms $(XIAN_BDS_STATEMENT_TIMEOUT_MS) --bds-acquire-timeout-ms $(XIAN_BDS_ACQUIRE_TIMEOUT_MS) --bds-application-name $(XIAN_BDS_APPLICATION_NAME) --bds-queue-max-size $(XIAN_BDS_QUEUE_MAX_SIZE) $$bds_catchup_flag --bds-catchup-poll-seconds $(XIAN_BDS_CATCHUP_POLL_SECONDS) $(if $(XIAN_BDS_RPC_URL),--bds-rpc-url $(XIAN_BDS_RPC_URL),) $(if $(XIAN_BDS_SPOOL_DIR),--bds-spool-dir $(XIAN_BDS_SPOOL_DIR),) --bds-spool-warn-entries $(XIAN_BDS_SPOOL_WARN_ENTRIES) --bds-spool-warn-bytes $(XIAN_BDS_SPOOL_WARN_BYTES) --bds-disk-free-warn-bytes $(XIAN_BDS_DISK_FREE_WARN_BYTES) ${CONFIGURE_ARGS}"
+	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "xian-configure-node $(XIAN_BDS_ENABLED_FLAG) $(XIAN_APP_METRICS_ENABLED_FLAG) --metrics-host $(XIAN_APP_METRICS_LISTEN_HOST) --metrics-port $(XIAN_APP_METRICS_PORT) --metrics-bds-refresh-seconds $(XIAN_APP_METRICS_BDS_REFRESH_SECONDS) $(if $(XIAN_BDS_DSN),--bds-dsn $(XIAN_BDS_DSN),) --bds-host $(XIAN_BDS_HOST) --bds-port $(XIAN_BDS_PORT) --bds-database $(XIAN_BDS_DATABASE) --bds-user $(XIAN_BDS_USER) --bds-password $(XIAN_BDS_PASSWORD) --bds-pool-min-size $(XIAN_BDS_POOL_MIN_SIZE) --bds-pool-max-size $(XIAN_BDS_POOL_MAX_SIZE) --bds-statement-timeout-ms $(XIAN_BDS_STATEMENT_TIMEOUT_MS) --bds-acquire-timeout-ms $(XIAN_BDS_ACQUIRE_TIMEOUT_MS) --bds-application-name $(XIAN_BDS_APPLICATION_NAME) --bds-queue-max-size $(XIAN_BDS_QUEUE_MAX_SIZE) $(XIAN_BDS_CATCHUP_ENABLED_FLAG) --bds-catchup-poll-seconds $(XIAN_BDS_CATCHUP_POLL_SECONDS) $(if $(XIAN_BDS_RPC_URL),--bds-rpc-url $(XIAN_BDS_RPC_URL),) $(if $(XIAN_BDS_SPOOL_DIR),--bds-spool-dir $(XIAN_BDS_SPOOL_DIR),) --bds-spool-warn-entries $(XIAN_BDS_SPOOL_WARN_ENTRIES) --bds-spool-warn-bytes $(XIAN_BDS_SPOOL_WARN_BYTES) --bds-disk-free-warn-bytes $(XIAN_BDS_DISK_FREE_WARN_BYTES) ${CONFIGURE_ARGS}"
 
 node-id:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci show-node-id

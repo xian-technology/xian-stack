@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -45,8 +46,52 @@ class StackBdsWiringTests(unittest.TestCase):
                 if env_key not in SENSITIVE_ENV_KEYS:
                     self.assertIn(f'printf "{env_key}=', makefile)
 
-        self.assertIn("bds_flag='--bds-enabled'", makefile)
-        self.assertIn("bds_catchup_flag='--bds-catchup-enabled'", makefile)
+        self.assertIn("XIAN_BDS_ENABLED_FLAG", makefile)
+        self.assertIn("XIAN_APP_METRICS_ENABLED_FLAG", makefile)
+        self.assertIn("XIAN_BDS_CATCHUP_ENABLED_FLAG", makefile)
+
+    def test_node_configure_renders_enabled_flags(self) -> None:
+        rendered = subprocess.run(
+            [
+                "make",
+                "-n",
+                "node-configure",
+                "XIAN_BDS_ENABLED=1",
+                "XIAN_BDS_PASSWORD=test",
+                "CONFIGURE_ARGS=--moniker test",
+            ],
+            cwd=STACK_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+        self.assertIn("xian-configure-node --bds-enabled --metrics-enabled", rendered)
+        self.assertIn("--bds-catchup-enabled", rendered)
+        self.assertNotIn("$bds_flag", rendered)
+        self.assertNotIn("$metrics_flag", rendered)
+        self.assertNotIn("$bds_catchup_flag", rendered)
+
+    def test_node_configure_renders_disabled_flags(self) -> None:
+        rendered = subprocess.run(
+            [
+                "make",
+                "-n",
+                "node-configure",
+                "XIAN_BDS_ENABLED=0",
+                "XIAN_APP_METRICS_ENABLED=0",
+                "XIAN_BDS_CATCHUP_ENABLED=0",
+                "XIAN_BDS_PASSWORD=test",
+                "CONFIGURE_ARGS=--moniker test",
+            ],
+            cwd=STACK_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+        self.assertIn("xian-configure-node --no-bds-enabled --no-metrics-enabled", rendered)
+        self.assertIn("--no-bds-catchup-enabled", rendered)
 
     def test_stack_env_exports_bds_runtime_options(self) -> None:
         stack_env = (STACK_ROOT / "scripts" / "stack-env.sh").read_text(encoding="utf-8")
