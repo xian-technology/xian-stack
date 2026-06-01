@@ -100,7 +100,9 @@ SHIELDED_TX_CHI = {
     "transfer": 10_000_000,
     "withdraw": 8_000_000,
 }
-CURRENT_UV_PYTHON = f"{sys.version_info.major}.{sys.version_info.minor}"
+CURRENT_UV_PYTHON = (
+    f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+)
 
 sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
 sys.path.insert(0, str(XIAN_ZK_PYTHON_DIR))
