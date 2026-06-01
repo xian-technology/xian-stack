@@ -7,12 +7,10 @@ import argparse
 import json
 import statistics
 import subprocess
-import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent

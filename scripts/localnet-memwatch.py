@@ -76,7 +76,7 @@ def main():
 
     duration = duration_minutes * 60
     print(f"Memory watch: {duration_minutes} min, sampling every {sample_interval}s")
-    print(f"Sending mixed transactions continuously...\n")
+    print("Sending mixed transactions continuously...\n")
 
     # Column headers
     header = f"{'Time':>6}  {'TXs':>6}  {'tx/s':>6}"

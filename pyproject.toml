@@ -33,3 +33,6 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"workloads/e2e/*.py" = ["F821"]

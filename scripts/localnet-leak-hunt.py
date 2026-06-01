@@ -100,7 +100,7 @@ def main():
 
     duration = duration_minutes * 60
     print(f"Leak hunt: {duration_minutes} min, sampling every {sample_interval}s")
-    print(f"Tracking per-process RSS (Python ABCI vs CometBFT Go)\n")
+    print("Tracking per-process RSS (Python ABCI vs CometBFT Go)\n")
 
     # Header
     hdr = f"{'Time':>5} {'TXs':>6}"

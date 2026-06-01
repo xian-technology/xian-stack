@@ -6,7 +6,6 @@ import argparse
 import json
 from pathlib import Path
 
-
 REQUIRED_COMPONENTS = (
     "xian-abci",
     "xian-configs",

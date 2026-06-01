@@ -6,7 +6,6 @@ import json
 import statistics
 from pathlib import Path
 
-
 DEFAULT_METRICS = (
     "check_tx",
     "block_packing",

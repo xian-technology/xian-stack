@@ -4,7 +4,6 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
-
 PhaseCallable = Callable[[], Coroutine[Any, Any, dict[str, Any]]]
 
 

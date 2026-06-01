@@ -7,7 +7,6 @@ import shutil
 import sys
 from pathlib import Path
 
-
 STACK_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -109,8 +108,10 @@ def main() -> int:
         "paths": paths,
         "alerts": alerts,
         "notes": [
-            "Docker image layers, build cache, and container logs also consume host disk but are not measured here.",
-            "The main live growth for Xian comes from CometBFT data, Xian state, the BDS spool, and Postgres data.",
+            "Docker image layers, build cache, and container logs also consume host disk "
+            "but are not measured here.",
+            "The main live growth for Xian comes from CometBFT data, Xian state, "
+            "the BDS spool, and Postgres data.",
         ],
     }
     json.dump(payload, fp=sys.stdout, indent=2)

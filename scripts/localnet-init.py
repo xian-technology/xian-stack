@@ -21,13 +21,11 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent
 
+from xian.execution_policy import VM_EXECUTION_MODE  # noqa: E402
 from xian.genesis_builder import (  # noqa: E402
     build_local_network_genesis,
 )
-from xian.execution_policy import VM_EXECUTION_MODE  # noqa: E402
 from xian.node_setup import (  # noqa: E402
-    AppLoggingOptions,
-    BdsOptions,
     DEFAULT_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED,
     DEFAULT_PARALLEL_EXECUTION_ENABLED,
     DEFAULT_PARALLEL_EXECUTION_LOW_ACCEPTANCE_MIN_WAVE_SIZE,
@@ -36,6 +34,8 @@ from xian.node_setup import (  # noqa: E402
     DEFAULT_PARALLEL_EXECUTION_MIN_WAVE_ACCEPTANCE_RATIO,
     DEFAULT_PARALLEL_EXECUTION_WARM_WORKERS,
     DEFAULT_PARALLEL_EXECUTION_WORKERS,
+    AppLoggingOptions,
+    BdsOptions,
     MetricsOptions,
     NodeConfigOptions,
     ParallelExecutionOptions,
@@ -511,9 +511,8 @@ def main():
         idx = node["index"]
         host_p2p = BASE_P2P_PORT + idx * PORT_STRIDE
         host_rpc = BASE_RPC_PORT + idx * PORT_STRIDE
-        print(
-            f"  {node['moniker']}: RPC=:{host_rpc} P2P=:{host_p2p} id={node['node_key']['node_id'][:12]}..."
-        )
+        node_id_prefix = node["node_key"]["node_id"][:12]
+        print(f"  {node['moniker']}: RPC=:{host_rpc} P2P=:{host_p2p} id={node_id_prefix}...")
 
     # 4. Write docker-compose-localnet.yml
     write_compose_file(

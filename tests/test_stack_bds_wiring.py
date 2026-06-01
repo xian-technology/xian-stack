@@ -3,7 +3,6 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-
 STACK_ROOT = Path(__file__).resolve().parents[1]
 
 BDS_RUNTIME_ENV_KEYS = {

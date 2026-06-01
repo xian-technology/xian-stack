@@ -17,7 +17,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Callable, Literal
 
 from aiohttp import web
-
 from xian_py import (
     SubmissionConfig,
     Wallet,
@@ -450,7 +449,8 @@ class ShieldedRelayerService:
     def render_metrics(self) -> str:
         self._expire_jobs()
         lines = [
-            "# HELP xian_shielded_relayer_requests_total Total HTTP requests handled by the relayer.",
+            "# HELP xian_shielded_relayer_requests_total "
+            "Total HTTP requests handled by the relayer.",
             "# TYPE xian_shielded_relayer_requests_total counter",
         ]
         for (method, path, status), value in sorted(self._request_counts.items()):
@@ -461,7 +461,8 @@ class ShieldedRelayerService:
 
         lines.extend(
             [
-                "# HELP xian_shielded_relayer_request_duration_seconds_count Total counted request observations.",
+                "# HELP xian_shielded_relayer_request_duration_seconds_count "
+                "Total counted request observations.",
                 "# TYPE xian_shielded_relayer_request_duration_seconds_count counter",
             ]
         )
@@ -473,7 +474,8 @@ class ShieldedRelayerService:
             )
         lines.extend(
             [
-                "# HELP xian_shielded_relayer_request_duration_seconds_sum Total request duration in seconds.",
+                "# HELP xian_shielded_relayer_request_duration_seconds_sum "
+                "Total request duration in seconds.",
                 "# TYPE xian_shielded_relayer_request_duration_seconds_sum counter",
             ]
         )
@@ -485,16 +487,20 @@ class ShieldedRelayerService:
 
         lines.extend(
             [
-                "# HELP xian_shielded_relayer_auth_failures_total Total failed authentication attempts.",
+                "# HELP xian_shielded_relayer_auth_failures_total "
+                "Total failed authentication attempts.",
                 "# TYPE xian_shielded_relayer_auth_failures_total counter",
                 f"xian_shielded_relayer_auth_failures_total {self._auth_failures_total}",
-                "# HELP xian_shielded_relayer_rate_limited_total Total requests rejected by relayer rate limits.",
+                "# HELP xian_shielded_relayer_rate_limited_total "
+                "Total requests rejected by relayer rate limits.",
                 "# TYPE xian_shielded_relayer_rate_limited_total counter",
                 f"xian_shielded_relayer_rate_limited_total {self._rate_limited_total}",
-                "# HELP xian_shielded_relayer_job_history_size Current number of retained relayer jobs.",
+                "# HELP xian_shielded_relayer_job_history_size "
+                "Current number of retained relayer jobs.",
                 "# TYPE xian_shielded_relayer_job_history_size gauge",
                 f"xian_shielded_relayer_job_history_size {len(self._jobs)}",
-                "# HELP xian_shielded_relayer_rate_limit_bucket_count Current number of active rate-limit buckets.",
+                "# HELP xian_shielded_relayer_rate_limit_bucket_count "
+                "Current number of active rate-limit buckets.",
                 "# TYPE xian_shielded_relayer_rate_limit_bucket_count gauge",
                 f"xian_shielded_relayer_rate_limit_bucket_count {len(self._rate_limit_buckets)}",
             ]
@@ -508,7 +514,8 @@ class ShieldedRelayerService:
 
         lines.extend(
             [
-                "# HELP xian_shielded_relayer_current_jobs Current retained jobs by kind and status.",
+                "# HELP xian_shielded_relayer_current_jobs "
+                "Current retained jobs by kind and status.",
                 "# TYPE xian_shielded_relayer_current_jobs gauge",
             ]
         )
@@ -518,7 +525,8 @@ class ShieldedRelayerService:
 
         lines.extend(
             [
-                "# HELP xian_shielded_relayer_job_outcomes_total Total submitted job outcomes by kind and status.",
+                "# HELP xian_shielded_relayer_job_outcomes_total "
+                "Total submitted job outcomes by kind and status.",
                 "# TYPE xian_shielded_relayer_job_outcomes_total counter",
             ]
         )

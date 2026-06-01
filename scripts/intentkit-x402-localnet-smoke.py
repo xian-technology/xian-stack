@@ -30,7 +30,6 @@ from xian_py.x402 import (
     xian_network_id,
 )
 
-
 REQUIRED_CONFIG_FIELDS = (
     "rpc_url",
     "chain_id",

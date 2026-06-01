@@ -12,7 +12,6 @@ from pathlib import Path
 
 from release_manifest import validate_manifest
 
-
 WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -1122,9 +1121,8 @@ def print_plan(plans: list[ReleasePlan]) -> None:
             mode_suffix = " (uses pre-bumped source version)"
         elif plan.version_mode == "initial":
             mode_suffix = " (initial release)"
-        print(
-            f"{index}. {plan.unit.key}: {plan.tag} [{previous} -> {plan.target_version}]{mode_suffix}"
-        )
+        version_range = f"[{previous} -> {plan.target_version}]"
+        print(f"{index}. {plan.unit.key}: {plan.tag} {version_range}{mode_suffix}")
         print(f"   reason: {plan.reason}")
         if plan.changed_files:
             preview = ", ".join(plan.changed_files[:4])
