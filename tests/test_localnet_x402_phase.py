@@ -45,6 +45,7 @@ class LocalnetX402PhaseTests(unittest.TestCase):
         self.assertTrue(localnet_e2e.X402_CONTRACT_SOURCE.exists())
         self.assertTrue(localnet_e2e.INTENTKIT_X402_SMOKE_SCRIPT.exists())
         self.assertEqual(Decimal("0.001"), localnet_e2e.X402_PAYMENT_AMOUNT)
+        self.assertIn("psycopg-binary", localnet_e2e.INTENTKIT_UV_EXTRA_PACKAGES)
 
         args = localnet_e2e.build_parser().parse_args(
             [

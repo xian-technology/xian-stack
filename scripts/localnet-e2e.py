@@ -59,6 +59,7 @@ INTENTKIT_DIR = (
     .resolve()
 )
 INTENTKIT_X402_SMOKE_SCRIPT = SCRIPT_DIR / "intentkit-x402-localnet-smoke.py"
+INTENTKIT_UV_EXTRA_PACKAGES = ("psycopg-binary",)
 ORCHESTRATION_TEMPLATE_MODULE = "__ORCH_TEMPLATE__"
 DEFAULT_EXECUTION_MODE = "xian_vm_v1"
 DEFAULT_LOCALNET_NODES = 5
@@ -3972,6 +3973,11 @@ class E2ERunner:
                     str(INTENTKIT_DIR),
                     "--python",
                     CURRENT_UV_PYTHON,
+                    *[
+                        item
+                        for package in INTENTKIT_UV_EXTRA_PACKAGES
+                        for item in ("--with", package)
+                    ],
                     "python3",
                     str(INTENTKIT_X402_SMOKE_SCRIPT),
                     "--config",
