@@ -1131,6 +1131,7 @@ class E2ERunner:
         self.sample_tx_hash: str | None = None
         self.sample_event_tx_hash: str | None = None
         self.node_report: dict[str, Any] | None = None
+        self.phase_stabilizations: list[dict[str, Any]] = []
 
     @property
     def execution_mode(self) -> str:
@@ -1909,6 +1910,7 @@ class E2ERunner:
         *,
         target_height: int,
         timeout_seconds: float,
+        restart_lagging: bool = True,
     ) -> dict[str, Any]:
         before: dict[str, Any] = {}
         lagging: list[tuple[LocalnetNode, str]] = []
@@ -1935,14 +1937,22 @@ class E2ERunner:
                 lagging.append((node, str(exc)))
 
         restarts = []
-        for node, error in lagging:
-            restart = await self.restart_node_runtime(
-                session,
-                node,
-                target_height=target_height,
-            )
-            restart["reason"] = error
-            restarts.append(restart)
+        lagging_summary = [
+            {
+                "node": node.moniker,
+                "error": error,
+            }
+            for node, error in lagging
+        ]
+        if restart_lagging:
+            for node, error in lagging:
+                restart = await self.restart_node_runtime(
+                    session,
+                    node,
+                    target_height=target_height,
+                )
+                restart["reason"] = error
+                restarts.append(restart)
 
         after: dict[str, Any] = {}
         if restarts:
@@ -1967,6 +1977,8 @@ class E2ERunner:
         return {
             "target_height": target_height,
             "before": before,
+            "lagging": lagging_summary,
+            "restart_lagging": restart_lagging,
             "restarts": restarts,
             "after": after,
         }
@@ -1979,6 +1991,7 @@ class E2ERunner:
         timeout_seconds: float,
         min_target_height: int | None = None,
         advance_blocks: int = 0,
+        allow_restarts: bool = False,
     ) -> dict[str, Any]:
         snapshot = await latest_heights_best_effort(session, self.nodes)
         observed_heights = [
@@ -2001,12 +2014,26 @@ class E2ERunner:
             session,
             target_height=target_height,
             timeout_seconds=timeout_seconds,
+            restart_lagging=allow_restarts,
         )
+        if recovery["lagging"] and not allow_restarts:
+            raise E2EError(
+                f"nodes failed to stabilize without restart: {reason}; "
+                + json.dumps(
+                    {
+                        "target_height": target_height,
+                        "lagging": recovery["lagging"],
+                        "snapshot": snapshot,
+                    },
+                    sort_keys=True,
+                )
+            )
         return {
             "reason": reason,
             "snapshot": snapshot,
             "target_height": target_height,
             "advance_blocks": effective_advance_blocks,
+            "allow_restarts": allow_restarts,
             "recovery": recovery,
         }
 
@@ -7720,6 +7747,8 @@ class E2ERunner:
         }
         if self.node_report is not None:
             summary["node_report"] = self.node_report
+        if self.phase_stabilizations:
+            summary["phase_stabilizations"] = self.phase_stabilizations
         return summary
 
     async def run(self) -> int:
@@ -7749,11 +7778,19 @@ class E2ERunner:
             start_index = valid_phase_names.index(start_phase)
             for phase_name, fn in phase_sequence[start_index:]:
                 if phase_name not in {"00-bootstrap", "01-health"} and self.nodes:
-                    await self.stabilize_nodes(
+                    phase_stabilization = await self.stabilize_nodes(
                         session,
                         reason=f"before phase {phase_name}",
                         timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
                         advance_blocks=1,
+                    )
+                    self.phase_stabilizations.append(
+                        normalize_value(
+                            {
+                                "phase": phase_name,
+                                **phase_stabilization,
+                            }
+                        )
                     )
                 await self.run_phase(phase_name, fn)
 

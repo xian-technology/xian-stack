@@ -131,6 +131,25 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertEqual(123, config.submission.timeout_seconds)
         self.assertEqual(0.5, config.submission.poll_interval_seconds)
 
+    def test_finalize_summary_includes_phase_stabilizations(self) -> None:
+        args = localnet_e2e.build_parser().parse_args([])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.phase_stabilizations = [
+            {
+                "phase": "02-xian-py-smoke",
+                "recovery": {
+                    "lagging": [],
+                    "restarts": [],
+                },
+            }
+        ]
+
+        summary = asyncio.run(runner.finalize_summary())
+
+        self.assertEqual(runner.phase_stabilizations, summary["phase_stabilizations"])
+
     def test_normalize_receipt_keeps_lookup_height(self) -> None:
         submission = SimpleNamespace(
             submitted=True,
@@ -238,7 +257,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertEqual(42, height)
         self.assertEqual([], responses)
 
-    def test_stabilize_nodes_recovers_to_highest_observed_height(self) -> None:
+    def test_stabilize_nodes_can_recover_to_highest_observed_height(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
         with tempfile.TemporaryDirectory() as tmpdir:
             args.resume_dir = tmpdir
@@ -247,7 +266,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             self._node(0, "http://node-0"),
             self._node(1, "http://node-1"),
         ]
-        runner.recover_lagging_nodes = AsyncMock(return_value={"restarts": []})
+        runner.recover_lagging_nodes = AsyncMock(return_value={"lagging": [], "restarts": []})
         statuses = {
             "node-0": {"ok": True, "height": 12},
             "node-1": {"ok": False, "error": "TimeoutError: node is wedged"},
@@ -260,6 +279,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                     reason="unit test",
                     timeout_seconds=7,
                     min_target_height=10,
+                    allow_restarts=True,
                 )
             )
 
@@ -267,11 +287,52 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             None,
             target_height=12,
             timeout_seconds=7,
+            restart_lagging=True,
         )
         self.assertEqual("unit test", result["reason"])
         self.assertEqual(12, result["target_height"])
         self.assertEqual(0, result["advance_blocks"])
+        self.assertTrue(result["allow_restarts"])
         self.assertEqual(statuses, result["snapshot"])
+
+    def test_stabilize_nodes_fails_lagging_nodes_without_restart(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.nodes = [
+            self._node(0, "http://node-0"),
+            self._node(1, "http://node-1"),
+        ]
+        runner.recover_lagging_nodes = AsyncMock(
+            return_value={
+                "lagging": [{"node": "node-1", "error": "TimeoutError: node is wedged"}],
+                "restarts": [],
+            }
+        )
+        statuses = {
+            "node-0": {"ok": True, "height": 12},
+            "node-1": {"ok": False, "error": "TimeoutError: node is wedged"},
+        }
+
+        with (
+            patch.object(localnet_e2e, "latest_heights_best_effort", return_value=statuses),
+            self.assertRaisesRegex(localnet_e2e.E2EError, "without restart"),
+        ):
+            asyncio.run(
+                runner.stabilize_nodes(
+                    None,
+                    reason="phase boundary",
+                    timeout_seconds=7,
+                )
+            )
+
+        runner.recover_lagging_nodes.assert_awaited_once_with(
+            None,
+            target_height=12,
+            timeout_seconds=7,
+            restart_lagging=False,
+        )
 
     def test_stabilize_nodes_can_require_height_progress(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
@@ -282,7 +343,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             self._node(0, "http://node-0"),
             self._node(1, "http://node-1"),
         ]
-        runner.recover_lagging_nodes = AsyncMock(return_value={"restarts": []})
+        runner.recover_lagging_nodes = AsyncMock(return_value={"lagging": [], "restarts": []})
         statuses = {
             "node-0": {"ok": True, "height": 12},
             "node-1": {"ok": True, "height": 11},
@@ -302,6 +363,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             None,
             target_height=13,
             timeout_seconds=7,
+            restart_lagging=False,
         )
         self.assertEqual(13, result["target_height"])
         self.assertEqual(1, result["advance_blocks"])
@@ -719,7 +781,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         )
         self.assertEqual(["async", "async"], [options["mode"] for *_args, options in send_labels])
 
-    def test_uniform_state_wait_recovers_nodes_before_retry(self) -> None:
+    def test_uniform_state_wait_requires_stable_nodes_before_retry(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
         with tempfile.TemporaryDirectory() as tmpdir:
             args.resume_dir = tmpdir
@@ -728,7 +790,9 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             self._node(0, "http://node-0"),
             self._node(1, "http://node-1"),
         ]
-        runner.stabilize_nodes = AsyncMock(return_value={"recovery": {"restarts": []}})
+        runner.stabilize_nodes = AsyncMock(
+            return_value={"recovery": {"lagging": [], "restarts": []}}
+        )
 
         with patch.object(
             localnet_e2e,
@@ -761,7 +825,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         )
         self.assertEqual(2, wait_for_state.await_count)
 
-    def test_uniform_state_wait_extends_deadline_after_recovery(self) -> None:
+    def test_uniform_state_wait_extends_deadline_after_stability_wait(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
         with tempfile.TemporaryDirectory() as tmpdir:
             args.resume_dir = tmpdir
@@ -775,7 +839,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         async def stabilize(*_args, **_kwargs):
             nonlocal now
             now = 11.0
-            return {"recovery": {"restarts": [{"node": "node-1"}]}}
+            return {"recovery": {"lagging": [], "restarts": []}}
 
         runner.stabilize_nodes = AsyncMock(side_effect=stabilize)
 

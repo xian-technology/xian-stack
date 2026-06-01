@@ -8,17 +8,23 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from localnet_node_report import (  # noqa: E402
+from localnet_node_report import (  # noqa: E402,I001
     collect_localnet_node_report,
     parse_prometheus_text,
 )
 
 
-METRICS_TEXT = """
-# HELP xian_node Static Xian node runtime information.
-# TYPE xian_node_info gauge
-xian_node_info{chain_id="xian-local",execution_mode="xian_vm_v1",bds_enabled="false",parallel_execution_enabled="false",tx_fees_enabled="true"} 1
-""".strip()
+METRICS_TEXT = "\n".join(
+    [
+        "# HELP xian_node Static Xian node runtime information.",
+        "# TYPE xian_node_info gauge",
+        (
+            'xian_node_info{chain_id="xian-local",execution_mode="xian_vm_v1",'
+            'bds_enabled="false",parallel_execution_enabled="false",'
+            'tx_fees_enabled="true"} 1'
+        ),
+    ]
+)
 
 
 class LocalnetNodeReportTests(unittest.TestCase):
@@ -54,7 +60,10 @@ class LocalnetNodeReportTests(unittest.TestCase):
                 return json.dumps(
                     {
                         "result": {
-                            "sync_info": {"latest_block_height": "17"},
+                            "sync_info": {
+                                "latest_block_height": "17",
+                                "catching_up": False,
+                            },
                         }
                     }
                 )
@@ -76,6 +85,56 @@ class LocalnetNodeReportTests(unittest.TestCase):
         )
         self.assertTrue(report["checks"]["uniform_execution_mode"])
         self.assertTrue(report["checks"]["all_nodes_report_xian_vm"])
+        self.assertTrue(report["checks"]["all_nodes_not_catching_up"])
+        self.assertTrue(report["checks"]["height_spread_within_tolerance"])
+        self.assertEqual(0, report["totals"]["height_spread"])
+
+    def test_collect_localnet_node_report_fails_lagging_nodes(self) -> None:
+        network = {
+            "execution": {"mode": "xian_vm_v1"},
+            "nodes": [
+                {
+                    "moniker": "node-0",
+                    "host_rpc_port": 36657,
+                    "host_metrics_port": 37660,
+                    "host_xian_metrics_port": 39108,
+                },
+                {
+                    "moniker": "node-1",
+                    "host_rpc_port": 36667,
+                    "host_metrics_port": 37670,
+                    "host_xian_metrics_port": 39208,
+                },
+            ],
+        }
+
+        def fake_fetch(url: str, *, timeout_seconds: float) -> str:
+            if url.endswith("/status"):
+                height = "20" if ":36657/" in url else "17"
+                return json.dumps(
+                    {
+                        "result": {
+                            "sync_info": {
+                                "latest_block_height": height,
+                                "catching_up": ":36667/" in url,
+                            },
+                        }
+                    }
+                )
+            if url.endswith(":39108/metrics") or url.endswith(":39208/metrics"):
+                return METRICS_TEXT
+            raise AssertionError(f"unexpected url {url}")
+
+        with mock.patch("localnet_node_report.fetch_text", side_effect=fake_fetch):
+            report = collect_localnet_node_report(
+                network,
+                timeout_seconds=5.0,
+            )
+
+        self.assertFalse(report["ok"])
+        self.assertFalse(report["checks"]["all_nodes_not_catching_up"])
+        self.assertFalse(report["checks"]["height_spread_within_tolerance"])
+        self.assertEqual(3, report["totals"]["height_spread"])
 
 
 if __name__ == "__main__":

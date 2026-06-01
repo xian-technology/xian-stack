@@ -11,6 +11,7 @@ from urllib.request import urlopen
 STACK_DIR = Path(__file__).resolve().parent.parent
 LOCALNET_NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 EXPECTED_EXECUTION_MODE = "xian_vm_v1"
+MAX_FINAL_HEIGHT_SPREAD = 1
 _PROMETHEUS_LINE_RE = re.compile(
     r"^(?P<name>[a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(?P<labels>.*)\})?\s+"
     r"(?P<value>[-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)$"
@@ -72,14 +73,17 @@ def collect_node_capability_status(
     node_info_samples = grouped.get("xian_node_info", [])
     node_info = dict(node_info_samples[0]["labels"]) if node_info_samples else {}
 
+    sync_info = rpc_payload.get("result", {}).get("sync_info", {})
+    height = int(sync_info.get("latest_block_height", 0))
+    catching_up = bool(sync_info.get("catching_up", False))
+
     return {
         "moniker": node["moniker"],
         "rpc_url": f"http://127.0.0.1:{node['host_rpc_port']}",
         "metrics_url": metrics_url,
         "comet_metrics_url": comet_metrics_url,
-        "height": int(
-            rpc_payload.get("result", {}).get("sync_info", {}).get("latest_block_height", 0)
-        ),
+        "height": height,
+        "catching_up": catching_up,
         "node_info": node_info,
     }
 
@@ -111,8 +115,25 @@ def collect_localnet_node_report(
     all_nodes_report_xian_vm = (
         all(mode == EXPECTED_EXECUTION_MODE for mode in reported_modes) if reported_modes else False
     )
+    all_nodes_not_catching_up = all(not node["catching_up"] for node in nodes) if nodes else False
+    heights = [int(node["height"]) for node in nodes]
+    min_height = min(heights) if heights else None
+    max_height = max(heights) if heights else None
+    height_spread = (
+        max_height - min_height if min_height is not None and max_height is not None else None
+    )
+    height_spread_within_tolerance = (
+        height_spread is not None and height_spread <= MAX_FINAL_HEIGHT_SPREAD
+    )
 
-    ok = not errors and bool(nodes) and uniform_execution_mode and all_nodes_report_xian_vm
+    ok = (
+        not errors
+        and bool(nodes)
+        and uniform_execution_mode
+        and all_nodes_report_xian_vm
+        and all_nodes_not_catching_up
+        and height_spread_within_tolerance
+    )
 
     return {
         "ok": ok,
@@ -122,9 +143,15 @@ def collect_localnet_node_report(
         "checks": {
             "uniform_execution_mode": uniform_execution_mode,
             "all_nodes_report_xian_vm": all_nodes_report_xian_vm,
+            "all_nodes_not_catching_up": all_nodes_not_catching_up,
+            "height_spread_within_tolerance": height_spread_within_tolerance,
         },
         "totals": {
             "node_count": len(nodes),
+            "min_height": min_height,
+            "max_height": max_height,
+            "height_spread": height_spread,
+            "max_final_height_spread": MAX_FINAL_HEIGHT_SPREAD,
         },
         "errors": errors,
         "nodes": nodes,
