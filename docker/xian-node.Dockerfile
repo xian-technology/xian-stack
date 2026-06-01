@@ -144,9 +144,19 @@ COPY --from=python-wheel-builder /tmp/wheels /tmp/wheels
 COPY --from=python-wheel-builder /tmp/build/python-runtime-requirements.txt /tmp/python-runtime-requirements.txt
 COPY --from=cometbft-builder /out/cometbft /usr/local/bin/cometbft
 
-RUN uv pip install --system --no-index --find-links /tmp/wheels --require-hashes \
+# Release image reproducibility: uv injects two non-deterministic artifacts into
+# this layer that `rewrite-timestamp` cannot normalize (they are bytes *inside*
+# files, not filesystem mtimes), and they were the sole source of release rootfs
+# drift:
+#   1. its package cache under /root/.cache/uv (content-addressed, random names)
+#   2. a per-package <dist-info>/uv_cache.json carrying a wall-clock install
+#      timestamp (written for every --find-links install regardless of --no-cache
+#      or --link-mode), whose hash also perturbs the package RECORD.
+# --no-cache keeps (1) out of the image; the post-install cleanup removes (2) and
+# strips its now-stale RECORD entries so the layer is byte-identical every build.
+RUN uv pip install --system --no-cache --no-index --find-links /tmp/wheels --require-hashes \
     -r /tmp/python-runtime-requirements.txt \
-    && uv pip install --system --no-index --find-links /tmp/wheels --no-deps \
+    && uv pip install --system --no-cache --no-index --find-links /tmp/wheels --no-deps \
     /tmp/wheels/xian_tech_accounts-*.whl \
     /tmp/wheels/xian_tech_compiler_core-*.whl \
     /tmp/wheels/xian_tech_runtime_types-*.whl \
@@ -156,7 +166,9 @@ RUN uv pip install --system --no-index --find-links /tmp/wheels --require-hashes
     /tmp/wheels/xian_tech_py-*.whl \
     /tmp/wheels/xian_tech_contracting-*.whl \
     /tmp/wheels/xian_tech_abci-*.whl \
-    && rm -rf /tmp/wheels /tmp/python-runtime-requirements.txt
+    && rm -rf /tmp/wheels /tmp/python-runtime-requirements.txt /root/.cache/uv \
+    && find /usr/local/lib -name uv_cache.json -delete \
+    && find /usr/local/lib -name RECORD -exec sed -i '/uv_cache\.json,/d' {} +
 
 FROM node-base AS split
 

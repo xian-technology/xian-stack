@@ -257,7 +257,7 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
                     workspace_root=Path("/workspace"),
                 )
 
-    def test_main_allows_rootfs_drift_when_requested(self) -> None:
+    def test_main_fails_on_rootfs_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             manifest_path = Path(tmp_dir) / "manifest.json"
             image_release_path = Path(tmp_dir) / "image-release.json"
@@ -274,7 +274,6 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
                         str(manifest_path),
                         "--image-release",
                         str(image_release_path),
-                        "--allow-rootfs-drift",
                     ],
                 ),
                 mock.patch.object(
@@ -290,12 +289,12 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
                 exit_code = repro.main()
 
         payload = json.loads(output.getvalue())
-        self.assertEqual(exit_code, 0)
+        self.assertEqual(exit_code, 1)
         self.assertFalse(payload["ok"])
-        self.assertTrue(payload["advisory"])
+        self.assertNotIn("advisory", payload)
         self.assertEqual(payload["mismatched_fields"], ["rootfs"])
 
-    def test_main_still_fails_config_drift_with_rootfs_drift_allowed(self) -> None:
+    def test_main_fails_on_config_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             manifest_path = Path(tmp_dir) / "manifest.json"
             image_release_path = Path(tmp_dir) / "image-release.json"
@@ -311,7 +310,6 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
                         str(manifest_path),
                         "--image-release",
                         str(image_release_path),
-                        "--allow-rootfs-drift",
                     ],
                 ),
                 mock.patch.object(

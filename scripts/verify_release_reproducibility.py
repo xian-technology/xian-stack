@@ -353,22 +353,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path(__file__).resolve().parents[2],
         help="Workspace root containing xian-stack and sibling repos.",
     )
-    parser.add_argument(
-        "--soft-fail",
-        action="store_true",
-        help=(
-            "Report content mismatches without failing. This keeps the release "
-            "check advisory while the Docker build is not fully hermetic."
-        ),
-    )
-    parser.add_argument(
-        "--allow-rootfs-drift",
-        action="store_true",
-        help=(
-            "Report rootfs-only mismatches without failing while keeping image "
-            "metadata/config mismatches as hard failures."
-        ),
-    )
     return parser
 
 
@@ -383,11 +367,9 @@ def main() -> int:
             workspace_root=args.workspace_root.resolve(),
         )
     except ReproducibilityMismatch as exc:
-        advisory = args.soft_fail or (args.allow_rootfs_drift and exc.reasons == ["rootfs"])
         print(
             json.dumps(
                 {
-                    "advisory": advisory,
                     "error": str(exc),
                     "mismatched_fields": exc.reasons,
                     "ok": False,
@@ -396,8 +378,6 @@ def main() -> int:
                 sort_keys=True,
             )
         )
-        if advisory:
-            return 0
         return 1
     else:
         print(json.dumps({"ok": True, "observed": observed}, indent=2, sort_keys=True))
