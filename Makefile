@@ -784,7 +784,7 @@ node-start:
 node-start-bds:
 	$(call maybe_pull_integrated,$(ABCI_BDS_COMPOSE),abci)
 	$(call maybe_build_postgraphile,$(ABCI_BDS_COMPOSE))
-	$(ABCI_BDS_COMPOSE) up -d $(NODE_UP_BUILD_FLAG)
+	$(ABCI_BDS_COMPOSE) up -d $(NODE_UP_BUILD_FLAG) abci postgres postgraphile
 
 node-init:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci init

@@ -107,6 +107,14 @@ class StackBdsWiringTests(unittest.TestCase):
             with self.subTest(env_key=env_key):
                 self.assertIn(f"{env_key}: ${{{env_key}}}", compose)
 
+    def test_node_start_bds_uses_explicit_runtime_services(self) -> None:
+        makefile = (STACK_ROOT / "Makefile").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "$(ABCI_BDS_COMPOSE) up -d $(NODE_UP_BUILD_FLAG) abci postgres postgraphile",
+            makefile,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

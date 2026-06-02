@@ -385,15 +385,23 @@ def run_make_target(
     target: str,
     *,
     capture_output: bool = True,
+    stream_output: bool = False,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    kwargs: dict[str, object] = {
+        "cwd": STACK_DIR,
+        "check": True,
+        "text": True,
+        "env": env,
+    }
+    if stream_output:
+        kwargs["stdout"] = sys.stderr
+        kwargs["stderr"] = sys.stderr
+    else:
+        kwargs["capture_output"] = capture_output
     return subprocess.run(
         ["make", target],
-        cwd=STACK_DIR,
-        check=True,
-        capture_output=capture_output,
-        text=True,
-        env=env,
+        **kwargs,
     )
 
 
@@ -816,11 +824,11 @@ def backend_start(
     )
     env["XIAN_SHIELDED_RELAYER_NODE_URL"] = rpc_base_url(rpc_url)
 
-    run_make_target(node_target, env=env)
+    run_make_target(node_target, stream_output=True, env=env)
     if monitoring_enabled:
-        run_make_target(monitoring_target, env=env)
+        run_make_target(monitoring_target, stream_output=True, env=env)
     if dashboard_enabled:
-        run_make_target(dashboard_target, env=env)
+        run_make_target(dashboard_target, stream_output=True, env=env)
     wait_for_abci_runtime(
         timeout_seconds=rpc_timeout_seconds,
         bds_enabled=bds_enabled,
@@ -2901,6 +2909,6 @@ if __name__ == "__main__":
     except subprocess.CalledProcessError as exc:
         print(format_subprocess_error(exc), file=sys.stderr)
         raise SystemExit(1) from exc
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, TimeoutError) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(1) from exc
