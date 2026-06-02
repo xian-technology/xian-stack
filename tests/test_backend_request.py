@@ -26,6 +26,16 @@ def _load_localnet_init_module():
 
 
 class BackendRequestTests(unittest.TestCase):
+    def _run_json_request(self, request: dict) -> tuple[int, str]:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as handle:
+            json.dump(request, handle)
+            handle.flush()
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = backend.main(["--request-json", handle.name])
+        return exit_code, stdout.getvalue()
+
     def test_main_accepts_json_backend_request(self) -> None:
         request = {
             "schema_version": 1,
@@ -37,26 +47,118 @@ class BackendRequestTests(unittest.TestCase):
                 "dashboard_port": 18080,
             },
         }
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as handle:
-            json.dump(request, handle)
-            handle.flush()
-
-            with patch.object(
-                backend,
-                "backend_status",
-                return_value={"ok": True},
-            ) as status:
-                stdout = io.StringIO()
-                with redirect_stdout(stdout):
-                    exit_code = backend.main(["--request-json", handle.name])
+        with patch.object(
+            backend,
+            "backend_status",
+            return_value={"ok": True},
+        ) as status:
+            exit_code, stdout = self._run_json_request(request)
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(json.loads(stdout.getvalue()), {"ok": True})
+        self.assertEqual(json.loads(stdout), {"ok": True})
         status.assert_called_once()
         self.assertTrue(status.call_args.kwargs["bds_enabled"])
         self.assertTrue(status.call_args.kwargs["dashboard_enabled"])
         self.assertEqual(status.call_args.kwargs["dashboard_host"], "0.0.0.0")
         self.assertEqual(status.call_args.kwargs["dashboard_port"], 18080)
+
+    def test_main_rejects_unknown_json_backend_option(self) -> None:
+        request = {
+            "schema_version": 1,
+            "command": "status",
+            "options": {"unknown_option": "accepted-before"},
+        }
+
+        with self.assertRaisesRegex(ValueError, "unknown_option"):
+            self._run_json_request(request)
+
+    def test_main_rejects_invalid_json_backend_choice(self) -> None:
+        request = {
+            "schema_version": 1,
+            "command": "status",
+            "options": {"node_image_mode": "bogus"},
+        }
+
+        with self.assertRaisesRegex(ValueError, "node_image_mode must be one of"):
+            self._run_json_request(request)
+
+    def test_main_rejects_invalid_json_backend_type(self) -> None:
+        request = {
+            "schema_version": 1,
+            "command": "status",
+            "options": {"dashboard_port": "not-an-int"},
+        }
+
+        with self.assertRaisesRegex(ValueError, "dashboard_port must be int"):
+            self._run_json_request(request)
+
+    def test_backend_health_checks_grafana_only_when_monitoring_is_enabled(self) -> None:
+        def fake_backend_status(**_: object) -> dict:
+            return {
+                "backend_running": True,
+                "node_id": "node-1",
+                "endpoints": {
+                    "cometbft_metrics": "http://metrics.local",
+                    "xian_metrics": "http://app-metrics.local",
+                    "prometheus": "http://prometheus.local",
+                    "grafana": "http://grafana.local",
+                    "intentkit": "http://intentkit.local",
+                    "intentkit_api": "http://intentkit-api.local",
+                },
+                "prometheus_reachable": True,
+                "grafana_reachable": True,
+                "intentkit_reachable": True,
+                "intentkit_api_reachable": True,
+            }
+
+        base_kwargs = {
+            "node_image_mode": "local_build",
+            "node_integrated_image": None,
+            "node_split_image": None,
+            "bds_enabled": False,
+            "dashboard_enabled": False,
+            "dashboard_host": "127.0.0.1",
+            "dashboard_port": 8080,
+            "public_rpc_enabled": False,
+            "public_query_enabled": False,
+            "public_metrics_enabled": False,
+            "intentkit_network_id": "xian-localnet",
+            "intentkit_host": "127.0.0.1",
+            "intentkit_port": 38000,
+            "intentkit_api_port": 38080,
+            "dex_automation_enabled": False,
+            "dex_automation_host": "127.0.0.1",
+            "dex_automation_port": 38280,
+            "dex_automation_config": None,
+            "shielded_relayer_enabled": False,
+            "shielded_relayer_host": "127.0.0.1",
+            "shielded_relayer_port": 38180,
+            "rpc_url": "http://rpc.local/status",
+            "check_disk": False,
+        }
+        with (
+            patch.object(backend, "backend_status", side_effect=fake_backend_status),
+            patch.object(
+                backend,
+                "fetch_json",
+                return_value={"result": {"sync_info": {}, "node_info": {}}},
+            ),
+            patch.object(backend, "probe_http_endpoint", return_value={"ok": True}),
+        ):
+            monitoring_result = backend.backend_health(
+                **base_kwargs,
+                monitoring_enabled=True,
+                intentkit_enabled=False,
+            )
+            intentkit_result = backend.backend_health(
+                **base_kwargs,
+                monitoring_enabled=False,
+                intentkit_enabled=True,
+            )
+
+        self.assertIn("grafana", monitoring_result["checks"])
+        self.assertNotIn("grafana", intentkit_result["checks"])
+        self.assertEqual(intentkit_result["state"], "healthy")
 
     def test_localnet_init_passes_chain_id_to_script(self) -> None:
         completed = subprocess.CompletedProcess(

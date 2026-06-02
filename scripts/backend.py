@@ -1619,6 +1619,13 @@ def backend_health(
                 "error": status.get("prometheus_error"),
             },
         }
+        checks["grafana"] = {
+            "ok": bool(status.get("grafana_reachable")),
+            "detail": {
+                "url": endpoints.get("grafana"),
+                "error": status.get("grafana_error"),
+            },
+        }
     if intentkit_enabled:
         checks["intentkit"] = {
             "ok": bool(status.get("intentkit_reachable")),
@@ -1632,13 +1639,6 @@ def backend_health(
             "detail": {
                 "url": endpoints.get("intentkit_api"),
                 "error": status.get("intentkit_api_error"),
-            },
-        }
-        checks["grafana"] = {
-            "ok": bool(status.get("grafana_reachable")),
-            "detail": {
-                "url": endpoints.get("grafana"),
-                "error": status.get("grafana_error"),
             },
         }
     if dex_automation_enabled:

@@ -32,7 +32,72 @@ def args_from_backend_request(
     parser: argparse.ArgumentParser,
     request: dict,
 ) -> argparse.Namespace:
+    option_actions = _option_actions_for_command(parser, request["command"])
     args = parser.parse_args([request["command"]])
     for key, value in request["options"].items():
-        setattr(args, key, value)
+        action = option_actions.get(key)
+        if action is None:
+            raise ValueError(
+                f"backend request option is not supported for {request['command']}: {key}"
+            )
+        if value is None:
+            continue
+        setattr(args, key, _coerce_backend_option(action, value))
     return args
+
+
+def _option_actions_for_command(
+    parser: argparse.ArgumentParser,
+    command: str,
+) -> dict[str, argparse.Action]:
+    command_parser = _command_parser(parser, command)
+    return {
+        action.dest: action
+        for action in command_parser._actions
+        if action.option_strings and action.dest != argparse.SUPPRESS
+    }
+
+
+def _command_parser(
+    parser: argparse.ArgumentParser,
+    command: str,
+) -> argparse.ArgumentParser:
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            command_parser = action.choices.get(command)
+            if command_parser is not None:
+                return command_parser
+    raise ValueError(f"backend request command is not supported: {command}")
+
+
+def _coerce_backend_option(action: argparse.Action, value: object) -> object:
+    if isinstance(action, argparse.BooleanOptionalAction):
+        if not isinstance(value, bool):
+            raise ValueError(f"{action.dest} must be a boolean")
+        return value
+    if action.__class__.__name__ == "_AppendAction":
+        if not isinstance(value, list):
+            raise ValueError(f"{action.dest} must be a list")
+        return [_coerce_backend_scalar(action, item) for item in value]
+    if isinstance(value, (list, dict, tuple)):
+        raise ValueError(f"{action.dest} must be a scalar value")
+    return _coerce_backend_scalar(action, value)
+
+
+def _coerce_backend_scalar(action: argparse.Action, value: object) -> object:
+    if isinstance(value, bool):
+        raise ValueError(f"{action.dest} must not be a boolean")
+    if action.type is None:
+        if not isinstance(value, str):
+            raise ValueError(f"{action.dest} must be a string")
+        coerced = value
+    else:
+        try:
+            coerced = action.type(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{action.dest} must be {action.type.__name__}") from exc
+    choices = action.choices
+    if choices is not None and coerced not in choices:
+        choice_values = sorted(str(choice) for choice in choices)
+        raise ValueError(f"{action.dest} must be one of {choice_values}")
+    return coerced
