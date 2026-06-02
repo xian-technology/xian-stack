@@ -63,6 +63,43 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
             self.assertEqual("0", env["XIAN_PUBLIC_QUERY_ENABLED"])
             self.assertEqual("0", env["XIAN_PUBLIC_METRICS_ENABLED"])
 
+    def test_runtime_env_offsets_hidden_intentkit_s3_port_on_collision(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(os.environ, {}, clear=True):
+                    env = backend.runtime_env(
+                        **runtime_env_kwargs(
+                            intentkit_enabled=True,
+                            intentkit_port=39000,
+                            intentkit_api_port=39001,
+                        )
+                    )
+
+            self.assertEqual("39000", env["XIAN_INTENTKIT_PORT"])
+            self.assertEqual("39001", env["XIAN_INTENTKIT_API_PORT"])
+            self.assertEqual("39002", env["XIAN_INTENTKIT_S3_PORT"])
+
+    def test_runtime_env_preserves_explicit_intentkit_s3_port(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(
+                    os.environ,
+                    {"XIAN_INTENTKIT_S3_PORT": "39123"},
+                    clear=True,
+                ):
+                    env = backend.runtime_env(
+                        **runtime_env_kwargs(
+                            intentkit_enabled=True,
+                            intentkit_port=39000,
+                        )
+                    )
+
+            self.assertEqual("39123", env["XIAN_INTENTKIT_S3_PORT"])
+
     def test_runtime_env_rejects_weak_default_bds_password(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             stack_dir = Path(temp_dir) / "xian-stack"

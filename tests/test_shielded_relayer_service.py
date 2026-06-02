@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import shielded_relayer_backend
 from shielded_relayer_backend import shielded_relayer_endpoints
 from shielded_relayer_service import (
     RelayerApiError,
@@ -341,6 +344,85 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
             "http://127.0.0.1:38180/metrics",
             endpoints["shielded_relayer_metrics"],
         )
+
+    def test_backend_status_removes_stale_pid_file(self) -> None:
+        with self.subTest("stale pid"):
+            with self._temporary_relayer_paths() as paths:
+                paths["pid_path"].write_text("12345", encoding="utf-8")
+
+                with patch.object(
+                    shielded_relayer_backend,
+                    "_process_running",
+                    return_value=False,
+                ):
+                    status = shielded_relayer_backend.get_shielded_relayer_status(
+                        bind_host="127.0.0.1",
+                        port=38180,
+                    )
+
+                self.assertFalse(status["shielded_relayer_running"])
+                self.assertIsNone(status["shielded_relayer_pid"])
+                self.assertFalse(paths["pid_path"].exists())
+
+    def test_backend_start_cleans_up_pid_file_when_readiness_fails(self) -> None:
+        with self._temporary_relayer_paths() as paths:
+            env = {
+                "XIAN_SHIELDED_RELAYER_PRIVATE_KEY": "1" * 64,
+                "XIAN_PY_DIR": str(paths["process_dir"] / "xian-py"),
+                "XIAN_CONTRACTING_DIR": str(paths["process_dir"] / "xian-contracting"),
+            }
+
+            with patch.object(
+                shielded_relayer_backend.subprocess,
+                "Popen",
+                return_value=SimpleNamespace(pid=12345),
+            ):
+                with patch.object(
+                    shielded_relayer_backend,
+                    "_process_running",
+                    return_value=False,
+                ):
+                    with patch.object(
+                        shielded_relayer_backend,
+                        "_wait_for_ready",
+                        side_effect=TimeoutError("port unavailable"),
+                    ):
+                        with self.assertRaisesRegex(TimeoutError, "port unavailable"):
+                            shielded_relayer_backend.start_shielded_relayer_runtime(
+                                bind_host="127.0.0.1",
+                                port=38180,
+                                env=env,
+                            )
+
+            self.assertFalse(paths["pid_path"].exists())
+
+    @staticmethod
+    def _temporary_relayer_paths():
+        class TemporaryRelayerPaths:
+            def __enter__(self):
+                self._tmp = tempfile.TemporaryDirectory()
+                process_dir = Path(self._tmp.name)
+                pid_path = process_dir / "shielded-relayer.pid"
+                log_path = process_dir / "shielded-relayer.log"
+                self._patches = [
+                    patch.object(shielded_relayer_backend, "_PROCESS_DIR", process_dir),
+                    patch.object(shielded_relayer_backend, "_PID_PATH", pid_path),
+                    patch.object(shielded_relayer_backend, "_LOG_PATH", log_path),
+                ]
+                for patcher in self._patches:
+                    patcher.start()
+                return {
+                    "process_dir": process_dir,
+                    "pid_path": pid_path,
+                    "log_path": log_path,
+                }
+
+            def __exit__(self, exc_type, exc, tb):
+                for patcher in reversed(self._patches):
+                    patcher.stop()
+                self._tmp.cleanup()
+
+        return TemporaryRelayerPaths()
 
     def test_non_loopback_bind_requires_auth_token(self) -> None:
         with self.assertRaisesRegex(

@@ -195,12 +195,14 @@ def _derived_env_values(
     bind_host: str,
     frontend_port: int,
     api_port: int,
+    s3_port: int,
 ) -> dict[str, str]:
     prefix = _network_env_prefix(network_id)
     endpoints = intentkit_endpoints(
         bind_host=bind_host,
         frontend_port=frontend_port,
         api_port=api_port,
+        s3_port=s3_port,
     )
     derived = {
         "ENV": os.environ.get("XIAN_INTENTKIT_ENV", "local"),
@@ -239,6 +241,7 @@ def ensure_intentkit_env(
     env: dict[str, str] | None = None,
 ) -> dict[str, str]:
     source_env = os.environ if env is None else env
+    s3_port = int(source_env.get("XIAN_INTENTKIT_S3_PORT", "39000"))
     repo_dir = require_intentkit_repo(env=source_env)
     env_example = repo_dir / ".env.example"
     env_file = resolve_intentkit_env_file(env=source_env)
@@ -254,6 +257,7 @@ def ensure_intentkit_env(
         bind_host=bind_host,
         frontend_port=frontend_port,
         api_port=api_port,
+        s3_port=s3_port,
     )
 
     lines = [_GENERATED_HEADER.rstrip("\n")]
@@ -296,7 +300,7 @@ def ensure_intentkit_env(
         frontend_port=frontend_port,
         api_port=api_port,
         public_host=source_env.get("XIAN_INTENTKIT_PUBLIC_HOST"),
-        s3_port=int(source_env.get("XIAN_INTENTKIT_S3_PORT", "39000")),
+        s3_port=s3_port,
     )
     return {
         "intentkit_repo_dir": str(repo_dir),

@@ -61,6 +61,7 @@ DEFAULT_XIAN_METRICS_URL = "http://127.0.0.1:9108/metrics"
 DEFAULT_PROMETHEUS_URL = "http://127.0.0.1:9090"
 DEFAULT_GRAFANA_URL = "http://127.0.0.1:3000"
 DEFAULT_GRAPHQL_URL = "http://127.0.0.1:5000/graphql"
+DEFAULT_INTENTKIT_S3_PORT = 39000
 DEFAULT_SHIELDED_RELAYER_URL = (
     f"http://{DEFAULT_SHIELDED_RELAYER_HOST}:{DEFAULT_SHIELDED_RELAYER_PORT}"
 )
@@ -442,7 +443,7 @@ def _docker_compose_container_id(*, service: str) -> str | None:
             capture_output=True,
             text=True,
         )
-    except (FileNotFoundError, subprocess.CalledProcessError):
+    except FileNotFoundError, subprocess.CalledProcessError:
         return None
 
     container_ids = result.stdout.strip().splitlines()
@@ -644,7 +645,13 @@ def runtime_env(
     env["XIAN_INTENTKIT_PUBLIC_HOST"] = display_host(intentkit_host)
     env["XIAN_INTENTKIT_PORT"] = str(intentkit_port)
     env["XIAN_INTENTKIT_API_PORT"] = str(intentkit_api_port)
-    env["XIAN_INTENTKIT_S3_PORT"] = env.get("XIAN_INTENTKIT_S3_PORT", "39000")
+    if not env.get("XIAN_INTENTKIT_S3_PORT"):
+        env["XIAN_INTENTKIT_S3_PORT"] = str(
+            default_intentkit_s3_port(
+                frontend_port=intentkit_port,
+                api_port=intentkit_api_port,
+            )
+        )
     env["XIAN_DEX_AUTOMATION_ENABLED"] = "1" if dex_automation_enabled else "0"
     env["XIAN_DEX_AUTOMATION_DIR"] = str(
         resolve_repo_dir("xian-dex-automation", "XIAN_DEX_AUTOMATION_DIR")
@@ -659,6 +666,14 @@ def runtime_env(
     env["XIAN_SHIELDED_RELAYER_PUBLIC_HOST"] = display_host(shielded_relayer_host)
     env["XIAN_SHIELDED_RELAYER_PORT"] = str(shielded_relayer_port)
     return ensure_stack_security_env(env)
+
+
+def default_intentkit_s3_port(*, frontend_port: int, api_port: int) -> int:
+    candidate = DEFAULT_INTENTKIT_S3_PORT
+    reserved = {frontend_port, api_port}
+    while candidate in reserved:
+        candidate += 1
+    return candidate
 
 
 def add_node_image_args(parser: argparse.ArgumentParser) -> None:
@@ -1356,6 +1371,7 @@ def backend_endpoints(
                 bind_host=intentkit_host,
                 frontend_port=intentkit_port,
                 api_port=intentkit_api_port,
+                s3_port=int(env.get("XIAN_INTENTKIT_S3_PORT", DEFAULT_INTENTKIT_S3_PORT)),
             )
         )
     if dex_automation_enabled:
