@@ -730,7 +730,7 @@ def recent_blocks_in_window(
     for block in recent_blocks:
         try:
             height = int(block["height"])
-        except KeyError, TypeError, ValueError:
+        except (KeyError, TypeError, ValueError):
             continue
         if min_height is not None and height < min_height:
             continue
@@ -743,7 +743,7 @@ def recent_blocks_in_window(
 def metadata_int(metadata: dict[str, Any], key: str) -> int:
     try:
         return int(metadata.get(key, 0) or 0)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return 0
 
 
@@ -904,7 +904,7 @@ def optional_int(value: Any) -> int | None:
         return None
     try:
         return int(value)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return None
 
 

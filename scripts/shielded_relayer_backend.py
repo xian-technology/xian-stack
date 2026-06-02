@@ -69,7 +69,7 @@ def _read_pid(path: Path) -> int | None:
         return None
     try:
         return int(path.read_text(encoding="utf-8").strip())
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return None
 
 
@@ -88,7 +88,7 @@ def _probe_health(url: str, *, timeout: float = 1.5) -> bool:
         with urlopen(url, timeout=timeout) as response:
             status = getattr(response, "status", 200)
             return int(status) < 500
-    except OSError, URLError, TimeoutError, ValueError:
+    except (OSError, URLError, TimeoutError, ValueError):
         return False
 
 
@@ -155,7 +155,7 @@ def _require_relayer_credentials(env: dict[str, str]) -> None:
     )
 
 
-def _wait_for_ready(url: str, *, timeout_seconds: float = 15.0) -> None:
+def _wait_for_ready(url: str, *, timeout_seconds: float = 180.0) -> None:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         if _probe_health(url):

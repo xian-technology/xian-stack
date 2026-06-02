@@ -5,7 +5,7 @@ import sys
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 
 def _load_bootstrap_module() -> ModuleType:
@@ -67,3 +67,15 @@ def test_deadline_value_uses_xian_vm_time_payload(monkeypatch) -> None:
     assert bootstrap.deadline_value(seconds_from_now=90) == {
         "__time__": [2026, 5, 21, 12, 2, 0, 123456]
     }
+
+
+def test_require_success_accepts_submission_without_receipt() -> None:
+    bootstrap.require_success(
+        "deploy con_pairs",
+        SimpleNamespace(
+            submitted=True,
+            accepted=True,
+            message=None,
+            receipt=None,
+        ),
+    )

@@ -442,7 +442,7 @@ def _docker_compose_container_id(*, service: str) -> str | None:
             capture_output=True,
             text=True,
         )
-    except FileNotFoundError, subprocess.CalledProcessError:
+    except (FileNotFoundError, subprocess.CalledProcessError):
         return None
 
     container_ids = result.stdout.strip().splitlines()

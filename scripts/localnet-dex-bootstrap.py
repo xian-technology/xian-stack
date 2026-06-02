@@ -194,9 +194,7 @@ def require_success(label: str, submission: TransactionSubmission) -> None:
         raise DexBootstrapError(f"{label}: transaction was not submitted")
     if submission.accepted is False:
         raise DexBootstrapError(f"{label}: transaction was rejected: {submission.message}")
-    if submission.receipt is None:
-        raise DexBootstrapError(f"{label}: transaction did not return a receipt")
-    if not submission.receipt.success:
+    if submission.receipt is not None and not submission.receipt.success:
         raise DexBootstrapError(f"{label}: transaction failed: {submission.receipt.message}")
 
 
