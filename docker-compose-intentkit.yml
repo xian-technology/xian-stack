@@ -1,7 +1,6 @@
 x-intentkit-xian-source-volumes: &intentkit-xian-source-volumes
   - ${XIAN_PY_DIR}:/xian-py:ro
-  - ${XIAN_CONTRACTING_DIR}/packages/xian-accounts:/xian-contracting/packages/xian-accounts:ro
-  - ${XIAN_CONTRACTING_DIR}/packages/xian-runtime-types:/xian-contracting/packages/xian-runtime-types:ro
+  - ${XIAN_CONTRACTING_DIR}:/xian-contracting:ro
 
 services:
   api:
@@ -10,8 +9,7 @@ services:
       dockerfile: ${XIAN_INTENTKIT_STACK_DOCKERFILE}
       additional_contexts:
         xian_py: ${XIAN_PY_DIR}
-        xian_accounts: ${XIAN_CONTRACTING_DIR}/packages/xian-accounts
-        xian_runtime_types: ${XIAN_CONTRACTING_DIR}/packages/xian-runtime-types
+        xian_contracting: ${XIAN_CONTRACTING_DIR}
       args:
         RELEASE: ${XIAN_INTENTKIT_RELEASE}
     extra_hosts:
@@ -26,8 +24,7 @@ services:
       dockerfile: ${XIAN_INTENTKIT_STACK_DOCKERFILE}
       additional_contexts:
         xian_py: ${XIAN_PY_DIR}
-        xian_accounts: ${XIAN_CONTRACTING_DIR}/packages/xian-accounts
-        xian_runtime_types: ${XIAN_CONTRACTING_DIR}/packages/xian-runtime-types
+        xian_contracting: ${XIAN_CONTRACTING_DIR}
       args:
         RELEASE: ${XIAN_INTENTKIT_RELEASE}
     extra_hosts:
@@ -40,8 +37,7 @@ services:
       dockerfile: ${XIAN_INTENTKIT_STACK_DOCKERFILE}
       additional_contexts:
         xian_py: ${XIAN_PY_DIR}
-        xian_accounts: ${XIAN_CONTRACTING_DIR}/packages/xian-accounts
-        xian_runtime_types: ${XIAN_CONTRACTING_DIR}/packages/xian-runtime-types
+        xian_contracting: ${XIAN_CONTRACTING_DIR}
       args:
         RELEASE: ${XIAN_INTENTKIT_RELEASE}
     extra_hosts:

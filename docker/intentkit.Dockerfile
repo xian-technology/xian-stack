@@ -19,8 +19,7 @@ WORKDIR /app
 # Copy the lock inputs plus local editable dependencies used by xian-intentkit.
 COPY pyproject.toml uv.lock ./
 COPY --from=xian_py . /xian-py
-COPY --from=xian_accounts . /xian-contracting/packages/xian-accounts
-COPY --from=xian_runtime_types . /xian-contracting/packages/xian-runtime-types
+COPY --from=xian_contracting . /xian-contracting
 
 # Install dependencies with app group (excludes dev-only tools like pytest, ruff)
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -47,8 +46,7 @@ WORKDIR /app
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /xian-py /xian-py
-COPY --from=builder /xian-contracting/packages/xian-accounts /xian-contracting/packages/xian-accounts
-COPY --from=builder /xian-contracting/packages/xian-runtime-types /xian-contracting/packages/xian-runtime-types
+COPY --from=builder /xian-contracting /xian-contracting
 
 # Copy application code
 COPY --from=builder /app/intentkit /app/intentkit
