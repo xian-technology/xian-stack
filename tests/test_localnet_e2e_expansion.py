@@ -27,9 +27,7 @@ else:
 
 class LocalnetE2EExpansionTests(unittest.TestCase):
     def test_nested_uv_commands_preserve_patch_python_version(self) -> None:
-        expected = (
-            f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-        )
+        expected = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
         self.assertEqual(localnet_e2e.CURRENT_UV_PYTHON, expected)
 
