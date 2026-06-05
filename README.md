@@ -86,7 +86,7 @@ XIAN_DEX_BOOTSTRAP_RPC_URL=http://127.0.0.1:26657 make localnet-dex-bootstrap
 Higher-level harnesses:
 
 ```bash
-make localnet-validator-governance   # 5-validator testnet-shaped governance run
+make localnet-protocol-safety        # 5-validator protocol safety harness
 make localnet-e2e                    # layered 5-validator e2e harness
 make localnet-parallel-e2e                 # same harness with lower parallel-execution batching
 make localnet-vm-tps-bench           # tuned VM throughput sweep
@@ -151,7 +151,7 @@ Use the smallest recipe that proves the behavior you care about:
 | Full 5-validator e2e harness | `make localnet-e2e` | Layered cross-repo behavior, workload phases, DEX coverage, catchup, governance, chaos / restart convergence |
 | IntentKit x402 buyer phase | `LOCALNET_E2E_INTENTKIT_X402=1 make localnet-e2e` | Adds a live IntentKit Xian-native x402 payment through a local seller/facilitator |
 | Parallel 5-validator harness | `make localnet-parallel-e2e` | The same e2e program with lower parallel-execution batching |
-| Focused validator governance run | `make localnet-validator-governance` | Validator set, delegation, governance, and state-patch behavior |
+| Protocol safety harness | `make localnet-protocol-safety` | Validator set, delegation, evidence, governance, and state-patch behavior |
 | Release gate | `make release-safety` | Repo validation plus the release-grade localnet gates |
 
 The localnet harnesses are intentionally heavier than a clean topology. A
@@ -257,5 +257,5 @@ before tagging this repo.
 - [docs/RELEASES.md](docs/RELEASES.md) — release process, signing, and reproducibility checks
 - [docs/RUNTIME_LIMITS.md](docs/RUNTIME_LIMITS.md) — runtime resource limits and policy
 - [docs/RUNTIME_RELEASE_BACKLOG.md](docs/RUNTIME_RELEASE_BACKLOG.md) — runtime release follow-ups
-- [docs/LOCALNET_VALIDATOR_GOVERNANCE.md](docs/LOCALNET_VALIDATOR_GOVERNANCE.md) — 5-validator governance harness
+- [docs/LOCALNET_PROTOCOL_SAFETY.md](docs/LOCALNET_PROTOCOL_SAFETY.md) — 5-validator protocol safety harness
 - [docs/LOCALNET_WORKLOAD_BACKLOG.md](docs/LOCALNET_WORKLOAD_BACKLOG.md) — localnet workload follow-ups

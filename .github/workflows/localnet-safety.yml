@@ -1,17 +1,14 @@
-name: Validate
+name: Localnet Safety
 
 on:
-  push:
-    branches:
-      - "*"
-  pull_request:
-    branches:
-      - "*"
   workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * *"
 
 jobs:
-  validate:
+  protocol-safety-localnet:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       - name: Check out xian-stack
@@ -70,14 +67,25 @@ jobs:
       - name: Install uv
         run: python -m pip install uv
 
-      - name: Validate stack
+      - name: Run protocol safety localnet
         working-directory: xian-stack
-        run: ./scripts/validate-stack.sh
+        env:
+          LOCALNET_PROTOCOL_SAFETY_BUILD: "1"
+        run: make localnet-protocol-safety
 
-  smoke:
+      - name: Upload protocol safety artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: xian-stack-protocol-safety-localnet
+          path: |
+            xian-stack/.artifacts/localnet-protocol-safety
+            xian-stack/.localnet/network.json
+          if-no-files-found: warn
+
+  release-safety-localnet:
     runs-on: ubuntu-latest
-    needs: validate
-    timeout-minutes: 30
+    timeout-minutes: 120
 
     steps:
       - name: Check out xian-stack
@@ -115,12 +123,18 @@ jobs:
           repository: xian-technology/xian-cli
           path: xian-cli
 
+      - name: Check out xian-contracts
+        uses: actions/checkout@v6
+        with:
+          repository: xian-technology/xian-contracts
+          path: xian-contracts
+
       - name: Use matching dependency branches when available
         shell: bash
         run: |
           set -euo pipefail
           BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          for repo in xian-abci xian-contracting xian-py xian-configs xian-cli; do
+          for repo in xian-abci xian-contracting xian-py xian-configs xian-cli xian-contracts; do
             REMOTE="https://github.com/xian-technology/${repo}"
             if git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
               git -C "$repo" fetch --depth=1 origin "$BRANCH"
@@ -136,6 +150,16 @@ jobs:
       - name: Install uv
         run: python -m pip install uv
 
-      - name: Run stack smoke test
+      - name: Run release safety localnet
         working-directory: xian-stack
-        run: ./scripts/smoke-stack.sh
+        run: ./scripts/release-safety.sh --skip-repo-validation --skip-protocol-safety
+
+      - name: Upload localnet safety artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: xian-stack-release-safety-localnet
+          path: |
+            xian-stack/.artifacts/localnet-e2e
+            xian-stack/.localnet/network.json
+          if-no-files-found: warn

@@ -417,14 +417,40 @@ LOCALNET_PARALLEL_E2E_MIN_TRANSACTIONS ?= 4
 LOCALNET_TPS_BENCH_PARALLEL_EXECUTION_ENABLED ?= $(XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED)
 LOCALNET_TPS_BENCH_PARALLEL_EXECUTION_WORKERS ?= $(XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS)
 LOCALNET_TPS_BENCH_PARALLEL_EXECUTION_MIN_TRANSACTIONS ?= $(XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS)
-LOCALNET_VALIDATOR_GOVERNANCE_BOOTSTRAP ?= 1
-LOCALNET_VALIDATOR_GOVERNANCE_BUILD ?= 0
-LOCALNET_VALIDATOR_GOVERNANCE_NODES ?= 5
-LOCALNET_VALIDATOR_GOVERNANCE_PORT_OFFSET ?= 1000
-LOCALNET_VALIDATOR_GOVERNANCE_SEED ?= xian-localnet-testnet-governance-v1
-LOCALNET_VALIDATOR_GOVERNANCE_LOG_LEVEL ?= INFO
-LOCALNET_VALIDATOR_GOVERNANCE_RPC_TIMEOUT_SECONDS ?= 180
-LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK ?= testnet
+LOCALNET_PROTOCOL_SAFETY_BOOTSTRAP ?= 1
+LOCALNET_PROTOCOL_SAFETY_BUILD ?= 0
+LOCALNET_PROTOCOL_SAFETY_NODES ?= 5
+LOCALNET_PROTOCOL_SAFETY_PORT_OFFSET ?= 1000
+LOCALNET_PROTOCOL_SAFETY_SEED ?= xian-localnet-testnet-protocol-safety-v1
+LOCALNET_PROTOCOL_SAFETY_LOG_LEVEL ?= INFO
+LOCALNET_PROTOCOL_SAFETY_RPC_TIMEOUT_SECONDS ?= 180
+LOCALNET_PROTOCOL_SAFETY_GENESIS_NETWORK ?= testnet
+
+# Backward-compatible overrides for the retired localnet-validator-governance name.
+ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_BOOTSTRAP), undefined)
+LOCALNET_PROTOCOL_SAFETY_BOOTSTRAP := $(LOCALNET_VALIDATOR_GOVERNANCE_BOOTSTRAP)
+endif
+ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_BUILD), undefined)
+LOCALNET_PROTOCOL_SAFETY_BUILD := $(LOCALNET_VALIDATOR_GOVERNANCE_BUILD)
+endif
+ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_NODES), undefined)
+LOCALNET_PROTOCOL_SAFETY_NODES := $(LOCALNET_VALIDATOR_GOVERNANCE_NODES)
+endif
+ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_PORT_OFFSET), undefined)
+LOCALNET_PROTOCOL_SAFETY_PORT_OFFSET := $(LOCALNET_VALIDATOR_GOVERNANCE_PORT_OFFSET)
+endif
+ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_SEED), undefined)
+LOCALNET_PROTOCOL_SAFETY_SEED := $(LOCALNET_VALIDATOR_GOVERNANCE_SEED)
+endif
+ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_LOG_LEVEL), undefined)
+LOCALNET_PROTOCOL_SAFETY_LOG_LEVEL := $(LOCALNET_VALIDATOR_GOVERNANCE_LOG_LEVEL)
+endif
+ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_RPC_TIMEOUT_SECONDS), undefined)
+LOCALNET_PROTOCOL_SAFETY_RPC_TIMEOUT_SECONDS := $(LOCALNET_VALIDATOR_GOVERNANCE_RPC_TIMEOUT_SECONDS)
+endif
+ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK), undefined)
+LOCALNET_PROTOCOL_SAFETY_GENESIS_NETWORK := $(LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK)
+endif
 
 .DEFAULT_GOAL := help
 
@@ -440,8 +466,8 @@ LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK ?= testnet
 	node-status node-status-fidelity bds-postgres-up bds-snapshot-export bds-snapshot-import \
 	storage-report \
 	localnet-init localnet-build localnet-up localnet-down localnet-status \
-	localnet-workload localnet-memwatch localnet-leak-hunt localnet-e2e localnet-node-report localnet-parallel-e2e localnet-vm-tps-bench localnet-validator-governance \
-	localnet-clean localnet-logs localnet-shell
+	localnet-workload localnet-memwatch localnet-leak-hunt localnet-e2e localnet-node-report localnet-parallel-e2e localnet-vm-tps-bench localnet-protocol-safety \
+	localnet-validator-governance localnet-clean localnet-logs localnet-shell
 
 help:
 	@printf "Available targets:\n"
@@ -499,7 +525,7 @@ help:
 	@printf "  %-24s %s\n" "localnet-node-report" "Collect the current node capability report from localnet nodes"
 	@printf "  %-24s %s\n" "localnet-parallel-e2e" "Run the localnet e2e program with lower parallel-execution batching"
 	@printf "  %-24s %s\n" "localnet-vm-tps-bench" "Run the VM-native throughput sweep on a tuned 5-node localnet"
-	@printf "  %-24s %s\n" "localnet-validator-governance" "Run the 5-validator testnet-shaped governance/state-patch exercise"
+	@printf "  %-24s %s\n" "localnet-protocol-safety" "Run the 5-validator protocol safety exercise"
 	@printf "  %-24s %s\n" "localnet-logs" "Tail logs from all nodes"
 	@printf "  %-24s %s\n" "localnet-shell" "Open a shell in node-0"
 	@printf "  %-24s %s\n" "localnet-clean" "Stop nodes and delete all localnet data"
@@ -957,17 +983,21 @@ localnet-vm-tps-bench:
 			--heavy-rounds $(LOCALNET_TPS_BENCH_HEAVY_ROUNDS); \
 	'
 
-localnet-validator-governance:
-	uv run --project "$(XIAN_ABCI_DIR)" --with "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-validator-governance.py \
-		$(if $(filter 0,$(LOCALNET_VALIDATOR_GOVERNANCE_BOOTSTRAP)),--no-bootstrap,--bootstrap) \
-		$(if $(filter 1,$(LOCALNET_VALIDATOR_GOVERNANCE_BUILD)),--build,--no-build) \
-		--nodes $(LOCALNET_VALIDATOR_GOVERNANCE_NODES) \
+localnet-protocol-safety:
+	uv run --project "$(XIAN_ABCI_DIR)" --with "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-protocol-safety.py \
+		$(if $(filter 0,$(LOCALNET_PROTOCOL_SAFETY_BOOTSTRAP)),--no-bootstrap,--bootstrap) \
+		$(if $(filter 1,$(LOCALNET_PROTOCOL_SAFETY_BUILD)),--build,--no-build) \
+		--nodes $(LOCALNET_PROTOCOL_SAFETY_NODES) \
 		--topology "$(XIAN_LOCALNET_TOPOLOGY)" \
-		--genesis-network "$(LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK)" \
-		--port-offset $(LOCALNET_VALIDATOR_GOVERNANCE_PORT_OFFSET) \
-		--seed "$(LOCALNET_VALIDATOR_GOVERNANCE_SEED)" \
-		--log-level "$(LOCALNET_VALIDATOR_GOVERNANCE_LOG_LEVEL)" \
-		--rpc-timeout-seconds $(LOCALNET_VALIDATOR_GOVERNANCE_RPC_TIMEOUT_SECONDS)
+		--genesis-network "$(LOCALNET_PROTOCOL_SAFETY_GENESIS_NETWORK)" \
+		--port-offset $(LOCALNET_PROTOCOL_SAFETY_PORT_OFFSET) \
+		--seed "$(LOCALNET_PROTOCOL_SAFETY_SEED)" \
+		--log-level "$(LOCALNET_PROTOCOL_SAFETY_LOG_LEVEL)" \
+		--rpc-timeout-seconds $(LOCALNET_PROTOCOL_SAFETY_RPC_TIMEOUT_SECONDS)
+
+localnet-validator-governance:
+	@printf '%s\n' "localnet-validator-governance is deprecated; use localnet-protocol-safety." >&2
+	@$(MAKE) localnet-protocol-safety
 
 localnet-logs:
 	$(LOCALNET_COMPOSE) logs -f --tail=50

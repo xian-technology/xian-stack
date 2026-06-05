@@ -40,11 +40,11 @@ tooling behind `xian-stack`.
   5-validator integrated stack with lower parallel-execution batching; it also
   enforces the node report through the generated `node_report.json`
   artifact
-- `localnet-validator-governance.py`: focused validator/delegation/governance
-  exercise against a real 5-validator testnet-shaped localnet, including real
-  duplicate-vote evidence injection, governance state-patch activation, and
-  announce-leave coverage, with JSON artifacts under
-  `.artifacts/localnet-validator-governance/<run-id>/`
+- `localnet-protocol-safety.py`: focused protocol safety exercise against a
+  real 5-validator testnet-shaped localnet, including validator/delegation
+  flows, real duplicate-vote evidence injection, governance state-patch
+  activation, and announce-leave coverage, with JSON artifacts under
+  `.artifacts/localnet-protocol-safety/<run-id>/`
 - `localnet-workload.py`, `localnet-memwatch.py`,
   `localnet-leak-hunt.py`, `localnet-perf-summary.py`: deeper runtime
   investigation helpers
@@ -71,9 +71,9 @@ tooling behind `xian-stack`.
   explicit operator action. By default it consumes the hash-pinned DEX contract
   pack bundle from `xian-configs`; raw source directory overrides are only for
   development.
-- The validator/governance runner should be executed through `uv` with the
+- The protocol safety runner should be executed through `uv` with the
   `xian-abci` project and local `xian-py` package available, preferably through
-  `make localnet-validator-governance`.
+  `make localnet-protocol-safety`.
 - `make localnet-node-report` is the quick operator/debugging path for
   checking whether all localnet nodes report the fixed Xian VM capability.
 - `make localnet-vm-tps-bench` is the benchmark wrapper for a tuned 5-node
@@ -81,7 +81,7 @@ tooling behind `xian-stack`.
   `workload_tps` when reporting chain throughput.
 - `./scripts/release-safety.sh` and `make release-safety` are the release-grade
   stack entrypoints. They validate sibling repos, run the localnet e2e harness,
-  enforce the node report, and run the validator/governance localnet.
+  enforce the node report, and run the protocol safety localnet.
 
 ```mermaid
 flowchart LR
@@ -89,8 +89,8 @@ flowchart LR
   Backend --> Localnet["localnet-init and localnet-up"]
   Localnet --> Workloads["localnet-workload"]
   Localnet --> E2E["localnet-e2e"]
-  Localnet --> Governance["validator-governance"]
+  Localnet --> ProtocolSafety["protocol-safety"]
   E2E --> RuntimeReport["Node report"]
-  Governance --> ReleaseSafety["release-safety"]
+  ProtocolSafety --> ReleaseSafety["release-safety"]
   RuntimeReport --> ReleaseSafety
 ```

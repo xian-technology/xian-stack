@@ -7,26 +7,26 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "localnet-validator-governance.py"
+MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "localnet-protocol-safety.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
 
-if "localnet_validator_governance" in sys.modules:
-    localnet_validator_governance = sys.modules["localnet_validator_governance"]
+if "localnet_protocol_safety" in sys.modules:
+    localnet_protocol_safety = sys.modules["localnet_protocol_safety"]
 else:
     SPEC = importlib.util.spec_from_file_location(
-        "localnet_validator_governance",
+        "localnet_protocol_safety",
         MODULE_PATH,
     )
     if SPEC is None or SPEC.loader is None:
         raise RuntimeError(f"unable to load {MODULE_PATH}")
-    localnet_validator_governance = importlib.util.module_from_spec(SPEC)
-    sys.modules[SPEC.name] = localnet_validator_governance
-    SPEC.loader.exec_module(localnet_validator_governance)
+    localnet_protocol_safety = importlib.util.module_from_spec(SPEC)
+    sys.modules[SPEC.name] = localnet_protocol_safety
+    SPEC.loader.exec_module(localnet_protocol_safety)
 
 
-class LocalnetValidatorGovernanceTests(unittest.TestCase):
+class LocalnetProtocolSafetyTests(unittest.TestCase):
     def _node(self, index: int, rpc_url: str):
-        return localnet_validator_governance.LocalnetNode(
+        return localnet_protocol_safety.LocalnetNode(
             index=index,
             moniker=f"node-{index}",
             rpc_url=rpc_url,
@@ -41,7 +41,7 @@ class LocalnetValidatorGovernanceTests(unittest.TestCase):
         )
 
     def test_client_config_uses_localnet_rpc_timeout(self) -> None:
-        args = localnet_validator_governance.build_parser().parse_args(
+        args = localnet_protocol_safety.build_parser().parse_args(
             [
                 "--rpc-timeout-seconds",
                 "123",
@@ -50,11 +50,11 @@ class LocalnetValidatorGovernanceTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.object(
-                localnet_validator_governance,
+                localnet_protocol_safety,
                 "OUTPUT_ROOT",
                 Path(tmpdir),
             ):
-                runner = localnet_validator_governance.ValidatorGovernanceRunner(args)
+                runner = localnet_protocol_safety.ProtocolSafetyRunner(args)
 
         config = runner.client_config()
 
@@ -63,20 +63,20 @@ class LocalnetValidatorGovernanceTests(unittest.TestCase):
         self.assertEqual(6, config.retry.max_attempts)
 
     def test_xian_client_owns_bounded_session(self) -> None:
-        args = localnet_validator_governance.build_parser().parse_args([])
+        args = localnet_protocol_safety.build_parser().parse_args([])
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.object(
-                localnet_validator_governance,
+                localnet_protocol_safety,
                 "OUTPUT_ROOT",
                 Path(tmpdir),
             ):
-                runner = localnet_validator_governance.ValidatorGovernanceRunner(args)
+                runner = localnet_protocol_safety.ProtocolSafetyRunner(args)
         runner.network = {"chain_id": "test-chain"}
         runner.nodes = [self._node(0, "http://node-0")]
 
         client = runner.client(
-            localnet_validator_governance.Wallet(),
+            localnet_protocol_safety.Wallet(),
             0,
             session=object(),
         )
@@ -90,16 +90,16 @@ class LocalnetValidatorGovernanceTests(unittest.TestCase):
         )
 
     def test_recover_lagging_nodes_restarts_abci_unresponsive_node(self) -> None:
-        args = localnet_validator_governance.build_parser().parse_args(
+        args = localnet_protocol_safety.build_parser().parse_args(
             ["--rpc-timeout-seconds", "30"]
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.object(
-                localnet_validator_governance,
+                localnet_protocol_safety,
                 "OUTPUT_ROOT",
                 Path(tmpdir),
             ):
-                runner = localnet_validator_governance.ValidatorGovernanceRunner(args)
+                runner = localnet_protocol_safety.ProtocolSafetyRunner(args)
         runner.nodes = [
             self._node(0, "http://node-0"),
             self._node(1, "http://node-1"),
@@ -115,21 +115,21 @@ class LocalnetValidatorGovernanceTests(unittest.TestCase):
         async def fake_wait_for_abci(_session, rpc_url: str, **_kwargs):
             abci_attempts[rpc_url] = abci_attempts.get(rpc_url, 0) + 1
             if rpc_url == "http://node-1" and abci_attempts[rpc_url] == 1:
-                raise localnet_validator_governance.RunnerError("ABCI query timed out")
+                raise localnet_protocol_safety.RunnerError("ABCI query timed out")
 
         with (
             patch.object(
-                localnet_validator_governance,
+                localnet_protocol_safety,
                 "wait_for_height",
                 side_effect=fake_wait_for_height,
             ),
             patch.object(
-                localnet_validator_governance,
+                localnet_protocol_safety,
                 "wait_for_abci_query_responsive",
                 side_effect=fake_wait_for_abci,
             ),
         ):
-            result = localnet_validator_governance.asyncio.run(
+            result = localnet_protocol_safety.asyncio.run(
                 runner.recover_lagging_nodes(None, target_height=42, timeout_seconds=7)
             )
 
@@ -143,14 +143,14 @@ class LocalnetValidatorGovernanceTests(unittest.TestCase):
         self.assertTrue(result["after"]["node-1"]["abci_query_ready"])
 
     def test_read_members_vote_falls_back_to_next_client(self) -> None:
-        args = localnet_validator_governance.build_parser().parse_args([])
+        args = localnet_protocol_safety.build_parser().parse_args([])
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.object(
-                localnet_validator_governance,
+                localnet_protocol_safety,
                 "OUTPUT_ROOT",
                 Path(tmpdir),
             ):
-                runner = localnet_validator_governance.ValidatorGovernanceRunner(args)
+                runner = localnet_protocol_safety.ProtocolSafetyRunner(args)
 
         class FailingClient:
             async def get_state(self, *_args):
@@ -160,7 +160,7 @@ class LocalnetValidatorGovernanceTests(unittest.TestCase):
             async def get_state(self, *_args):
                 return {"status": "approved"}
 
-        result = localnet_validator_governance.asyncio.run(
+        result = localnet_protocol_safety.asyncio.run(
             runner.read_members_vote(
                 [FailingClient(), HealthyClient()],
                 proposal_id=1,
@@ -171,14 +171,14 @@ class LocalnetValidatorGovernanceTests(unittest.TestCase):
         self.assertEqual({"status": "approved"}, result)
 
     def test_read_contract_state_falls_back_to_next_client(self) -> None:
-        args = localnet_validator_governance.build_parser().parse_args([])
+        args = localnet_protocol_safety.build_parser().parse_args([])
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.object(
-                localnet_validator_governance,
+                localnet_protocol_safety,
                 "OUTPUT_ROOT",
                 Path(tmpdir),
             ):
-                runner = localnet_validator_governance.ValidatorGovernanceRunner(args)
+                runner = localnet_protocol_safety.ProtocolSafetyRunner(args)
 
         class FailingClient:
             async def get_state(self, *_args):
@@ -188,7 +188,7 @@ class LocalnetValidatorGovernanceTests(unittest.TestCase):
             async def get_state(self, *_args):
                 return 7
 
-        result = localnet_validator_governance.asyncio.run(
+        result = localnet_protocol_safety.asyncio.run(
             runner.read_contract_state(
                 [FailingClient(), HealthyClient()],
                 "masternodes",

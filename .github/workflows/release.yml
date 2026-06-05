@@ -157,7 +157,7 @@ jobs:
           name: xian-stack-release-safety-artifacts
           path: |
             xian-stack/.artifacts/localnet-e2e
-            xian-stack/.artifacts/localnet-validator-governance
+            xian-stack/.artifacts/localnet-protocol-safety
             xian-stack/.localnet/network.json
           if-no-files-found: warn
 

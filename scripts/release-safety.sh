@@ -10,7 +10,7 @@ require_docker
 require_uv
 
 repo_validation=1
-validator_governance=1
+protocol_safety=1
 vm_report=1
 keep_localnet=0
 
@@ -19,8 +19,11 @@ while (($#)); do
     --skip-repo-validation)
       repo_validation=0
       ;;
+    --skip-protocol-safety)
+      protocol_safety=0
+      ;;
     --skip-validator-governance)
-      validator_governance=0
+      protocol_safety=0
       ;;
     --skip-vm-report)
       vm_report=0
@@ -84,8 +87,8 @@ if [[ "${vm_report}" == "1" ]]; then
   run_step "Collect localnet node report" make localnet-node-report
 fi
 
-if [[ "${validator_governance}" == "1" ]]; then
-  run_step "Reset localnet before validator governance" make localnet-down
+if [[ "${protocol_safety}" == "1" ]]; then
+  run_step "Reset localnet before protocol safety" make localnet-down
   restore_ci_workspace_ownership
-  run_step "Run validator governance localnet" make localnet-validator-governance
+  run_step "Run protocol safety localnet" make localnet-protocol-safety
 fi

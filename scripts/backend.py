@@ -49,7 +49,7 @@ LOCALNET_DEX_BOOTSTRAP_SCRIPT = STACK_DIR / "scripts" / "localnet-dex-bootstrap.
 LOCALNET_WORKLOAD_SCRIPT = STACK_DIR / "scripts" / "localnet-workload.py"
 LOCALNET_E2E_SCRIPT = STACK_DIR / "scripts" / "localnet-e2e.py"
 LOCALNET_NODE_REPORT_SCRIPT = STACK_DIR / "scripts" / "localnet_node_report.py"
-LOCALNET_VALIDATOR_GOVERNANCE_SCRIPT = STACK_DIR / "scripts" / "localnet-validator-governance.py"
+LOCALNET_PROTOCOL_SAFETY_SCRIPT = STACK_DIR / "scripts" / "localnet-protocol-safety.py"
 LOCALNET_MEMWATCH_SCRIPT = STACK_DIR / "scripts" / "localnet-memwatch.py"
 LOCALNET_LEAK_HUNT_SCRIPT = STACK_DIR / "scripts" / "localnet-leak-hunt.py"
 STACK_UV_PYTHON = "3.14"
@@ -2436,47 +2436,51 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
     )
 
-    localnet_validator_governance = subparsers.add_parser("localnet-validator-governance")
-    localnet_validator_governance.add_argument(
-        "--seed",
-        default="xian-localnet-testnet-governance-v1",
+    localnet_protocol_safety = subparsers.add_parser(
+        "localnet-protocol-safety",
+        aliases=["localnet-validator-governance"],
     )
-    localnet_validator_governance.add_argument(
+    localnet_protocol_safety.set_defaults(command="localnet-protocol-safety")
+    localnet_protocol_safety.add_argument(
+        "--seed",
+        default="xian-localnet-testnet-protocol-safety-v1",
+    )
+    localnet_protocol_safety.add_argument(
         "--nodes",
         type=int,
         default=5,
-        help="validator count for the governance exercise (expects 5)",
+        help="validator count for the protocol safety exercise (expects 5)",
     )
-    localnet_validator_governance.add_argument(
+    localnet_protocol_safety.add_argument(
         "--port-offset",
         type=int,
         default=1000,
     )
-    localnet_validator_governance.add_argument(
+    localnet_protocol_safety.add_argument(
         "--topology",
         choices=("integrated", "fidelity"),
         default="integrated",
     )
-    localnet_validator_governance.add_argument(
+    localnet_protocol_safety.add_argument(
         "--genesis-network",
         default="testnet",
         help="genesis bundle name used to seed localnet genesis",
     )
-    localnet_validator_governance.add_argument(
+    localnet_protocol_safety.add_argument(
         "--log-level",
         default="INFO",
     )
-    localnet_validator_governance.add_argument(
+    localnet_protocol_safety.add_argument(
         "--rpc-timeout-seconds",
         type=float,
         default=180.0,
     )
-    localnet_validator_governance.add_argument(
+    localnet_protocol_safety.add_argument(
         "--bootstrap",
         action=argparse.BooleanOptionalAction,
         default=True,
     )
-    localnet_validator_governance.add_argument(
+    localnet_protocol_safety.add_argument(
         "--build",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -2849,9 +2853,9 @@ def main(argv: list[str] | None = None) -> int:
                 str(args.app_hash_window),
             ],
         )
-    elif args.command == "localnet-validator-governance":
+    elif args.command == "localnet-protocol-safety":
         payload = backend_localnet_diagnostic(
-            script_path=LOCALNET_VALIDATOR_GOVERNANCE_SCRIPT,
+            script_path=LOCALNET_PROTOCOL_SAFETY_SCRIPT,
             script_args=[
                 "--seed",
                 args.seed,

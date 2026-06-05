@@ -1,8 +1,8 @@
-# Localnet Validator Governance
+# Localnet Protocol Safety
 
 ## Purpose
 
-`scripts/localnet-validator-governance.py` is the focused live validation
+`scripts/localnet-protocol-safety.py` is the focused live validation
 program for validator, delegation, governance, and evidence behavior on a real
 5-validator localnet seeded from the canonical `testnet` contract bundle.
 
@@ -14,13 +14,13 @@ stateful to trust to unit tests alone.
 Run it through the `xian-abci` project with local `xian-py` available:
 
 ```bash
-make localnet-validator-governance
+make localnet-protocol-safety
 ```
 
 Artifacts are written under:
 
 ```text
-.artifacts/localnet-validator-governance/<run-id>/
+.artifacts/localnet-protocol-safety/<run-id>/
 ```
 
 ## Live Coverage

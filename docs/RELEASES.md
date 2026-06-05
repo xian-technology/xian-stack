@@ -170,7 +170,7 @@ The image workflow:
    - `xian-stack/scripts/validate-stack.sh`
    - `make localnet-parallel-e2e`
    - `make localnet-node-report`
-   - `make localnet-validator-governance`
+   - `make localnet-protocol-safety`
 3. checks out the exact pinned component refs
 4. builds and publishes:
    - `ghcr.io/<owner>/xian-node`

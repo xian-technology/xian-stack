@@ -27,7 +27,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent
 ROOT_DIR = STACK_DIR.parent
 NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
-OUTPUT_ROOT = STACK_DIR / ".artifacts" / "localnet-validator-governance"
+OUTPUT_ROOT = STACK_DIR / ".artifacts" / "localnet-protocol-safety"
 XIAN_ABCI_SRC = ROOT_DIR / "xian-abci" / "src"
 XIAN_CONTRACTING_SRC = ROOT_DIR / "xian-contracting" / "src"
 
@@ -618,7 +618,7 @@ def assert_true(value: Any, *, label: str) -> None:
         raise RunnerError(f"{label}: expected truthy value, got {value!r}")
 
 
-class ValidatorGovernanceRunner:
+class ProtocolSafetyRunner:
     def __init__(self, args: argparse.Namespace):
         self.args = args
         self.run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -1659,7 +1659,7 @@ def get_status():
                 target_contract=probe_contract,
                 target_function="set_value",
                 kwargs={"new_value": next_value},
-                summary="validator-governance script probe contract update",
+                summary="protocol-safety script probe contract update",
                 label_prefix="governance-contract-call",
             )
             updated_value = coerce_int(await node0.get_state(probe_contract, "value"))
@@ -1693,14 +1693,14 @@ def get_status():
             int(governance_min_patch_delay) + STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS,
             STATE_PATCH_DELAY_BLOCKS,
         )
-        patch_id = f"localnet-validator-governance-{short_hash(self.run_id)}"
+        patch_id = f"localnet-protocol-safety-{short_hash(self.run_id)}"
         bundle_payload = {
             "version": 1,
             "patch_id": patch_id,
             "activation_height": activation_height,
             "governance_contract": "governance",
             "summary": "Validator governance localnet state patch exercise",
-            "uri": "local://localnet-validator-governance",
+            "uri": "local://localnet-protocol-safety",
             "chain_id": self.network["chain_id"],
             "changes": [
                 {
@@ -2928,10 +2928,10 @@ def get_status():
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Run a focused validator/governance exercise against a disposable 5-validator localnet."
+            "Run a focused protocol safety exercise against a disposable 5-validator localnet."
         )
     )
-    parser.add_argument("--seed", default="xian-localnet-testnet-governance-v1")
+    parser.add_argument("--seed", default="xian-localnet-testnet-protocol-safety-v1")
     parser.add_argument("--nodes", type=int, default=DEFAULT_LOCALNET_NODES)
     parser.add_argument("--port-offset", type=int, default=1000)
     parser.add_argument(
@@ -2962,7 +2962,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def async_main(args: argparse.Namespace) -> int:
-    runner = ValidatorGovernanceRunner(args)
+    runner = ProtocolSafetyRunner(args)
     summary = await runner.run()
     print(json.dumps(normalize_value(summary), indent=2, sort_keys=True))
     return 0
