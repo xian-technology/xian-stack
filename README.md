@@ -52,6 +52,13 @@ python3 ./scripts/backend.py health --no-bds-enabled --dashboard --monitoring
 python3 ./scripts/backend.py stop   --no-bds-enabled --dashboard --monitoring
 ```
 
+The stack-managed single node configures periodic empty blocks by default
+(`XIAN_BLOCK_POLICY_MODE=periodic`, `XIAN_BLOCK_POLICY_INTERVAL=5s`) so local
+contract time stays close to wall-clock time during interactive development.
+Set `XIAN_BLOCK_POLICY_MODE=on_demand` and `XIAN_BLOCK_POLICY_INTERVAL=0s`
+before `make node-configure` only when stale time during idle periods is
+acceptable.
+
 The stack defaults to fail-closed host bindings:
 
 - CometBFT RPC binds to `127.0.0.1` unless `--public-rpc` is set.

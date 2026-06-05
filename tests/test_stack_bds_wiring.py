@@ -49,6 +49,10 @@ class StackBdsWiringTests(unittest.TestCase):
         self.assertIn("XIAN_BDS_ENABLED_FLAG", makefile)
         self.assertIn("XIAN_APP_METRICS_ENABLED_FLAG", makefile)
         self.assertIn("XIAN_BDS_CATCHUP_ENABLED_FLAG", makefile)
+        self.assertIn("XIAN_BLOCK_POLICY_MODE ?= periodic", makefile)
+        self.assertIn("XIAN_BLOCK_POLICY_INTERVAL ?= 5s", makefile)
+        self.assertIn("--block-policy-mode $(XIAN_BLOCK_POLICY_MODE)", makefile)
+        self.assertIn("--block-policy-interval $(XIAN_BLOCK_POLICY_INTERVAL)", makefile)
 
     def test_node_configure_renders_enabled_flags(self) -> None:
         rendered = subprocess.run(
@@ -67,10 +71,30 @@ class StackBdsWiringTests(unittest.TestCase):
         ).stdout
 
         self.assertIn("xian-configure-node --bds-enabled --metrics-enabled", rendered)
+        self.assertIn("--block-policy-mode periodic --block-policy-interval 5s", rendered)
         self.assertIn("--bds-catchup-enabled", rendered)
         self.assertNotIn("$bds_flag", rendered)
         self.assertNotIn("$metrics_flag", rendered)
         self.assertNotIn("$bds_catchup_flag", rendered)
+
+    def test_node_configure_allows_block_policy_override(self) -> None:
+        rendered = subprocess.run(
+            [
+                "make",
+                "-n",
+                "node-configure",
+                "XIAN_BDS_PASSWORD=test",
+                "XIAN_BLOCK_POLICY_MODE=on_demand",
+                "XIAN_BLOCK_POLICY_INTERVAL=0s",
+                "CONFIGURE_ARGS=--moniker test",
+            ],
+            cwd=STACK_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+        self.assertIn("--block-policy-mode on_demand --block-policy-interval 0s", rendered)
 
     def test_node_configure_renders_disabled_flags(self) -> None:
         rendered = subprocess.run(
@@ -99,6 +123,8 @@ class StackBdsWiringTests(unittest.TestCase):
         for env_key in BDS_RUNTIME_ENV_KEYS:
             with self.subTest(env_key=env_key):
                 self.assertIn(f"export {env_key}=", stack_env)
+        self.assertIn("export XIAN_BLOCK_POLICY_MODE=", stack_env)
+        self.assertIn("export XIAN_BLOCK_POLICY_INTERVAL=", stack_env)
 
     def test_compose_overlay_passes_bds_runtime_environment(self) -> None:
         compose = (STACK_ROOT / "docker-compose-abci-bds.yml").read_text(encoding="utf-8")

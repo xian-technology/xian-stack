@@ -173,6 +173,8 @@ export_stack_env() {
   export XIAN_DEX_AUTOMATION_CONFIG="${XIAN_DEX_AUTOMATION_CONFIG:-${stack_root}/.artifacts/dex-automation/config.yaml}"
   export XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE="${XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE:-${stack_root}/.artifacts/dex-automation/wallet.key}"
   export XIAN_COMETBFT_HOME="${XIAN_COMETBFT_HOME:-${stack_root}/.cometbft}"
+  export XIAN_BLOCK_POLICY_MODE="${XIAN_BLOCK_POLICY_MODE:-periodic}"
+  export XIAN_BLOCK_POLICY_INTERVAL="${XIAN_BLOCK_POLICY_INTERVAL:-5s}"
   export XIAN_BDS_DATA_DIR="${XIAN_BDS_DATA_DIR:-${stack_root}/.bds.db}"
   ensure_stack_secrets_env
   export XIAN_BDS_DSN="${XIAN_BDS_DSN:-}"

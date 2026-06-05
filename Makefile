@@ -24,6 +24,8 @@ FALSE_VALUES := 0 false FALSE False no NO No off OFF Off
 XIAN_BDS_ENABLED ?= 0
 XIAN_BDS_ENABLED_FLAG = $(if $(filter $(FALSE_VALUES),$(XIAN_BDS_ENABLED)),--no-bds-enabled,--bds-enabled)
 XIAN_COMETBFT_HOME ?= ./.cometbft
+XIAN_BLOCK_POLICY_MODE ?= periodic
+XIAN_BLOCK_POLICY_INTERVAL ?= 5s
 XIAN_BDS_DATA_DIR ?= ./.bds.db
 XIAN_BDS_DSN ?=
 XIAN_BDS_HOST ?= postgres
@@ -539,6 +541,8 @@ print-env:
 	@printf "XIAN_STACK_SECRETS_ENV=%s\n" "$(XIAN_STACK_SECRETS_ENV)"
 	@printf "XIAN_BDS_ENABLED=%s\n" "$(XIAN_BDS_ENABLED)"
 	@printf "XIAN_COMETBFT_HOME=%s\n" "$(XIAN_COMETBFT_HOME)"
+	@printf "XIAN_BLOCK_POLICY_MODE=%s\n" "$(XIAN_BLOCK_POLICY_MODE)"
+	@printf "XIAN_BLOCK_POLICY_INTERVAL=%s\n" "$(XIAN_BLOCK_POLICY_INTERVAL)"
 	@printf "XIAN_BDS_DATA_DIR=%s\n" "$(XIAN_BDS_DATA_DIR)"
 	@printf "XIAN_BDS_HOST=%s\n" "$(XIAN_BDS_HOST)"
 	@printf "XIAN_BDS_PORT=%s\n" "$(XIAN_BDS_PORT)"
@@ -816,7 +820,7 @@ node-init:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci init
 
 node-configure: guard-stack-security
-	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "xian-configure-node $(XIAN_BDS_ENABLED_FLAG) $(XIAN_APP_METRICS_ENABLED_FLAG) --metrics-host $(XIAN_APP_METRICS_LISTEN_HOST) --metrics-port $(XIAN_APP_METRICS_PORT) --metrics-bds-refresh-seconds $(XIAN_APP_METRICS_BDS_REFRESH_SECONDS) $(if $(XIAN_BDS_DSN),--bds-dsn $(XIAN_BDS_DSN),) --bds-host $(XIAN_BDS_HOST) --bds-port $(XIAN_BDS_PORT) --bds-database $(XIAN_BDS_DATABASE) --bds-user $(XIAN_BDS_USER) --bds-password $(XIAN_BDS_PASSWORD) --bds-pool-min-size $(XIAN_BDS_POOL_MIN_SIZE) --bds-pool-max-size $(XIAN_BDS_POOL_MAX_SIZE) --bds-statement-timeout-ms $(XIAN_BDS_STATEMENT_TIMEOUT_MS) --bds-acquire-timeout-ms $(XIAN_BDS_ACQUIRE_TIMEOUT_MS) --bds-application-name $(XIAN_BDS_APPLICATION_NAME) --bds-queue-max-size $(XIAN_BDS_QUEUE_MAX_SIZE) $(XIAN_BDS_CATCHUP_ENABLED_FLAG) --bds-catchup-poll-seconds $(XIAN_BDS_CATCHUP_POLL_SECONDS) $(if $(XIAN_BDS_RPC_URL),--bds-rpc-url $(XIAN_BDS_RPC_URL),) $(if $(XIAN_BDS_SPOOL_DIR),--bds-spool-dir $(XIAN_BDS_SPOOL_DIR),) --bds-spool-warn-entries $(XIAN_BDS_SPOOL_WARN_ENTRIES) --bds-spool-warn-bytes $(XIAN_BDS_SPOOL_WARN_BYTES) --bds-disk-free-warn-bytes $(XIAN_BDS_DISK_FREE_WARN_BYTES) ${CONFIGURE_ARGS}"
+	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "xian-configure-node $(XIAN_BDS_ENABLED_FLAG) $(XIAN_APP_METRICS_ENABLED_FLAG) --block-policy-mode $(XIAN_BLOCK_POLICY_MODE) --block-policy-interval $(XIAN_BLOCK_POLICY_INTERVAL) --metrics-host $(XIAN_APP_METRICS_LISTEN_HOST) --metrics-port $(XIAN_APP_METRICS_PORT) --metrics-bds-refresh-seconds $(XIAN_APP_METRICS_BDS_REFRESH_SECONDS) $(if $(XIAN_BDS_DSN),--bds-dsn $(XIAN_BDS_DSN),) --bds-host $(XIAN_BDS_HOST) --bds-port $(XIAN_BDS_PORT) --bds-database $(XIAN_BDS_DATABASE) --bds-user $(XIAN_BDS_USER) --bds-password $(XIAN_BDS_PASSWORD) --bds-pool-min-size $(XIAN_BDS_POOL_MIN_SIZE) --bds-pool-max-size $(XIAN_BDS_POOL_MAX_SIZE) --bds-statement-timeout-ms $(XIAN_BDS_STATEMENT_TIMEOUT_MS) --bds-acquire-timeout-ms $(XIAN_BDS_ACQUIRE_TIMEOUT_MS) --bds-application-name $(XIAN_BDS_APPLICATION_NAME) --bds-queue-max-size $(XIAN_BDS_QUEUE_MAX_SIZE) $(XIAN_BDS_CATCHUP_ENABLED_FLAG) --bds-catchup-poll-seconds $(XIAN_BDS_CATCHUP_POLL_SECONDS) $(if $(XIAN_BDS_RPC_URL),--bds-rpc-url $(XIAN_BDS_RPC_URL),) $(if $(XIAN_BDS_SPOOL_DIR),--bds-spool-dir $(XIAN_BDS_SPOOL_DIR),) --bds-spool-warn-entries $(XIAN_BDS_SPOOL_WARN_ENTRIES) --bds-spool-warn-bytes $(XIAN_BDS_SPOOL_WARN_BYTES) --bds-disk-free-warn-bytes $(XIAN_BDS_DISK_FREE_WARN_BYTES) ${CONFIGURE_ARGS}"
 
 node-id:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci show-node-id
