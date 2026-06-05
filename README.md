@@ -81,7 +81,8 @@ python3 ./scripts/backend.py localnet-up    --wait-for-health --rpc-timeout-seco
 python3 ./scripts/backend.py localnet-workload --scenario counter_basic
 ```
 
-Bootstrap the canonical DEX contracts on a running local node:
+Bootstrap DEX contracts on a running local node for stack validation. Product
+installs should normally use the `xian-dex`/`xian-cli` contract-pack flow:
 
 ```bash
 make localnet-up
@@ -188,8 +189,9 @@ python3 ./scripts/backend.py localnet-e2e
   required to understand the core node.
 - **Fail-closed network bindings.** Loopback by default; public exposure is
   always an explicit opt-in flag.
-- **Localnet flows are product safety nets.** They double as smoke gates for
-  cross-repo behavior, not just developer convenience.
+- **Localnet flows are product safety nets, not product packaging.** They
+  smoke-test cross-repo behavior after the core node starts; product repos own
+  their installer entrypoints.
 - **Independent sibling repos stay independent.** `xian-intentkit` and
   `xian-dex-automation` are attached as optional services without copying
   their topology into this repo.

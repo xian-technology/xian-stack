@@ -18,9 +18,10 @@ tooling behind `xian-stack`.
 - `localnet-init.py`: multi-node localnet creation, including local-only
   validator keys, bundle-backed genesis selection, fixed VM execution, and
   optional BDS wiring
-- `localnet-dex-bootstrap.py`: opt-in canonical DEX deployment for a running
-  local node or generated localnet; it deploys `con_pairs`, `con_dex`, optional
-  `con_dex_helper`, and a reusable local demo pool for DEX UI and event testing
+- `localnet-dex-bootstrap.py`: opt-in local DEX deployment harness for a
+  running local node or generated localnet; it deploys `con_pairs`, `con_dex`,
+  optional `con_dex_helper`, and a reusable local demo pool for DEX UI and
+  event testing
 - `localnet-workload.py`: deterministic workload execution against the localnet
 - `localnet-tps-bench.py`: repeatable throughput sweeps for a running localnet;
   it writes benchmark artifacts under `.artifacts/tps-bench/` and reports both
@@ -66,11 +67,11 @@ tooling behind `xian-stack`.
 - `network.json` under `.localnet/` includes local-only validator private keys
   for automated governance flows. Treat it as disposable dev material and do
   not reuse it outside the local test network.
-- `localnet-dex-bootstrap.py` is post-start bootstrap, not a genesis mutation.
-  The base contract bundle remains unchanged; local DEX availability is an
-  explicit operator action. By default it consumes the hash-pinned DEX contract
-  pack bundle from `xian-configs`; raw source directory overrides are only for
-  development.
+- `localnet-dex-bootstrap.py` is a post-start local harness, not a genesis
+  mutation and not product packaging. The base contract bundle remains
+  unchanged; local DEX availability is an explicit operator action. Product
+  entrypoints live in `xian-dex`, and this stack script remains available for
+  release/e2e validation and low-level local debugging.
 - The protocol safety runner should be executed through `uv` with the
   `xian-abci` project and local `xian-py` package available, preferably through
   `make localnet-protocol-safety`.
