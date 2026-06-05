@@ -23,8 +23,6 @@ jobs:
       xian_contracting_ref: ${{ steps.resolve.outputs.xian_contracting_ref }}
       xian_py_repository: ${{ steps.resolve.outputs.xian_py_repository }}
       xian_py_ref: ${{ steps.resolve.outputs.xian_py_ref }}
-      xian_stable_protocol_repository: ${{ steps.resolve.outputs.xian_stable_protocol_repository }}
-      xian_stable_protocol_ref: ${{ steps.resolve.outputs.xian_stable_protocol_ref }}
       python_image: ${{ steps.resolve.outputs.python_image }}
       go_image: ${{ steps.resolve.outputs.go_image }}
       rust_image: ${{ steps.resolve.outputs.rust_image }}
@@ -99,13 +97,6 @@ jobs:
           repository: ${{ needs.release-manifest.outputs.xian_py_repository }}
           ref: ${{ needs.release-manifest.outputs.xian_py_ref }}
           path: xian-py
-
-      - name: Check out xian-stable-protocol
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ needs.release-manifest.outputs.xian_stable_protocol_repository }}
-          ref: ${{ needs.release-manifest.outputs.xian_stable_protocol_ref }}
-          path: xian-stable-protocol
 
       - name: Check out xian-cli
         uses: actions/checkout@v6
@@ -380,7 +371,6 @@ jobs:
           xian_configs_ref=${{ needs.release-manifest.outputs.xian_configs_ref }}
           xian_contracting_ref=${{ needs.release-manifest.outputs.xian_contracting_ref }}
           xian_py_ref=${{ needs.release-manifest.outputs.xian_py_ref }}
-          xian_stable_protocol_ref=${{ needs.release-manifest.outputs.xian_stable_protocol_ref }}
           EOF
           export XIAN_RELEASE_VERSION="${GITHUB_REF_NAME#v}"
           python3 - <<'PY'
