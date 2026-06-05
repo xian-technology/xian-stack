@@ -6712,6 +6712,11 @@ class E2ERunner:
                     "XIAN_SHIELDED_RELAYER_MIN_NOTE_RELAYER_FEE": "1",
                 }
             )
+            stop_shielded_relayer_runtime(
+                bind_host=DEFAULT_SHIELDED_RELAYER_HOST,
+                port=DEFAULT_SHIELDED_RELAYER_PORT,
+                env=relayer_env,
+            )
             relayer_runtime_status = start_shielded_relayer_runtime(
                 bind_host=DEFAULT_SHIELDED_RELAYER_HOST,
                 port=DEFAULT_SHIELDED_RELAYER_PORT,
