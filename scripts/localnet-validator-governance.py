@@ -279,14 +279,46 @@ def run_cmd(
     env: dict[str, str] | None = None,
     capture_output: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        cmd,
-        cwd=cwd,
-        env=env,
-        check=True,
-        capture_output=capture_output,
-        text=True,
-    )
+    try:
+        return subprocess.run(
+            cmd,
+            cwd=cwd,
+            env=env,
+            check=True,
+            capture_output=capture_output,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RunnerError(format_subprocess_error(exc)) from exc
+
+
+def format_subprocess_error(
+    exc: subprocess.CalledProcessError,
+    *,
+    max_lines: int = 80,
+) -> str:
+    command = exc.cmd
+    if isinstance(command, (list, tuple)):
+        command_str = " ".join(str(part) for part in command)
+    else:
+        command_str = str(command)
+
+    def tail(text: str | None) -> str:
+        if not text:
+            return ""
+        lines = text.strip().splitlines()
+        if len(lines) <= max_lines:
+            return "\n".join(lines)
+        return "\n".join(["..."] + lines[-max_lines:])
+
+    lines = [f"command failed with exit code {exc.returncode}: {command_str}"]
+    stdout_tail = tail(exc.stdout)
+    stderr_tail = tail(exc.stderr)
+    if stdout_tail:
+        lines.extend(["", "stdout (tail):", stdout_tail])
+    if stderr_tail:
+        lines.extend(["", "stderr (tail):", stderr_tail])
+    return "\n".join(lines)
 
 
 def run_make(target: str, *, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
