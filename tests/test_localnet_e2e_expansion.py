@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import inspect
 import sys
 import tempfile
 import unittest
@@ -90,6 +91,18 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                 hasattr(localnet_e2e.E2ERunner, phase.method_name),
                 msg=f"missing phase method for {phase.name}: {phase.method_name}",
             )
+
+    def test_orchestration_phase_covers_pending_callback_overlay(self) -> None:
+        workload_dir = Path(__file__).resolve().parents[1] / "workloads" / "e2e"
+        controller_source = (workload_dir / "pending_overlay_controller.py").read_text()
+        adapter_source = (workload_dir / "pending_overlay_adapter.py").read_text()
+        phase_source = inspect.getsource(localnet_e2e.E2ERunner.contract_orchestration_phase)
+
+        self.assertIn("adapter_spend_public", controller_source)
+        self.assertIn("get_active_public_spend_remaining", adapter_source)
+        self.assertIn("adapter did not see the controller's pending spend budget", adapter_source)
+        self.assertIn("pending_overlay_path", phase_source)
+        self.assertIn("orchestration-pending-overlay", phase_source)
 
     def test_cli_exposes_throughput_mix_sizing_knobs(self) -> None:
         args = localnet_e2e.build_parser().parse_args(

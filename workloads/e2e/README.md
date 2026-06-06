@@ -14,6 +14,10 @@ multi-phase localnet end-to-end runner.
 - `orchestration_router.py`: dynamic contract and function dispatch helper
 - `orchestration_mid.py`: mid-hop contract for caller/signer chain checks
 - `orchestration_root.py`: root-hop contract for nested ctx semantics
+- `pending_overlay_controller.py`: controller-side pending state probe for
+  nested callback visibility
+- `pending_overlay_adapter.py`: adapter-side callback probe that consumes the
+  controller's pending budget before the outer call commits
 - `patch_target.py`: simple state-patch target contract
 
 ```mermaid
@@ -26,5 +30,6 @@ flowchart LR
   E2E --> Conflict["conflict_guard"]
   E2E --> Atomic["atomic_rollback"]
   E2E --> Allocation["allocation_guards"]
+  E2E --> Overlay["pending_overlay"]
   E2E --> Patch["patch_target"]
 ```

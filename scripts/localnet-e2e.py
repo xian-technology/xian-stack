@@ -2740,6 +2740,8 @@ class E2ERunner:
         router_name = f"con_orch_router_{suffix}"
         mid_name = f"con_orch_mid_{suffix}"
         root_name = f"con_orch_root_{suffix}"
+        overlay_controller_name = f"con_orch_overlay_controller_{suffix}"
+        overlay_adapter_name = f"con_orch_overlay_adapter_{suffix}"
         family_prefix = f"con_orch_family_{suffix}"
         failed_prefix = f"con_orch_fail_{suffix}"
         alpha_name = family_prefix + "_alpha"
@@ -2752,6 +2754,10 @@ class E2ERunner:
         router_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_router.py")
         mid_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_mid.py")
         root_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_root.py")
+        overlay_controller_code = read_text(
+            WORKLOADS_DIR / "e2e" / "pending_overlay_controller.py"
+        )
+        overlay_adapter_code = read_text(WORKLOADS_DIR / "e2e" / "pending_overlay_adapter.py")
 
         self.contracts.update(
             {
@@ -2759,6 +2765,8 @@ class E2ERunner:
                 "orchestration_router": router_name,
                 "orchestration_mid": mid_name,
                 "orchestration_root": root_name,
+                "orchestration_overlay_controller": overlay_controller_name,
+                "orchestration_overlay_adapter": overlay_adapter_name,
                 "orchestrated_alpha": alpha_name,
                 "orchestrated_beta": beta_name,
             }
@@ -2767,11 +2775,17 @@ class E2ERunner:
 
         async with self.client(operator, 1, session) as client:
             deployments = []
-            for name, code in (
-                (factory_name, factory_code),
-                (router_name, router_code),
-                (mid_name, mid_code),
-                (root_name, root_code),
+            for name, code, constructor_args in (
+                (factory_name, factory_code, None),
+                (router_name, router_code, None),
+                (mid_name, mid_code, None),
+                (root_name, root_code, None),
+                (overlay_controller_name, overlay_controller_code, None),
+                (
+                    overlay_adapter_name,
+                    overlay_adapter_code,
+                    {"controller_contract": overlay_controller_name},
+                ),
             ):
                 existing_contract = await client.get_contract_source(name)
                 if existing_contract is not None:
@@ -2786,6 +2800,7 @@ class E2ERunner:
                 submission = await client.submit_contract(
                     name=name,
                     **self.contract_submission_kwargs(name=name, code=code),
+                    args=constructor_args,
                     chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
                     mode="commit",
                 )
@@ -2968,6 +2983,61 @@ class E2ERunner:
             raise E2EError("leaf entry context did not preserve the root entrypoint")
         if alpha_touch_total != 3:
             raise E2EError("dynamic touch did not persist the expected leaf state")
+
+        overlay_amount = 17
+        overlay_recipient = recipient.public_key
+        overlay_tag = f"pending-overlay-{short_hash(self.run_id)}"
+        overlay_submission = await self.send_tx_with_broadcast_failover(
+            session,
+            operator,
+            overlay_controller_name,
+            "spend_via_adapter",
+            {
+                "adapter_contract": overlay_adapter_name,
+                "amount": overlay_amount,
+                "recipient": overlay_recipient,
+                "tag": overlay_tag,
+            },
+            preferred_index=3,
+            excluded_indices=None,
+            chi=CONTRACT_ORCHESTRATION_TX_CHI["dynamic_call"],
+            label="orchestration-pending-overlay",
+            timeout_seconds=self.args.rpc_timeout_seconds,
+        )
+        overlay_receipt = ensure_positive_submission(
+            overlay_submission,
+            label="orchestration-pending-overlay",
+        )
+        overlay_last_before = await self.wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract=overlay_controller_name,
+            variable="spend",
+            keys=["last_before"],
+            expected=overlay_amount,
+            label="pending overlay adapter saw parent write",
+            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+        )
+        overlay_last_after = await self.wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract=overlay_controller_name,
+            variable="spend",
+            keys=["last_after"],
+            expected=0,
+            label="pending overlay budget consumed",
+            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+        )
+        overlay_last_to = await self.wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract=overlay_controller_name,
+            variable="metadata",
+            keys=["last_to"],
+            expected=overlay_recipient,
+            label="pending overlay recipient recorded",
+            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+        )
 
         direct_allowance = 321
         direct_spend = 123
@@ -3426,6 +3496,15 @@ class E2ERunner:
                 "tampered_contract_absent": bad_artifact_absent,
             },
             "chain_preview": normalize_value(chain_preview),
+            "pending_overlay_path": {
+                "controller": overlay_controller_name,
+                "adapter": overlay_adapter_name,
+                "amount": overlay_amount,
+                "receipt": overlay_receipt,
+                "last_before_state": overlay_last_before,
+                "last_after_state": overlay_last_after,
+                "last_to_state": overlay_last_to,
+            },
             "currency_allowance_path": {
                 "direct_approve_receipt": direct_approve_receipt,
                 "direct_allowance_state": direct_allowance_state,
