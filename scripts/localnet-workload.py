@@ -77,6 +77,7 @@ class BroadcastRecord:
     function: str
     rpc_url: str
     sender: str
+    nonce: int | None
     expected_success: bool
     expected_message: str | None
     response: TransactionSubmission
@@ -478,6 +479,7 @@ class WorkloadContext:
             function=function,
             rpc_url=self.nodes[submission_index].rpc_url,
             sender=wallet.public_key,
+            nonce=reserved_nonce,
             expected_success=expected_success,
             expected_message=expected_message,
             response=response,
@@ -504,6 +506,13 @@ class WorkloadContext:
 
         worker_count = max(1, min(max_workers, len(records)))
         semaphore = asyncio.Semaphore(worker_count)
+        lanes: dict[str, list[tuple[int, BroadcastRecord]]] = {}
+
+        for index, record in enumerate(records):
+            lanes.setdefault(record.sender, []).append((index, record))
+
+        for lane_records in lanes.values():
+            lane_records.sort(key=lambda item: (item[1].nonce is None, item[1].nonce or 0, item[0]))
 
         async def resolve_one(record: BroadcastRecord) -> None:
             async with semaphore:
@@ -512,7 +521,14 @@ class WorkloadContext:
                     timeout_seconds=timeout_seconds,
                 )
 
-        await asyncio.gather(*(resolve_one(record) for record in records))
+        async def resolve_lane(lane_records: list[tuple[int, BroadcastRecord]]) -> None:
+            # Transactions from one sender have nonce dependencies; resolving a
+            # later nonce before an earlier one can cause false rebroadcast
+            # failures under async burst load.
+            for _index, record in lane_records:
+                await resolve_one(record)
+
+        await asyncio.gather(*(resolve_lane(lane_records) for lane_records in lanes.values()))
 
     async def _resolve_record(
         self,

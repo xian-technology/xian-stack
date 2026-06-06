@@ -27,10 +27,7 @@ STACK_DIR = SCRIPT_DIR.parent
 ROOT_DIR = STACK_DIR.parent
 WORKLOADS_DIR = STACK_DIR / "workloads"
 NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
-DEFAULT_XIAN_CONFIGS_DIR = ROOT_DIR / "xian-configs"
-DEFAULT_DEX_BUNDLE_PATH = (
-    DEFAULT_XIAN_CONFIGS_DIR / "contract-packs" / "dex" / "contract-bundle.json"
-)
+DEFAULT_DEX_BUNDLE_PATH = ROOT_DIR / "xian-dex" / "contract-bundle.json"
 DEFAULT_VALIDATOR_KEY_PATH = STACK_DIR / ".cometbft" / "config" / "priv_validator_key.json"
 XIAN_CONTRACTING_SRC = ROOT_DIR / "xian-contracting" / "src"
 XIAN_CLI_SRC = ROOT_DIR / "xian-cli" / "src"
@@ -768,7 +765,7 @@ def parse_args() -> argparse.Namespace:
         "--dex-bundle",
         type=Path,
         default=Path(os.environ.get("XIAN_DEX_BUNDLE", DEFAULT_DEX_BUNDLE_PATH)),
-        help=("hash-pinned DEX contract bundle; defaults to xian-configs/contract-packs/dex"),
+        help=("hash-pinned DEX contract bundle; defaults to xian-dex/contract-bundle.json"),
     )
     parser.add_argument(
         "--dex-contracts-dir",

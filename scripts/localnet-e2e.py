@@ -92,7 +92,7 @@ CONTRACT_ORCHESTRATION_TX_CHI = {
     "dynamic_call": 50_000,
 }
 X402_CONTRACT_SOURCE = (
-    ROOT_DIR / "xian-configs" / "examples" / "x402-exact" / "contracts" / "x402_settlement.s.py"
+    ROOT_DIR / "xian-py" / "examples" / "x402_exact" / "contracts" / "x402_settlement.s.py"
 )
 X402_PAYMENT_AMOUNT = Decimal("0.001")
 X402_SETTLEMENT_TX_CHI = 15_000
@@ -1290,7 +1290,12 @@ class E2ERunner:
 
     async def run_phase(self, name: str, fn) -> dict[str, Any]:
         started = datetime.now(UTC).isoformat()
-        details = await fn()
+        print(f"[localnet-e2e] starting {name}", flush=True)
+        try:
+            details = await fn()
+        except Exception:
+            print(f"[localnet-e2e] failed {name}", flush=True)
+            raise
         ended = datetime.now(UTC).isoformat()
         phase = PhaseResult(
             name=name,
@@ -1300,6 +1305,7 @@ class E2ERunner:
             details=details,
         )
         self.write_phase(phase)
+        print(f"[localnet-e2e] completed {name}", flush=True)
         return details
 
     async def submit_tx(
@@ -5261,6 +5267,11 @@ class E2ERunner:
             self.client(node2_wallet, 2, session) as node2,
             self.client(node3_wallet, 3, session) as node3,
         ):
+            print(
+                "[localnet-e2e] 12-validator-governance intentionally stopping node-4 "
+                "while member power changes apply",
+                flush=True,
+            )
             node4_stop = await self.stop_node_runtime(node4)
             power_vote = await self.approve_members_vote(
                 node0,
@@ -5289,6 +5300,11 @@ class E2ERunner:
             )
             if power_record["power"] != 15:
                 raise E2EError("validator power change did not apply")
+            print(
+                "[localnet-e2e] 12-validator-governance restarting node-4 "
+                "to verify member-power catch-up",
+                flush=True,
+            )
             node4_restart = await self.start_node_runtime(
                 session,
                 node4,
@@ -5553,6 +5569,11 @@ class E2ERunner:
         else:
             proposal_vote = None
 
+        print(
+            "[localnet-e2e] 13-state-patch intentionally stopping node-4 "
+            "through activation to verify patch catch-up",
+            flush=True,
+        )
         node4_stop = await self.stop_node_runtime(node4)
 
         current_height = int(
@@ -5606,6 +5627,10 @@ class E2ERunner:
                 service.rpc_url,
                 f"/state_patches_for_block/{activation_height}",
             )
+        print(
+            "[localnet-e2e] 13-state-patch restarting node-4 after activation",
+            flush=True,
+        )
         node4_restart = await self.start_node_runtime(
             session,
             node4,
@@ -5952,11 +5977,11 @@ class E2ERunner:
                 "shielded token root history window drifted: "
                 f"{proof_config['root_history_window']!r}"
             )
-        if proof_config["circuit_family"] != "shielded_note_v3":
+        if proof_config["circuit_family"] != "shielded_note_v4":
             raise E2EError("shielded token circuit family drifted")
-        if relay_proof_config["circuit_family"] != "shielded_command_v4":
+        if relay_proof_config["circuit_family"] != "shielded_command_v5":
             raise E2EError("shielded relay circuit family drifted")
-        if relay_proof_config["statement_version"] != "4":
+        if relay_proof_config["statement_version"] != "5":
             raise E2EError("shielded relay statement version drifted")
         if initial_tree_state["root"] != zero_root or initial_tree_state["note_count"] != 0:
             raise E2EError("shielded token did not start from the zero root")
@@ -7563,6 +7588,11 @@ class E2ERunner:
             ]
             cycle_claims = []
             pre_heights = await latest_heights(session, self.nodes)
+            print(
+                f"[localnet-e2e] 17-chaos-convergence intentionally stopping "
+                f"{target_node.moniker} for cycle {cycle_index}",
+                flush=True,
+            )
             stop = await self.stop_node_runtime(target_node)
 
             for tx_index in range(max(self.args.chaos_load_transactions, 1)):
@@ -7594,6 +7624,11 @@ class E2ERunner:
             )
 
             anchor_height = await latest_height(session, self.nodes[0].rpc_url)
+            print(
+                f"[localnet-e2e] 17-chaos-convergence restarting "
+                f"{target_node.moniker} for cycle {cycle_index}",
+                flush=True,
+            )
             restart = await self.start_node_runtime(
                 session,
                 target_node,

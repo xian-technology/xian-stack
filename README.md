@@ -81,8 +81,9 @@ python3 ./scripts/backend.py localnet-up    --wait-for-health --rpc-timeout-seco
 python3 ./scripts/backend.py localnet-workload --scenario counter_basic
 ```
 
-Bootstrap DEX contracts on a running local node for stack validation. Product
-installs should normally use the `xian-dex`/`xian-cli` contract-pack flow:
+Bootstrap DEX contracts on a running local node for stack validation. General
+DEX installs should use the repo-owned bootstrap script in `xian-dex`; this
+make target is a stack validation convenience:
 
 ```bash
 make localnet-up
@@ -166,6 +167,11 @@ The localnet harnesses are intentionally heavier than a clean topology. A
 clean five-node network tells you that the validators can start and peer. The
 e2e harness tells you that the product stack still behaves under realistic
 contract, indexer, governance, recovery, and restart pressure.
+
+`localnet-e2e` prints `[localnet-e2e] starting ...` and `completed ...` phase
+markers. Per-phase JSON, the final node report, and the summary live under
+`.artifacts/localnet-e2e/<run-id>/`; use those files to resume or debug a long
+run without guessing which layer is active.
 
 For automation, prefer the backend command equivalents where available:
 
