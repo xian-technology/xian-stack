@@ -144,7 +144,6 @@ COPY --from=xian-configs README.md /opt/xian-configs/README.md
 COPY --from=xian-configs contracts /opt/xian-configs/contracts
 COPY --from=xian-configs networks /opt/xian-configs/networks
 COPY --from=xian-configs templates /opt/xian-configs/templates
-COPY --from=xian-configs contract-templates /opt/xian-configs/contract-templates
 COPY --from=python-wheel-builder /tmp/wheels /tmp/wheels
 COPY --from=python-wheel-builder /tmp/build/python-runtime-requirements.txt /tmp/python-runtime-requirements.txt
 COPY --from=cometbft-builder /out/cometbft /usr/local/bin/cometbft

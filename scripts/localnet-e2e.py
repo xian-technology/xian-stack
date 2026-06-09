@@ -264,6 +264,7 @@ def make_localnet_env(args: argparse.Namespace) -> dict[str, str]:
     env["XIAN_LOCALNET_APP_LOG_LEVEL"] = args.log_level
     env["XIAN_LOCALNET_APP_LOG_JSON"] = "0"
     env["XIAN_LOCALNET_TRANSACTION_TRACE_LOGGING"] = "0"
+    env["XIAN_LOCALNET_RUNTIME_FEATURE_ZK"] = "1"
     env["LOCALNET_NODES"] = str(args.nodes)
     env["XIAN_LOCALNET_TOPOLOGY"] = args.topology
     return env
@@ -2309,6 +2310,7 @@ class E2ERunner:
                 "XIAN_LOCALNET_BDS_NODE_INDEX": env["XIAN_LOCALNET_BDS_NODE_INDEX"],
                 "XIAN_LOCALNET_PORT_OFFSET": env["XIAN_LOCALNET_PORT_OFFSET"],
                 "XIAN_LOCALNET_APP_LOG_LEVEL": env["XIAN_LOCALNET_APP_LOG_LEVEL"],
+                "XIAN_LOCALNET_RUNTIME_FEATURE_ZK": env["XIAN_LOCALNET_RUNTIME_FEATURE_ZK"],
                 "XIAN_LOCALNET_TOPOLOGY": env["XIAN_LOCALNET_TOPOLOGY"],
                 "LOCALNET_NODES": env["LOCALNET_NODES"],
             }

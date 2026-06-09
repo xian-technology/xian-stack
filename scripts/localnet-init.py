@@ -382,6 +382,7 @@ def main():
         DEFAULT_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED,
     )
     transaction_trace_logging = env_bool("XIAN_LOCALNET_TRANSACTION_TRACE_LOGGING", False)
+    runtime_feature_zk = env_bool("XIAN_LOCALNET_RUNTIME_FEATURE_ZK", False)
     app_log_level = env_str("XIAN_LOCALNET_APP_LOG_LEVEL", "INFO")
     app_log_json = env_bool("XIAN_LOCALNET_APP_LOG_JSON", False)
     app_log_rotation_hours = env_int("XIAN_LOCALNET_APP_LOG_ROTATION_HOURS", 1)
@@ -463,6 +464,7 @@ def main():
         validators=validators,
         network=args.genesis_network,
         contracts_dir=CONFIGS_DIR / "contracts",
+        runtime_features={"zk": runtime_feature_zk},
     )
     print(f"  Genesis has {len(genesis.get('validators', []))} validators")
 
@@ -531,6 +533,9 @@ def main():
         "topology": args.topology,
         "execution": {
             "mode": VM_EXECUTION_MODE,
+        },
+        "runtime_features": {
+            "zk": runtime_feature_zk,
         },
         "nodes": [
             {
