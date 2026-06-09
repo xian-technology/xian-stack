@@ -212,7 +212,8 @@ python3 ./scripts/backend.py localnet-e2e
 - `monitoring/` — Prometheus, Grafana dashboards (including dedicated
   `Xian VM Runtime` and `Xian BDS Recovery`), and alert variants.
 - `workloads/` — localnet workload fixtures and contracts.
-- `contracts/` — built-in contract bundles deployed by localnet bootstrap.
+- `contracts/` — stack-local runtime contract mount; localnet bootstrap pulls
+  product bundles from their owning repos (e.g. `xian-dex`).
 - `tests/` — backend, smoke, and harness coverage.
 - `docs/` — runtime, release, and governance notes.
 
