@@ -428,32 +428,6 @@ LOCALNET_PROTOCOL_SAFETY_LOG_LEVEL ?= INFO
 LOCALNET_PROTOCOL_SAFETY_RPC_TIMEOUT_SECONDS ?= 180
 LOCALNET_PROTOCOL_SAFETY_GENESIS_NETWORK ?= testnet
 
-# Backward-compatible overrides for the retired localnet-validator-governance name.
-ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_BOOTSTRAP), undefined)
-LOCALNET_PROTOCOL_SAFETY_BOOTSTRAP := $(LOCALNET_VALIDATOR_GOVERNANCE_BOOTSTRAP)
-endif
-ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_BUILD), undefined)
-LOCALNET_PROTOCOL_SAFETY_BUILD := $(LOCALNET_VALIDATOR_GOVERNANCE_BUILD)
-endif
-ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_NODES), undefined)
-LOCALNET_PROTOCOL_SAFETY_NODES := $(LOCALNET_VALIDATOR_GOVERNANCE_NODES)
-endif
-ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_PORT_OFFSET), undefined)
-LOCALNET_PROTOCOL_SAFETY_PORT_OFFSET := $(LOCALNET_VALIDATOR_GOVERNANCE_PORT_OFFSET)
-endif
-ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_SEED), undefined)
-LOCALNET_PROTOCOL_SAFETY_SEED := $(LOCALNET_VALIDATOR_GOVERNANCE_SEED)
-endif
-ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_LOG_LEVEL), undefined)
-LOCALNET_PROTOCOL_SAFETY_LOG_LEVEL := $(LOCALNET_VALIDATOR_GOVERNANCE_LOG_LEVEL)
-endif
-ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_RPC_TIMEOUT_SECONDS), undefined)
-LOCALNET_PROTOCOL_SAFETY_RPC_TIMEOUT_SECONDS := $(LOCALNET_VALIDATOR_GOVERNANCE_RPC_TIMEOUT_SECONDS)
-endif
-ifneq ($(origin LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK), undefined)
-LOCALNET_PROTOCOL_SAFETY_GENESIS_NETWORK := $(LOCALNET_VALIDATOR_GOVERNANCE_GENESIS_NETWORK)
-endif
-
 .DEFAULT_GOAL := help
 
 .PHONY: help print-env validate release-safety smoke smoke-cli guard-stack-security prepare-dirs \
@@ -469,7 +443,7 @@ endif
 	storage-report \
 	localnet-init localnet-build localnet-up localnet-down localnet-status \
 	localnet-workload localnet-memwatch localnet-leak-hunt localnet-e2e localnet-node-report localnet-parallel-e2e localnet-vm-tps-bench localnet-protocol-safety \
-	localnet-validator-governance localnet-clean localnet-logs localnet-shell
+	localnet-clean localnet-logs localnet-shell
 
 help:
 	@printf "Available targets:\n"
@@ -998,10 +972,6 @@ localnet-protocol-safety:
 		--seed "$(LOCALNET_PROTOCOL_SAFETY_SEED)" \
 		--log-level "$(LOCALNET_PROTOCOL_SAFETY_LOG_LEVEL)" \
 		--rpc-timeout-seconds $(LOCALNET_PROTOCOL_SAFETY_RPC_TIMEOUT_SECONDS)
-
-localnet-validator-governance:
-	@printf '%s\n' "localnet-validator-governance is deprecated; use localnet-protocol-safety." >&2
-	@$(MAKE) localnet-protocol-safety
 
 localnet-logs:
 	$(LOCALNET_COMPOSE) logs -f --tail=50
