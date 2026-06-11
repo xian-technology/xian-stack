@@ -2760,9 +2760,7 @@ class E2ERunner:
         router_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_router.py")
         mid_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_mid.py")
         root_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_root.py")
-        overlay_controller_code = read_text(
-            WORKLOADS_DIR / "e2e" / "pending_overlay_controller.py"
-        )
+        overlay_controller_code = read_text(WORKLOADS_DIR / "e2e" / "pending_overlay_controller.py")
         overlay_adapter_code = read_text(WORKLOADS_DIR / "e2e" / "pending_overlay_adapter.py")
 
         self.contracts.update(
@@ -5460,9 +5458,7 @@ class E2ERunner:
                 if auto_policy["selection_mode"] != "auto_top_n":
                     raise E2EError("auto_top_n policy switch did not apply")
                 if auto_active_accounts != expected_active_accounts:
-                    raise E2EError(
-                        "auto_top_n switch changed the 5-node active set unexpectedly"
-                    )
+                    raise E2EError("auto_top_n switch changed the 5-node active set unexpectedly")
 
                 hybrid_policy_vote = await self.approve_members_vote(
                     node0,

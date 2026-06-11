@@ -90,9 +90,7 @@ class LocalnetProtocolSafetyTests(unittest.TestCase):
         )
 
     def test_recover_lagging_nodes_restarts_abci_unresponsive_node(self) -> None:
-        args = localnet_protocol_safety.build_parser().parse_args(
-            ["--rpc-timeout-seconds", "30"]
-        )
+        args = localnet_protocol_safety.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.object(
                 localnet_protocol_safety,

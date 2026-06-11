@@ -37,7 +37,6 @@ PERF_BLOCK_METRICS = (
     "finalize_result_assembly",
     "finalize_evidence",
     "finalize_epoch_rebalance",
-    "finalize_rewards",
     "finalize_commit_prepare",
     "finalize_bds_enqueue",
 )

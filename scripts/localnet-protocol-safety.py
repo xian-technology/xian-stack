@@ -1069,8 +1069,7 @@ class ProtocolSafetyRunner:
 
         if last_proposal is previous_proposal and last_error:
             raise RunnerError(
-                f"governance proposal {proposal_id} progress could not be read; "
-                f"last={last_error}"
+                f"governance proposal {proposal_id} progress could not be read; last={last_error}"
             )
         return last_proposal
 
