@@ -373,6 +373,33 @@ def set_json_version(path: Path, version: str) -> bool:
     return True
 
 
+def chrome_extension_version(version: str) -> str:
+    parsed = parse_semver(version)
+    if parsed.prerelease is None:
+        build = 65535
+    else:
+        channel = str(parsed.prerelease[0])
+        offsets = {"alpha": 10000, "beta": 20000, "rc": 30000}
+        if channel not in offsets:
+            raise ReleaseError(f"Unsupported Chrome extension prerelease channel: {channel}")
+        number = parsed.prerelease[-1] if isinstance(parsed.prerelease[-1], int) else 1
+        build = offsets[channel] + number
+    if build > 65535:
+        raise ReleaseError(f"Chrome extension build component is too large for {version}")
+    return f"{parsed.major}.{parsed.minor}.{parsed.patch}.{build}"
+
+
+def set_chrome_manifest_version(path: Path, version: str) -> bool:
+    payload = read_json(path)
+    chrome_version = chrome_extension_version(version)
+    if payload.get("version") == chrome_version and payload.get("version_name") == version:
+        return False
+    payload["version"] = chrome_version
+    payload["version_name"] = version
+    write_json(path, payload)
+    return True
+
+
 def update_json_dependencies(path: Path, updates: dict[str, str]) -> bool:
     payload = read_json(path)
     changed = False
@@ -500,6 +527,7 @@ def read_source_version(unit: ReleaseUnit) -> str | None:
             },
         )
     if unit.key == "xian-wallet-browser":
+        extension_manifest = read_json(repo_path / "apps/wallet-extension/public/manifest.json")
         return ensure_matching_versions(
             "xian-wallet-browser",
             {
@@ -510,9 +538,9 @@ def read_source_version(unit: ReleaseUnit) -> str | None:
                 "apps/wallet-extension/package.json": read_json(
                     repo_path / "apps/wallet-extension/package.json"
                 )["version"],
-                "apps/wallet-extension/public/manifest.json": read_json(
-                    repo_path / "apps/wallet-extension/public/manifest.json"
-                )["version"],
+                "apps/wallet-extension/public/manifest.json version_name": extension_manifest.get(
+                    "version_name", extension_manifest["version"]
+                ),
             },
         )
     if unit.key == "xian-stack":
@@ -1050,7 +1078,9 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
         record_change(
             changed_paths,
             repo_path / "apps/wallet-extension/public/manifest.json",
-            set_json_version(repo_path / "apps/wallet-extension/public/manifest.json", version),
+            set_chrome_manifest_version(
+                repo_path / "apps/wallet-extension/public/manifest.json", version
+            ),
         )
         record_change(
             changed_paths,
