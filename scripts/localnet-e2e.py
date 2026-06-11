@@ -140,8 +140,6 @@ try:  # noqa: SIM105
         output_payload_hashes,
         recover_encrypted_notes,
         scan_notes,
-        shielded_registry_manifest,
-        shielded_relay_registry_manifest,
         tree_state,
     )
 except Exception as exc:  # noqa: BLE001
@@ -6100,8 +6098,106 @@ class E2ERunner:
                 )
             prover = ShieldedNoteProver.build_insecure_dev_bundle()
             relay_prover = ShieldedRelayTransferProver.build_insecure_dev_bundle()
-            registry_manifest = shielded_registry_manifest(prover)
-            relay_registry_manifest = shielded_relay_registry_manifest(relay_prover)
+            promotion_ceremony = f"localnet-e2e-promote-{short_hash(self.run_id)}"
+            promotion_dir = self.output_dir / "shielded-promotion"
+            promotion_input_dir = promotion_dir / "input-bundles"
+            promotion_output_dir = promotion_dir / "promoted"
+            promotion_input_dir.mkdir(parents=True, exist_ok=True)
+
+            note_bundle = dict(prover.bundle)
+            note_bundle.update(
+                {
+                    "contract_name": token_name,
+                    "setup_mode": "ceremony-import",
+                    "setup_ceremony": promotion_ceremony,
+                    "warning": (
+                        "LOCALNET E2E ONLY: dev proving material relabeled to exercise "
+                        "the ceremony-import promotion handoff."
+                    ),
+                }
+            )
+            relay_bundle = dict(relay_prover.bundle)
+            relay_bundle.update(
+                {
+                    "contract_name": token_name,
+                    "setup_mode": "ceremony-import",
+                    "setup_ceremony": promotion_ceremony,
+                    "warning": (
+                        "LOCALNET E2E ONLY: dev proving material relabeled to exercise "
+                        "the ceremony-import promotion handoff."
+                    ),
+                }
+            )
+            note_bundle_path = promotion_input_dir / "ceremony-note-bundle.json"
+            relay_bundle_path = promotion_input_dir / "ceremony-relay-command-bundle.json"
+            write_private_json(note_bundle_path, note_bundle)
+            write_private_json(relay_bundle_path, relay_bundle)
+
+            promotion_result = run_cmd(
+                [
+                    "uv",
+                    "run",
+                    "--project",
+                    str(ROOT_DIR / "xian-contracting" / "packages" / "xian-zk"),
+                    "--python",
+                    CURRENT_UV_PYTHON,
+                    "xian-zk-shielded-bundle",
+                    "promote",
+                    "--network",
+                    self.args.genesis_network,
+                    "--contract-name",
+                    token_name,
+                    "--note-bundle",
+                    str(note_bundle_path),
+                    "--relay-command-bundle",
+                    str(relay_bundle_path),
+                    "--output-dir",
+                    str(promotion_output_dir),
+                    "--overwrite",
+                ],
+                cwd=STACK_DIR,
+            )
+            promoted_note_bundle_text = read_text(
+                promotion_output_dir / "shielded-note-bundle.json"
+            )
+            promoted_relay_bundle_text = read_text(
+                promotion_output_dir / "shielded-relay-command-bundle.json"
+            )
+            prover = ShieldedNoteProver(promoted_note_bundle_text)
+            relay_prover = ShieldedRelayTransferProver(promoted_relay_bundle_text)
+            registry_manifest = json.loads(
+                read_text(promotion_output_dir / "shielded-note-registry-manifest.json")
+            )
+            relay_registry_manifest = json.loads(
+                read_text(promotion_output_dir / "shielded-relay-registry-manifest.json")
+            )
+            promotion_summary = json.loads(
+                read_text(promotion_output_dir / "promotion-summary.json")
+            )
+            promotion_catalog_entries = json.loads(
+                read_text(promotion_output_dir / "catalog-artifacts-snippet.json")
+            )
+            register_helper_path = promotion_output_dir / "register_and_bind.py"
+            compile(read_text(register_helper_path), str(register_helper_path), "exec")
+            if promotion_summary.get("network") != self.args.genesis_network:
+                raise E2EError("shielded promotion summary network drifted")
+            if promotion_summary.get("contract_name") != token_name:
+                raise E2EError("shielded promotion summary contract drifted")
+            if promotion_summary.get("operator_script") != "register_and_bind.py":
+                raise E2EError("shielded promotion helper was not generated")
+            if [entry.get("kind") for entry in promotion_catalog_entries] != [
+                "shielded_note",
+                "shielded_relay",
+            ]:
+                raise E2EError("shielded promotion catalog entries drifted")
+            for entry in [
+                *registry_manifest["registry_entries"],
+                *relay_registry_manifest["registry_entries"],
+            ]:
+                if entry.get("setup_mode") != "ceremony-import":
+                    raise E2EError("shielded promotion did not preserve ceremony-import mode")
+                if entry.get("setup_ceremony") != promotion_ceremony:
+                    raise E2EError("shielded promotion ceremony metadata drifted")
             proof_config = await client.call(token_name, "get_proof_config", {})
             relay_proof_config = await client.call(
                 token_name,
@@ -7287,6 +7383,14 @@ class E2ERunner:
             "registry_owner": registry_owner,
             "proof_config": normalize_value(proof_config),
             "relay_proof_config": normalize_value(relay_proof_config),
+            "promotion": {
+                "directory": str(promotion_output_dir),
+                "setup_ceremony": promotion_ceremony,
+                "summary": normalize_value(promotion_summary),
+                "catalog_entries": normalize_value(promotion_catalog_entries),
+                "operator_script": register_helper_path.name,
+                "stdout_tail": promotion_result.stdout.strip().splitlines()[-20:],
+            },
             "initial_tree_state": normalize_value(initial_tree_state),
             "vk_infos": vk_infos,
             "vk_bindings": vk_bindings,

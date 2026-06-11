@@ -113,6 +113,18 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertIn("hybrid mode admitted a registered candidate", phase_source)
         self.assertIn('"selection_mode": "manual"', phase_source)
 
+    def test_shielded_phase_promotes_bundles_before_governance_binding(self) -> None:
+        phase_source = inspect.getsource(localnet_e2e.E2ERunner.shielded_phase)
+
+        self.assertIn("xian-zk-shielded-bundle", phase_source)
+        self.assertIn('"promote"', phase_source)
+        self.assertIn('"ceremony-import"', phase_source)
+        self.assertIn("shielded-note-registry-manifest.json", phase_source)
+        self.assertIn("shielded-relay-registry-manifest.json", phase_source)
+        self.assertIn("catalog-artifacts-snippet.json", phase_source)
+        self.assertIn("register_and_bind.py", phase_source)
+        self.assertIn("configure_vk", phase_source)
+
     def test_cli_exposes_throughput_mix_sizing_knobs(self) -> None:
         args = localnet_e2e.build_parser().parse_args(
             [
