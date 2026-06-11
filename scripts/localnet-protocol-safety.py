@@ -1024,6 +1024,56 @@ class ProtocolSafetyRunner:
             f"last={last_proposal}"
         )
 
+    async def wait_for_governance_proposal_progress(
+        self,
+        clients: list[XianAsync],
+        proposal_id: int,
+        *,
+        previous_proposal: dict[str, Any],
+        timeout_seconds: float = 5.0,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout_seconds
+        last_proposal = previous_proposal
+        previous_status = previous_proposal.get("status")
+        previous_yes = coerce_int(previous_proposal.get("yes_votes", 0) or 0)
+        previous_no = coerce_int(previous_proposal.get("no_votes", 0) or 0)
+        previous_yes_weight = coerce_int(previous_proposal.get("yes_weight", 0) or 0)
+        previous_no_weight = coerce_int(previous_proposal.get("no_weight", 0) or 0)
+        last_error: str | None = None
+
+        while time.monotonic() < deadline:
+            for client in clients:
+                try:
+                    proposal = await asyncio.wait_for(
+                        client.call(
+                            "governance",
+                            "get_proposal",
+                            {"proposal_id": proposal_id},
+                        ),
+                        timeout=min(5.0, max(deadline - time.monotonic(), 0.1)),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    last_error = f"{type(exc).__name__}: {exc}"
+                    continue
+
+                last_proposal = proposal
+                if (
+                    proposal.get("status") != previous_status
+                    or coerce_int(proposal.get("yes_votes", 0) or 0) != previous_yes
+                    or coerce_int(proposal.get("no_votes", 0) or 0) != previous_no
+                    or coerce_int(proposal.get("yes_weight", 0) or 0) != previous_yes_weight
+                    or coerce_int(proposal.get("no_weight", 0) or 0) != previous_no_weight
+                ):
+                    return proposal
+            await asyncio.sleep(0.25)
+
+        if last_proposal is previous_proposal and last_error:
+            raise RunnerError(
+                f"governance proposal {proposal_id} progress could not be read; "
+                f"last={last_error}"
+            )
+        return last_proposal
+
     async def wait_for_members_vote_status(
         self,
         client: XianAsync,
@@ -1157,6 +1207,7 @@ class ProtocolSafetyRunner:
             label=f"{label_prefix} pending status",
         )
 
+        status_readers = [proposer, *[voter for _name, voter in voters]]
         vote_receipts = []
         proposal_final = None
         for index, (name, voter) in enumerate(voters, start=1):
@@ -1178,10 +1229,10 @@ class ProtocolSafetyRunner:
                     chi=GOVERNANCE_TX_CHI,
                 )
             )
-            current_proposal = await proposer.call(
-                "governance",
-                "get_proposal",
-                {"proposal_id": proposal_id},
+            current_proposal = await self.wait_for_governance_proposal_progress(
+                status_readers,
+                proposal_id,
+                previous_proposal=current_proposal,
             )
             if current_proposal["status"] == "executed":
                 proposal_final = current_proposal
