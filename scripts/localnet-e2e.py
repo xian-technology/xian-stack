@@ -5257,9 +5257,10 @@ class E2ERunner:
         ) = self.validator_wallets
         node3_key = self.nodes[3].account_public_key
         node4 = self.nodes[4]
+        standby_wallet = derive_wallet(self.seed, "validator-policy-standby")
         await self.fund_wallets(
             session,
-            [node1_wallet, node2_wallet, node3_wallet, node4_wallet],
+            [node1_wallet, node2_wallet, node3_wallet, node4_wallet, standby_wallet],
             amount=500_000,
         )
 
@@ -5431,6 +5432,159 @@ class E2ERunner:
                     {"account": node3_key},
                 )
 
+                expected_active_accounts = {node.account_public_key for node in self.nodes}
+                auto_policy_vote = await self.approve_members_vote(
+                    node0,
+                    [
+                        ("node1", node1),
+                        ("node2", node2),
+                        ("node3", node3),
+                        ("node4", node4_client),
+                    ],
+                    type_of_vote="update_policy",
+                    arg={
+                        "selection_mode": "auto_top_n",
+                        "max_validators": 5,
+                        "power_mode": "equal",
+                        "rebalance_interval": 1,
+                        "activation_delay_epochs": 0,
+                        "min_self_bond": 0,
+                        "min_total_bond": 0,
+                        "max_active_set_churn": 5,
+                        "min_bond_margin_bps": 0,
+                        "manual_override_enabled": True,
+                    },
+                    label_prefix="auto-top-n-policy",
+                )
+                auto_policy = await node0.call("validators", "get_policy_config", {})
+                auto_active = await node0.call("validators", "get_active_validators", {})
+                auto_active_accounts = {entry["account"] for entry in auto_active}
+                if auto_policy["selection_mode"] != "auto_top_n":
+                    raise E2EError("auto_top_n policy switch did not apply")
+                if auto_active_accounts != expected_active_accounts:
+                    raise E2EError(
+                        "auto_top_n switch changed the 5-node active set unexpectedly"
+                    )
+
+                hybrid_policy_vote = await self.approve_members_vote(
+                    node0,
+                    [
+                        ("node1", node1),
+                        ("node2", node2),
+                        ("node3", node3),
+                        ("node4", node4_client),
+                    ],
+                    type_of_vote="update_policy",
+                    arg={
+                        "selection_mode": "hybrid",
+                        "max_validators": 6,
+                        "power_mode": "equal",
+                        "rebalance_interval": 1,
+                        "activation_delay_epochs": 0,
+                        "min_self_bond": 0,
+                        "min_total_bond": 0,
+                        "max_active_set_churn": 5,
+                        "min_bond_margin_bps": 0,
+                        "manual_override_enabled": True,
+                    },
+                    label_prefix="hybrid-policy",
+                )
+                hybrid_policy = await node0.call("validators", "get_policy_config", {})
+                if hybrid_policy["selection_mode"] != "hybrid":
+                    raise E2EError("hybrid policy switch did not apply")
+
+                async with self.client(standby_wallet, 0, session) as standby:
+                    standby_registration_fee = await node0.get_state(
+                        "validators",
+                        "registration_fee",
+                    )
+                    standby_approval = await self.submit_tx(
+                        standby,
+                        "currency",
+                        "approve",
+                        {"amount": standby_registration_fee, "to": "validators"},
+                        label="hybrid-standby-register-approve",
+                        chi=DEFAULT_TX_CHI,
+                    )
+                    standby_register = await self.submit_tx(
+                        standby,
+                        "validators",
+                        "register",
+                        {
+                            "requested_validator_power": 10,
+                            "moniker": "standby-hybrid-candidate",
+                            "network_endpoint": "localnet://standby-hybrid-candidate",
+                        },
+                        label="hybrid-standby-register",
+                        chi=GOVERNANCE_TX_CHI,
+                    )
+                    hybrid_rebalance = await self.submit_tx(
+                        node0,
+                        "validators",
+                        "rebalance",
+                        {},
+                        label="hybrid-rebalance-before-standby-approval",
+                        chi=GOVERNANCE_TX_CHI,
+                    )
+                    hybrid_active = await node0.call(
+                        "validators",
+                        "get_active_validators",
+                        {},
+                    )
+                    hybrid_active_accounts = {entry["account"] for entry in hybrid_active}
+                    standby_record = await node0.call(
+                        "validators",
+                        "get_validator",
+                        {"account": standby_wallet.public_key},
+                    )
+                    if standby_wallet.public_key in hybrid_active_accounts:
+                        raise E2EError(
+                            "hybrid mode admitted a registered candidate before add_member approval"
+                        )
+                    if standby_record["status"] != "pending" or standby_record["active"]:
+                        raise E2EError(
+                            "hybrid standby candidate did not remain pending before approval"
+                        )
+                    standby_unregister = await self.submit_tx(
+                        standby,
+                        "validators",
+                        "unregister",
+                        {},
+                        label="hybrid-standby-unregister",
+                        chi=GOVERNANCE_TX_CHI,
+                    )
+
+                restore_manual_vote = await self.approve_members_vote(
+                    node0,
+                    [
+                        ("node1", node1),
+                        ("node2", node2),
+                        ("node3", node3),
+                        ("node4", node4_client),
+                    ],
+                    type_of_vote="update_policy",
+                    arg={
+                        "selection_mode": "manual",
+                        "max_validators": 5,
+                        "power_mode": "equal",
+                        "rebalance_interval": 1,
+                        "activation_delay_epochs": 0,
+                        "min_self_bond": 0,
+                        "min_total_bond": 0,
+                        "max_active_set_churn": 1,
+                        "min_bond_margin_bps": 0,
+                        "manual_override_enabled": True,
+                    },
+                    label_prefix="restore-manual-policy",
+                )
+                restored_policy = await node0.call("validators", "get_policy_config", {})
+                restored_active = await node0.call("validators", "get_active_validators", {})
+                restored_active_accounts = {entry["account"] for entry in restored_active}
+                if restored_policy["selection_mode"] != "manual":
+                    raise E2EError("manual policy restore did not apply")
+                if restored_active_accounts != expected_active_accounts:
+                    raise E2EError("manual policy restore did not preserve the 5-node active set")
+
         return {
             "node4_outage_during_power_vote": {
                 "stop": normalize_value(node4_stop),
@@ -5448,6 +5602,20 @@ class E2ERunner:
             "validators_after_remove": normalize_value(validators_after_remove),
             "validators_after_add": normalize_value(validators_after_add),
             "node3_validator_record": normalize_value(validator_record),
+            "auto_top_n_policy_vote": normalize_value(auto_policy_vote),
+            "auto_top_n_policy": normalize_value(auto_policy),
+            "auto_top_n_active_validators": normalize_value(auto_active),
+            "hybrid_policy_vote": normalize_value(hybrid_policy_vote),
+            "hybrid_policy": normalize_value(hybrid_policy),
+            "hybrid_standby_approval": normalize_value(standby_approval),
+            "hybrid_standby_register": normalize_value(standby_register),
+            "hybrid_rebalance_before_standby_approval": normalize_value(hybrid_rebalance),
+            "hybrid_active_validators": normalize_value(hybrid_active),
+            "hybrid_standby_record": normalize_value(standby_record),
+            "hybrid_standby_unregister": normalize_value(standby_unregister),
+            "restore_manual_vote": normalize_value(restore_manual_vote),
+            "restored_policy": normalize_value(restored_policy),
+            "restored_active_validators": normalize_value(restored_active),
         }
 
     async def state_patch_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:

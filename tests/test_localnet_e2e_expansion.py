@@ -104,6 +104,15 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertIn("pending_overlay_path", phase_source)
         self.assertIn("orchestration-pending-overlay", phase_source)
 
+    def test_validator_governance_phase_covers_selection_mode_switches(self) -> None:
+        phase_source = inspect.getsource(localnet_e2e.E2ERunner.validator_governance_phase)
+
+        self.assertIn('"selection_mode": "auto_top_n"', phase_source)
+        self.assertIn('"selection_mode": "hybrid"', phase_source)
+        self.assertIn("hybrid-rebalance-before-standby-approval", phase_source)
+        self.assertIn("hybrid mode admitted a registered candidate", phase_source)
+        self.assertIn('"selection_mode": "manual"', phase_source)
+
     def test_cli_exposes_throughput_mix_sizing_knobs(self) -> None:
         args = localnet_e2e.build_parser().parse_args(
             [
