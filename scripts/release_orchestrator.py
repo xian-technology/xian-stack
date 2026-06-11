@@ -628,6 +628,41 @@ def bump_version(version: str, bump: str) -> str:
     return f"{parsed.major}.{parsed.minor}.{parsed.patch + 1}"
 
 
+def strip_prerelease(version: SemVer) -> SemVer:
+    return SemVer(
+        major=version.major,
+        minor=version.minor,
+        patch=version.patch,
+        prerelease=None,
+    )
+
+
+def bump_semver_core(version: SemVer, bump: str) -> SemVer:
+    if bump == "major":
+        return SemVer(version.major + 1, 0, 0, None)
+    if bump == "minor":
+        return SemVer(version.major, version.minor + 1, 0, None)
+    return SemVer(version.major, version.minor, version.patch + 1, None)
+
+
+def prerelease_number(version: SemVer, channel: str) -> int:
+    prerelease = version.prerelease
+    if prerelease and prerelease[0] == channel and isinstance(prerelease[-1], int):
+        return prerelease[-1] + 1
+    return 1
+
+
+def make_prerelease(base: SemVer, channel: str, number: int) -> str:
+    return format_semver(
+        SemVer(
+            major=base.major,
+            minor=base.minor,
+            patch=base.patch,
+            prerelease=(channel, number),
+        )
+    )
+
+
 def version_from_tag(unit: ReleaseUnit, tag: str | None) -> str | None:
     if tag is None:
         return None
@@ -641,7 +676,17 @@ def choose_target_version(
     latest_version: str | None,
     source_version: str | None,
     bump: str,
+    prerelease_channel: str | None = None,
 ) -> tuple[str, str]:
+    if prerelease_channel is not None:
+        return choose_prerelease_target_version(
+            unit,
+            latest_version,
+            source_version,
+            bump,
+            prerelease_channel,
+        )
+
     if unit.key == "xian-stack":
         if latest_version is None:
             raise ReleaseError("xian-stack requires at least one existing tag")
@@ -660,6 +705,46 @@ def choose_target_version(
     if comparison == 0:
         return bump_version(latest_version, bump), "bump"
     return source_version, "prebumped"
+
+
+def choose_prerelease_target_version(
+    unit: ReleaseUnit,
+    latest_version: str | None,
+    source_version: str | None,
+    bump: str,
+    channel: str,
+) -> tuple[str, str]:
+    if unit.key == "xian-stack":
+        if latest_version is None:
+            raise ReleaseError("xian-stack requires at least one existing tag")
+        latest = parse_semver(latest_version)
+        if latest.prerelease is None:
+            base = bump_semver_core(latest, bump)
+        else:
+            base = strip_prerelease(latest)
+        return make_prerelease(base, channel, prerelease_number(latest, channel)), f"{channel}-bump"
+
+    if source_version is None:
+        raise ReleaseError(f"{unit.key}: source version is required")
+
+    source = parse_semver(source_version)
+    if latest_version is None:
+        return make_prerelease(strip_prerelease(source), channel, 1), f"{channel}-initial"
+
+    comparison = compare_semver(source_version, latest_version)
+    if comparison < 0:
+        raise ReleaseError(
+            f"{unit.key}: source version {source_version} is behind latest tag {latest_version}"
+        )
+
+    latest = parse_semver(latest_version)
+    if comparison == 0:
+        base = bump_semver_core(latest, bump)
+        return make_prerelease(base, channel, 1), f"{channel}-bump"
+
+    if source.prerelease and source.prerelease[0] == channel:
+        return source_version, f"{channel}-prebumped"
+    return make_prerelease(strip_prerelease(source), channel, 1), f"{channel}-prebumped"
 
 
 def build_stack_manifest_updates(plans_by_key: dict[str, ReleasePlan]) -> dict[str, str]:
@@ -700,6 +785,8 @@ def plan_releases(
     repo_states: dict[str, RepoState],
     *,
     bump: str,
+    prerelease_channel: str | None = None,
+    force_all: bool = False,
     skip_units: set[str] | None = None,
 ) -> list[ReleasePlan]:
     plans: list[ReleasePlan] = []
@@ -739,9 +826,17 @@ def plan_releases(
                 reason_parts.append(
                     "upstream release commits will advance " + ", ".join(future_component_releases)
                 )
+            if force_all and not reason_parts:
+                reason_parts.append("forced release requested")
             if not reason_parts:
                 continue
-            target_version, version_mode = choose_target_version(unit, latest_version, None, bump)
+            target_version, version_mode = choose_target_version(
+                unit,
+                latest_version,
+                None,
+                bump,
+                prerelease_channel,
+            )
             if tag_exists(REPOS[unit.repo], f"{unit.tag_prefix}{target_version}"):
                 raise ReleaseError(
                     f"{unit.key}: tag {unit.tag_prefix}{target_version} already exists"
@@ -774,12 +869,18 @@ def plan_releases(
             if dependency in plans_by_key:
                 dependency_plan = plans_by_key[dependency]
                 reason_parts.append(f"{dependency} will release {dependency_plan.target_version}")
+        if force_all and not reason_parts:
+            reason_parts.append("forced release requested")
         if not reason_parts:
             continue
 
         source_version = read_source_version(unit)
         target_version, version_mode = choose_target_version(
-            unit, latest_version, source_version, bump
+            unit,
+            latest_version,
+            source_version,
+            bump,
+            prerelease_channel,
         )
         if tag_exists(REPOS[unit.repo], f"{unit.tag_prefix}{target_version}"):
             raise ReleaseError(f"{unit.key}: tag {unit.tag_prefix}{target_version} already exists")
@@ -1121,6 +1222,12 @@ def print_plan(plans: list[ReleasePlan]) -> None:
             mode_suffix = " (uses pre-bumped source version)"
         elif plan.version_mode == "initial":
             mode_suffix = " (initial release)"
+        elif plan.version_mode.endswith("-prebumped"):
+            mode_suffix = " (uses pre-bumped source base)"
+        elif plan.version_mode.endswith("-initial"):
+            mode_suffix = " (initial prerelease)"
+        elif plan.version_mode.endswith("-bump"):
+            mode_suffix = " (prerelease bump)"
         version_range = f"[{previous} -> {plan.target_version}]"
         print(f"{index}. {plan.unit.key}: {plan.tag} {version_range}{mode_suffix}")
         print(f"   reason: {plan.reason}")
@@ -1187,6 +1294,24 @@ def parse_args() -> argparse.Namespace:
         help="Version bump to apply when a repo has not already been pre-bumped on main.",
     )
     parser.add_argument(
+        "--prerelease-channel",
+        choices=("alpha", "beta", "rc"),
+        default=None,
+        help="Create prerelease versions on this channel instead of stable releases.",
+    )
+    parser.add_argument(
+        "--beta",
+        dest="prerelease_channel",
+        action="store_const",
+        const="beta",
+        help="Shortcut for --prerelease-channel beta.",
+    )
+    parser.add_argument(
+        "--force-all",
+        action="store_true",
+        help="Plan a release for every non-skipped unit, even when no files changed.",
+    )
+    parser.add_argument(
         "--skip-unit",
         action="append",
         choices=tuple(sorted(UNITS)),
@@ -1220,7 +1345,13 @@ def main() -> None:
     args = parse_args()
     fetch = not getattr(args, "no_fetch", False)
     repo_states = collect_repo_states(fetch=fetch)
-    plans = plan_releases(repo_states, bump=args.bump, skip_units=set(args.skip_unit))
+    plans = plan_releases(
+        repo_states,
+        bump=args.bump,
+        prerelease_channel=args.prerelease_channel,
+        force_all=args.force_all,
+        skip_units=set(args.skip_unit),
+    )
 
     if args.command == "plan":
         print_repo_warnings(repo_states)
