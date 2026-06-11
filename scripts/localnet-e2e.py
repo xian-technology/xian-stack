@@ -1642,7 +1642,7 @@ class E2ERunner:
     ) -> dict[str, Any]:
         try:
             return await wait_for_status(
-                lambda: client.get_state("masternodes", "votes", proposal_id),
+                lambda: client.get_state("validators", "votes", proposal_id),
                 expected_status=expected_status,
                 label=f"members vote {proposal_id}",
                 timeout_seconds=timeout_seconds,
@@ -1747,15 +1747,15 @@ class E2ERunner:
     ) -> dict[str, Any]:
         proposal_receipt = await self.submit_tx(
             proposer,
-            "masternodes",
+            "validators",
             "propose_vote",
             {"type_of_vote": type_of_vote, "arg": arg},
             label=f"{label_prefix}-propose",
             chi=GOVERNANCE_TX_CHI,
             mode="async",
         )
-        proposal_id = int(await proposer.get_state("masternodes", "total_votes"))
-        proposal_pending = await proposer.get_state("masternodes", "votes", proposal_id)
+        proposal_id = int(await proposer.get_state("validators", "total_votes"))
+        proposal_pending = await proposer.get_state("validators", "votes", proposal_id)
         if proposal_pending["status"] != "pending":
             raise E2EError(
                 f"{label_prefix} expected pending vote, got {proposal_pending['status']!r}"
@@ -1765,7 +1765,7 @@ class E2ERunner:
             functools.partial(
                 self.submit_tx,
                 voter,
-                "masternodes",
+                "validators",
                 "vote",
                 {"proposal_id": proposal_id, "vote": "yes"},
                 label=f"{label_prefix}-vote-{index}-{name}",
@@ -1776,7 +1776,7 @@ class E2ERunner:
         ]
         vote_receipts, proposal_final = await cast_votes_until_status(
             vote_senders,
-            fetch_status=lambda: proposer.get_state("masternodes", "votes", proposal_id),
+            fetch_status=lambda: proposer.get_state("validators", "votes", proposal_id),
             completed_statuses={"approved"},
         )
         if proposal_final is None:
@@ -5296,7 +5296,7 @@ class E2ERunner:
                 timeout_seconds=20.0,
             )
             power_record = await node0.call(
-                "masternodes",
+                "validators",
                 "get_validator",
                 {"account": node3_key},
             )
@@ -5314,7 +5314,7 @@ class E2ERunner:
             )
             async with self.client(node4_wallet, 4, session) as restarted_node4:
                 node4_power_record = await restarted_node4.call(
-                    "masternodes",
+                    "validators",
                     "get_validator",
                     {"account": node3_key},
                 )
@@ -5362,11 +5362,11 @@ class E2ERunner:
                 if len(validators_after_remove["result"]["validators"]) != 4:
                     raise E2EError("validator removal did not reduce the validator set to 4")
 
-                registration_fee = await node0.get_state("masternodes", "registration_fee")
+                registration_fee = await node0.get_state("validators", "registration_fee")
                 approval_submission = await node3.send_tx(
                     "currency",
                     "approve",
-                    {"amount": registration_fee, "to": "masternodes"},
+                    {"amount": registration_fee, "to": "validators"},
                     chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 )
@@ -5376,7 +5376,7 @@ class E2ERunner:
                 )
 
                 register_submission = await node3.send_tx(
-                    "masternodes",
+                    "validators",
                     "register",
                     {
                         "requested_validator_power": 12,
@@ -5426,7 +5426,7 @@ class E2ERunner:
                 if len(validators_after_add["result"]["validators"]) != 5:
                     raise E2EError("validator add-back did not restore the validator set to 5")
                 validator_record = await node0.call(
-                    "masternodes",
+                    "validators",
                     "get_validator",
                     {"account": node3_key},
                 )

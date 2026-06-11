@@ -772,9 +772,9 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
 
             async def get_state(self, contract, variable, *keys):
                 nonlocal vote_status_reads
-                if (contract, variable) == ("masternodes", "total_votes"):
+                if (contract, variable) == ("validators", "total_votes"):
                     return 11
-                if (contract, variable) == ("masternodes", "votes"):
+                if (contract, variable) == ("validators", "votes"):
                     vote_status_reads += 1
                     if vote_status_reads >= 4:
                         return {"status": "approved"}
@@ -794,7 +794,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertEqual(11, result["proposal_id"])
         self.assertEqual("approved", result["proposal_final"]["status"])
         self.assertEqual(
-            [("masternodes", "propose_vote"), ("masternodes", "vote")],
+            [("validators", "propose_vote"), ("validators", "vote")],
             [(contract, function) for contract, function, *_rest in send_labels],
         )
         self.assertEqual(["async", "async"], [options["mode"] for *_args, options in send_labels])

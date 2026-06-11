@@ -191,7 +191,7 @@ class LocalnetProtocolSafetyTests(unittest.TestCase):
         result = localnet_protocol_safety.asyncio.run(
             runner.read_contract_state(
                 [FailingClient(), HealthyClient()],
-                "masternodes",
+                "validators",
                 "total_votes",
                 timeout_seconds=1,
             )

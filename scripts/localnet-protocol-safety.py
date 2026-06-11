@@ -957,8 +957,8 @@ class ProtocolSafetyRunner:
             )
 
         async with self.client(self.validator_wallets[0], 0, session) as node0:
-            policy = await node0.call("masternodes", "get_policy_config", {})
-            active_validators = await node0.call("masternodes", "get_active_validators", {})
+            policy = await node0.call("validators", "get_policy_config", {})
+            active_validators = await node0.call("validators", "get_active_validators", {})
             governance_members = await node0.call("governance", "get_members", {})
 
         assert_equal(
@@ -1094,7 +1094,7 @@ class ProtocolSafetyRunner:
     ) -> dict[str, Any]:
         return await self.read_contract_state(
             clients,
-            "masternodes",
+            "validators",
             "votes",
             proposal_id,
             timeout_seconds=timeout_seconds,
@@ -1213,7 +1213,7 @@ class ProtocolSafetyRunner:
         status_readers = [voter for _name, voter in voters]
         proposal_receipt = await self.submit_tx(
             proposer,
-            "masternodes",
+            "validators",
             "propose_vote",
             {"type_of_vote": type_of_vote, "arg": arg},
             label=f"{label_prefix}-propose",
@@ -1222,7 +1222,7 @@ class ProtocolSafetyRunner:
         proposal_id = coerce_int(
             await self.read_contract_state(
                 [proposer, *status_readers],
-                "masternodes",
+                "validators",
                 "total_votes",
             )
         )
@@ -1249,7 +1249,7 @@ class ProtocolSafetyRunner:
             vote_receipts.append(
                 await self.submit_tx(
                     voter,
-                    "masternodes",
+                    "validators",
                     "vote",
                     {"proposal_id": proposal_id, "vote": "yes"},
                     label=f"{label_prefix}-vote-{index}-{name}",
@@ -1369,7 +1369,7 @@ class ProtocolSafetyRunner:
         last_record = None
         while time.monotonic() < deadline:
             last_record = await client.call(
-                "masternodes",
+                "validators",
                 "get_validator",
                 {"account": account},
             )
@@ -1390,7 +1390,7 @@ class ProtocolSafetyRunner:
         last_active = None
         while time.monotonic() < deadline:
             last_active = await client.call(
-                "masternodes",
+                "validators",
                 "get_active_validators",
                 {},
             )
@@ -1894,7 +1894,7 @@ def get_status():
                 label_prefix="manual-set-member-power",
             )
             validator_after_power = await node0.call(
-                "masternodes",
+                "validators",
                 "get_validator",
                 {"account": node3_key},
             )
@@ -1937,7 +1937,7 @@ def get_status():
                 expected_count=4,
             )
             validator_after_remove = await node0.call(
-                "masternodes",
+                "validators",
                 "get_validator",
                 {"account": node3_key},
             )
@@ -1947,17 +1947,17 @@ def get_status():
                 label="node3 removed status",
             )
 
-            registration_fee = coerce_int(await node0.get_state("masternodes", "registration_fee"))
+            registration_fee = coerce_int(await node0.get_state("validators", "registration_fee"))
             reapprove = await self.submit_tx(
                 node3,
                 "currency",
                 "approve",
-                {"amount": registration_fee, "to": "masternodes"},
+                {"amount": registration_fee, "to": "validators"},
                 label="manual-reregister-approve",
             )
             register_receipt = await self.submit_tx(
                 node3,
-                "masternodes",
+                "validators",
                 "register",
                 {
                     "requested_validator_power": 12,
@@ -1969,7 +1969,7 @@ def get_status():
             )
             update_registration_receipt = await self.submit_tx(
                 node3,
-                "masternodes",
+                "validators",
                 "update_registration",
                 {
                     "requested_validator_power": 13,
@@ -1980,7 +1980,7 @@ def get_status():
                 chi=GOVERNANCE_TX_CHI,
             )
             validator_pending = await node0.call(
-                "masternodes",
+                "validators",
                 "get_validator",
                 {"account": node3_key},
             )
@@ -2007,7 +2007,7 @@ def get_status():
                 expected_count=5,
             )
             validator_after_readd = await node0.call(
-                "masternodes",
+                "validators",
                 "get_validator",
                 {"account": node3_key},
             )
@@ -2077,7 +2077,7 @@ def get_status():
                         client,
                         "currency",
                         "approve",
-                        {"amount": 2_000, "to": "masternodes"},
+                        {"amount": 2_000, "to": "validators"},
                         label=f"bond-approve-{name}",
                     )
                 )
@@ -2085,35 +2085,35 @@ def get_status():
             bond_receipts = [
                 await self.submit_tx(
                     node0,
-                    "masternodes",
+                    "validators",
                     "bond_self",
                     {"amount": 50},
                     label="bond-self-node0",
                 ),
                 await self.submit_tx(
                     node1,
-                    "masternodes",
+                    "validators",
                     "bond_self",
                     {"amount": 400},
                     label="bond-self-node1",
                 ),
                 await self.submit_tx(
                     node2,
-                    "masternodes",
+                    "validators",
                     "bond_self",
                     {"amount": 300},
                     label="bond-self-node2",
                 ),
                 await self.submit_tx(
                     node3,
-                    "masternodes",
+                    "validators",
                     "bond_self",
                     {"amount": 200},
                     label="bond-self-node3",
                 ),
                 await self.submit_tx(
                     node4,
-                    "masternodes",
+                    "validators",
                     "bond_self",
                     {"amount": 100},
                     label="bond-self-node4",
@@ -2158,7 +2158,7 @@ def get_status():
                 expected_count=3,
             )
             active_after_policy = await node0.call(
-                "masternodes",
+                "validators",
                 "get_active_validators",
                 {},
             )
@@ -2177,12 +2177,12 @@ def get_status():
                 delegator,
                 "currency",
                 "approve",
-                {"amount": 500, "to": "masternodes"},
+                {"amount": 500, "to": "validators"},
                 label="delegator-approve",
             )
             delegate_receipt = await self.submit_tx(
                 delegator,
-                "masternodes",
+                "validators",
                 "delegate",
                 {
                     "validator": self.nodes[3].account_public_key,
@@ -2193,7 +2193,7 @@ def get_status():
                 chi=GOVERNANCE_TX_CHI,
             )
             delegation = await node0.call(
-                "masternodes",
+                "validators",
                 "get_delegation",
                 {
                     "delegator": self.delegator_wallet.public_key,
@@ -2201,7 +2201,7 @@ def get_status():
                 },
             )
             reward_distribution_before_rebalance = await node0.call(
-                "masternodes",
+                "validators",
                 "get_reward_distribution_info",
                 {"validator": self.nodes[3].account_public_key},
             )
@@ -2213,7 +2213,7 @@ def get_status():
             assert_true(
                 self.delegator_wallet.public_key
                 in await node0.call(
-                    "masternodes",
+                    "validators",
                     "get_delegators",
                     {"validator": self.nodes[3].account_public_key},
                 ),
@@ -2222,14 +2222,14 @@ def get_status():
 
             rebalance_receipt = await self.submit_tx(
                 node0,
-                "masternodes",
+                "validators",
                 "rebalance",
                 {},
                 label="auto-rebalance-after-delegation",
                 chi=GOVERNANCE_TX_CHI,
             )
             active_after_rebalance = await node0.call(
-                "masternodes",
+                "validators",
                 "get_active_validators",
                 {},
             )
@@ -2255,7 +2255,7 @@ def get_status():
                 label_prefix="auto-jail-member",
             )
             active_after_jail = await node0.call(
-                "masternodes",
+                "validators",
                 "get_active_validators",
                 {},
             )
@@ -2270,7 +2270,7 @@ def get_status():
                 label="active validators after jail",
             )
             jailed_validator = await node0.call(
-                "masternodes",
+                "validators",
                 "get_validator",
                 {"account": self.nodes[1].account_public_key},
             )
@@ -2288,7 +2288,7 @@ def get_status():
                 label_prefix="auto-unjail-member",
             )
             active_after_unjail = await node0.call(
-                "masternodes",
+                "validators",
                 "get_active_validators",
                 {},
             )
@@ -2325,7 +2325,7 @@ def get_status():
                 "dao",
             )
             validator_after_slash = await node0.call(
-                "masternodes",
+                "validators",
                 "get_validator",
                 {"account": self.nodes[1].account_public_key},
             )
@@ -2347,14 +2347,14 @@ def get_status():
 
             undelegate_receipt = await self.submit_tx(
                 delegator,
-                "masternodes",
+                "validators",
                 "undelegate",
                 {"validator": self.nodes[3].account_public_key, "amount": 100},
                 label="undelegate-from-node3",
                 chi=GOVERNANCE_TX_CHI,
             )
             pending_unbond_ids = await node0.call(
-                "masternodes",
+                "validators",
                 "get_pending_unbond_ids",
                 {"owner": self.delegator_wallet.public_key},
             )
@@ -2364,7 +2364,7 @@ def get_status():
             )
             pending_unbond_id = pending_unbond_ids[-1]
             pending_unbond = await node0.call(
-                "masternodes",
+                "validators",
                 "get_pending_unbond",
                 {"unbond_id": pending_unbond_id},
             )
@@ -2383,14 +2383,14 @@ def get_status():
 
             claim_unbond_receipt = await self.submit_tx(
                 delegator,
-                "masternodes",
+                "validators",
                 "claim_unbond",
                 {"unbond_id": pending_unbond_id},
                 label="claim-pending-unbond",
                 chi=GOVERNANCE_TX_CHI,
             )
             pending_unbond_after_claim = await node0.call(
-                "masternodes",
+                "validators",
                 "get_pending_unbond",
                 {"unbond_id": pending_unbond_id},
             )
@@ -2412,7 +2412,7 @@ def get_status():
             )
 
             reward_distribution_after_claim = await node0.call(
-                "masternodes",
+                "validators",
                 "get_reward_distribution_info",
                 {"validator": self.nodes[3].account_public_key},
             )
@@ -2502,7 +2502,7 @@ def get_status():
                 label_prefix="hybrid-remove-candidate",
             )
             validator_after_remove = await node3.call(
-                "masternodes",
+                "validators",
                 "get_validator",
                 {"account": node1_key},
             )
@@ -2512,7 +2512,7 @@ def get_status():
                 label="node1 removed before hybrid re-register",
             )
             active_after_remove = await node3.call(
-                "masternodes",
+                "validators",
                 "get_active_validators",
                 {},
             )
@@ -2528,7 +2528,7 @@ def get_status():
                 label_prefix="hybrid-update-policy",
             )
             policy_after_switch = await node3.call(
-                "masternodes",
+                "validators",
                 "get_policy_config",
                 {},
             )
@@ -2538,17 +2538,17 @@ def get_status():
                 label="hybrid selection mode",
             )
 
-            registration_fee = coerce_int(await node3.get_state("masternodes", "registration_fee"))
+            registration_fee = coerce_int(await node3.get_state("validators", "registration_fee"))
             approve_registration = await self.submit_tx(
                 node1,
                 "currency",
                 "approve",
-                {"amount": registration_fee, "to": "masternodes"},
+                {"amount": registration_fee, "to": "validators"},
                 label="hybrid-register-approve",
             )
             register_receipt = await self.submit_tx(
                 node1,
-                "masternodes",
+                "validators",
                 "register",
                 {
                     "requested_validator_power": 11,
@@ -2562,12 +2562,12 @@ def get_status():
                 node1,
                 "currency",
                 "approve",
-                {"amount": 400, "to": "masternodes"},
+                {"amount": 400, "to": "validators"},
                 label="hybrid-bond-approve",
             )
             bond_receipt = await self.submit_tx(
                 node1,
-                "masternodes",
+                "validators",
                 "bond_self",
                 {"amount": 350},
                 label="hybrid-bond-self",
@@ -2575,14 +2575,14 @@ def get_status():
 
             rebalance_pending = await self.submit_tx(
                 node3,
-                "masternodes",
+                "validators",
                 "rebalance",
                 {},
                 label="hybrid-rebalance-before-approval",
                 chi=GOVERNANCE_TX_CHI,
             )
             active_before_approval = await node3.call(
-                "masternodes",
+                "validators",
                 "get_active_validators",
                 {},
             )
@@ -2604,7 +2604,7 @@ def get_status():
                 label_prefix="hybrid-add-member",
             )
             active_after_approval = await node3.call(
-                "masternodes",
+                "validators",
                 "get_active_validators",
                 {},
             )
@@ -2651,14 +2651,14 @@ def get_status():
         )
 
         async with self.client(node0_wallet, 0, session) as node0:
-            policy = await node0.call("masternodes", "get_policy_config", {})
+            policy = await node0.call("validators", "get_policy_config", {})
             validator_before = await node0.call(
-                "masternodes",
+                "validators",
                 "get_validator",
                 {"account": node1_account},
             )
             active_before = await node0.call(
-                "masternodes",
+                "validators",
                 "get_active_validators",
                 {},
             )
@@ -2785,18 +2785,18 @@ def get_status():
             self.client(node3_wallet, 3, session) as node3,
         ):
             validator_before = await node0.call(
-                "masternodes",
+                "validators",
                 "get_validator",
                 {"account": node3_account},
             )
             active_before = await node0.call(
-                "masternodes",
+                "validators",
                 "get_active_validators",
                 {},
             )
             announce_leave_receipt = await self.submit_tx(
                 node3,
-                "masternodes",
+                "validators",
                 "announce_leave",
                 {},
                 label="announce-leave-node3",
@@ -2813,7 +2813,7 @@ def get_status():
                 label="announce_leave recorded",
             )
             immediate_leave_submission = await node3.send_tx(
-                "masternodes",
+                "validators",
                 "leave",
                 {},
                 chi=GOVERNANCE_TX_CHI,
@@ -2826,7 +2826,7 @@ def get_status():
             )
             rebalance_receipt = await self.submit_tx(
                 node0,
-                "masternodes",
+                "validators",
                 "rebalance",
                 {},
                 label="rebalance-after-announce-leave",
@@ -2847,7 +2847,7 @@ def get_status():
                 expected_count=3,
             )
             validator_after_rebalance = await node0.call(
-                "masternodes",
+                "validators",
                 "get_validator",
                 {"account": node3_account},
             )
