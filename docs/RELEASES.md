@@ -76,6 +76,9 @@ The `xian-js` release unit is intentionally repo-wide. Changes under
 verifies all JS package versions match the tag and publishes all four npm
 packages together. If `web-kit` becomes a standalone repository later, add it as
 a separate `ReleaseUnit` in `scripts/release_orchestrator.py`.
+Release-process and root documentation changes in `xian-js`, such as
+`.github/`, `README.md`, and `docs/`, do not create SDK package releases.
+Package-facing changes under `packages/` remain release-relevant.
 
 All non-stack workflows create the GitHub release from the pushed tag automatically.
 No separate “publish a GitHub release first” step is needed.

@@ -162,6 +162,11 @@ UNITS = {
             display_name="xian-js",
             tag_glob="v*",
             tag_prefix="v",
+            exclude_prefixes=(
+                ".github/",
+                "README.md",
+                "docs/",
+            ),
         ),
         ReleaseUnit(
             key="xian-wallet-browser",
