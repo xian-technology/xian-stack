@@ -25,6 +25,8 @@ Recommended release order:
    - `vX.Y.Z`
 7. `xian-js`:
    - `vX.Y.Z`
+   - publishes `@xian-tech/types`, `@xian-tech/client`,
+     `@xian-tech/provider`, and `@xian-tech/web-kit` from the same tag
 8. `xian-wallet-browser`:
    - `vX.Y.Z`
 9. `xian-intentkit`:
@@ -48,6 +50,13 @@ python3 ./scripts/release_orchestrator.py plan
 python3 ./scripts/release_orchestrator.py apply
 ```
 
+For the beta channel, pass the channel option before the subcommand:
+
+```bash
+python3 ./scripts/release_orchestrator.py --beta plan
+python3 ./scripts/release_orchestrator.py --beta apply
+```
+
 The orchestrator:
 
 - fetches `origin` and tags for every relevant repo
@@ -57,9 +66,16 @@ The orchestrator:
 - creates release-prep commits only where the source tree still needs version edits
 - pushes tags in dependency order
 - updates `release-manifest.json` and tags `xian-stack` last
+- ignores docs-only `xian-stack` changes for image-release planning
 
 `apply` refuses to run if any repo it needs is dirty, off `main`, or ahead/behind
 `origin/main`. That keeps the release set anchored to the exact state already on GitHub.
+
+The `xian-js` release unit is intentionally repo-wide. Changes under
+`xian-js/packages/web-kit/` are released by the `xian-js` tag workflow, which
+verifies all JS package versions match the tag and publishes all four npm
+packages together. If `web-kit` becomes a standalone repository later, add it as
+a separate `ReleaseUnit` in `scripts/release_orchestrator.py`.
 
 All non-stack workflows create the GitHub release from the pushed tag automatically.
 No separate “publish a GitHub release first” step is needed.
@@ -123,8 +139,13 @@ Notes:
 
 ## npm Package Releases
 
-`xian-js` and `xian-wallet-browser` follow the same tag-push model, but publish to npm
-instead of PyPI.
+`xian-js` and `xian-wallet-browser` follow the same tag-push model, but publish
+to npm instead of PyPI. A `xian-js` tag publishes these npm packages together:
+
+- `@xian-tech/types`
+- `@xian-tech/client`
+- `@xian-tech/provider`
+- `@xian-tech/web-kit`
 
 Their workflows:
 

@@ -184,6 +184,12 @@ UNITS = {
             display_name="xian-stack",
             tag_glob="v*",
             tag_prefix="v",
+            exclude_prefixes=(
+                "README.md",
+                "docs/",
+                "scripts/README.md",
+                "scripts/release_orchestrator.py",
+            ),
         ),
     )
 }
