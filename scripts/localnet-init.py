@@ -57,6 +57,43 @@ PORT_STRIDE = 100  # node-0: 266xx, node-1: 267xx, node-2: 268xx, ...
 NODE_IMAGE_INTEGRATED = "xian-node-integrated:local"
 NODE_IMAGE_SPLIT = "xian-node-split:local"
 LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
+COMPOSE_DEFAULTS = {
+    "XIAN_ABCI_DIR": "../xian-abci",
+    "XIAN_CONFIGS_DIR": "../xian-configs",
+    "XIAN_CONTRACTING_DIR": "../xian-contracting",
+    "XIAN_PY_DIR": "../xian-py",
+    "XIAN_COMETBFT_VERSION": "0.39.3",
+    "XIAN_S6_OVERLAY_VERSION": "3.2.1.0",
+    "XIAN_S6_VERBOSITY": "1",
+    "XIAN_DOCKER_POSTGRES_MEMORY_LIMIT": "1024m",
+    "XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION": "512m",
+    "XIAN_DOCKER_POSTGRES_MEMORY_SWAP": "1024m",
+    "XIAN_DOCKER_POSTGRES_PIDS_LIMIT": "256",
+    "XIAN_DOCKER_POSTGRES_NOFILE_SOFT": "65536",
+    "XIAN_DOCKER_POSTGRES_NOFILE_HARD": "65536",
+    "XIAN_LOCALNET_NODE_MEMORY_LIMIT": "1536m",
+    "XIAN_LOCALNET_NODE_MEMORY_RESERVATION": "1024m",
+    "XIAN_LOCALNET_NODE_MEMORY_SWAP": "1536m",
+    "XIAN_LOCALNET_NODE_PIDS_LIMIT": "512",
+    "XIAN_LOCALNET_NODE_NOFILE_SOFT": "65536",
+    "XIAN_LOCALNET_NODE_NOFILE_HARD": "65536",
+    "XIAN_LOCALNET_ABCI_MEMORY_LIMIT": "1024m",
+    "XIAN_LOCALNET_ABCI_MEMORY_RESERVATION": "768m",
+    "XIAN_LOCALNET_ABCI_MEMORY_SWAP": "1024m",
+    "XIAN_LOCALNET_ABCI_PIDS_LIMIT": "384",
+    "XIAN_LOCALNET_ABCI_NOFILE_SOFT": "65536",
+    "XIAN_LOCALNET_ABCI_NOFILE_HARD": "65536",
+    "XIAN_LOCALNET_COMETBFT_MEMORY_LIMIT": "512m",
+    "XIAN_LOCALNET_COMETBFT_MEMORY_RESERVATION": "256m",
+    "XIAN_LOCALNET_COMETBFT_MEMORY_SWAP": "512m",
+    "XIAN_LOCALNET_COMETBFT_PIDS_LIMIT": "256",
+    "XIAN_LOCALNET_COMETBFT_NOFILE_SOFT": "65536",
+    "XIAN_LOCALNET_COMETBFT_NOFILE_HARD": "65536",
+}
+
+
+def compose_var(name: str) -> str:
+    return f"${{{name}:-{COMPOSE_DEFAULTS[name]}}}"
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -114,14 +151,14 @@ def node_build_config(target: str) -> dict:
         "dockerfile": "./docker/xian-node.Dockerfile",
         "target": target,
         "additional_contexts": {
-            "xian-abci": "${XIAN_ABCI_DIR}",
-            "xian-configs": "${XIAN_CONFIGS_DIR}",
-            "xian-contracting": "${XIAN_CONTRACTING_DIR}",
-            "xian-py": "${XIAN_PY_DIR}",
+            "xian-abci": compose_var("XIAN_ABCI_DIR"),
+            "xian-configs": compose_var("XIAN_CONFIGS_DIR"),
+            "xian-contracting": compose_var("XIAN_CONTRACTING_DIR"),
+            "xian-py": compose_var("XIAN_PY_DIR"),
         },
         "args": {
-            "COMETBFT_VERSION": "${XIAN_COMETBFT_VERSION}",
-            "S6_OVERLAY_VERSION": "${XIAN_S6_OVERLAY_VERSION}",
+            "COMETBFT_VERSION": compose_var("XIAN_COMETBFT_VERSION"),
+            "S6_OVERLAY_VERSION": compose_var("XIAN_S6_OVERLAY_VERSION"),
         },
     }
 
@@ -636,19 +673,19 @@ def write_compose_file(
         "restart": "always",
         "stop_grace_period": "45s",
         "build": integrated_build,
-        "mem_limit": "${XIAN_LOCALNET_NODE_MEMORY_LIMIT}",
-        "mem_reservation": "${XIAN_LOCALNET_NODE_MEMORY_RESERVATION}",
-        "memswap_limit": "${XIAN_LOCALNET_NODE_MEMORY_SWAP}",
-        "pids_limit": "${XIAN_LOCALNET_NODE_PIDS_LIMIT}",
+        "mem_limit": compose_var("XIAN_LOCALNET_NODE_MEMORY_LIMIT"),
+        "mem_reservation": compose_var("XIAN_LOCALNET_NODE_MEMORY_RESERVATION"),
+        "memswap_limit": compose_var("XIAN_LOCALNET_NODE_MEMORY_SWAP"),
+        "pids_limit": compose_var("XIAN_LOCALNET_NODE_PIDS_LIMIT"),
         "ulimits": {
             "nofile": {
-                "soft": "${XIAN_LOCALNET_NODE_NOFILE_SOFT}",
-                "hard": "${XIAN_LOCALNET_NODE_NOFILE_HARD}",
+                "soft": compose_var("XIAN_LOCALNET_NODE_NOFILE_SOFT"),
+                "hard": compose_var("XIAN_LOCALNET_NODE_NOFILE_HARD"),
             }
         },
         "environment": {
             "XIAN_CONFIGS_DIR": "/opt/xian-configs",
-            "S6_VERBOSITY": "${XIAN_S6_VERBOSITY}",
+            "S6_VERBOSITY": compose_var("XIAN_S6_VERBOSITY"),
             "XIAN_PERF_ENABLED": "1" if profiling_enabled else "0",
             "XIAN_PERF_OUTPUT_PATH": "/root/.cometbft/xian-perf.json",
             "XIAN_PERF_RECENT_BLOCKS": str(profiling_recent_blocks),
@@ -663,14 +700,14 @@ def write_compose_file(
             "stop_grace_period": "30s",
             "hostname": LOCALNET_POSTGRES_SERVICE,
             "container_name": f"xian-{LOCALNET_POSTGRES_SERVICE}",
-            "mem_limit": "${XIAN_DOCKER_POSTGRES_MEMORY_LIMIT}",
-            "mem_reservation": "${XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION}",
-            "memswap_limit": "${XIAN_DOCKER_POSTGRES_MEMORY_SWAP}",
-            "pids_limit": "${XIAN_DOCKER_POSTGRES_PIDS_LIMIT}",
+            "mem_limit": compose_var("XIAN_DOCKER_POSTGRES_MEMORY_LIMIT"),
+            "mem_reservation": compose_var("XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION"),
+            "memswap_limit": compose_var("XIAN_DOCKER_POSTGRES_MEMORY_SWAP"),
+            "pids_limit": compose_var("XIAN_DOCKER_POSTGRES_PIDS_LIMIT"),
             "ulimits": {
                 "nofile": {
-                    "soft": "${XIAN_DOCKER_POSTGRES_NOFILE_SOFT}",
-                    "hard": "${XIAN_DOCKER_POSTGRES_NOFILE_HARD}",
+                    "soft": compose_var("XIAN_DOCKER_POSTGRES_NOFILE_SOFT"),
+                    "hard": compose_var("XIAN_DOCKER_POSTGRES_NOFILE_HARD"),
                 }
             },
             "environment": {
@@ -737,14 +774,14 @@ def write_compose_file(
                 "hostname": f"{moniker}-abci",
                 "container_name": f"xian-{moniker}-abci",
                 "build": split_build,
-                "mem_limit": "${XIAN_LOCALNET_ABCI_MEMORY_LIMIT}",
-                "mem_reservation": "${XIAN_LOCALNET_ABCI_MEMORY_RESERVATION}",
-                "memswap_limit": "${XIAN_LOCALNET_ABCI_MEMORY_SWAP}",
-                "pids_limit": "${XIAN_LOCALNET_ABCI_PIDS_LIMIT}",
+                "mem_limit": compose_var("XIAN_LOCALNET_ABCI_MEMORY_LIMIT"),
+                "mem_reservation": compose_var("XIAN_LOCALNET_ABCI_MEMORY_RESERVATION"),
+                "memswap_limit": compose_var("XIAN_LOCALNET_ABCI_MEMORY_SWAP"),
+                "pids_limit": compose_var("XIAN_LOCALNET_ABCI_PIDS_LIMIT"),
                 "ulimits": {
                     "nofile": {
-                        "soft": "${XIAN_LOCALNET_ABCI_NOFILE_SOFT}",
-                        "hard": "${XIAN_LOCALNET_ABCI_NOFILE_HARD}",
+                        "soft": compose_var("XIAN_LOCALNET_ABCI_NOFILE_SOFT"),
+                        "hard": compose_var("XIAN_LOCALNET_ABCI_NOFILE_HARD"),
                     }
                 },
                 "volumes": [home_mount, shared_tmp],
@@ -775,14 +812,14 @@ def write_compose_file(
                 "hostname": moniker,
                 "container_name": f"xian-{moniker}",
                 "build": split_build,
-                "mem_limit": "${XIAN_LOCALNET_COMETBFT_MEMORY_LIMIT}",
-                "mem_reservation": "${XIAN_LOCALNET_COMETBFT_MEMORY_RESERVATION}",
-                "memswap_limit": "${XIAN_LOCALNET_COMETBFT_MEMORY_SWAP}",
-                "pids_limit": "${XIAN_LOCALNET_COMETBFT_PIDS_LIMIT}",
+                "mem_limit": compose_var("XIAN_LOCALNET_COMETBFT_MEMORY_LIMIT"),
+                "mem_reservation": compose_var("XIAN_LOCALNET_COMETBFT_MEMORY_RESERVATION"),
+                "memswap_limit": compose_var("XIAN_LOCALNET_COMETBFT_MEMORY_SWAP"),
+                "pids_limit": compose_var("XIAN_LOCALNET_COMETBFT_PIDS_LIMIT"),
                 "ulimits": {
                     "nofile": {
-                        "soft": "${XIAN_LOCALNET_COMETBFT_NOFILE_SOFT}",
-                        "hard": "${XIAN_LOCALNET_COMETBFT_NOFILE_HARD}",
+                        "soft": compose_var("XIAN_LOCALNET_COMETBFT_NOFILE_SOFT"),
+                        "hard": compose_var("XIAN_LOCALNET_COMETBFT_NOFILE_HARD"),
                     }
                 },
                 "volumes": [home_mount, shared_tmp],
