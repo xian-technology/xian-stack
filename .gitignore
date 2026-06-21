@@ -12,3 +12,4 @@ __pycache__
 .venv-localnet/
 docker-compose-localnet.yml
 /contracts/*
+graphify-out/
