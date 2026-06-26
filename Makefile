@@ -853,7 +853,7 @@ localnet-status:
 	@./scripts/localnet-status.sh
 
 localnet-dex-bootstrap:
-	uv run --project "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-dex-bootstrap.py \
+	uv run --project "$(XIAN_PY_DIR)" --with "$(XIAN_CONTRACTING_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-dex-bootstrap.py \
 		--dex-bundle "$(XIAN_DEX_BUNDLE)" \
 		$(if $(XIAN_DEX_CONTRACTS_DIR),--dex-contracts-dir "$(XIAN_DEX_CONTRACTS_DIR)",) \
 		$(if $(XIAN_DEX_BOOTSTRAP_RPC_URL),--rpc-url "$(XIAN_DEX_BOOTSTRAP_RPC_URL)",) \
@@ -874,7 +874,7 @@ localnet-dex-bootstrap:
 		--test-swap-amount $(LOCALNET_DEX_TEST_SWAP_AMOUNT)
 
 localnet-workload:
-	uv run --project "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-workload.py \
+	uv run --project "$(XIAN_PY_DIR)" --with "$(XIAN_CONTRACTING_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-workload.py \
 		--scenario "$(LOCALNET_WORKLOAD_SCENARIO)" \
 		--seed "$(LOCALNET_WORKLOAD_SEED)" \
 		--counter-ops $(LOCALNET_COUNTER_OPS) \
@@ -902,7 +902,7 @@ localnet-e2e:
 	XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS="$(LOCALNET_E2E_PARALLEL_EXECUTION_WORKERS)" \
 	XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS="$(LOCALNET_E2E_PARALLEL_EXECUTION_MIN_TRANSACTIONS)" \
 	XIAN_LOCALNET_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED="$(LOCALNET_E2E_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED)" \
-	uv run --project "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-e2e.py \
+	uv run --project "$(XIAN_PY_DIR)" --with "$(XIAN_CONTRACTING_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-e2e.py \
 		$(if $(filter 0,$(LOCALNET_E2E_BOOTSTRAP)),--no-bootstrap,--bootstrap) \
 		$(if $(filter 1,$(LOCALNET_E2E_BUILD)),--build,--no-build) \
 		--nodes $(LOCALNET_E2E_NODES) \
