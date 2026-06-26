@@ -4236,6 +4236,8 @@ class E2ERunner:
             "run",
             "--project",
             str(ROOT_DIR / "xian-py"),
+            "--with",
+            str(ROOT_DIR / "xian-contracting"),
             "--python",
             CURRENT_UV_PYTHON,
             "python3",
