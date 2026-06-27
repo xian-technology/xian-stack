@@ -79,3 +79,73 @@ def test_require_success_accepts_submission_without_receipt() -> None:
             receipt=None,
         ),
     )
+
+
+def test_seed_demo_pool_registers_lp_before_auto_creating_pair(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+    pair_reads = 0
+
+    class FakeClient:
+        wallet = SimpleNamespace(public_key="deployer")
+
+        def get_state(self, contract, variable, *args):
+            nonlocal pair_reads
+            assert contract == "con_pairs"
+            if variable == "toks_to_pair":
+                pair_reads += 1
+                return None if pair_reads == 1 else 1
+            if variable == "registered_lp_tokens":
+                return None
+            raise AssertionError(f"unexpected state read: {variable} {args}")
+
+    def fake_send_call(
+        client,
+        *,
+        label,
+        contract,
+        function,
+        kwargs,
+        chi,
+        mode,
+        receipt_timeout_seconds,
+    ):
+        calls.append(
+            {
+                "label": label,
+                "contract": contract,
+                "function": function,
+                "kwargs": kwargs,
+            }
+        )
+        return calls[-1]
+
+    monkeypatch.setattr(bootstrap, "send_call", fake_send_call)
+    monkeypatch.setattr(
+        bootstrap,
+        "get_pair_snapshot",
+        lambda client, pair_id: {"pair_id": pair_id},
+    )
+
+    result = bootstrap.seed_demo_pool(
+        FakeClient(),
+        token_contract="con_dex_demo_token",
+        lp_contract="con_dex_demo_lp",
+        liquidity_currency_amount=Decimal("10"),
+        liquidity_demo_token_amount=Decimal("20"),
+        top_up_liquidity=False,
+        mode="sync",
+        receipt_timeout_seconds=1,
+    )
+
+    assert [call["function"] for call in calls] == [
+        "registerLpToken",
+        "approve",
+        "approve",
+        "addLiquidity",
+    ]
+    assert calls[0]["kwargs"] == {
+        "tokenA": "con_dex_demo_token",
+        "tokenB": "currency",
+        "lpToken": "con_dex_demo_lp",
+    }
+    assert result["action"] == "seeded"

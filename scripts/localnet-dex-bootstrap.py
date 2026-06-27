@@ -441,6 +441,14 @@ def get_pair_id(client: Xian, token_a: str, token_b: str) -> int | None:
     return int(value)
 
 
+def get_registered_lp_token(client: Xian, token_a: str, token_b: str) -> str | None:
+    token0, token1 = pair_tokens(token_a, token_b)
+    value = client.get_state("con_pairs", "registered_lp_tokens", token0, token1)
+    if value in (None, 0, "0"):
+        return None
+    return str(value)
+
+
 def get_pair_snapshot(client: Xian, pair_id: int) -> dict[str, Any]:
     token0 = client.get_state("con_pairs", "pairs", pair_id, "token0")
     token1 = client.get_state("con_pairs", "pairs", pair_id, "token1")
@@ -508,6 +516,31 @@ def seed_demo_pool(
         if snapshot["lp_token"] != lp_contract:
             raise DexBootstrapError(
                 f"existing demo pair uses LP token {snapshot['lp_token']!r}, "
+                f"expected {lp_contract!r}"
+            )
+    else:
+        registered_lp_token = get_registered_lp_token(client, "currency", token_contract)
+        if registered_lp_token is None:
+            token0, token1 = pair_tokens("currency", token_contract)
+            operations.append(
+                send_call(
+                    client,
+                    label="Registering DEX demo LP token...",
+                    contract="con_pairs",
+                    function="registerLpToken",
+                    kwargs={
+                        "tokenA": token0,
+                        "tokenB": token1,
+                        "lpToken": lp_contract,
+                    },
+                    chi=DEX_TX_CHI,
+                    mode=mode,
+                    receipt_timeout_seconds=receipt_timeout_seconds,
+                )
+            )
+        elif registered_lp_token != lp_contract:
+            raise DexBootstrapError(
+                f"registered demo LP token is {registered_lp_token!r}, "
                 f"expected {lp_contract!r}"
             )
 
