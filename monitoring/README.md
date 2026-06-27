@@ -25,7 +25,7 @@ monitoring stack.
 - `shared-network` is the current profile-specific monitoring posture.
   Local indexed nodes use the overview, VM runtime, and BDS recovery dashboards
   without a separate profile variant.
-- Runtime monitoring is part of the main operator surface now, so VM panels live
+- Runtime monitoring is part of the main operator surface, so VM panels live
   here with the rest of the stack monitoring assets.
 - Alertmanager is not provisioned by default, but the example routing file is
   kept here so operators can route runtime alerts separately from BDS recovery
