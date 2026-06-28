@@ -121,6 +121,7 @@ from xian_py.x402 import (  # noqa: E402
 )
 from xian_py.xian_async import XianAsync  # noqa: E402
 from xian_runtime_types.decimal import ContractingDecimal  # noqa: E402
+from xian_runtime_types.time import Datetime as RuntimeDatetime  # noqa: E402
 
 try:  # noqa: SIM105
     from xian_zk import (  # noqa: E402
@@ -131,6 +132,8 @@ try:  # noqa: SIM105
         ShieldedOutput,
         ShieldedRelayTransferProver,
         ShieldedRelayTransferWallet,
+        ShieldedSchedulerAuthProver,
+        ShieldedSchedulerAuthRequest,
         ShieldedTransferRequest,
         ShieldedWallet,
         ShieldedWithdrawRequest,
@@ -138,6 +141,8 @@ try:  # noqa: SIM105
         output_payload_hashes,
         recover_encrypted_notes,
         scan_notes,
+        scheduler_owner_commitment,
+        shielded_scheduler_auth_registry_manifest,
         tree_state,
     )
 except Exception as exc:  # noqa: BLE001
@@ -5939,10 +5944,91 @@ class E2ERunner:
         registry_name = "zk_registry"
         base_token_name = f"con_private_e2e_{short_hash(self.run_id)}"
         token_name = base_token_name
+        scheduler_name = f"con_sched_e2e_{short_hash(self.run_id)}"
+        scheduler_adapter_name = f"con_sched_adapter_{short_hash(self.run_id)}"
+        scheduler_target_name = f"con_sched_target_{short_hash(self.run_id)}"
+        scheduler_target_source = """
+counter = Variable()
+labels = Hash(default_value="")
+
+
+@construct
+def seed():
+    counter.set(0)
+
+
+@export
+def interact(payload: dict):
+    counter.set(counter.get() + payload.get("amount", 0))
+    labels["last"] = payload.get("label", "")
+    return {"counter": counter.get(), "label": labels["last"]}
+
+
+@export
+def info():
+    return {"counter": counter.get(), "label": labels["last"]}
+"""
         shielded_wallet_balance_target = 1_000_000
         vk_registration_proposals: list[dict[str, Any]] = []
         vk_infos: dict[str, dict[str, Any]] = {}
         vk_bindings: dict[str, dict[str, Any]] = {}
+        scheduler_auth_summary: dict[str, Any] | None = None
+        scheduler_control_chi = 2_000_000
+        scheduler_proof_chi = 10_000_000
+        scheduler_deploy_chi = 25_000_000
+
+        def runtime_datetime_from_utc(value: datetime) -> RuntimeDatetime:
+            utc_value = value.astimezone(UTC).replace(tzinfo=None, microsecond=0)
+            return RuntimeDatetime(
+                utc_value.year,
+                utc_value.month,
+                utc_value.day,
+                utc_value.hour,
+                utc_value.minute,
+                utc_value.second,
+            )
+
+        def parse_chain_time(value: str) -> datetime:
+            normalized = str(value)
+            if normalized.endswith("Z"):
+                normalized = normalized[:-1] + "+00:00"
+            if "." in normalized:
+                prefix, suffix = normalized.split(".", 1)
+                if "+" in suffix:
+                    fraction, zone = suffix.split("+", 1)
+                    normalized = f"{prefix}.{fraction[:6]}+{zone}"
+                else:
+                    normalized = f"{prefix}.{suffix[:6]}"
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=UTC)
+            return parsed.astimezone(UTC)
+
+        async def latest_chain_time(node: LocalnetNode) -> datetime:
+            payload = await fetch_json(session, f"{node.rpc_url}/status", timeout=5.0)
+            return parse_chain_time(payload["result"]["sync_info"]["latest_block_time"])
+
+        async def wait_for_chain_time(node: LocalnetNode, target: RuntimeDatetime) -> datetime:
+            target_time = datetime(
+                target.year,
+                target.month,
+                target.day,
+                target.hour,
+                target.minute,
+                target.second,
+                tzinfo=UTC,
+            )
+            deadline = time.monotonic() + min(self.args.rpc_timeout_seconds, 90.0)
+            latest = await latest_chain_time(node)
+            while latest < target_time:
+                if time.monotonic() >= deadline:
+                    raise E2EError(
+                        "scheduler e2e execute action did not become due before timeout: "
+                        f"latest={latest.isoformat()} target={target_time.isoformat()}"
+                    )
+                await asyncio.sleep(0.5)
+                latest = await latest_chain_time(node)
+            return latest
 
         async def indexed_note_records(
             client: XianAsync,
@@ -6044,10 +6130,7 @@ class E2ERunner:
                     founder,
                     name=token_name,
                     code=read_text(
-                        CONTRACTS_DIR
-                        / "shielded-note-token"
-                        / "src"
-                        / "con_shielded_note_token.py"
+                        CONTRACTS_DIR / "shielded-note-token" / "src" / "con_shielded_note_token.py"
                     ),
                     args={
                         "token_name": "Local Private USD",
@@ -6070,8 +6153,88 @@ class E2ERunner:
                     timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
                     advance_blocks=1,
                 )
+            scheduler_source = await client.get_contract_source(scheduler_name)
+            if scheduler_source is None:
+                scheduler_submission = await self.submit_contract_with_broadcast_failover(
+                    session,
+                    founder,
+                    name=scheduler_name,
+                    code=read_text(
+                        CONTRACTS_DIR / "scheduled-actions" / "src" / "con_scheduled_actions.py"
+                    ),
+                    args={
+                        "name": "Shielded Scheduler E2E",
+                        "operator": founder.public_key,
+                    },
+                    preferred_index=shielded_submission_index,
+                    excluded_indices=shielded_excluded_indices,
+                    chi=scheduler_deploy_chi,
+                    label="deploy-shielded-scheduler",
+                )
+                ensure_positive_submission(
+                    scheduler_submission,
+                    label="deploy-shielded-scheduler",
+                )
+            target_source = await client.get_contract_source(scheduler_target_name)
+            if target_source is None:
+                target_submission = await self.submit_contract_with_broadcast_failover(
+                    session,
+                    founder,
+                    name=scheduler_target_name,
+                    code=scheduler_target_source,
+                    preferred_index=shielded_submission_index,
+                    excluded_indices=shielded_excluded_indices,
+                    chi=scheduler_control_chi,
+                    label="deploy-shielded-scheduler-target",
+                )
+                ensure_positive_submission(
+                    target_submission,
+                    label="deploy-shielded-scheduler-target",
+                )
+            adapter_source = await client.get_contract_source(scheduler_adapter_name)
+            if adapter_source is None:
+                adapter_submission = await self.submit_contract_with_broadcast_failover(
+                    session,
+                    founder,
+                    name=scheduler_adapter_name,
+                    code=read_text(
+                        CONTRACTS_DIR
+                        / "shielded-scheduler-adapter"
+                        / "src"
+                        / "con_shielded_scheduler_adapter.py"
+                    ),
+                    args={
+                        "scheduler_contract": scheduler_name,
+                        "operator": founder.public_key,
+                    },
+                    preferred_index=shielded_submission_index,
+                    excluded_indices=shielded_excluded_indices,
+                    chi=scheduler_deploy_chi,
+                    label="deploy-shielded-scheduler-adapter",
+                )
+                ensure_positive_submission(
+                    adapter_submission,
+                    label="deploy-shielded-scheduler-adapter",
+                )
+            allow_target_submission = await self.send_tx_with_broadcast_failover(
+                session,
+                founder,
+                scheduler_name,
+                "set_target_allowed",
+                {"target_contract": scheduler_target_name, "enabled": True},
+                preferred_index=shielded_submission_index,
+                excluded_indices=shielded_excluded_indices,
+                chi=scheduler_control_chi,
+                label="allow-shielded-scheduler-target",
+            )
+            ensure_positive_submission(
+                allow_target_submission,
+                label="allow-shielded-scheduler-target",
+            )
             prover = ShieldedNoteProver.build_insecure_dev_bundle()
             relay_prover = ShieldedRelayTransferProver.build_insecure_dev_bundle()
+            auth_prover = ShieldedSchedulerAuthProver.build_insecure_dev_bundle()
+            auth_manifest = shielded_scheduler_auth_registry_manifest(auth_prover)
             promotion_ceremony = f"localnet-e2e-promote-{short_hash(self.run_id)}"
             promotion_dir = self.output_dir / "shielded-promotion"
             promotion_input_dir = promotion_dir / "input-bundles"
@@ -6436,6 +6599,418 @@ class E2ERunner:
                 if binding.get("vk_hash") != vk_info.get("vk_hash"):
                     raise E2EError(f"shielded vk binding hash drifted for {action}")
                 vk_bindings[action] = normalize_value(binding)
+
+            auth_entry = auth_manifest["registry_entries"][0]
+            auth_vk_id = auth_entry["vk_id"]
+            auth_vk_info = await node0.call(
+                registry_name,
+                "get_vk_info",
+                {"vk_id": auth_vk_id},
+            )
+            if auth_vk_info is None:
+                auth_vk_vote = await self.approve_governance_proposal(
+                    node0,
+                    [
+                        ("node1", node1),
+                        ("node2", node2),
+                        ("node3", node3),
+                        ("node4", node4),
+                    ],
+                    proposal_function="propose_contract_call",
+                    proposal_kwargs={
+                        "target_contract": registry_name,
+                        "target_function": "register_vk",
+                        "kwargs": {
+                            "vk_id": auth_vk_id,
+                            "vk_hex": auth_entry["vk_hex"],
+                            "circuit_name": auth_entry["circuit_name"],
+                            "version": auth_entry["version"],
+                            "artifact_contract_name": auth_entry["artifact_contract_name"],
+                            "circuit_family": auth_entry["circuit_family"],
+                            "statement_version": auth_entry["statement_version"],
+                            "tree_depth": auth_entry["tree_depth"],
+                            "leaf_capacity": auth_entry["leaf_capacity"],
+                            "max_inputs": auth_entry["max_inputs"],
+                            "max_outputs": auth_entry["max_outputs"],
+                            "setup_mode": auth_entry["setup_mode"],
+                            "setup_ceremony": auth_entry["setup_ceremony"],
+                            "bundle_hash": auth_entry["bundle_hash"],
+                            "artifact_hash": auth_entry["artifact_hash"],
+                            "warning": auth_entry["warning"],
+                        },
+                        "summary": "register scheduler authorization vk for localnet shielded e2e",
+                    },
+                    expected_final_status="executed",
+                    label_prefix="register-vk-scheduler-auth",
+                    proposal_count_reader=read_governance_proposal_count,
+                    proposal_status_reader=read_governance_proposal,
+                )
+                vk_registration_proposals.append(normalize_value(auth_vk_vote))
+                auth_vk_info = await node0.call(
+                    registry_name,
+                    "get_vk_info",
+                    {"vk_id": auth_vk_id},
+                )
+            if auth_vk_info is None:
+                raise E2EError(f"scheduler auth vk {auth_vk_id} was not registered")
+            if auth_vk_info.get("circuit_family") != auth_entry["circuit_family"]:
+                raise E2EError("scheduler auth vk circuit family drifted")
+            if auth_vk_info.get("statement_version") != auth_entry["statement_version"]:
+                raise E2EError("scheduler auth vk statement version drifted")
+            vk_infos["scheduler_authorization"] = normalize_value(auth_vk_info)
+
+        async def authorize_scheduler_update(
+            client: XianAsync,
+            payload: dict[str, Any],
+            *,
+            owner_secret: str,
+        ) -> tuple[dict[str, Any], Any]:
+            update_digest = await client.call(
+                scheduler_adapter_name,
+                "hash_update_payload",
+                {"payload": payload},
+            )
+            proof = auth_prover.prove_update(
+                ShieldedSchedulerAuthRequest(
+                    owner_secret=owner_secret,
+                    update_digest=update_digest,
+                )
+            )
+            authorized = dict(payload)
+            authorized["authorization_nullifier"] = proof.update_nullifier
+            authorized["authorization_proof"] = proof.proof_hex
+            return authorized, proof
+
+        def scheduler_created_ids(receipt: dict[str, Any], *, label: str) -> tuple[int, int]:
+            for event in receipt.get("events", []):
+                if (
+                    event.get("contract") == scheduler_adapter_name
+                    and event.get("event") == "ShieldedSchedulerActionCreated"
+                ):
+                    indexed = event.get("data_indexed") or {}
+                    return int(indexed["adapter_action_id"]), int(indexed["scheduler_action_id"])
+            raise E2EError(f"{label}: scheduler adapter creation event missing")
+
+        scheduler_submission_index = await shielded_submission_node_index(2)
+        async with self.client(founder, scheduler_submission_index, session) as scheduler_client:
+            configure_auth_submission = await scheduler_client.send_tx(
+                scheduler_adapter_name,
+                "configure_authorization_vk",
+                {"vk_id": auth_manifest["configure_actions"][0]["vk_id"]},
+                chi=scheduler_control_chi,
+                wait_for_tx=True,
+            )
+            configure_auth_receipt = ensure_positive_submission(
+                configure_auth_submission,
+                label="configure-shielded-scheduler-auth-vk",
+            )
+
+            base_chain_time = await latest_chain_time(self.nodes[scheduler_submission_index])
+            cancel_owner_secret = "0x" + format(303, "064x")
+            other_owner_secret = "0x" + format(404, "064x")
+            cancel_schedule_payload = {
+                "action": "schedule",
+                "owner_commitment": scheduler_owner_commitment(cancel_owner_secret),
+                "target_contract": scheduler_target_name,
+                "run_at": runtime_datetime_from_utc(base_chain_time + timedelta(minutes=20)),
+                "target_payload": {"amount": 1, "label": "cancelled"},
+                "memo": "cancel-path",
+            }
+            cancel_schedule_submission = await scheduler_client.send_tx(
+                scheduler_adapter_name,
+                "interact",
+                {"payload": cancel_schedule_payload},
+                chi=scheduler_control_chi,
+                wait_for_tx=True,
+            )
+            cancel_schedule_receipt = ensure_positive_submission(
+                cancel_schedule_submission,
+                label="shielded-scheduler-schedule-cancel-path",
+            )
+            cancel_adapter_action_id, cancel_scheduler_action_id = scheduler_created_ids(
+                cancel_schedule_receipt,
+                label="shielded-scheduler-schedule-cancel-path",
+            )
+            cancel_action = await scheduler_client.call(
+                scheduler_adapter_name,
+                "get_action",
+                {"adapter_action_id": cancel_adapter_action_id},
+            )
+            if cancel_action["owner_commitment"] != cancel_schedule_payload["owner_commitment"]:
+                raise E2EError("shielded scheduler owner commitment drifted")
+
+            copied_public_failure = ensure_failed_submission(
+                await scheduler_client.send_tx(
+                    scheduler_adapter_name,
+                    "interact",
+                    {
+                        "payload": {
+                            "action": "cancel",
+                            "adapter_action_id": cancel_adapter_action_id,
+                            "owner_commitment": cancel_schedule_payload["owner_commitment"],
+                            "reason": "copied-public-value",
+                        }
+                    },
+                    chi=scheduler_proof_chi,
+                    wait_for_tx=True,
+                ),
+                label="shielded-scheduler-copied-public-cancel",
+                expected_message_fragment="authorization_nullifier must be a string.",
+            )
+
+            wrong_cancel_payload, _wrong_cancel_proof = await authorize_scheduler_update(
+                scheduler_client,
+                {
+                    "action": "cancel",
+                    "adapter_action_id": cancel_adapter_action_id,
+                    "reason": "wrong-owner",
+                },
+                owner_secret=other_owner_secret,
+            )
+            wrong_owner_failure = ensure_failed_submission(
+                await scheduler_client.send_tx(
+                    scheduler_adapter_name,
+                    "interact",
+                    {"payload": wrong_cancel_payload},
+                    chi=scheduler_proof_chi,
+                    wait_for_tx=True,
+                ),
+                label="shielded-scheduler-wrong-owner-cancel",
+                expected_message_fragment="Invalid authorization proof.",
+            )
+
+            cancel_payload, cancel_proof = await authorize_scheduler_update(
+                scheduler_client,
+                {
+                    "action": "cancel",
+                    "adapter_action_id": cancel_adapter_action_id,
+                    "reason": "localnet-e2e",
+                },
+                owner_secret=cancel_owner_secret,
+            )
+            cancel_submission = await scheduler_client.send_tx(
+                scheduler_adapter_name,
+                "interact",
+                {"payload": cancel_payload},
+                chi=scheduler_proof_chi,
+                wait_for_tx=True,
+            )
+            cancel_receipt = ensure_positive_submission(
+                cancel_submission,
+                label="shielded-scheduler-valid-cancel",
+            )
+            cancel_replay_failure = ensure_failed_submission(
+                await scheduler_client.send_tx(
+                    scheduler_adapter_name,
+                    "interact",
+                    {"payload": cancel_payload},
+                    chi=scheduler_proof_chi,
+                    wait_for_tx=True,
+                ),
+                label="shielded-scheduler-cancel-replay",
+                expected_message_fragment="Authorization nullifier already spent.",
+            )
+            cancel_nullifier_spent = await scheduler_client.call(
+                scheduler_adapter_name,
+                "is_authorization_nullifier_spent",
+                {"authorization_nullifier": cancel_proof.update_nullifier},
+            )
+            if cancel_nullifier_spent is not True:
+                raise E2EError("shielded scheduler cancel nullifier was not spent")
+            cancelled_adapter_action = await scheduler_client.call(
+                scheduler_adapter_name,
+                "get_action",
+                {"adapter_action_id": cancel_adapter_action_id},
+            )
+            cancelled_scheduler_action = await scheduler_client.call(
+                scheduler_name,
+                "get_action",
+                {"action_id": cancel_scheduler_action_id},
+            )
+            if cancelled_adapter_action["status"] != "cancelled":
+                raise E2EError("shielded scheduler adapter cancel status drifted")
+            if cancelled_scheduler_action["status"] != "cancelled":
+                raise E2EError("shielded scheduler cancel status drifted")
+            if cancelled_scheduler_action["cancel_reason"] != "localnet-e2e":
+                raise E2EError("shielded scheduler cancel reason drifted")
+
+            reschedule_owner_secret = "0x" + format(505, "064x")
+            reschedule_schedule_payload = {
+                "action": "schedule",
+                "owner_commitment": scheduler_owner_commitment(reschedule_owner_secret),
+                "target_contract": scheduler_target_name,
+                "run_at": runtime_datetime_from_utc(base_chain_time + timedelta(minutes=25)),
+                "target_payload": {"amount": 2, "label": "rescheduled"},
+                "memo": "reschedule-path",
+            }
+            reschedule_schedule_submission = await scheduler_client.send_tx(
+                scheduler_adapter_name,
+                "interact",
+                {"payload": reschedule_schedule_payload},
+                chi=scheduler_control_chi,
+                wait_for_tx=True,
+            )
+            reschedule_schedule_receipt = ensure_positive_submission(
+                reschedule_schedule_submission,
+                label="shielded-scheduler-schedule-reschedule-path",
+            )
+            reschedule_adapter_action_id, reschedule_scheduler_action_id = scheduler_created_ids(
+                reschedule_schedule_receipt,
+                label="shielded-scheduler-schedule-reschedule-path",
+            )
+            expected_reschedule_run_at = runtime_datetime_from_utc(
+                base_chain_time + timedelta(minutes=30)
+            )
+            expected_reschedule_expires_at = runtime_datetime_from_utc(
+                base_chain_time + timedelta(minutes=35)
+            )
+            reschedule_payload, reschedule_proof = await authorize_scheduler_update(
+                scheduler_client,
+                {
+                    "action": "reschedule",
+                    "adapter_action_id": reschedule_adapter_action_id,
+                    "run_at": expected_reschedule_run_at,
+                    "expires_at": expected_reschedule_expires_at,
+                    "memo": "later",
+                },
+                owner_secret=reschedule_owner_secret,
+            )
+            tampered_reschedule_payload = dict(reschedule_payload)
+            tampered_reschedule_payload["run_at"] = runtime_datetime_from_utc(
+                base_chain_time + timedelta(minutes=31)
+            )
+            tampered_reschedule_failure = ensure_failed_submission(
+                await scheduler_client.send_tx(
+                    scheduler_adapter_name,
+                    "interact",
+                    {"payload": tampered_reschedule_payload},
+                    chi=scheduler_proof_chi,
+                    wait_for_tx=True,
+                ),
+                label="shielded-scheduler-tampered-reschedule",
+                expected_message_fragment="Invalid authorization proof.",
+            )
+            reschedule_nullifier_before = await scheduler_client.call(
+                scheduler_adapter_name,
+                "is_authorization_nullifier_spent",
+                {"authorization_nullifier": reschedule_proof.update_nullifier},
+            )
+            if reschedule_nullifier_before is not False:
+                raise E2EError("shielded scheduler spent nullifier after failed proof")
+            reschedule_submission = await scheduler_client.send_tx(
+                scheduler_adapter_name,
+                "interact",
+                {"payload": reschedule_payload},
+                chi=scheduler_proof_chi,
+                wait_for_tx=True,
+            )
+            reschedule_receipt = ensure_positive_submission(
+                reschedule_submission,
+                label="shielded-scheduler-valid-reschedule",
+            )
+            reschedule_nullifier_spent = await scheduler_client.call(
+                scheduler_adapter_name,
+                "is_authorization_nullifier_spent",
+                {"authorization_nullifier": reschedule_proof.update_nullifier},
+            )
+            if reschedule_nullifier_spent is not True:
+                raise E2EError("shielded scheduler reschedule nullifier was not spent")
+            rescheduled_adapter_action = await scheduler_client.call(
+                scheduler_adapter_name,
+                "get_action",
+                {"adapter_action_id": reschedule_adapter_action_id},
+            )
+            rescheduled_scheduler_action = await scheduler_client.call(
+                scheduler_name,
+                "get_action",
+                {"action_id": reschedule_scheduler_action_id},
+            )
+            if rescheduled_adapter_action["status"] != "scheduled":
+                raise E2EError("shielded scheduler adapter reschedule status drifted")
+            if rescheduled_scheduler_action["status"] != "scheduled":
+                raise E2EError("shielded scheduler reschedule status drifted")
+            if rescheduled_scheduler_action["run_at"] != str(expected_reschedule_run_at):
+                raise E2EError("shielded scheduler reschedule run_at drifted")
+            if rescheduled_scheduler_action["expires_at"] != str(expected_reschedule_expires_at):
+                raise E2EError("shielded scheduler reschedule expires_at drifted")
+            if rescheduled_scheduler_action["memo"] != "later":
+                raise E2EError("shielded scheduler reschedule memo drifted")
+
+            execute_owner_secret = "0x" + format(606, "064x")
+            execute_run_at = runtime_datetime_from_utc(
+                (await latest_chain_time(self.nodes[scheduler_submission_index]))
+                + timedelta(seconds=20)
+            )
+            execute_schedule_payload = {
+                "action": "schedule",
+                "owner_commitment": scheduler_owner_commitment(execute_owner_secret),
+                "target_contract": scheduler_target_name,
+                "run_at": execute_run_at,
+                "target_payload": {"amount": 7, "label": "executed"},
+                "memo": "execute-path",
+            }
+            execute_schedule_submission = await scheduler_client.send_tx(
+                scheduler_adapter_name,
+                "interact",
+                {"payload": execute_schedule_payload},
+                chi=scheduler_control_chi,
+                wait_for_tx=True,
+            )
+            execute_schedule_receipt = ensure_positive_submission(
+                execute_schedule_submission,
+                label="shielded-scheduler-schedule-execute-path",
+            )
+            execute_adapter_action_id, _execute_scheduler_action_id = scheduler_created_ids(
+                execute_schedule_receipt,
+                label="shielded-scheduler-schedule-execute-path",
+            )
+            await wait_for_chain_time(self.nodes[scheduler_submission_index], execute_run_at)
+            execute_submission = await scheduler_client.send_tx(
+                scheduler_adapter_name,
+                "interact",
+                {"payload": {"action": "execute", "adapter_action_id": execute_adapter_action_id}},
+                chi=scheduler_control_chi,
+                wait_for_tx=True,
+            )
+            execute_receipt = ensure_positive_submission(
+                execute_submission,
+                label="shielded-scheduler-execute",
+            )
+            target_info = await scheduler_client.call(
+                scheduler_target_name,
+                "info",
+                {},
+            )
+            if normalize_value(target_info) != {"counter": 7, "label": "executed"}:
+                raise E2EError(f"shielded scheduler target state drifted: {target_info!r}")
+
+            scheduler_auth_summary = {
+                "scheduler": scheduler_name,
+                "adapter": scheduler_adapter_name,
+                "target": scheduler_target_name,
+                "auth_vk_id": auth_manifest["configure_actions"][0]["vk_id"],
+                "adapter_action_ids": {
+                    "cancel": cancel_adapter_action_id,
+                    "reschedule": reschedule_adapter_action_id,
+                    "execute": execute_adapter_action_id,
+                },
+                "configure_auth_receipt": configure_auth_receipt,
+                "cancel_schedule_receipt": cancel_schedule_receipt,
+                "cancelled_adapter_action": normalize_value(cancelled_adapter_action),
+                "cancelled_scheduler_action": normalize_value(cancelled_scheduler_action),
+                "copied_public_failure": copied_public_failure,
+                "wrong_owner_failure": wrong_owner_failure,
+                "cancel_receipt": cancel_receipt,
+                "cancel_replay_failure": cancel_replay_failure,
+                "reschedule_schedule_receipt": reschedule_schedule_receipt,
+                "rescheduled_adapter_action": normalize_value(rescheduled_adapter_action),
+                "rescheduled_scheduler_action": normalize_value(rescheduled_scheduler_action),
+                "tampered_reschedule_failure": tampered_reschedule_failure,
+                "reschedule_receipt": reschedule_receipt,
+                "execute_schedule_receipt": execute_schedule_receipt,
+                "execute_receipt": execute_receipt,
+                "target_info": normalize_value(target_info),
+            }
 
         alice_keys = ShieldedKeyBundle.generate()
         bob_keys = ShieldedKeyBundle.generate()
@@ -7369,6 +7944,7 @@ class E2ERunner:
             "vk_infos": vk_infos,
             "vk_bindings": vk_bindings,
             "vk_registration_proposals": vk_registration_proposals,
+            "scheduler_authorization": normalize_value(scheduler_auth_summary),
             "validator_rpc_indices": validator_rpc_indices,
             "shielded_excluded_rpc_indices": sorted(shielded_excluded_indices),
             "deposit_receipt": deposit_receipt,
