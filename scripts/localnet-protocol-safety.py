@@ -29,7 +29,6 @@ ROOT_DIR = STACK_DIR.parent
 NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 OUTPUT_ROOT = STACK_DIR / ".artifacts" / "localnet-protocol-safety"
 XIAN_ABCI_SRC = ROOT_DIR / "xian-abci" / "src"
-XIAN_CONTRACTING_SRC = ROOT_DIR / "xian-contracting" / "src"
 
 DEFAULT_TRANSFER_CHI = 2_000
 DEFAULT_TX_CHI = 200_000
@@ -45,24 +44,12 @@ LOCALNET_IMAGE_BY_TOPOLOGY = {
 }
 
 sys.path.append(str(XIAN_ABCI_SRC))
-sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
-
 import nacl.signing  # noqa: E402
 from cometbft.types.v1 import canonical_pb2  # noqa: E402
-from contracting.artifacts import build_contract_artifacts  # noqa: E402
 from google.protobuf.timestamp_pb2 import Timestamp  # noqa: E402
 from xian_py.config import RetryPolicy, SubmissionConfig, XianClientConfig  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian_async import XianAsync  # noqa: E402
-
-
-def build_deployment_artifacts(module_name: str, source: str) -> dict[str, Any]:
-    return build_contract_artifacts(
-        module_name=module_name,
-        source=source,
-        lint=True,
-        vm_profile="xian_vm_v1",
-    )
 
 
 @dataclass(frozen=True)
@@ -1685,10 +1672,7 @@ def get_status():
 """.strip()
             deploy_submission = await node0.submit_contract(
                 name=probe_contract,
-                deployment_artifacts=build_deployment_artifacts(
-                    probe_contract,
-                    probe_code,
-                ),
+                code=probe_code,
                 chi=GOVERNANCE_TX_CHI,
                 wait_for_tx=True,
             )

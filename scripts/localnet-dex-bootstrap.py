@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
-import functools
 import json
 import os
 import re
@@ -29,16 +28,9 @@ WORKLOADS_DIR = STACK_DIR / "workloads"
 NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 DEFAULT_DEX_BUNDLE_PATH = ROOT_DIR / "xian-dex" / "contract-bundle.json"
 DEFAULT_VALIDATOR_KEY_PATH = STACK_DIR / ".cometbft" / "config" / "priv_validator_key.json"
-XIAN_CONTRACTING_SRC = ROOT_DIR / "xian-contracting" / "src"
 XIAN_CLI_SRC = ROOT_DIR / "xian-cli" / "src"
 
-sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
 sys.path.insert(0, str(XIAN_CLI_SRC))
-
-try:
-    from contracting.artifacts import build_contract_artifacts
-except ImportError:  # pragma: no cover - only used when xian-contracting is absent.
-    build_contract_artifacts = None
 
 try:
     from xian_cli.contract_bundles import (
@@ -334,21 +326,6 @@ def load_dex_contract_sources(
     }
 
 
-@functools.lru_cache(maxsize=128)
-def build_deployment_artifacts_for(module_name: str, source: str) -> dict[str, Any]:
-    if build_contract_artifacts is None:
-        raise DexBootstrapError("xian-contracting is required to build VM deployment artifacts")
-    return build_contract_artifacts(module_name=module_name, source=source)
-
-
-def deployment_artifacts(
-    *,
-    module_name: str,
-    source: str,
-) -> dict[str, Any] | None:
-    return build_deployment_artifacts_for(module_name, source)
-
-
 def contract_exists(client: Xian, name: str) -> bool:
     return bool(client.get_contract_source(name))
 
@@ -378,10 +355,7 @@ def submit_contract_if_missing(
     print(f"Deploying {name}...")
     submission = client.submit_contract(
         name,
-        deployment_artifacts(
-            module_name=name,
-            source=code,
-        ),
+        code,
         args=constructor_args,
         chi=chi,
         mode=mode,

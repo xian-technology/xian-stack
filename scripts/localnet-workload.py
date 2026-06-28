@@ -33,7 +33,6 @@ XIAN_CONTRACTING_SRC = ROOT_DIR / "xian-contracting" / "src"
 
 sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
 
-from contracting.artifacts import build_contract_artifacts  # noqa: E402
 from xian_py import transaction as tr  # noqa: E402
 from xian_py.exception import TransportError  # noqa: E402
 from xian_py.models import TransactionSubmission  # noqa: E402
@@ -157,7 +156,7 @@ class WorkloadContext:
         kwargs: dict[str, Any] = {"name": name}
         if constructor_args is not None:
             kwargs["constructor_args"] = constructor_args
-        kwargs["deployment_artifacts"] = build_deployment_artifacts(name, code)
+        kwargs["code"] = code
         return kwargs
 
     async def __aenter__(self) -> WorkloadContext:
@@ -854,11 +853,6 @@ def load_network() -> dict[str, Any]:
 
 def read_fixture(path: str) -> str:
     return (WORKLOADS_DIR / path).read_text(encoding="utf-8")
-
-
-@functools.lru_cache(maxsize=128)
-def build_deployment_artifacts(module_name: str, source: str) -> dict[str, Any]:
-    return build_contract_artifacts(module_name=module_name, source=source)
 
 
 def derive_wallet(seed: str, label: str) -> Wallet:

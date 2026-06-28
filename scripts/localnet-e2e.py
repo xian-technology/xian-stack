@@ -60,7 +60,6 @@ INTENTKIT_DIR = (
 )
 INTENTKIT_X402_SMOKE_SCRIPT = SCRIPT_DIR / "intentkit-x402-localnet-smoke.py"
 INTENTKIT_UV_EXTRA_PACKAGES = ("psycopg-binary",)
-ORCHESTRATION_TEMPLATE_MODULE = "__ORCH_TEMPLATE__"
 DEFAULT_EXECUTION_MODE = "xian_vm_v1"
 DEFAULT_LOCALNET_NODES = 5
 DEFAULT_GENESIS_NETWORK = "testnet"
@@ -108,7 +107,6 @@ sys.path.insert(0, str(XIAN_ZK_PYTHON_DIR))
 sys.path.insert(0, str(XIAN_ABCI_SRC))
 
 import xian_py.transaction as tr  # noqa: E402
-from contracting.artifacts import build_contract_artifacts  # noqa: E402
 from xian_py.config import RetryPolicy, SubmissionConfig, XianClientConfig  # noqa: E402
 from xian_py.exception import SimulationError, TransportError, TxTimeoutError  # noqa: E402
 from xian_py.models import TransactionSubmission  # noqa: E402
@@ -177,34 +175,17 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-@functools.lru_cache(maxsize=128)
-def build_deployment_artifacts(module_name: str, source: str) -> dict[str, Any]:
-    return build_contract_artifacts(module_name=module_name, source=source)
-
-
 @functools.lru_cache(maxsize=8)
 def render_orchestration_factory_source() -> str:
     factory_template = read_text(WORKLOADS_DIR / "e2e" / "orchestration_factory.py")
     child_source = read_text(WORKLOADS_DIR / "e2e" / "orchestration_child.py")
-    child_artifacts = build_contract_artifacts(
-        module_name=ORCHESTRATION_TEMPLATE_MODULE,
-        source=child_source,
-    )
     replacements = {
-        "__ORCH_CHILD_SOURCE_JSON__": json.dumps(child_artifacts["source"]),
-        "__ORCH_CHILD_VM_IR_TEMPLATE_JSON__": json.dumps(child_artifacts["vm_ir_json"]),
-        "__ORCH_CHILD_ARTIFACT_FORMAT_JSON__": json.dumps(child_artifacts["format"]),
-        "__ORCH_CHILD_VM_PROFILE_JSON__": json.dumps(child_artifacts["vm_profile"]),
-        "__ORCH_CHILD_SOURCE_SHA256_JSON__": json.dumps(child_artifacts["hashes"]["source_sha256"]),
+        "__ORCH_CHILD_SOURCE_JSON__": json.dumps(child_source),
     }
     rendered = factory_template
     for token, value in replacements.items():
         rendered = rendered.replace(token, value)
-    unresolved = sorted(
-        token
-        for token in set(re.findall(r"__ORCH_[A-Z0-9_]+__", rendered))
-        if token != ORCHESTRATION_TEMPLATE_MODULE
-    )
+    unresolved = sorted(set(re.findall(r"__ORCH_[A-Z0-9_]+__", rendered)))
     if unresolved:
         raise E2EError("unresolved orchestration factory placeholders: " + ", ".join(unresolved))
     return rendered
@@ -1149,7 +1130,7 @@ class E2ERunner:
         code: str,
     ) -> dict[str, Any]:
         return {
-            "deployment_artifacts": build_deployment_artifacts(name, code),
+            "code": code,
         }
 
     @functools.lru_cache(maxsize=1)
@@ -1581,7 +1562,7 @@ class E2ERunner:
         wallet: Wallet,
         *,
         name: str,
-        deployment_artifacts: dict[str, Any],
+        code: str,
         args: dict[str, Any] | None = None,
         preferred_index: int | None,
         excluded_indices: set[int] | None,
@@ -1591,7 +1572,7 @@ class E2ERunner:
     ) -> TransactionSubmission:
         kwargs: dict[str, Any] = {
             "name": name,
-            "deployment_artifacts": deployment_artifacts,
+            "code": code,
         }
         if args:
             kwargs["constructor_args"] = args
@@ -2884,33 +2865,31 @@ class E2ERunner:
             )
 
             tampered_source = read_text(WORKLOADS_DIR / "e2e" / "patch_target.py")
-            tampered_artifacts = build_deployment_artifacts(
-                bad_artifact_name,
-                tampered_source,
-            )
-            tampered_ir = json.loads(tampered_artifacts["vm_ir_json"])
-            tampered_ir["module_name"] = f"{bad_artifact_name}_tampered"
-            tampered_artifacts["vm_ir_json"] = json.dumps(
-                tampered_ir,
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            tampered_artifacts["hashes"]["vm_ir_sha256"] = hashlib.sha256(
-                tampered_artifacts["vm_ir_json"].encode("utf-8")
-            ).hexdigest()
+            obsolete_artifacts = {
+                "format": "xian_contract_artifact_v1",
+                "module_name": f"{bad_artifact_name}_tampered",
+                "vm_profile": "xian_vm_v1",
+                "source": tampered_source,
+                "vm_ir_json": "{}",
+                "hashes": {},
+            }
             artifact_failure_receipt = ensure_failed_submission(
-                await client.submit_contract(
-                    name=bad_artifact_name,
-                    deployment_artifacts=tampered_artifacts,
+                await client.send_tx(
+                    "submission",
+                    "submit_contract",
+                    {
+                        "name": bad_artifact_name,
+                        "deployment_artifacts": obsolete_artifacts,
+                    },
                     chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
                     wait_for_tx=True,
                 ),
-                label="orchestration-invalid-artifacts",
+                label="orchestration-obsolete-artifacts",
             )
             bad_artifact_source = await client.get_contract_source(bad_artifact_name)
             bad_artifact_absent = bad_artifact_source is None
             if not bad_artifact_absent:
-                raise E2EError("tampered deployment_artifacts unexpectedly persisted a contract")
+                raise E2EError("obsolete deployment_artifacts unexpectedly persisted a contract")
 
         node_recoveries.append(
             await self.stabilize_nodes(
@@ -6064,15 +6043,12 @@ class E2ERunner:
                     session,
                     founder,
                     name=token_name,
-                    deployment_artifacts=self.contract_submission_kwargs(
-                        name=token_name,
-                        code=read_text(
-                            CONTRACTS_DIR
-                            / "shielded-note-token"
-                            / "src"
-                            / "con_shielded_note_token.py"
-                        ),
-                    )["deployment_artifacts"],
+                    code=read_text(
+                        CONTRACTS_DIR
+                        / "shielded-note-token"
+                        / "src"
+                        / "con_shielded_note_token.py"
+                    ),
                     args={
                         "token_name": "Local Private USD",
                         "token_symbol": "lpUSD",

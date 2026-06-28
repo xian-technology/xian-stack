@@ -1015,7 +1015,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                 None,
                 wallet,
                 name="con_demo",
-                deployment_artifacts={"module": "demo"},
+                code="counter = Variable()\n",
                 args={"owner": "wallet-0"},
                 preferred_index=2,
                 excluded_indices={0},
@@ -1033,7 +1033,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             "submit_contract",
             {
                 "name": "con_demo",
-                "deployment_artifacts": {"module": "demo"},
+                "code": "counter = Variable()\n",
                 "constructor_args": {"owner": "wallet-0"},
             },
             preferred_index=2,
