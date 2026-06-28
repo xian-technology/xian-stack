@@ -125,6 +125,8 @@ from xian_runtime_types.time import Datetime as RuntimeDatetime  # noqa: E402
 
 try:  # noqa: SIM105
     from xian_zk import (  # noqa: E402
+        ShieldedCommandProver,
+        ShieldedCommandRequest,
         ShieldedDepositRequest,
         ShieldedKeyBundle,
         ShieldedNote,
@@ -5947,35 +5949,124 @@ class E2ERunner:
         scheduler_name = f"con_sched_e2e_{short_hash(self.run_id)}"
         scheduler_adapter_name = f"con_sched_adapter_{short_hash(self.run_id)}"
         scheduler_target_name = f"con_sched_target_{short_hash(self.run_id)}"
-        scheduler_target_source = """
-counter = Variable()
-labels = Hash(default_value="")
-
-
-@construct
-def seed():
-    counter.set(0)
-
-
-@export
-def interact(payload: dict):
-    counter.set(counter.get() + payload.get("amount", 0))
-    labels["last"] = payload.get("label", "")
-    return {"counter": counter.get(), "label": labels["last"]}
-
-
-@export
-def info():
-    return {"counter": counter.get(), "label": labels["last"]}
-"""
+        command_name = f"con_cmd_e2e_{short_hash(self.run_id)}"
+        command_fee_token_name = f"con_cmd_fee_{short_hash(self.run_id)}"
+        command_target_name = f"con_cmd_target_{short_hash(self.run_id)}"
+        scheduler_target_source = "\n".join(
+            [
+                "counter = Variable()",
+                'labels = Hash(default_value="")',
+                "",
+                "",
+                "@construct",
+                "def seed():",
+                "    counter.set(0)",
+                "",
+                "",
+                "@export",
+                "def interact(payload: dict):",
+                '    counter.set(counter.get() + payload.get("amount", 0))',
+                '    labels["last"] = payload.get("label", "")',
+                '    return {"counter": counter.get(), "label": labels["last"]}',
+                "",
+                "",
+                "@export",
+                "def info():",
+                '    return {"counter": counter.get(), "label": labels["last"]}',
+                "",
+            ]
+        )
+        command_fee_token_source = "\n".join(
+            [
+                "balances = Hash(default_value=0)",
+                "approvals = Hash(default_value=0)",
+                "metadata = Hash()",
+                "",
+                "",
+                "@construct",
+                "def seed():",
+                '    metadata["token_name"] = "Command Fee Token"',
+                '    metadata["token_symbol"] = "CFT"',
+                '    metadata["token_logo_url"] = ""',
+                '    metadata["token_logo_svg"] = ""',
+                '    metadata["token_website"] = ""',
+                "",
+                "",
+                "@export",
+                "def balance_of(address: str):",
+                "    return balances[address]",
+                "",
+                "",
+                "@export",
+                "def mint(amount: int, to: str):",
+                "    balances[to] += amount",
+                "    return amount",
+                "",
+                "",
+                "@export",
+                "def approve(amount: int, to: str):",
+                "    approvals[ctx.caller, to] = amount",
+                "    return amount",
+                "",
+                "",
+                "@export",
+                "def transfer(amount: int, to: str):",
+                '    assert balances[ctx.caller] >= amount, "insufficient balance"',
+                "    balances[ctx.caller] -= amount",
+                "    balances[to] += amount",
+                "    return amount",
+                "",
+                "",
+                "@export",
+                "def transfer_from(amount: int, to: str, main_account: str):",
+                (
+                    "    assert approvals[main_account, ctx.caller] >= amount, "
+                    '"insufficient allowance"'
+                ),
+                '    assert balances[main_account] >= amount, "insufficient balance"',
+                "    approvals[main_account, ctx.caller] -= amount",
+                "    balances[main_account] -= amount",
+                "    balances[to] += amount",
+                "    return amount",
+                "",
+            ]
+        )
+        command_target_source = "\n".join(
+            [
+                "counter = Variable()",
+                'labels = Hash(default_value="")',
+                "",
+                "",
+                "@construct",
+                "def seed():",
+                "    counter.set(0)",
+                "",
+                "",
+                "@export",
+                "def interact(payload: dict):",
+                '    counter.set(counter.get() + payload.get("increment", 0))',
+                '    labels["last"] = payload.get("label", "")',
+                '    return {"counter": counter.get(), "label": labels["last"]}',
+                "",
+                "",
+                "@export",
+                "def info():",
+                '    return {"counter": counter.get(), "label": labels["last"]}',
+                "",
+            ]
+        )
         shielded_wallet_balance_target = 1_000_000
         vk_registration_proposals: list[dict[str, Any]] = []
         vk_infos: dict[str, dict[str, Any]] = {}
         vk_bindings: dict[str, dict[str, Any]] = {}
         scheduler_auth_summary: dict[str, Any] | None = None
+        command_pool_summary: dict[str, Any] | None = None
         scheduler_control_chi = 2_000_000
         scheduler_proof_chi = 10_000_000
         scheduler_deploy_chi = 25_000_000
+        command_control_chi = 2_000_000
+        command_proof_chi = 10_000_000
+        command_deploy_chi = 25_000_000
 
         def runtime_datetime_from_utc(value: datetime) -> RuntimeDatetime:
             utc_value = value.astimezone(UTC).replace(tzinfo=None, microsecond=0)
@@ -6072,6 +6163,9 @@ def info():
                 }
                 for record in records
             ]
+
+        def field_hex(value: int) -> str:
+            return f"0x{value:064x}"
 
         non_bds_indices = {node.index for node in self.nodes if not node.bds_node}
         shielded_excluded_indices = (
@@ -6216,6 +6310,63 @@ def info():
                     adapter_submission,
                     label="deploy-shielded-scheduler-adapter",
                 )
+            command_fee_token_source_on_chain = await client.get_contract_source(
+                command_fee_token_name
+            )
+            if command_fee_token_source_on_chain is None:
+                command_fee_token_submission = await self.submit_contract_with_broadcast_failover(
+                    session,
+                    founder,
+                    name=command_fee_token_name,
+                    code=command_fee_token_source,
+                    preferred_index=shielded_submission_index,
+                    excluded_indices=shielded_excluded_indices,
+                    chi=command_control_chi,
+                    label="deploy-shielded-command-fee-token",
+                )
+                ensure_positive_submission(
+                    command_fee_token_submission,
+                    label="deploy-shielded-command-fee-token",
+                )
+            command_target_source_on_chain = await client.get_contract_source(command_target_name)
+            if command_target_source_on_chain is None:
+                command_target_submission = await self.submit_contract_with_broadcast_failover(
+                    session,
+                    founder,
+                    name=command_target_name,
+                    code=command_target_source,
+                    preferred_index=shielded_submission_index,
+                    excluded_indices=shielded_excluded_indices,
+                    chi=command_control_chi,
+                    label="deploy-shielded-command-target",
+                )
+                ensure_positive_submission(
+                    command_target_submission,
+                    label="deploy-shielded-command-target",
+                )
+            command_source = await client.get_contract_source(command_name)
+            if command_source is None:
+                command_submission = await self.submit_contract_with_broadcast_failover(
+                    session,
+                    founder,
+                    name=command_name,
+                    code=read_text(
+                        CONTRACTS_DIR / "shielded-commands" / "src" / "con_shielded_commands.py"
+                    ),
+                    args={
+                        "token_contract": command_fee_token_name,
+                        "operator_address": founder.public_key,
+                        "root_window_size": 8,
+                    },
+                    preferred_index=shielded_submission_index,
+                    excluded_indices=shielded_excluded_indices,
+                    chi=command_deploy_chi,
+                    label="deploy-shielded-command-pool",
+                )
+                ensure_positive_submission(
+                    command_submission,
+                    label="deploy-shielded-command-pool",
+                )
             allow_target_submission = await self.send_tx_with_broadcast_failover(
                 session,
                 founder,
@@ -6231,9 +6382,26 @@ def info():
                 allow_target_submission,
                 label="allow-shielded-scheduler-target",
             )
+            allow_command_target_submission = await self.send_tx_with_broadcast_failover(
+                session,
+                founder,
+                command_name,
+                "set_target_allowed",
+                {"target_contract": command_target_name, "enabled": True},
+                preferred_index=shielded_submission_index,
+                excluded_indices=shielded_excluded_indices,
+                chi=command_control_chi,
+                label="allow-shielded-command-target",
+            )
+            ensure_positive_submission(
+                allow_command_target_submission,
+                label="allow-shielded-command-target",
+            )
             prover = ShieldedNoteProver.build_insecure_dev_bundle()
             relay_prover = ShieldedRelayTransferProver.build_insecure_dev_bundle()
+            command_prover = ShieldedCommandProver.build_insecure_dev_bundle()
             auth_prover = ShieldedSchedulerAuthProver.build_insecure_dev_bundle()
+            command_manifest = command_prover.registry_manifest()
             auth_manifest = shielded_scheduler_auth_registry_manifest(auth_prover)
             promotion_ceremony = f"localnet-e2e-promote-{short_hash(self.run_id)}"
             promotion_dir = self.output_dir / "shielded-promotion"
@@ -6599,6 +6767,106 @@ def info():
                 if binding.get("vk_hash") != vk_info.get("vk_hash"):
                     raise E2EError(f"shielded vk binding hash drifted for {action}")
                 vk_bindings[action] = normalize_value(binding)
+
+            command_registry_entries = {
+                entry["action"]: entry for entry in command_manifest["registry_entries"]
+            }
+            for action in ("deposit", "command", "withdraw"):
+                vk_entry = command_registry_entries[action]
+                vk_id = vk_entry["vk_id"]
+                vk_info = await node0.call(
+                    registry_name,
+                    "get_vk_info",
+                    {"vk_id": vk_id},
+                )
+                if vk_info is None:
+                    vk_vote = await self.approve_governance_proposal(
+                        node0,
+                        [
+                            ("node1", node1),
+                            ("node2", node2),
+                            ("node3", node3),
+                            ("node4", node4),
+                        ],
+                        proposal_function="propose_contract_call",
+                        proposal_kwargs={
+                            "target_contract": registry_name,
+                            "target_function": "register_vk",
+                            "kwargs": {
+                                "vk_id": vk_id,
+                                "vk_hex": vk_entry["vk_hex"],
+                                "circuit_name": vk_entry["circuit_name"],
+                                "version": vk_entry["version"],
+                                "artifact_contract_name": vk_entry["artifact_contract_name"],
+                                "circuit_family": vk_entry["circuit_family"],
+                                "statement_version": vk_entry["statement_version"],
+                                "tree_depth": vk_entry["tree_depth"],
+                                "leaf_capacity": vk_entry["leaf_capacity"],
+                                "max_inputs": vk_entry["max_inputs"],
+                                "max_outputs": vk_entry["max_outputs"],
+                                "setup_mode": vk_entry["setup_mode"],
+                                "setup_ceremony": vk_entry["setup_ceremony"],
+                                "bundle_hash": vk_entry["bundle_hash"],
+                                "artifact_hash": vk_entry["artifact_hash"],
+                                "warning": vk_entry["warning"],
+                            },
+                            "summary": (f"register shielded command {action} vk for localnet e2e"),
+                        },
+                        expected_final_status="executed",
+                        label_prefix=f"register-vk-shielded-command-{action}",
+                        proposal_count_reader=read_governance_proposal_count,
+                        proposal_status_reader=read_governance_proposal,
+                    )
+                    vk_registration_proposals.append(normalize_value(vk_vote))
+                    vk_info = await node0.call(
+                        registry_name,
+                        "get_vk_info",
+                        {"vk_id": vk_id},
+                    )
+                if vk_info is None:
+                    raise E2EError(f"shielded command vk {vk_id} was not registered")
+                if vk_info.get("circuit_family") != vk_entry["circuit_family"]:
+                    raise E2EError(f"shielded command vk {vk_id} circuit family drifted")
+                if vk_info.get("statement_version") != vk_entry["statement_version"]:
+                    raise E2EError(f"shielded command vk {vk_id} statement version drifted")
+                if vk_info.get("tree_depth") != vk_entry["tree_depth"]:
+                    raise E2EError(f"shielded command vk {vk_id} tree depth drifted")
+                if vk_info.get("leaf_capacity") != vk_entry["leaf_capacity"]:
+                    raise E2EError(f"shielded command vk {vk_id} leaf capacity drifted")
+                if vk_info.get("max_inputs") != vk_entry["max_inputs"]:
+                    raise E2EError(f"shielded command vk {vk_id} max_inputs drifted")
+                if vk_info.get("max_outputs") != vk_entry["max_outputs"]:
+                    raise E2EError(f"shielded command vk {vk_id} max_outputs drifted")
+
+                binding = await node0.call(
+                    command_name,
+                    "get_vk_binding",
+                    {"action": action},
+                )
+                if binding is None or binding.get("vk_id") != vk_id:
+                    bind_submission = await node0.send_tx(
+                        command_name,
+                        "configure_vk",
+                        {"action": action, "vk_id": vk_id},
+                        chi=command_control_chi,
+                        mode="async",
+                        wait_for_tx=True,
+                    )
+                    ensure_positive_submission(
+                        bind_submission,
+                        label=f"bind-shielded-command-vk-{action}",
+                    )
+                    binding = await node0.call(
+                        command_name,
+                        "get_vk_binding",
+                        {"action": action},
+                    )
+                if binding is None:
+                    raise E2EError(f"shielded command vk binding missing for {action}")
+                if binding.get("vk_hash") != vk_info.get("vk_hash"):
+                    raise E2EError(f"shielded command vk binding hash drifted for {action}")
+                vk_infos[f"shielded_command:{action}"] = normalize_value(vk_info)
+                vk_bindings[f"shielded_command:{action}"] = normalize_value(binding)
 
             auth_entry = auth_manifest["registry_entries"][0]
             auth_vk_id = auth_entry["vk_id"]
@@ -7012,6 +7280,361 @@ def info():
                 "target_info": normalize_value(target_info),
             }
 
+        command_submission_index = await shielded_submission_node_index(4)
+        async with (
+            self.client(founder, command_submission_index, session) as command_founder_client,
+            self.client(alice, command_submission_index, session) as command_alice_client,
+            self.client(bob, command_submission_index, session) as command_bob_client,
+            self.client(relayer, command_submission_index, session) as command_relayer_client,
+        ):
+            command_asset_id = await command_founder_client.call(command_name, "asset_id", {})
+            command_initial_root = await command_founder_client.call(
+                command_name,
+                "current_shielded_root",
+                {},
+            )
+            if command_initial_root != await command_founder_client.call(
+                command_name,
+                "zero_shielded_root",
+                {},
+            ):
+                raise E2EError("shielded command pool did not start from the zero root")
+
+            mint_alice_submission = await command_founder_client.send_tx(
+                command_fee_token_name,
+                "mint",
+                {"amount": 20, "to": alice.public_key},
+                chi=command_control_chi,
+                wait_for_tx=True,
+            )
+            mint_alice_receipt = ensure_positive_submission(
+                mint_alice_submission,
+                label="shielded-command-mint-alice",
+            )
+            mint_bob_submission = await command_founder_client.send_tx(
+                command_fee_token_name,
+                "mint",
+                {"amount": 3, "to": bob.public_key},
+                chi=command_control_chi,
+                wait_for_tx=True,
+            )
+            mint_bob_receipt = ensure_positive_submission(
+                mint_bob_submission,
+                label="shielded-command-mint-bob",
+            )
+            unsolicited_submission = await command_bob_client.send_tx(
+                command_fee_token_name,
+                "transfer",
+                {"amount": 3, "to": command_name},
+                chi=command_control_chi,
+                wait_for_tx=True,
+            )
+            unsolicited_receipt = ensure_positive_submission(
+                unsolicited_submission,
+                label="shielded-command-unsolicited-transfer",
+            )
+            initial_excess = await command_founder_client.call(
+                command_name,
+                "get_excess_balance",
+                {},
+            )
+            initial_escrow = await command_founder_client.call(
+                command_name,
+                "get_escrow_balance",
+                {},
+            )
+            if initial_excess != 3 or initial_escrow != 0:
+                raise E2EError(
+                    "shielded command unsolicited surplus accounting drifted: "
+                    f"escrow={initial_escrow!r} excess={initial_excess!r}"
+                )
+
+            approve_submission = await command_alice_client.send_tx(
+                command_fee_token_name,
+                "approve",
+                {"amount": 20, "to": command_name},
+                chi=command_control_chi,
+                wait_for_tx=True,
+            )
+            approve_receipt = ensure_positive_submission(
+                approve_submission,
+                label="shielded-command-approve-deposit",
+            )
+            command_deposit_note = ShieldedNote(
+                owner_secret=field_hex(701),
+                amount=20,
+                rho=field_hex(702),
+                blind=field_hex(703),
+            )
+            command_deposit = command_prover.prove_deposit(
+                ShieldedDepositRequest(
+                    asset_id=command_asset_id,
+                    old_root=command_initial_root,
+                    append_state=tree_state([]),
+                    amount=20,
+                    outputs=[command_deposit_note.to_output()],
+                )
+            )
+            command_deposit_submission = await command_alice_client.send_tx(
+                command_name,
+                "deposit_shielded",
+                {
+                    "amount": 20,
+                    "old_root": command_deposit.old_root,
+                    "output_commitments": command_deposit.output_commitments,
+                    "proof_hex": command_deposit.proof_hex,
+                },
+                chi=command_proof_chi,
+                wait_for_tx=True,
+            )
+            command_deposit_receipt = ensure_positive_submission(
+                command_deposit_submission,
+                label="shielded-command-deposit",
+            )
+            post_deposit_escrow = await command_founder_client.call(
+                command_name,
+                "get_escrow_balance",
+                {},
+            )
+            post_deposit_excess = await command_founder_client.call(
+                command_name,
+                "get_excess_balance",
+                {},
+            )
+            if post_deposit_escrow != 20 or post_deposit_excess != 3:
+                raise E2EError(
+                    "shielded command deposit did not preserve surplus accounting: "
+                    f"escrow={post_deposit_escrow!r} excess={post_deposit_excess!r}"
+                )
+
+            command_matches = scan_notes(
+                asset_id=command_asset_id,
+                commitments=command_deposit.output_commitments,
+                notes=[command_deposit_note],
+            )
+            if len(command_matches) != 1:
+                raise E2EError("shielded command deposit note scan drifted")
+            command_change_note = ShieldedNote(
+                owner_secret=field_hex(701),
+                amount=18,
+                rho=field_hex(704),
+                blind=field_hex(705),
+            )
+            command_execute = command_prover.prove_execute(
+                ShieldedCommandRequest(
+                    asset_id=command_asset_id,
+                    old_root=command_deposit.expected_new_root,
+                    append_state=tree_state(command_deposit.output_commitments),
+                    fee=2,
+                    public_amount=0,
+                    inputs=[command_matches[0].to_input()],
+                    outputs=[command_change_note.to_output()],
+                    target_contract=command_target_name,
+                    payload={"increment": 5, "label": "command"},
+                    relayer=relayer.public_key,
+                    chain_id=self.network["chain_id"],
+                )
+            )
+            command_execute_submission = await command_relayer_client.send_tx(
+                command_name,
+                "execute_command",
+                {
+                    "target_contract": command_target_name,
+                    "old_root": command_execute.old_root,
+                    "input_nullifiers": command_execute.input_nullifiers,
+                    "output_commitments": command_execute.output_commitments,
+                    "proof_hex": command_execute.proof_hex,
+                    "relayer_fee": 2,
+                    "public_amount": 0,
+                    "payload": {"increment": 5, "label": "command"},
+                },
+                chi=command_proof_chi,
+                wait_for_tx=True,
+            )
+            command_execute_receipt = ensure_positive_submission(
+                command_execute_submission,
+                label="shielded-command-execute",
+            )
+            command_target_info = await command_founder_client.call(
+                command_target_name,
+                "info",
+                {},
+            )
+            if normalize_value(command_target_info) != {"counter": 5, "label": "command"}:
+                raise E2EError(f"shielded command target state drifted: {command_target_info!r}")
+            post_execute_escrow = await command_founder_client.call(
+                command_name,
+                "get_escrow_balance",
+                {},
+            )
+            post_execute_excess = await command_founder_client.call(
+                command_name,
+                "get_excess_balance",
+                {},
+            )
+            relayer_fee_balance = await command_founder_client.call(
+                command_fee_token_name,
+                "balance_of",
+                {"address": relayer.public_key},
+            )
+            if post_execute_escrow != 18 or post_execute_excess != 3:
+                raise E2EError(
+                    "shielded command execution did not preserve surplus accounting: "
+                    f"escrow={post_execute_escrow!r} excess={post_execute_excess!r}"
+                )
+            if relayer_fee_balance != 2:
+                raise E2EError(f"shielded command relayer fee drifted: {relayer_fee_balance!r}")
+
+            command_withdraw_matches = scan_notes(
+                asset_id=command_asset_id,
+                commitments=command_deposit.output_commitments + command_execute.output_commitments,
+                notes=[command_change_note],
+            )
+            if len(command_withdraw_matches) != 1:
+                raise E2EError("shielded command change note scan drifted")
+            command_withdraw_change_note = ShieldedNote(
+                owner_secret=field_hex(701),
+                amount=13,
+                rho=field_hex(706),
+                blind=field_hex(707),
+            )
+            command_withdraw = command_prover.prove_withdraw(
+                ShieldedWithdrawRequest(
+                    asset_id=command_asset_id,
+                    old_root=command_execute.expected_new_root,
+                    append_state=tree_state(
+                        command_deposit.output_commitments + command_execute.output_commitments
+                    ),
+                    amount=5,
+                    recipient=bob.public_key,
+                    inputs=[command_withdraw_matches[0].to_input()],
+                    outputs=[command_withdraw_change_note.to_output()],
+                )
+            )
+            command_withdraw_submission = await command_alice_client.send_tx(
+                command_name,
+                "withdraw_shielded",
+                {
+                    "amount": 5,
+                    "to": bob.public_key,
+                    "old_root": command_withdraw.old_root,
+                    "input_nullifiers": command_withdraw.input_nullifiers,
+                    "output_commitments": command_withdraw.output_commitments,
+                    "proof_hex": command_withdraw.proof_hex,
+                },
+                chi=command_proof_chi,
+                wait_for_tx=True,
+            )
+            command_withdraw_receipt = ensure_positive_submission(
+                command_withdraw_submission,
+                label="shielded-command-withdraw",
+            )
+            post_withdraw_escrow = await command_founder_client.call(
+                command_name,
+                "get_escrow_balance",
+                {},
+            )
+            post_withdraw_excess = await command_founder_client.call(
+                command_name,
+                "get_excess_balance",
+                {},
+            )
+            bob_fee_token_balance = await command_founder_client.call(
+                command_fee_token_name,
+                "balance_of",
+                {"address": bob.public_key},
+            )
+            if post_withdraw_escrow != 13 or post_withdraw_excess != 3:
+                raise E2EError(
+                    "shielded command withdraw did not preserve surplus accounting: "
+                    f"escrow={post_withdraw_escrow!r} excess={post_withdraw_excess!r}"
+                )
+            if bob_fee_token_balance != 5:
+                raise E2EError(
+                    f"shielded command public withdraw balance drifted: {bob_fee_token_balance!r}"
+                )
+
+            unauthorized_sweep_failure = ensure_failed_submission(
+                await command_alice_client.send_tx(
+                    command_name,
+                    "sweep_excess",
+                    {"to": founder.public_key},
+                    chi=command_control_chi,
+                    wait_for_tx=True,
+                ),
+                label="shielded-command-unauthorized-sweep",
+                expected_message_fragment="Only operator!",
+            )
+            sweep_submission = await command_founder_client.send_tx(
+                command_name,
+                "sweep_excess",
+                {"to": founder.public_key},
+                chi=command_control_chi,
+                wait_for_tx=True,
+            )
+            sweep_receipt = ensure_positive_submission(
+                sweep_submission,
+                label="shielded-command-sweep-excess",
+            )
+            final_command_escrow = await command_founder_client.call(
+                command_name,
+                "get_escrow_balance",
+                {},
+            )
+            final_command_excess = await command_founder_client.call(
+                command_name,
+                "get_excess_balance",
+                {},
+            )
+            founder_fee_token_balance = await command_founder_client.call(
+                command_fee_token_name,
+                "balance_of",
+                {"address": founder.public_key},
+            )
+            command_contract_balance = await command_founder_client.call(
+                command_fee_token_name,
+                "balance_of",
+                {"address": command_name},
+            )
+            if final_command_escrow != 13 or final_command_excess != 0:
+                raise E2EError(
+                    "shielded command sweep did not leave only escrowed backing: "
+                    f"escrow={final_command_escrow!r} excess={final_command_excess!r}"
+                )
+            if founder_fee_token_balance != 3:
+                raise E2EError(
+                    "shielded command sweep recipient balance drifted: "
+                    f"{founder_fee_token_balance!r}"
+                )
+            if command_contract_balance != final_command_escrow:
+                raise E2EError(
+                    "shielded command contract balance did not match escrow after sweep: "
+                    f"balance={command_contract_balance!r} escrow={final_command_escrow!r}"
+                )
+
+            command_pool_summary = {
+                "command_pool": command_name,
+                "fee_token": command_fee_token_name,
+                "target": command_target_name,
+                "asset_id": command_asset_id,
+                "mint_alice_receipt": mint_alice_receipt,
+                "mint_bob_receipt": mint_bob_receipt,
+                "unsolicited_receipt": unsolicited_receipt,
+                "approve_receipt": approve_receipt,
+                "deposit_receipt": command_deposit_receipt,
+                "execute_receipt": command_execute_receipt,
+                "withdraw_receipt": command_withdraw_receipt,
+                "unauthorized_sweep_failure": unauthorized_sweep_failure,
+                "sweep_receipt": sweep_receipt,
+                "target_info": normalize_value(command_target_info),
+                "final_escrow": final_command_escrow,
+                "final_excess": final_command_excess,
+                "contract_balance": command_contract_balance,
+                "relayer_balance": relayer_fee_balance,
+                "bob_balance": bob_fee_token_balance,
+                "sweep_recipient_balance": founder_fee_token_balance,
+            }
+
         alice_keys = ShieldedKeyBundle.generate()
         bob_keys = ShieldedKeyBundle.generate()
         alice_wallet = ShieldedRelayTransferWallet.from_parts(
@@ -7024,9 +7647,6 @@ def info():
             owner_secret=bob_keys.owner_secret,
             viewing_private_key=bob_keys.viewing_private_key,
         )
-
-        def field_hex(value: int) -> str:
-            return f"0x{value:064x}"
 
         alice_note_1 = ShieldedNote(
             owner_secret=alice_keys.owner_secret,
@@ -7945,6 +8565,7 @@ def info():
             "vk_bindings": vk_bindings,
             "vk_registration_proposals": vk_registration_proposals,
             "scheduler_authorization": normalize_value(scheduler_auth_summary),
+            "command_pool": normalize_value(command_pool_summary),
             "validator_rpc_indices": validator_rpc_indices,
             "shielded_excluded_rpc_indices": sorted(shielded_excluded_indices),
             "deposit_receipt": deposit_receipt,
