@@ -125,6 +125,20 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertIn("register_and_bind.py", phase_source)
         self.assertIn("configure_vk", phase_source)
 
+    def test_shielded_scheduler_reads_use_validator_failover_client(self) -> None:
+        phase_source = inspect.getsource(localnet_e2e.E2ERunner.shielded_phase)
+
+        self.assertIn(
+            "ShieldedValidatorClient(\n"
+            "            founder,\n"
+            "            scheduler_submission_index,",
+            phase_source,
+        )
+        self.assertNotIn(
+            "self.client(founder, scheduler_submission_index, session) as scheduler_client",
+            phase_source,
+        )
+
     def test_cli_exposes_throughput_mix_sizing_knobs(self) -> None:
         args = localnet_e2e.build_parser().parse_args(
             [

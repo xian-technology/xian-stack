@@ -6928,7 +6928,7 @@ class E2ERunner:
             vk_infos["scheduler_authorization"] = normalize_value(auth_vk_info)
 
         async def authorize_scheduler_update(
-            client: XianAsync,
+            client,
             payload: dict[str, Any],
             *,
             owner_secret: str,
@@ -6960,7 +6960,10 @@ class E2ERunner:
             raise E2EError(f"{label}: scheduler adapter creation event missing")
 
         scheduler_submission_index = await shielded_submission_node_index(2)
-        async with self.client(founder, scheduler_submission_index, session) as scheduler_client:
+        async with ShieldedValidatorClient(
+            founder,
+            scheduler_submission_index,
+        ) as scheduler_client:
             configure_auth_submission = await scheduler_client.send_tx(
                 scheduler_adapter_name,
                 "configure_authorization_vk",
