@@ -73,6 +73,7 @@ validate_stack_security_env() {
   local monitoring_public_auth_confirmed="${XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED:-0}"
   local require_digest_pinned_third_party_images="${XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES:-0}"
   local bds_enabled="${XIAN_BDS_ENABLED:-0}"
+  local dashboard_enabled="${XIAN_DASHBOARD_ENABLED:-0}"
   local errors=()
 
   if [[ -z "${XIAN_BDS_PASSWORD:-}" ]]; then
@@ -111,7 +112,8 @@ validate_stack_security_env() {
     fi
   fi
 
-  if ! _stack_is_loopback_host "${XIAN_DASHBOARD_HOST:-127.0.0.1}" \
+  if _stack_truthy "${dashboard_enabled}" \
+    && ! _stack_is_loopback_host "${XIAN_DASHBOARD_HOST:-127.0.0.1}" \
     && ! _stack_truthy "${public_query_enabled}"; then
     errors+=("Public dashboard exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
   fi
@@ -289,6 +291,7 @@ export_stack_env() {
   export XIAN_DOCKER_DASHBOARD_PIDS_LIMIT="${XIAN_DOCKER_DASHBOARD_PIDS_LIMIT:-256}"
   export XIAN_DOCKER_DASHBOARD_NOFILE_SOFT="${XIAN_DOCKER_DASHBOARD_NOFILE_SOFT:-65536}"
   export XIAN_DOCKER_DASHBOARD_NOFILE_HARD="${XIAN_DOCKER_DASHBOARD_NOFILE_HARD:-65536}"
+  export XIAN_DASHBOARD_ENABLED="${XIAN_DASHBOARD_ENABLED:-0}"
   export XIAN_DASHBOARD_HOST="${XIAN_DASHBOARD_HOST:-127.0.0.1}"
   export XIAN_DASHBOARD_PORT="${XIAN_DASHBOARD_PORT:-8080}"
   export XIAN_DOCKER_POSTGRES_MEMORY_LIMIT="${XIAN_DOCKER_POSTGRES_MEMORY_LIMIT:-1024m}"

@@ -206,8 +206,10 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
         elif not env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED")):
             errors.append("Public query exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
 
-    if not is_loopback_host(env.get("XIAN_DASHBOARD_HOST")) and not env_truthy(
-        env.get("XIAN_PUBLIC_QUERY_ENABLED")
+    if (
+        env_truthy(env.get("XIAN_DASHBOARD_ENABLED"))
+        and not is_loopback_host(env.get("XIAN_DASHBOARD_HOST"))
+        and not env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED"))
     ):
         errors.append("Public dashboard exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
 
@@ -218,8 +220,7 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
             errors.append("Public monitoring exposure requires XIAN_PUBLIC_MONITORING_ENABLED=1")
         if not env_truthy(env.get("XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED")):
             errors.append(
-                "Public monitoring exposure requires "
-                "XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED=1"
+                "Public monitoring exposure requires XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED=1"
             )
 
     if (

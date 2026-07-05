@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -176,6 +177,84 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
             self.assertEqual("127.0.0.1", env["XIAN_APP_METRICS_HOST"])
             self.assertEqual("0.0.0.0", env["XIAN_POSTGRAPHILE_HOST"])
 
+    def test_runtime_env_allows_public_dashboard_host_when_dashboard_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(os.environ, {}, clear=True):
+                    env = backend.runtime_env(
+                        **runtime_env_kwargs(
+                            dashboard_enabled=False,
+                            dashboard_host="0.0.0.0",
+                        )
+                    )
+
+            self.assertEqual("0", env["XIAN_DASHBOARD_ENABLED"])
+            self.assertEqual("0.0.0.0", env["XIAN_DASHBOARD_HOST"])
+            self.assertEqual("0", env["XIAN_PUBLIC_QUERY_ENABLED"])
+
+    def test_runtime_env_rejects_public_dashboard_without_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(os.environ, {}, clear=True):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "Public dashboard exposure requires XIAN_PUBLIC_QUERY_ENABLED=1",
+                    ):
+                        backend.runtime_env(
+                            **runtime_env_kwargs(
+                                dashboard_enabled=True,
+                                dashboard_host="0.0.0.0",
+                            )
+                        )
+
+    def test_shell_security_allows_public_dashboard_host_when_dashboard_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = {
+                **os.environ,
+                "XIAN_STACK_SECRETS_ENV": str(Path(temp_dir) / "secrets.env"),
+                "XIAN_DASHBOARD_ENABLED": "0",
+                "XIAN_DASHBOARD_HOST": "0.0.0.0",
+                "XIAN_PUBLIC_QUERY_ENABLED": "0",
+            }
+            result = subprocess.run(
+                ["bash", "-lc", "source ./scripts/stack-env.sh && export_stack_env >/dev/null"],
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_shell_security_rejects_public_dashboard_without_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = {
+                **os.environ,
+                "XIAN_STACK_SECRETS_ENV": str(Path(temp_dir) / "secrets.env"),
+                "XIAN_DASHBOARD_ENABLED": "1",
+                "XIAN_DASHBOARD_HOST": "0.0.0.0",
+                "XIAN_PUBLIC_QUERY_ENABLED": "0",
+            }
+            result = subprocess.run(
+                ["bash", "-lc", "source ./scripts/stack-env.sh && export_stack_env >/dev/null"],
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Public dashboard exposure requires XIAN_PUBLIC_QUERY_ENABLED=1",
+            result.stderr,
+        )
+
     def test_runtime_env_rejects_public_dex_automation_without_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             stack_dir = Path(temp_dir) / "xian-stack"
@@ -251,12 +330,12 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
         self.assertEqual("0.0.0.0", env["XIAN_GRAFANA_HOST"])
 
     def test_monitoring_compose_does_not_enable_prometheus_lifecycle(self) -> None:
-        compose = (Path(__file__).resolve().parents[1] / "docker-compose-monitoring.yml")
+        compose = Path(__file__).resolve().parents[1] / "docker-compose-monitoring.yml"
 
         self.assertNotIn("--web.enable-lifecycle", compose.read_text(encoding="utf-8"))
 
     def test_bds_compose_uses_configurable_postgres_image(self) -> None:
-        compose = (Path(__file__).resolve().parents[1] / "docker-compose-abci-bds.yml")
+        compose = Path(__file__).resolve().parents[1] / "docker-compose-abci-bds.yml"
         source = compose.read_text(encoding="utf-8")
 
         self.assertIn("image: ${XIAN_POSTGRES_IMAGE:-postgres:17}", source)
