@@ -65,6 +65,8 @@ validate_stack_security_env() {
   local public_rpc_enabled="${XIAN_PUBLIC_RPC_ENABLED:-0}"
   local public_query_enabled="${XIAN_PUBLIC_QUERY_ENABLED:-0}"
   local public_metrics_enabled="${XIAN_PUBLIC_METRICS_ENABLED:-0}"
+  local public_monitoring_enabled="${XIAN_PUBLIC_MONITORING_ENABLED:-0}"
+  local monitoring_public_auth_confirmed="${XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED:-0}"
   local bds_enabled="${XIAN_BDS_ENABLED:-0}"
   local errors=()
 
@@ -107,6 +109,18 @@ validate_stack_security_env() {
   if ! _stack_is_loopback_host "${XIAN_DASHBOARD_HOST:-127.0.0.1}" \
     && ! _stack_truthy "${public_query_enabled}"; then
     errors+=("Public dashboard exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
+  fi
+
+  if {
+      ! _stack_is_loopback_host "${XIAN_PROMETHEUS_HOST:-127.0.0.1}" ||
+      ! _stack_is_loopback_host "${XIAN_GRAFANA_HOST:-127.0.0.1}";
+    }; then
+    if ! _stack_truthy "${public_monitoring_enabled}"; then
+      errors+=("Public monitoring exposure requires XIAN_PUBLIC_MONITORING_ENABLED=1")
+    fi
+    if ! _stack_truthy "${monitoring_public_auth_confirmed}"; then
+      errors+=("Public monitoring exposure requires XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED=1")
+    fi
   fi
 
   if _stack_truthy "${XIAN_DEX_AUTOMATION_ENABLED:-0}" \
@@ -207,6 +221,8 @@ export_stack_env() {
   export XIAN_PUBLIC_RPC_ENABLED="${XIAN_PUBLIC_RPC_ENABLED:-0}"
   export XIAN_PUBLIC_QUERY_ENABLED="${XIAN_PUBLIC_QUERY_ENABLED:-0}"
   export XIAN_PUBLIC_METRICS_ENABLED="${XIAN_PUBLIC_METRICS_ENABLED:-0}"
+  export XIAN_PUBLIC_MONITORING_ENABLED="${XIAN_PUBLIC_MONITORING_ENABLED:-0}"
+  export XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED="${XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED:-0}"
   export XIAN_COMETBFT_RPC_HOST="${XIAN_COMETBFT_RPC_HOST:-127.0.0.1}"
   export XIAN_COMETBFT_RPC_PORT="${XIAN_COMETBFT_RPC_PORT:-26657}"
   export XIAN_COMETBFT_P2P_HOST="${XIAN_COMETBFT_P2P_HOST:-0.0.0.0}"

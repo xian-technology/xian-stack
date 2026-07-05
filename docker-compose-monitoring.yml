@@ -15,7 +15,6 @@ services:
       [
         "--config.file=/etc/prometheus/prometheus.yml",
         "--storage.tsdb.path=/prometheus",
-        "--web.enable-lifecycle",
       ]
     volumes:
       - ${XIAN_PROMETHEUS_CONFIG}:/etc/prometheus/prometheus.yml:ro

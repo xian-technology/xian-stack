@@ -131,6 +131,8 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
     env.setdefault("XIAN_PUBLIC_RPC_ENABLED", "0")
     env.setdefault("XIAN_PUBLIC_QUERY_ENABLED", "0")
     env.setdefault("XIAN_PUBLIC_METRICS_ENABLED", "0")
+    env.setdefault("XIAN_PUBLIC_MONITORING_ENABLED", "0")
+    env.setdefault("XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED", "0")
     env.setdefault("XIAN_COMETBFT_RPC_HOST", "127.0.0.1")
     env.setdefault("XIAN_COMETBFT_RPC_PORT", "26657")
     env.setdefault("XIAN_COMETBFT_METRICS_HOST", "127.0.0.1")
@@ -199,6 +201,17 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
         env.get("XIAN_PUBLIC_QUERY_ENABLED")
     ):
         errors.append("Public dashboard exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
+
+    if not is_loopback_host(env.get("XIAN_PROMETHEUS_HOST")) or not is_loopback_host(
+        env.get("XIAN_GRAFANA_HOST")
+    ):
+        if not env_truthy(env.get("XIAN_PUBLIC_MONITORING_ENABLED")):
+            errors.append("Public monitoring exposure requires XIAN_PUBLIC_MONITORING_ENABLED=1")
+        if not env_truthy(env.get("XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED")):
+            errors.append(
+                "Public monitoring exposure requires "
+                "XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED=1"
+            )
 
     if (
         env_truthy(env.get("XIAN_DEX_AUTOMATION_ENABLED"))

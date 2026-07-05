@@ -183,6 +183,68 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
                             )
                         )
 
+    def test_runtime_env_rejects_public_monitoring_without_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(
+                    os.environ,
+                    {"XIAN_PROMETHEUS_HOST": "0.0.0.0"},
+                    clear=True,
+                ):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "Public monitoring exposure requires XIAN_PUBLIC_MONITORING_ENABLED=1",
+                    ):
+                        backend.runtime_env(**runtime_env_kwargs())
+
+    def test_runtime_env_rejects_public_monitoring_without_auth_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(
+                    os.environ,
+                    {
+                        "XIAN_GRAFANA_HOST": "0.0.0.0",
+                        "XIAN_PUBLIC_MONITORING_ENABLED": "1",
+                    },
+                    clear=True,
+                ):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED=1",
+                    ):
+                        backend.runtime_env(**runtime_env_kwargs())
+
+    def test_runtime_env_allows_public_monitoring_with_explicit_auth_confirmation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(
+                    os.environ,
+                    {
+                        "XIAN_PROMETHEUS_HOST": "0.0.0.0",
+                        "XIAN_GRAFANA_HOST": "0.0.0.0",
+                        "XIAN_PUBLIC_MONITORING_ENABLED": "1",
+                        "XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED": "1",
+                    },
+                    clear=True,
+                ):
+                    env = backend.runtime_env(**runtime_env_kwargs())
+
+        self.assertEqual("0.0.0.0", env["XIAN_PROMETHEUS_HOST"])
+        self.assertEqual("0.0.0.0", env["XIAN_GRAFANA_HOST"])
+
+    def test_monitoring_compose_does_not_enable_prometheus_lifecycle(self) -> None:
+        compose = (Path(__file__).resolve().parents[1] / "docker-compose-monitoring.yml")
+
+        self.assertNotIn("--web.enable-lifecycle", compose.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
