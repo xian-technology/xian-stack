@@ -70,6 +70,11 @@ The stack defaults to fail-closed host bindings:
   ignored by git.
 - BDS uses a dedicated read-only PostgreSQL role for PostGraphile rather than
   the BDS owner account.
+- Local stack defaults may use third-party image tags for Postgres,
+  Prometheus, and Grafana. Set
+  `XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1` for production/release-style
+  validation; then `XIAN_POSTGRES_IMAGE`, `XIAN_PROMETHEUS_IMAGE`, and
+  `XIAN_GRAFANA_IMAGE` must use `@sha256:` image refs.
 
 ### Localnet
 

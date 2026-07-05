@@ -29,6 +29,10 @@ _stack_is_loopback_host() {
   esac
 }
 
+_stack_is_digest_pinned_image() {
+  [[ "${1:-}" =~ @sha256:[0-9a-fA-F]{64}$ ]]
+}
+
 ensure_stack_secrets_env() {
   local secrets_env="${XIAN_STACK_SECRETS_ENV:-${stack_secrets_env_default}}"
   local explicit_bds_password="${XIAN_BDS_PASSWORD-}"
@@ -67,6 +71,7 @@ validate_stack_security_env() {
   local public_metrics_enabled="${XIAN_PUBLIC_METRICS_ENABLED:-0}"
   local public_monitoring_enabled="${XIAN_PUBLIC_MONITORING_ENABLED:-0}"
   local monitoring_public_auth_confirmed="${XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED:-0}"
+  local require_digest_pinned_third_party_images="${XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES:-0}"
   local bds_enabled="${XIAN_BDS_ENABLED:-0}"
   local errors=()
 
@@ -127,6 +132,18 @@ validate_stack_security_env() {
     && ! _stack_is_loopback_host "${XIAN_DEX_AUTOMATION_HOST:-127.0.0.1}" \
     && ! _stack_truthy "${public_query_enabled}"; then
     errors+=("Public DEX automation exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
+  fi
+
+  if _stack_truthy "${require_digest_pinned_third_party_images}"; then
+    if ! _stack_is_digest_pinned_image "${XIAN_POSTGRES_IMAGE:-postgres:17}"; then
+      errors+=("XIAN_POSTGRES_IMAGE must be digest-pinned when XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1")
+    fi
+    if ! _stack_is_digest_pinned_image "${XIAN_PROMETHEUS_IMAGE:-prom/prometheus:v3.10.0}"; then
+      errors+=("XIAN_PROMETHEUS_IMAGE must be digest-pinned when XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1")
+    fi
+    if ! _stack_is_digest_pinned_image "${XIAN_GRAFANA_IMAGE:-grafana/grafana:12.2.0}"; then
+      errors+=("XIAN_GRAFANA_IMAGE must be digest-pinned when XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1")
+    fi
   fi
 
   if [[ "${#errors[@]}" -gt 0 ]]; then
@@ -223,6 +240,7 @@ export_stack_env() {
   export XIAN_PUBLIC_METRICS_ENABLED="${XIAN_PUBLIC_METRICS_ENABLED:-0}"
   export XIAN_PUBLIC_MONITORING_ENABLED="${XIAN_PUBLIC_MONITORING_ENABLED:-0}"
   export XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED="${XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED:-0}"
+  export XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES="${XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES:-0}"
   export XIAN_COMETBFT_RPC_HOST="${XIAN_COMETBFT_RPC_HOST:-127.0.0.1}"
   export XIAN_COMETBFT_RPC_PORT="${XIAN_COMETBFT_RPC_PORT:-26657}"
   export XIAN_COMETBFT_P2P_HOST="${XIAN_COMETBFT_P2P_HOST:-0.0.0.0}"
@@ -238,6 +256,7 @@ export_stack_env() {
   export XIAN_PERF_RECENT_BLOCKS="${XIAN_PERF_RECENT_BLOCKS:-64}"
   export XIAN_LOCALNET_PROFILE_ENABLED="${XIAN_LOCALNET_PROFILE_ENABLED:-${XIAN_PERF_ENABLED}}"
   export XIAN_LOCALNET_PROFILE_RECENT_BLOCKS="${XIAN_LOCALNET_PROFILE_RECENT_BLOCKS:-${XIAN_PERF_RECENT_BLOCKS}}"
+  export XIAN_POSTGRES_IMAGE="${XIAN_POSTGRES_IMAGE:-postgres:17}"
   export XIAN_PROMETHEUS_IMAGE="${XIAN_PROMETHEUS_IMAGE:-prom/prometheus:v3.10.0}"
   export XIAN_PROMETHEUS_CONFIG="${XIAN_PROMETHEUS_CONFIG:-./monitoring/prometheus/integrated.yml}"
   export XIAN_PROMETHEUS_HOST="${XIAN_PROMETHEUS_HOST:-127.0.0.1}"

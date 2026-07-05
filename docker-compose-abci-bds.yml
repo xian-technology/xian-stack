@@ -31,7 +31,7 @@ services:
     restart: always
     init: true
     stop_grace_period: 30s
-    image: postgres:17
+    image: ${XIAN_POSTGRES_IMAGE:-postgres:17}
     mem_limit: ${XIAN_DOCKER_POSTGRES_MEMORY_LIMIT}
     mem_reservation: ${XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION}
     memswap_limit: ${XIAN_DOCKER_POSTGRES_MEMORY_SWAP}
@@ -60,7 +60,7 @@ services:
   postgraphile-db-init:
     restart: "no"
     init: true
-    image: postgres:17
+    image: ${XIAN_POSTGRES_IMAGE:-postgres:17}
     depends_on:
       postgres:
         condition: service_healthy

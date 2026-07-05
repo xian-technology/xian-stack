@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 import tempfile
@@ -9,7 +10,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-import backend
+backend = importlib.import_module("backend")
+
+
+PINNED_POSTGRES_IMAGE = "postgres:17@sha256:" + "a" * 64
+PINNED_PROMETHEUS_IMAGE = "prom/prometheus:v3.10.0@sha256:" + "b" * 64
+PINNED_GRAFANA_IMAGE = "grafana/grafana:12.2.0@sha256:" + "c" * 64
 
 
 def runtime_env_kwargs(**overrides: object) -> dict[str, object]:
@@ -62,6 +68,10 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
             self.assertEqual("0", env["XIAN_PUBLIC_RPC_ENABLED"])
             self.assertEqual("0", env["XIAN_PUBLIC_QUERY_ENABLED"])
             self.assertEqual("0", env["XIAN_PUBLIC_METRICS_ENABLED"])
+            self.assertEqual("0", env["XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES"])
+            self.assertEqual("postgres:17", env["XIAN_POSTGRES_IMAGE"])
+            self.assertEqual("prom/prometheus:v3.10.0", env["XIAN_PROMETHEUS_IMAGE"])
+            self.assertEqual("grafana/grafana:12.2.0", env["XIAN_GRAFANA_IMAGE"])
 
     def test_runtime_env_offsets_hidden_intentkit_s3_port_on_collision(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -244,6 +254,62 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
         compose = (Path(__file__).resolve().parents[1] / "docker-compose-monitoring.yml")
 
         self.assertNotIn("--web.enable-lifecycle", compose.read_text(encoding="utf-8"))
+
+    def test_bds_compose_uses_configurable_postgres_image(self) -> None:
+        compose = (Path(__file__).resolve().parents[1] / "docker-compose-abci-bds.yml")
+        source = compose.read_text(encoding="utf-8")
+
+        self.assertIn("image: ${XIAN_POSTGRES_IMAGE:-postgres:17}", source)
+        self.assertNotIn("image: postgres:17", source)
+
+    def test_runtime_env_allows_tagged_third_party_images_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(os.environ, {}, clear=True):
+                    env = backend.runtime_env(**runtime_env_kwargs(bds_enabled=True))
+
+        self.assertEqual("postgres:17", env["XIAN_POSTGRES_IMAGE"])
+        self.assertEqual("prom/prometheus:v3.10.0", env["XIAN_PROMETHEUS_IMAGE"])
+        self.assertEqual("grafana/grafana:12.2.0", env["XIAN_GRAFANA_IMAGE"])
+
+    def test_runtime_env_rejects_tagged_third_party_images_when_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(
+                    os.environ,
+                    {"XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES": "1"},
+                    clear=True,
+                ):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "XIAN_POSTGRES_IMAGE must be digest-pinned",
+                    ):
+                        backend.runtime_env(**runtime_env_kwargs(bds_enabled=True))
+
+    def test_runtime_env_allows_digest_pinned_third_party_images_when_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(
+                    os.environ,
+                    {
+                        "XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES": "1",
+                        "XIAN_POSTGRES_IMAGE": PINNED_POSTGRES_IMAGE,
+                        "XIAN_PROMETHEUS_IMAGE": PINNED_PROMETHEUS_IMAGE,
+                        "XIAN_GRAFANA_IMAGE": PINNED_GRAFANA_IMAGE,
+                    },
+                    clear=True,
+                ):
+                    env = backend.runtime_env(**runtime_env_kwargs(bds_enabled=True))
+
+        self.assertEqual(PINNED_POSTGRES_IMAGE, env["XIAN_POSTGRES_IMAGE"])
+        self.assertEqual(PINNED_PROMETHEUS_IMAGE, env["XIAN_PROMETHEUS_IMAGE"])
+        self.assertEqual(PINNED_GRAFANA_IMAGE, env["XIAN_GRAFANA_IMAGE"])
 
 
 if __name__ == "__main__":

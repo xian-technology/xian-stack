@@ -5,6 +5,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -84,6 +85,10 @@ def env_truthy(value: str | None) -> bool:
     return value.strip().lower() in TRUTHY_VALUES
 
 
+def is_digest_pinned_image_ref(value: str | None) -> bool:
+    return bool(re.search(r"@sha256:[0-9a-fA-F]{64}$", value or ""))
+
+
 def is_loopback_host(host: str | None) -> bool:
     if host is None:
         return True
@@ -133,6 +138,7 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
     env.setdefault("XIAN_PUBLIC_METRICS_ENABLED", "0")
     env.setdefault("XIAN_PUBLIC_MONITORING_ENABLED", "0")
     env.setdefault("XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED", "0")
+    env.setdefault("XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES", "0")
     env.setdefault("XIAN_COMETBFT_RPC_HOST", "127.0.0.1")
     env.setdefault("XIAN_COMETBFT_RPC_PORT", "26657")
     env.setdefault("XIAN_COMETBFT_METRICS_HOST", "127.0.0.1")
@@ -148,6 +154,9 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
     env.setdefault("XIAN_DEX_AUTOMATION_HOST", DEFAULT_DEX_AUTOMATION_HOST)
     env.setdefault("XIAN_DEX_AUTOMATION_PORT", str(DEFAULT_DEX_AUTOMATION_PORT))
     env.setdefault("XIAN_BDS_ENABLED", "0")
+    env.setdefault("XIAN_POSTGRES_IMAGE", "postgres:17")
+    env.setdefault("XIAN_PROMETHEUS_IMAGE", "prom/prometheus:v3.10.0")
+    env.setdefault("XIAN_GRAFANA_IMAGE", "grafana/grafana:12.2.0")
 
     secrets_path = stack_secrets_env_path(env)
     loaded_secrets = load_env_file(secrets_path)
@@ -219,6 +228,18 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
         and not env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED"))
     ):
         errors.append("Public DEX automation exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
+
+    if env_truthy(env.get("XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES")):
+        for key in (
+            "XIAN_POSTGRES_IMAGE",
+            "XIAN_PROMETHEUS_IMAGE",
+            "XIAN_GRAFANA_IMAGE",
+        ):
+            if not is_digest_pinned_image_ref(env.get(key)):
+                errors.append(
+                    f"{key} must be digest-pinned when "
+                    "XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1"
+                )
 
     if errors:
         detail = "\n".join(f"  - {message}" for message in errors)
