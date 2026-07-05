@@ -66,6 +66,16 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
             self.assertEqual("127.0.0.1", env["XIAN_COMETBFT_METRICS_HOST"])
             self.assertEqual("127.0.0.1", env["XIAN_APP_METRICS_HOST"])
             self.assertEqual("127.0.0.1", env["XIAN_POSTGRAPHILE_HOST"])
+            self.assertEqual("10000", env["XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS"])
+            self.assertEqual("1048576", env["XIAN_POSTGRAPHILE_BODY_SIZE_LIMIT_BYTES"])
+            self.assertEqual("1", env["XIAN_POSTGRAPHILE_DISABLE_DEFAULT_MUTATIONS"])
+            self.assertEqual("omit", env["XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS"])
+            self.assertEqual("60", env["XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS"])
+            self.assertEqual(
+                "addresses,bds_meta,blocks,contracts,events,rewards,shielded_output_tags,"
+                "shielded_outputs,state,state_changes,state_patches,transactions",
+                env["XIAN_POSTGRAPHILE_REQUIRED_TABLES"],
+            )
             self.assertEqual("0", env["XIAN_PUBLIC_RPC_ENABLED"])
             self.assertEqual("0", env["XIAN_PUBLIC_QUERY_ENABLED"])
             self.assertEqual("0", env["XIAN_PUBLIC_METRICS_ENABLED"])

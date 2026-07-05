@@ -135,6 +135,16 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
     env.setdefault("XIAN_POSTGRAPHILE_USER", "xian_graphql")
     env.setdefault("XIAN_POSTGRAPHILE_HOST", "127.0.0.1")
     env.setdefault("XIAN_POSTGRAPHILE_PORT", "5000")
+    env.setdefault("XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS", "10000")
+    env.setdefault("XIAN_POSTGRAPHILE_BODY_SIZE_LIMIT_BYTES", "1048576")
+    env.setdefault("XIAN_POSTGRAPHILE_DISABLE_DEFAULT_MUTATIONS", "1")
+    env.setdefault("XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS", "omit")
+    env.setdefault("XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS", "60")
+    env.setdefault(
+        "XIAN_POSTGRAPHILE_REQUIRED_TABLES",
+        "addresses,bds_meta,blocks,contracts,events,rewards,shielded_output_tags,"
+        "shielded_outputs,state,state_changes,state_patches,transactions",
+    )
     env.setdefault("XIAN_DASHBOARD_HOST", "127.0.0.1")
     env.setdefault("XIAN_DASHBOARD_PORT", "8080")
     env.setdefault("XIAN_DEX_AUTOMATION_ENABLED", "0")

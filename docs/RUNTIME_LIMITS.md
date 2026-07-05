@@ -33,12 +33,27 @@ environment variables:
 - `XIAN_DOCKER_FIDELITY_COMETBFT_MEMORY_LIMIT=768m`
 - `XIAN_DOCKER_POSTGRES_MEMORY_LIMIT=1024m`
 - `XIAN_DOCKER_POSTGRAPHILE_MEMORY_LIMIT=768m`
+- `XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS=10000`
+- `XIAN_POSTGRAPHILE_BODY_SIZE_LIMIT_BYTES=1048576`
+- `XIAN_POSTGRAPHILE_DISABLE_DEFAULT_MUTATIONS=1`
+- `XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS=omit`
+- `XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS=60`
+- `XIAN_POSTGRAPHILE_REQUIRED_TABLES=blocks,transactions,events,addresses,shielded_outputs`
 - `XIAN_LOCALNET_NODE_MEMORY_LIMIT=1536m`
 - `XIAN_LOCALNET_ABCI_MEMORY_LIMIT=1024m`
 - `XIAN_LOCALNET_COMETBFT_MEMORY_LIMIT=512m`
 
 The same pattern applies to reservations, swap, PID caps, and `nofile` limits
 for BDS, split-runtime, and localnet services.
+
+For BDS GraphQL, the stack treats PostGraphile as a read-only public query
+surface. The generated mutation plugins are disabled by default, simple list
+fields are omitted in favor of connection-style pagination, request bodies are
+capped, and the dedicated `xian_graphql` database role has a statement timeout.
+PostGraphile also waits for the core BDS tables before starting, so a partial
+database schema is not exposed during node startup. Keep those controls enabled
+for public query endpoints; use the ABCI BDS helper routes or direct database
+access for internal maintenance jobs that need broader query latitude.
 
 This gives you:
 

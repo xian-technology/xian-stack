@@ -9,6 +9,12 @@ set -euo pipefail
 : "${XIAN_BDS_USER:?XIAN_BDS_USER must be set}"
 : "${XIAN_POSTGRAPHILE_USER:?XIAN_POSTGRAPHILE_USER must be set}"
 : "${XIAN_POSTGRAPHILE_PASSWORD:?XIAN_POSTGRAPHILE_PASSWORD must be set}"
+: "${XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS:=10000}"
+
+if ! [[ "${XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS}" =~ ^[0-9]+$ ]]; then
+  printf 'XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS must be a non-negative integer\n' >&2
+  exit 1
+fi
 
 psql \
   --no-psqlrc \
@@ -16,6 +22,7 @@ psql \
   --set "owner_role=${XIAN_BDS_USER}" \
   --set "postgraphile_user=${XIAN_POSTGRAPHILE_USER}" \
   --set "postgraphile_password=${XIAN_POSTGRAPHILE_PASSWORD}" \
+  --set "postgraphile_statement_timeout_ms=${XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS}" \
   <<'SQL'
 SELECT format(
   'CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT',
@@ -30,6 +37,18 @@ SELECT format(
   'ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT',
   :'postgraphile_user',
   :'postgraphile_password'
+)\gexec
+
+SELECT format(
+  'ALTER ROLE %I SET statement_timeout = %L',
+  :'postgraphile_user',
+  :'postgraphile_statement_timeout_ms' || 'ms'
+)\gexec
+
+SELECT format(
+  'ALTER ROLE %I SET idle_in_transaction_session_timeout = %L',
+  :'postgraphile_user',
+  :'postgraphile_statement_timeout_ms' || 'ms'
 )\gexec
 
 SELECT format(

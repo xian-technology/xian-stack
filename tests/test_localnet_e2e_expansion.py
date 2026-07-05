@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import importlib.util
 import inspect
 import sys
@@ -91,6 +92,172 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                 hasattr(localnet_e2e.E2ERunner, phase.method_name),
                 msg=f"missing phase method for {phase.name}: {phase.method_name}",
             )
+
+    def test_retrieval_phase_covers_direct_bds_transaction_queries(self) -> None:
+        phase_source = inspect.getsource(localnet_e2e.E2ERunner.retrieval_phase)
+        query_surface_source = inspect.getsource(localnet_e2e.exercise_bds_query_surface)
+
+        self.assertIn("assert_canonical_bds_tx_payload", phase_source)
+        self.assertIn("exercise_bds_query_surface", phase_source)
+        self.assertIn("exercise_bds_db_schema_surface", phase_source)
+        self.assertIn("bds_db_schema_surface", phase_source)
+        self.assertIn("list_txs_for_block(block_height)", phase_source)
+        self.assertIn("list_txs_for_block(block_hash)", phase_source)
+        self.assertIn("list_txs_by_sender(sender", phase_source)
+        self.assertIn("list_txs_by_contract(contract", phase_source)
+
+        for route in (
+            "/bds_status",
+            "/bds_spool/limit=5/offset=0",
+            "/blocks/limit=5/offset=0",
+            "/block_by_hash/",
+            "/tx/",
+            "/txs_for_block/",
+            "/addresses/limit=5/offset=0",
+            "/contract_summary/",
+            "/events_for_tx/",
+            "/recent_events/limit=5/offset=0",
+            "/token_balances/",
+            "/token_contracts/limit=5/offset=0",
+            "/state_history/",
+            "/state_previous/",
+            "/state_for_tx/",
+            "/state_for_block/",
+            "/developer_rewards/",
+            "/shielded_output_tags/",
+            "/shielded_wallet_history/",
+            "/state_patch_bundles",
+            "/state_patches/limit=5/offset=0",
+            "/state_changes_for_patch/",
+        ):
+            self.assertIn(route, query_surface_source)
+
+        for table in (
+            "addresses",
+            "bds_meta",
+            "blocks",
+            "contracts",
+            "events",
+            "rewards",
+            "shielded_output_tags",
+            "shielded_outputs",
+            "state",
+            "state_changes",
+            "state_patches",
+            "transactions",
+        ):
+            self.assertIn(table, localnet_e2e.BDS_REQUIRED_TABLE_COLUMNS)
+
+        for table in (
+            "blocks",
+            "transactions",
+            "events",
+            "state",
+            "state_changes",
+            "shielded_output_tags",
+        ):
+            self.assertIn(table, localnet_e2e.BDS_REQUIRED_TABLE_INDEXES)
+
+    def test_bds_tx_payload_contract_rejects_legacy_hash_alias(self) -> None:
+        with self.assertRaisesRegex(localnet_e2e.E2EError, "legacy hash field"):
+            localnet_e2e.assert_canonical_bds_tx_payload(
+                {"hash": "TX-1", "tx_hash": "TX-1"},
+                label="legacy",
+            )
+
+        with self.assertRaisesRegex(localnet_e2e.E2EError, "missing tx_hash"):
+            localnet_e2e.assert_canonical_bds_tx_payload({}, label="missing")
+
+        localnet_e2e.assert_canonical_bds_tx_payload(
+            {"tx_hash": "TX-1"},
+            label="canonical",
+            expected_tx_hash="TX-1",
+        )
+
+    def test_bds_surface_query_contract_validates_shapes_and_counts(self) -> None:
+        localnet_e2e.assert_bds_surface_query_result(
+            localnet_e2e.BdsSurfaceQuerySpec("list", "/items", "list", min_count=1),
+            [{"id": 1}],
+        )
+        localnet_e2e.assert_bds_surface_query_result(
+            localnet_e2e.BdsSurfaceQuerySpec("page", "/items", "dict", min_count=1),
+            {"items": [{"id": 1}]},
+        )
+        localnet_e2e.assert_bds_surface_query_result(
+            localnet_e2e.BdsSurfaceQuerySpec("nullable", "/missing", "any"),
+            None,
+        )
+
+        with self.assertRaisesRegex(localnet_e2e.E2EError, "expected list"):
+            localnet_e2e.assert_bds_surface_query_result(
+                localnet_e2e.BdsSurfaceQuerySpec("bad", "/bad", "list"),
+                {},
+            )
+        with self.assertRaisesRegex(localnet_e2e.E2EError, "expected at least 2"):
+            localnet_e2e.assert_bds_surface_query_result(
+                localnet_e2e.BdsSurfaceQuerySpec("short", "/short", "list", min_count=2),
+                [{"id": 1}],
+            )
+        with self.assertRaisesRegex(localnet_e2e.E2EError, "did not include expected tx_hash"):
+            localnet_e2e.assert_bds_surface_query_result(
+                localnet_e2e.BdsSurfaceQuerySpec(
+                    "missing-tx",
+                    "/txs",
+                    "list",
+                    contains_tx_hash="TX-2",
+                ),
+                [{"tx_hash": "TX-1"}],
+            )
+
+    def test_bds_db_schema_contract_validates_tables_indexes_rows_and_probes(self) -> None:
+        snapshot = {
+            "tables": sorted(localnet_e2e.BDS_REQUIRED_TABLE_COLUMNS),
+            "columns": {
+                table: sorted(columns)
+                for table, columns in localnet_e2e.BDS_REQUIRED_TABLE_COLUMNS.items()
+            },
+            "indexes": {
+                table: sorted(indexes)
+                for table, indexes in localnet_e2e.BDS_REQUIRED_TABLE_INDEXES.items()
+            },
+            "row_counts": {
+                table: (1 if table in localnet_e2e.BDS_NON_EMPTY_TABLES else 0)
+                for table in localnet_e2e.BDS_REQUIRED_TABLE_COLUMNS
+            },
+            "probes": {
+                "transaction_sample": True,
+                "block_sample": True,
+                "state_sample": True,
+                "state_history_sample": True,
+                "event_for_tx_sample": True,
+            },
+        }
+        localnet_e2e.assert_bds_db_schema_snapshot(snapshot)
+
+        missing_table = copy.deepcopy(snapshot)
+        missing_table["tables"].remove("transactions")
+        with self.assertRaisesRegex(localnet_e2e.E2EError, "missing tables"):
+            localnet_e2e.assert_bds_db_schema_snapshot(missing_table)
+
+        missing_column = copy.deepcopy(snapshot)
+        missing_column["columns"]["transactions"].remove("hash")
+        with self.assertRaisesRegex(localnet_e2e.E2EError, "missing columns"):
+            localnet_e2e.assert_bds_db_schema_snapshot(missing_column)
+
+        missing_index = copy.deepcopy(snapshot)
+        missing_index["indexes"]["transactions"].remove("transactions_pkey")
+        with self.assertRaisesRegex(localnet_e2e.E2EError, "missing indexes"):
+            localnet_e2e.assert_bds_db_schema_snapshot(missing_index)
+
+        empty_required_table = copy.deepcopy(snapshot)
+        empty_required_table["row_counts"]["events"] = 0
+        with self.assertRaisesRegex(localnet_e2e.E2EError, "expected indexed rows"):
+            localnet_e2e.assert_bds_db_schema_snapshot(empty_required_table)
+
+        failed_probe = copy.deepcopy(snapshot)
+        failed_probe["probes"]["event_for_tx_sample"] = False
+        with self.assertRaisesRegex(localnet_e2e.E2EError, "sample probes failed"):
+            localnet_e2e.assert_bds_db_schema_snapshot(failed_probe)
 
     def test_orchestration_phase_covers_pending_callback_overlay(self) -> None:
         workload_dir = Path(__file__).resolve().parents[1] / "workloads" / "e2e"

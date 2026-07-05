@@ -639,9 +639,671 @@ async def wait_for_bds_indexed_tx(
     while time.monotonic() < deadline:
         indexed_tx = await client.get_indexed_tx(tx_hash)
         if indexed_tx is not None:
-            return normalize_value(indexed_tx.raw)
+            raw = normalize_value(indexed_tx.raw)
+            assert_canonical_bds_tx_payload(raw, label=f"indexed transaction {tx_hash}")
+            return raw
         await asyncio.sleep(0.5)
     raise E2EError(f"BDS did not index transaction {tx_hash} before timeout")
+
+
+def assert_canonical_bds_tx_payload(
+    payload: dict[str, Any],
+    *,
+    label: str,
+    expected_tx_hash: str | None = None,
+) -> None:
+    if "hash" in payload:
+        raise E2EError(f"{label}: BDS transaction payload exposed legacy hash field")
+    tx_hash = payload.get("tx_hash")
+    if not isinstance(tx_hash, str) or not tx_hash:
+        raise E2EError(f"{label}: BDS transaction payload missing tx_hash")
+    if expected_tx_hash is not None and tx_hash != expected_tx_hash:
+        raise E2EError(f"{label}: expected tx_hash {expected_tx_hash}, got {tx_hash}")
+
+
+def assert_canonical_bds_tx_payloads(
+    payloads: list[dict[str, Any]],
+    *,
+    label: str,
+) -> None:
+    for index, payload in enumerate(payloads):
+        assert_canonical_bds_tx_payload(payload, label=f"{label}[{index}]")
+
+
+@dataclass(frozen=True, slots=True)
+class BdsSurfaceQuerySpec:
+    name: str
+    path: str
+    expected_shape: str
+    min_count: int = 0
+    canonical_txs: bool = False
+    equal_tx_hash: str | None = None
+    contains_tx_hash: str | None = None
+
+
+def require_bds_string(payload: dict[str, Any], field: str, *, label: str) -> str:
+    value = payload.get(field)
+    if not isinstance(value, str) or not value:
+        raise E2EError(f"{label}: BDS payload missing {field}")
+    return value
+
+
+def bds_result_count(value: Any) -> int | None:
+    if isinstance(value, list):
+        return len(value)
+    if isinstance(value, dict) and isinstance(value.get("items"), list):
+        return len(value["items"])
+    return None
+
+
+def bds_result_contains_tx_hash(value: Any, tx_hash: str) -> bool:
+    if isinstance(value, dict):
+        if value.get("tx_hash") == tx_hash:
+            return True
+        items = value.get("items")
+        if isinstance(items, list):
+            return bds_result_contains_tx_hash(items, tx_hash)
+        return False
+    if isinstance(value, list):
+        return any(isinstance(item, dict) and item.get("tx_hash") == tx_hash for item in value)
+    return False
+
+
+def assert_bds_surface_query_result(spec: BdsSurfaceQuerySpec, value: Any) -> None:
+    if spec.expected_shape == "dict" and not isinstance(value, dict):
+        raise E2EError(
+            f"BDS query {spec.name} expected object, got {type(value).__name__}"
+        )
+    if spec.expected_shape == "list" and not isinstance(value, list):
+        raise E2EError(f"BDS query {spec.name} expected list, got {type(value).__name__}")
+    if spec.expected_shape not in {"dict", "list", "any"}:
+        raise E2EError(f"BDS query {spec.name} has unknown expected shape")
+
+    count = bds_result_count(value)
+    if spec.min_count > 0 and (count is None or count < spec.min_count):
+        raise E2EError(
+            f"BDS query {spec.name} returned {count or 0} rows, expected at least "
+            f"{spec.min_count}"
+        )
+
+    if spec.canonical_txs:
+        if isinstance(value, dict):
+            assert_canonical_bds_tx_payload(value, label=spec.name)
+        elif isinstance(value, list):
+            tx_payloads = [item for item in value if isinstance(item, dict)]
+            assert_canonical_bds_tx_payloads(tx_payloads, label=spec.name)
+        else:
+            raise E2EError(f"BDS query {spec.name} did not return canonical tx payloads")
+
+    if spec.equal_tx_hash is not None:
+        if not isinstance(value, dict) or value.get("tx_hash") != spec.equal_tx_hash:
+            raise E2EError(f"BDS query {spec.name} did not return expected tx_hash")
+    if spec.contains_tx_hash is not None and not bds_result_contains_tx_hash(
+        value,
+        spec.contains_tx_hash,
+    ):
+        raise E2EError(f"BDS query {spec.name} did not include expected tx_hash")
+
+
+def summarize_bds_surface_query(name: str, path: str, value: Any) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "name": name,
+        "path": path,
+        "type": type(value).__name__,
+    }
+    count = bds_result_count(value)
+    if count is not None:
+        summary["count"] = count
+    if isinstance(value, dict):
+        summary["keys"] = sorted(str(key) for key in value)[:16]
+    elif isinstance(value, list) and value and isinstance(value[0], dict):
+        summary["first_keys"] = sorted(str(key) for key in value[0])[:16]
+    return summary
+
+
+async def fetch_bds_surface_query(
+    session: aiohttp.ClientSession,
+    rpc_url: str,
+    spec: BdsSurfaceQuerySpec,
+) -> dict[str, Any]:
+    value = await fetch_abci_query(session, rpc_url, spec.path)
+    assert_bds_surface_query_result(spec, value)
+    return summarize_bds_surface_query(spec.name, spec.path, value)
+
+
+async def exercise_bds_query_surface(
+    session: aiohttp.ClientSession,
+    rpc_url: str,
+    *,
+    indexed_tx_sample: dict[str, Any],
+    state_prefix: str,
+    state_key: str,
+    portfolio_address: str,
+    event_contract: str,
+    event_name: str,
+    after_event_id: int | None,
+) -> dict[str, Any]:
+    tx_hash = require_bds_string(indexed_tx_sample, "tx_hash", label="BDS surface sample")
+    block_hash = require_bds_string(indexed_tx_sample, "block_hash", label="BDS surface sample")
+    sender = require_bds_string(indexed_tx_sample, "sender", label="BDS surface sample")
+    contract = require_bds_string(indexed_tx_sample, "contract", label="BDS surface sample")
+    block_height = indexed_tx_sample.get("block_height")
+    if not isinstance(block_height, int):
+        raise E2EError("BDS surface sample missing integer block_height")
+    cursor = 0 if after_event_id is None else max(int(after_event_id), 0)
+
+    specs = [
+        BdsSurfaceQuerySpec("bds_status", "/bds_status", "dict"),
+        BdsSurfaceQuerySpec("bds_spool", "/bds_spool/limit=5/offset=0", "list"),
+        BdsSurfaceQuerySpec("blocks", "/blocks/limit=5/offset=0", "list", min_count=1),
+        BdsSurfaceQuerySpec("block_by_height", f"/block/{block_height}", "dict"),
+        BdsSurfaceQuerySpec("block_by_hash", f"/block_by_hash/{block_hash}", "dict"),
+        BdsSurfaceQuerySpec(
+            "tx_by_hash",
+            f"/tx/{tx_hash}",
+            "dict",
+            canonical_txs=True,
+            equal_tx_hash=tx_hash,
+        ),
+        BdsSurfaceQuerySpec(
+            "txs_for_block_height",
+            f"/txs_for_block/{block_height}",
+            "list",
+            min_count=1,
+            canonical_txs=True,
+            contains_tx_hash=tx_hash,
+        ),
+        BdsSurfaceQuerySpec(
+            "txs_for_block_hash",
+            f"/txs_for_block/{block_hash}",
+            "list",
+            min_count=1,
+            canonical_txs=True,
+            contains_tx_hash=tx_hash,
+        ),
+        BdsSurfaceQuerySpec(
+            "txs_by_sender",
+            f"/txs_by_sender/{sender}/limit=5/offset=0",
+            "list",
+            min_count=1,
+            canonical_txs=True,
+            contains_tx_hash=tx_hash,
+        ),
+        BdsSurfaceQuerySpec("addresses", "/addresses/limit=5/offset=0", "dict", min_count=1),
+        BdsSurfaceQuerySpec(
+            "txs_by_contract",
+            f"/txs_by_contract/{contract}/limit=5/offset=0",
+            "list",
+            min_count=1,
+            canonical_txs=True,
+            contains_tx_hash=tx_hash,
+        ),
+        BdsSurfaceQuerySpec("contract_summary", f"/contract_summary/{contract}", "dict"),
+        BdsSurfaceQuerySpec(
+            "events_for_tx",
+            f"/events_for_tx/{tx_hash}",
+            "list",
+            min_count=1,
+        ),
+        BdsSurfaceQuerySpec(
+            "events_offset",
+            f"/events/{event_contract}/{event_name}/limit=5/offset=0",
+            "list",
+            min_count=1,
+        ),
+        BdsSurfaceQuerySpec(
+            "events_cursor",
+            f"/events/{event_contract}/{event_name}/limit=5/after_id={cursor}",
+            "list",
+        ),
+        BdsSurfaceQuerySpec(
+            "recent_events",
+            "/recent_events/limit=5/offset=0",
+            "dict",
+            min_count=1,
+        ),
+        BdsSurfaceQuerySpec(
+            "state_prefix",
+            f"/state/{state_prefix}/limit=5/offset=0",
+            "list",
+            min_count=1,
+        ),
+        BdsSurfaceQuerySpec(
+            "state_exact_prefix",
+            f"/state/{state_key}/limit=5/offset=0",
+            "list",
+            min_count=1,
+        ),
+        BdsSurfaceQuerySpec(
+            "token_balances",
+            f"/token_balances/{portfolio_address}/limit=5/offset=0",
+            "dict",
+            min_count=1,
+        ),
+        BdsSurfaceQuerySpec(
+            "token_balances_include_zero",
+            f"/token_balances/{portfolio_address}/limit=5/offset=0/include_zero=true",
+            "dict",
+            min_count=1,
+        ),
+        BdsSurfaceQuerySpec(
+            "token_contracts",
+            "/token_contracts/limit=5/offset=0",
+            "dict",
+            min_count=1,
+        ),
+        BdsSurfaceQuerySpec(
+            "state_history",
+            f"/state_history/{state_key}/limit=5/offset=0",
+            "list",
+            min_count=1,
+        ),
+        BdsSurfaceQuerySpec("state_previous", f"/state_previous/{state_key}", "dict"),
+        BdsSurfaceQuerySpec("state_for_tx", f"/state_for_tx/{tx_hash}", "list", min_count=1),
+        BdsSurfaceQuerySpec(
+            "state_for_block_height",
+            f"/state_for_block/{block_height}",
+            "list",
+            min_count=1,
+        ),
+        BdsSurfaceQuerySpec(
+            "state_for_block_hash",
+            f"/state_for_block/{block_hash}",
+            "list",
+            min_count=1,
+        ),
+        BdsSurfaceQuerySpec("developer_rewards", f"/developer_rewards/{portfolio_address}", "dict"),
+        BdsSurfaceQuerySpec(
+            "shielded_output_tags_offset",
+            "/shielded_output_tags/not-present/limit=5/offset=0/kind=sync_hint",
+            "dict",
+        ),
+        BdsSurfaceQuerySpec(
+            "shielded_output_tags_cursor",
+            "/shielded_output_tags/not-present/limit=5/after_id=0/kind=sync_hint",
+            "dict",
+        ),
+        BdsSurfaceQuerySpec(
+            "shielded_wallet_history",
+            "/shielded_wallet_history/not-present/limit=5/after_note_index=0/kind=sync_hint",
+            "dict",
+        ),
+        BdsSurfaceQuerySpec("state_patch_bundles", "/state_patch_bundles", "any"),
+        BdsSurfaceQuerySpec(
+            "scheduled_state_patches",
+            f"/scheduled_state_patches/{block_height}",
+            "any",
+        ),
+        BdsSurfaceQuerySpec("state_patches", "/state_patches/limit=5/offset=0", "list"),
+        BdsSurfaceQuerySpec(
+            "state_patches_for_block",
+            f"/state_patches_for_block/{block_height}",
+            "list",
+        ),
+        BdsSurfaceQuerySpec("state_patch_missing", "/state_patch/not-present", "any"),
+        BdsSurfaceQuerySpec(
+            "state_changes_for_patch_missing",
+            "/state_changes_for_patch/not-present",
+            "list",
+        ),
+    ]
+    queries = [await fetch_bds_surface_query(session, rpc_url, spec) for spec in specs]
+    return {
+        "query_count": len(queries),
+        "queries": queries,
+    }
+
+
+BDS_REQUIRED_TABLE_COLUMNS: dict[str, set[str]] = {
+    "addresses": {
+        "address",
+        "tx_count",
+        "first_block_height",
+        "last_block_height",
+        "last_tx_hash",
+        "last_contract",
+        "last_function",
+    },
+    "bds_meta": {"key", "value", "updated_at"},
+    "blocks": {"height", "block_hash", "block_time", "block_time_iso", "tx_count", "app_hash"},
+    "contracts": {"name", "last_tx_hash", "submitted_at_block", "source", "xsc001"},
+    "events": {
+        "id",
+        "block_height",
+        "tx_hash",
+        "tx_index",
+        "event_index",
+        "contract",
+        "event",
+        "signer",
+        "caller",
+        "data_indexed",
+        "data",
+    },
+    "rewards": {
+        "id",
+        "block_height",
+        "tx_hash",
+        "tx_index",
+        "reward_index",
+        "type",
+        "recipient_key",
+        "source_contract",
+        "value",
+    },
+    "shielded_output_tags": {
+        "id",
+        "block_height",
+        "tx_hash",
+        "tx_index",
+        "contract",
+        "function",
+        "action",
+        "output_index",
+        "note_index",
+        "commitment",
+        "new_root",
+        "payload_hash",
+        "tag_kind",
+        "tag_value",
+    },
+    "shielded_outputs": {
+        "id",
+        "block_height",
+        "tx_hash",
+        "tx_index",
+        "contract",
+        "function",
+        "action",
+        "output_index",
+        "note_index",
+        "commitment",
+        "new_root",
+        "payload_hash",
+    },
+    "state": {
+        "key",
+        "value",
+        "value_numeric",
+        "last_change_id",
+        "last_tx_hash",
+        "last_block_height",
+    },
+    "state_changes": {
+        "change_id",
+        "block_height",
+        "block_hash",
+        "block_time",
+        "tx_hash",
+        "tx_index",
+        "write_index",
+        "key",
+        "new_value",
+        "new_value_numeric",
+        "previous_change_id",
+        "previous_tx_hash",
+        "origin_type",
+    },
+    "state_patches": {"hash", "block_height", "block_hash", "block_time", "patch_count", "patches"},
+    "transactions": {
+        "hash",
+        "block_height",
+        "block_hash",
+        "block_time",
+        "tx_index",
+        "sender",
+        "nonce",
+        "contract",
+        "function",
+        "success",
+        "status_code",
+        "chi_used",
+        "result",
+        "payload",
+        "envelope",
+    },
+}
+
+BDS_REQUIRED_TABLE_INDEXES: dict[str, set[str]] = {
+    "addresses": {"addresses_pkey", "idx_addresses_last_activity"},
+    "bds_meta": {"bds_meta_pkey"},
+    "blocks": {"blocks_pkey", "blocks_block_hash_key", "idx_blocks_time_iso"},
+    "contracts": {"contracts_pkey", "idx_contracts_submitted_at_block"},
+    "events": {
+        "events_pkey",
+        "events_tx_hash_event_index_key",
+        "idx_events_contract_event_id",
+        "idx_events_contract_event_order",
+        "idx_events_data_indexed",
+        "idx_events_tx_hash",
+    },
+    "rewards": {
+        "rewards_pkey",
+        "idx_rewards_tx_hash",
+        "idx_rewards_type_recipient_height",
+        "idx_rewards_type_source_contract_height",
+    },
+    "shielded_output_tags": {
+        "shielded_output_tags_pkey",
+        "idx_shielded_output_tags_kind_value_height",
+        "idx_shielded_output_tags_kind_value_id",
+        "idx_shielded_output_tags_kind_value_note",
+        "idx_shielded_output_tags_tx_hash",
+    },
+    "shielded_outputs": {
+        "shielded_outputs_pkey",
+        "idx_shielded_outputs_note_index",
+        "idx_shielded_outputs_tx_hash",
+    },
+    "state": {
+        "state_pkey",
+        "idx_state_key_prefix",
+        "idx_state_last_block_height",
+        "idx_state_value_numeric",
+    },
+    "state_changes": {
+        "state_changes_pkey",
+        "idx_state_changes_block_order",
+        "idx_state_changes_key_history",
+        "idx_state_changes_previous_change",
+        "idx_state_changes_tx_hash",
+    },
+    "state_patches": {"state_patches_pkey", "idx_state_patches_block_height"},
+    "transactions": {
+        "transactions_pkey",
+        "transactions_block_height_tx_index_key",
+        "idx_transactions_block_hash",
+        "idx_transactions_contract_height_index",
+        "idx_transactions_sender_height_index",
+        "idx_transactions_sender_nonce",
+    },
+}
+
+BDS_NON_EMPTY_TABLES = {
+    "addresses",
+    "blocks",
+    "contracts",
+    "events",
+    "rewards",
+    "state",
+    "state_changes",
+    "transactions",
+}
+
+
+def sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def parse_psql_json(stdout: str, *, label: str) -> Any:
+    text = stdout.strip()
+    if not text:
+        raise E2EError(f"BDS DB {label} query returned no output")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise E2EError(f"BDS DB {label} query did not return JSON: {text[:200]}") from exc
+
+
+def query_localnet_bds_db_json(sql: str, *, label: str) -> Any:
+    result = run_cmd(
+        [
+            "docker",
+            "exec",
+            LOCALNET_POSTGRES_CONTAINER,
+            "psql",
+            "-X",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-U",
+            "xian",
+            "-d",
+            "xian",
+            "-Atc",
+            sql,
+        ]
+    )
+    return parse_psql_json(result.stdout, label=label)
+
+
+def load_bds_db_schema_snapshot(
+    *,
+    tx_hash: str,
+    block_height: int,
+    state_key: str,
+) -> dict[str, Any]:
+    tables = query_localnet_bds_db_json(
+        """
+        SELECT jsonb_agg(table_name ORDER BY table_name)
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_type = 'BASE TABLE'
+        """,
+        label="tables",
+    )
+    columns = query_localnet_bds_db_json(
+        """
+        SELECT jsonb_object_agg(table_name, columns)
+        FROM (
+            SELECT table_name, jsonb_agg(column_name ORDER BY ordinal_position) AS columns
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+            GROUP BY table_name
+        ) AS grouped
+        """,
+        label="columns",
+    )
+    indexes = query_localnet_bds_db_json(
+        """
+        SELECT jsonb_object_agg(tablename, indexes)
+        FROM (
+            SELECT tablename, jsonb_agg(indexname ORDER BY indexname) AS indexes
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+            GROUP BY tablename
+        ) AS grouped
+        """,
+        label="indexes",
+    )
+    row_counts = query_localnet_bds_db_json(
+        """
+        SELECT jsonb_build_object(
+            'addresses', (SELECT count(*) FROM public.addresses),
+            'blocks', (SELECT count(*) FROM public.blocks),
+            'contracts', (SELECT count(*) FROM public.contracts),
+            'events', (SELECT count(*) FROM public.events),
+            'rewards', (SELECT count(*) FROM public.rewards),
+            'shielded_output_tags', (SELECT count(*) FROM public.shielded_output_tags),
+            'shielded_outputs', (SELECT count(*) FROM public.shielded_outputs),
+            'state', (SELECT count(*) FROM public.state),
+            'state_changes', (SELECT count(*) FROM public.state_changes),
+            'state_patches', (SELECT count(*) FROM public.state_patches),
+            'transactions', (SELECT count(*) FROM public.transactions)
+        )
+        """,
+        label="row_counts",
+    )
+    probes = query_localnet_bds_db_json(
+        f"""
+        SELECT jsonb_build_object(
+            'transaction_sample',
+                EXISTS (SELECT 1 FROM public.transactions WHERE hash = {sql_literal(tx_hash)}),
+            'block_sample',
+                EXISTS (SELECT 1 FROM public.blocks WHERE height = {int(block_height)}),
+            'state_sample',
+                EXISTS (SELECT 1 FROM public.state WHERE key = {sql_literal(state_key)}),
+            'state_history_sample',
+                EXISTS (SELECT 1 FROM public.state_changes WHERE key = {sql_literal(state_key)}),
+            'event_for_tx_sample',
+                EXISTS (SELECT 1 FROM public.events WHERE tx_hash = {sql_literal(tx_hash)})
+        )
+        """,
+        label="probes",
+    )
+    return {
+        "tables": tables,
+        "columns": columns,
+        "indexes": indexes,
+        "row_counts": row_counts,
+        "probes": probes,
+    }
+
+
+def assert_bds_db_schema_snapshot(snapshot: dict[str, Any]) -> None:
+    table_names = set(snapshot.get("tables") or [])
+    missing_tables = sorted(set(BDS_REQUIRED_TABLE_COLUMNS) - table_names)
+    if missing_tables:
+        raise E2EError(f"BDS DB schema missing tables: {missing_tables}")
+
+    columns_by_table = snapshot.get("columns") or {}
+    for table, expected_columns in BDS_REQUIRED_TABLE_COLUMNS.items():
+        actual_columns = set(columns_by_table.get(table) or [])
+        missing_columns = sorted(expected_columns - actual_columns)
+        if missing_columns:
+            raise E2EError(f"BDS DB table {table} missing columns: {missing_columns}")
+
+    indexes_by_table = snapshot.get("indexes") or {}
+    for table, expected_indexes in BDS_REQUIRED_TABLE_INDEXES.items():
+        actual_indexes = set(indexes_by_table.get(table) or [])
+        missing_indexes = sorted(expected_indexes - actual_indexes)
+        if missing_indexes:
+            raise E2EError(f"BDS DB table {table} missing indexes: {missing_indexes}")
+
+    row_counts = snapshot.get("row_counts") or {}
+    empty_tables = [
+        table
+        for table in sorted(BDS_NON_EMPTY_TABLES)
+        if int(row_counts.get(table) or 0) <= 0
+    ]
+    if empty_tables:
+        raise E2EError(f"BDS DB expected indexed rows in tables: {empty_tables}")
+
+    probes = snapshot.get("probes") or {}
+    failed_probes = sorted(name for name, ok in probes.items() if ok is not True)
+    if failed_probes:
+        raise E2EError(f"BDS DB sample probes failed: {failed_probes}")
+
+
+def exercise_bds_db_schema_surface(
+    *,
+    tx_hash: str,
+    block_height: int,
+    state_key: str,
+) -> dict[str, Any]:
+    snapshot = load_bds_db_schema_snapshot(
+        tx_hash=tx_hash,
+        block_height=block_height,
+        state_key=state_key,
+    )
+    assert_bds_db_schema_snapshot(snapshot)
+    return {
+        "tables_checked": sorted(BDS_REQUIRED_TABLE_COLUMNS),
+        "column_tables_checked": len(BDS_REQUIRED_TABLE_COLUMNS),
+        "index_tables_checked": len(BDS_REQUIRED_TABLE_INDEXES),
+        "non_empty_tables_checked": sorted(BDS_NON_EMPTY_TABLES),
+        "row_counts": snapshot["row_counts"],
+        "sample_probes": snapshot["probes"],
+    }
 
 
 async def wait_for_container_state(
@@ -4953,6 +5615,93 @@ class E2ERunner:
                 if self.sample_event_tx_hash
                 else []
             )
+            indexed_tx_sample = (
+                await wait_for_bds_indexed_tx(
+                    client,
+                    self.sample_event_tx_hash,
+                    timeout_seconds=15.0,
+                )
+                if self.sample_event_tx_hash
+                else None
+            )
+            txs_for_block_height = []
+            txs_for_block_hash = []
+            txs_by_sender = []
+            txs_by_contract = []
+            bds_query_surface = None
+            bds_db_schema_surface = None
+            if indexed_tx_sample is not None:
+                expected_tx_hash = indexed_tx_sample["tx_hash"]
+                block_height = indexed_tx_sample.get("block_height")
+                block_hash = indexed_tx_sample.get("block_hash")
+                sender = indexed_tx_sample.get("sender")
+                contract = indexed_tx_sample.get("contract")
+                assert_canonical_bds_tx_payload(
+                    indexed_tx_sample,
+                    label="retrieval indexed transaction",
+                    expected_tx_hash=expected_tx_hash,
+                )
+                if block_height is not None:
+                    txs_for_block_height = [
+                        normalize_value(item.raw)
+                        for item in await client.list_txs_for_block(block_height)
+                    ]
+                    assert_canonical_bds_tx_payloads(
+                        txs_for_block_height,
+                        label="txs_for_block_height",
+                    )
+                    if not any(
+                        item.get("tx_hash") == expected_tx_hash for item in txs_for_block_height
+                    ):
+                        raise E2EError("BDS txs_for_block(height) missed indexed sample tx")
+                if block_hash is not None:
+                    txs_for_block_hash = [
+                        normalize_value(item.raw)
+                        for item in await client.list_txs_for_block(block_hash)
+                    ]
+                    assert_canonical_bds_tx_payloads(
+                        txs_for_block_hash,
+                        label="txs_for_block_hash",
+                    )
+                    if not any(
+                        item.get("tx_hash") == expected_tx_hash for item in txs_for_block_hash
+                    ):
+                        raise E2EError("BDS txs_for_block(hash) missed indexed sample tx")
+                if isinstance(sender, str) and sender:
+                    txs_by_sender = [
+                        normalize_value(item.raw)
+                        for item in await client.list_txs_by_sender(sender, limit=5)
+                    ]
+                    assert_canonical_bds_tx_payloads(txs_by_sender, label="txs_by_sender")
+                    if not any(item.get("tx_hash") == expected_tx_hash for item in txs_by_sender):
+                        raise E2EError("BDS txs_by_sender missed indexed sample tx")
+                if isinstance(contract, str) and contract:
+                    txs_by_contract = [
+                        normalize_value(item.raw)
+                        for item in await client.list_txs_by_contract(contract, limit=5)
+                    ]
+                    assert_canonical_bds_tx_payloads(txs_by_contract, label="txs_by_contract")
+                    if not any(item.get("tx_hash") == expected_tx_hash for item in txs_by_contract):
+                        raise E2EError("BDS txs_by_contract missed indexed sample tx")
+
+                if not isinstance(block_height, int):
+                    raise E2EError("BDS indexed sample missing integer block_height")
+                bds_query_surface = await exercise_bds_query_surface(
+                    session,
+                    service.rpc_url,
+                    indexed_tx_sample=indexed_tx_sample,
+                    state_prefix=self.contracts["conflict"],
+                    state_key=f"{self.contracts['conflict']}.counter",
+                    portfolio_address=founder.public_key,
+                    event_contract=self.contracts["conflict"],
+                    event_name="Claimed",
+                    after_event_id=events[0].id if events else None,
+                )
+                bds_db_schema_surface = exercise_bds_db_schema_surface(
+                    tx_hash=expected_tx_hash,
+                    block_height=block_height,
+                    state_key=f"{self.contracts['conflict']}.counter",
+                )
             current_state = await client.get_state(self.contracts["conflict"], "counter")
             current_events = await client.list_events(
                 self.contracts["conflict"],
@@ -5028,6 +5777,13 @@ class E2ERunner:
             "state_history": [normalize_value(item.raw) for item in state_history],
             "tx_events": [normalize_value(item.raw) for item in tx_events],
             "tx_state": [normalize_value(item.raw) for item in tx_state],
+            "indexed_tx_sample": indexed_tx_sample,
+            "txs_for_block_height": txs_for_block_height,
+            "txs_for_block_hash": txs_for_block_hash,
+            "txs_by_sender": txs_by_sender,
+            "txs_by_contract": txs_by_contract,
+            "bds_query_surface": normalize_value(bds_query_surface),
+            "bds_db_schema_surface": normalize_value(bds_db_schema_surface),
             "current_state": normalize_value(current_state),
             "keys_page_one": normalize_value(keys_page_one),
             "keys_page_two": normalize_value(keys_page_two),
