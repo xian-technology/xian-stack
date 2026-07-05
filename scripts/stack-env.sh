@@ -18,8 +18,45 @@ _stack_truthy() {
   esac
 }
 
+_stack_unbracket_host() {
+  local host="${1:-}"
+  if [[ "${host}" == \[*\] ]]; then
+    printf '%s\n' "${host:1:${#host}-2}"
+    return
+  fi
+  printf '%s\n' "${host}"
+}
+
+_stack_display_host() {
+  local host
+  host="$(_stack_unbracket_host "${1:-}")"
+  case "${host}" in
+    0.0.0.0)
+      printf '127.0.0.1\n'
+      ;;
+    ::)
+      printf '::1\n'
+      ;;
+    *)
+      printf '%s\n' "${host}"
+      ;;
+  esac
+}
+
+_stack_url_host() {
+  local host
+  host="$(_stack_display_host "${1:-}")"
+  if [[ "${host}" == *:* && "${host}" != \[*\] ]]; then
+    printf '[%s]\n' "${host}"
+    return
+  fi
+  printf '%s\n' "${host}"
+}
+
 _stack_is_loopback_host() {
-  case "${1:-}" in
+  local host
+  host="$(_stack_unbracket_host "${1:-}")"
+  case "${host}" in
     127.0.0.1|localhost|::1)
       return 0
       ;;
@@ -190,7 +227,7 @@ export_stack_env() {
   export XIAN_INTENTKIT_ENV_FILE="${XIAN_INTENTKIT_ENV_FILE:-${XIAN_INTENTKIT_DIR}/deployment/.env}"
   export XIAN_INTENTKIT_STACK_DOCKERFILE="${XIAN_INTENTKIT_STACK_DOCKERFILE:-${stack_root}/docker/intentkit.Dockerfile}"
   export XIAN_INTENTKIT_HOST="${XIAN_INTENTKIT_HOST:-127.0.0.1}"
-  export XIAN_INTENTKIT_PUBLIC_HOST="${XIAN_INTENTKIT_PUBLIC_HOST:-127.0.0.1}"
+  export XIAN_INTENTKIT_PUBLIC_HOST="$(_stack_url_host "${XIAN_INTENTKIT_PUBLIC_HOST:-${XIAN_INTENTKIT_HOST}}")"
   export XIAN_INTENTKIT_PORT="${XIAN_INTENTKIT_PORT:-38000}"
   export XIAN_INTENTKIT_API_PORT="${XIAN_INTENTKIT_API_PORT:-38080}"
   export XIAN_INTENTKIT_S3_PORT="${XIAN_INTENTKIT_S3_PORT:-39000}"
@@ -201,7 +238,7 @@ export_stack_env() {
   export XIAN_DEX_AUTOMATION_DIR="${XIAN_DEX_AUTOMATION_DIR:-$(resolve_repo_dir xian-dex-automation "${XIAN_DEX_AUTOMATION_DIR:-}")}"
   export XIAN_DEX_AUTOMATION_ENABLED="${XIAN_DEX_AUTOMATION_ENABLED:-0}"
   export XIAN_DEX_AUTOMATION_HOST="${XIAN_DEX_AUTOMATION_HOST:-127.0.0.1}"
-  export XIAN_DEX_AUTOMATION_PUBLIC_HOST="${XIAN_DEX_AUTOMATION_PUBLIC_HOST:-127.0.0.1}"
+  export XIAN_DEX_AUTOMATION_PUBLIC_HOST="$(_stack_url_host "${XIAN_DEX_AUTOMATION_PUBLIC_HOST:-${XIAN_DEX_AUTOMATION_HOST}}")"
   export XIAN_DEX_AUTOMATION_PORT="${XIAN_DEX_AUTOMATION_PORT:-38280}"
   export XIAN_DEX_AUTOMATION_CONFIG="${XIAN_DEX_AUTOMATION_CONFIG:-${stack_root}/.artifacts/dex-automation/config.yaml}"
   export XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE="${XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE:-${stack_root}/.artifacts/dex-automation/wallet.key}"

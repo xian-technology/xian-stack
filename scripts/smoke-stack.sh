@@ -31,8 +31,9 @@ smoke_genesis_time="${XIAN_SMOKE_GENESIS_TIME:-}"
 smoke_validator_privkey="${XIAN_SMOKE_VALIDATOR_PRIVKEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
 smoke_skip_build="${XIAN_SMOKE_SKIP_BUILD:-0}"
 smoke_timeout_seconds="${XIAN_SMOKE_TIMEOUT_SECONDS:-90}"
-smoke_status_url="${XIAN_SMOKE_STATUS_URL:-http://${XIAN_COMETBFT_RPC_HOST}:${XIAN_COMETBFT_RPC_PORT}/status}"
-smoke_abci_info_url="${XIAN_SMOKE_ABCI_INFO_URL:-http://${XIAN_COMETBFT_RPC_HOST}:${XIAN_COMETBFT_RPC_PORT}/abci_info}"
+smoke_rpc_url_host="$(_stack_url_host "${XIAN_COMETBFT_RPC_HOST}")"
+smoke_status_url="${XIAN_SMOKE_STATUS_URL:-http://${smoke_rpc_url_host}:${XIAN_COMETBFT_RPC_PORT}/status}"
+smoke_abci_info_url="${XIAN_SMOKE_ABCI_INFO_URL:-http://${smoke_rpc_url_host}:${XIAN_COMETBFT_RPC_PORT}/abci_info}"
 
 if [[ -z "${smoke_genesis_source}" && -z "${smoke_genesis_bundle}" ]]; then
   manifest_path="${XIAN_CONFIGS_DIR}/networks/${smoke_network}/manifest.json"

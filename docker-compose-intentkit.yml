@@ -2,6 +2,15 @@ x-intentkit-xian-source-volumes: &intentkit-xian-source-volumes
   - ${XIAN_PY_DIR}:/xian-py:ro
   - ${XIAN_CONTRACTING_DIR}:/xian-contracting:ro
 
+x-intentkit-xian-networks: &intentkit-xian-networks
+  - default
+  - xian-stack
+
+networks:
+  xian-stack:
+    name: ${XIAN_STACK_DOCKER_NETWORK:-xian-stack_xian-net}
+    external: true
+
 services:
   api:
     build:
@@ -15,8 +24,12 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes: *intentkit-xian-source-volumes
+    networks: *intentkit-xian-networks
     ports:
-      - "${XIAN_INTENTKIT_HOST}:${XIAN_INTENTKIT_API_PORT}:8000"
+      - target: 8000
+        published: "${XIAN_INTENTKIT_API_PORT}"
+        host_ip: "${XIAN_INTENTKIT_HOST}"
+        protocol: tcp
 
   autonomous:
     build:
@@ -30,6 +43,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes: *intentkit-xian-source-volumes
+    networks: *intentkit-xian-networks
 
   scheduler:
     build:
@@ -43,6 +57,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes: *intentkit-xian-source-volumes
+    networks: *intentkit-xian-networks
 
   frontend:
     build:
@@ -52,8 +67,14 @@ services:
         NEXT_PUBLIC_API_BASE_URL: http://${XIAN_INTENTKIT_PUBLIC_HOST}:${XIAN_INTENTKIT_API_PORT}
         NEXT_PUBLIC_AWS_S3_CDN_URL: http://${XIAN_INTENTKIT_PUBLIC_HOST}:${XIAN_INTENTKIT_S3_PORT}/static
     ports:
-      - "${XIAN_INTENTKIT_HOST}:${XIAN_INTENTKIT_PORT}:3000"
+      - target: 3000
+        published: "${XIAN_INTENTKIT_PORT}"
+        host_ip: "${XIAN_INTENTKIT_HOST}"
+        protocol: tcp
 
   rustfs:
     ports:
-      - "${XIAN_INTENTKIT_HOST}:${XIAN_INTENTKIT_S3_PORT}:9000"
+      - target: 9000
+        published: "${XIAN_INTENTKIT_S3_PORT}"
+        host_ip: "${XIAN_INTENTKIT_HOST}"
+        protocol: tcp

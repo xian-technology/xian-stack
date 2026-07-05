@@ -177,6 +177,105 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
             self.assertEqual("127.0.0.1", env["XIAN_APP_METRICS_HOST"])
             self.assertEqual("0.0.0.0", env["XIAN_POSTGRAPHILE_HOST"])
 
+    def test_runtime_env_preserves_explicit_ipv6_public_binds(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(
+                    os.environ,
+                    {
+                        "XIAN_COMETBFT_RPC_HOST": "::",
+                        "XIAN_COMETBFT_METRICS_HOST": "::",
+                        "XIAN_APP_METRICS_HOST": "::",
+                    },
+                    clear=True,
+                ):
+                    env = backend.runtime_env(
+                        **runtime_env_kwargs(
+                            public_rpc_enabled=True,
+                            public_metrics_enabled=True,
+                        )
+                    )
+
+        self.assertEqual("::", env["XIAN_COMETBFT_RPC_HOST"])
+        self.assertEqual("::", env["XIAN_COMETBFT_METRICS_HOST"])
+        self.assertEqual("::", env["XIAN_APP_METRICS_HOST"])
+
+    def test_runtime_env_endpoints_bracket_ipv6_hosts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stack_dir = Path(temp_dir) / "xian-stack"
+            stack_dir.mkdir()
+            with patch.object(backend, "STACK_DIR", stack_dir):
+                with patch.dict(
+                    os.environ,
+                    {
+                        "XIAN_COMETBFT_RPC_HOST": "::1",
+                        "XIAN_COMETBFT_METRICS_HOST": "::1",
+                        "XIAN_APP_METRICS_HOST": "::1",
+                        "XIAN_POSTGRAPHILE_HOST": "::1",
+                        "XIAN_PROMETHEUS_HOST": "::1",
+                        "XIAN_GRAFANA_HOST": "::1",
+                    },
+                    clear=True,
+                ):
+                    with patch.object(
+                        backend,
+                        "_discover_runtime_endpoints",
+                        return_value={},
+                    ):
+                        result = backend.backend_endpoints(
+                            **runtime_env_kwargs(
+                                bds_enabled=True,
+                                dashboard_enabled=True,
+                                dashboard_host="::1",
+                                monitoring_enabled=True,
+                                intentkit_enabled=True,
+                                intentkit_host="::1",
+                                dex_automation_enabled=True,
+                                dex_automation_host="::1",
+                                shielded_relayer_enabled=True,
+                                shielded_relayer_host="::1",
+                            )
+                        )
+
+        endpoints = result["endpoints"]
+        self.assertEqual("http://[::1]:26657", endpoints["rpc"])
+        self.assertEqual("http://[::1]:26657/status", endpoints["rpc_status"])
+        self.assertEqual("http://[::1]:26660/metrics", endpoints["cometbft_metrics"])
+        self.assertEqual("http://[::1]:9108/metrics", endpoints["xian_metrics"])
+        self.assertEqual("http://[::1]:5000/graphql", endpoints["graphql"])
+        self.assertEqual("http://[::1]:8080", endpoints["dashboard"])
+        self.assertEqual("http://[::1]:9090", endpoints["prometheus"])
+        self.assertEqual("http://[::1]:3000", endpoints["grafana"])
+        self.assertEqual("http://[::1]:38000", endpoints["intentkit"])
+        self.assertEqual("http://[::1]:39000/static", endpoints["intentkit_static"])
+        self.assertEqual("http://[::1]:38280", endpoints["dex_automation"])
+        self.assertEqual("http://[::1]:38180", endpoints["shielded_relayer"])
+        self.assertTrue(endpoints["bds_status_query"].startswith("http://[::1]:26657/"))
+
+    def test_default_runtime_rpc_status_url_follows_ipv6_rpc_bind(self) -> None:
+        env = {
+            "XIAN_COMETBFT_RPC_HOST": "::1",
+            "XIAN_COMETBFT_RPC_PORT": "26657",
+        }
+
+        self.assertEqual(
+            backend.runtime_rpc_status_url(env, backend.DEFAULT_RPC_STATUS_URL),
+            "http://[::1]:26657/status",
+        )
+
+    def test_custom_runtime_rpc_status_url_is_preserved(self) -> None:
+        env = {
+            "XIAN_COMETBFT_RPC_HOST": "::1",
+            "XIAN_COMETBFT_RPC_PORT": "26657",
+        }
+
+        self.assertEqual(
+            backend.runtime_rpc_status_url(env, "http://rpc.example:26657/status"),
+            "http://rpc.example:26657/status",
+        )
+
     def test_runtime_env_allows_public_dashboard_host_when_dashboard_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             stack_dir = Path(temp_dir) / "xian-stack"
@@ -252,6 +351,46 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
             "Public dashboard exposure requires XIAN_PUBLIC_QUERY_ENABLED=1",
+            result.stderr,
+        )
+
+    def test_shell_security_treats_bracketed_ipv6_loopback_as_loopback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = {
+                **os.environ,
+                "XIAN_STACK_SECRETS_ENV": str(Path(temp_dir) / "secrets.env"),
+                "XIAN_COMETBFT_RPC_HOST": "[::1]",
+            }
+            result = subprocess.run(
+                ["bash", "-lc", "source ./scripts/stack-env.sh && export_stack_env >/dev/null"],
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_shell_security_rejects_non_loopback_ipv6_without_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = {
+                **os.environ,
+                "XIAN_STACK_SECRETS_ENV": str(Path(temp_dir) / "secrets.env"),
+                "XIAN_COMETBFT_RPC_HOST": "2001:db8::1",
+            }
+            result = subprocess.run(
+                ["bash", "-lc", "source ./scripts/stack-env.sh && export_stack_env >/dev/null"],
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Public RPC exposure requires XIAN_PUBLIC_RPC_ENABLED=1",
             result.stderr,
         )
 
@@ -340,6 +479,32 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
 
         self.assertIn("image: ${XIAN_POSTGRES_IMAGE:-postgres:17}", source)
         self.assertNotIn("image: postgres:17", source)
+
+    def test_compose_uses_long_form_host_ip_for_configurable_port_binds(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        compose_sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (
+                root / "docker-compose-abci.yml",
+                root / "docker-compose-abci-bds.yml",
+                root / "docker-compose-monitoring.yml",
+                root / "docker-compose-intentkit.yml",
+            )
+        )
+
+        self.assertNotRegex(compose_sources, r'"\$\{XIAN_[A-Z0-9_]*HOST\}:\$\{')
+        for host_var in (
+            "XIAN_COMETBFT_RPC_HOST",
+            "XIAN_COMETBFT_P2P_HOST",
+            "XIAN_COMETBFT_METRICS_HOST",
+            "XIAN_APP_METRICS_HOST",
+            "XIAN_DASHBOARD_HOST",
+            "XIAN_POSTGRAPHILE_HOST",
+            "XIAN_PROMETHEUS_HOST",
+            "XIAN_GRAFANA_HOST",
+            "XIAN_INTENTKIT_HOST",
+        ):
+            self.assertIn(f'host_ip: "${{{host_var}}}"', compose_sources)
 
     def test_runtime_env_allows_tagged_third_party_images_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

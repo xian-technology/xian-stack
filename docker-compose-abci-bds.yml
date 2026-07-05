@@ -108,5 +108,8 @@ services:
       - xian-db
       - xian-net
     ports:
-      - "${XIAN_POSTGRAPHILE_HOST}:${XIAN_POSTGRAPHILE_PORT}:5000"
+      - target: 5000
+        published: "${XIAN_POSTGRAPHILE_PORT}"
+        host_ip: "${XIAN_POSTGRAPHILE_HOST}"
+        protocol: tcp
     command: ["/usr/src/app/start-postgraphile.sh"]

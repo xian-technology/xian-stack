@@ -8,6 +8,8 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from stack_backend.net import display_host, http_url
+
 STACK_DIR = Path(__file__).resolve().parent.parent
 STACK_UV_PYTHON = "3.14"
 DEFAULT_SHIELDED_RELAYER_PORT = 38180
@@ -15,14 +17,6 @@ DEFAULT_SHIELDED_RELAYER_HOST = "127.0.0.1"
 _PROCESS_DIR = STACK_DIR / ".artifacts" / "shielded-relayer"
 _PID_PATH = _PROCESS_DIR / "shielded-relayer.pid"
 _LOG_PATH = _PROCESS_DIR / "shielded-relayer.log"
-
-
-def display_host(host: str) -> str:
-    if host == "0.0.0.0":
-        return "127.0.0.1"
-    if host == "::":
-        return "::1"
-    return host
 
 
 def resolve_repo_dir(
@@ -53,7 +47,7 @@ def shielded_relayer_endpoints(
     public_host: str | None = None,
 ) -> dict[str, str]:
     public_host = public_host or display_host(bind_host)
-    base_url = f"http://{public_host}:{port}"
+    base_url = http_url(public_host, port)
     return {
         "shielded_relayer": base_url,
         "shielded_relayer_health": f"{base_url}/health",

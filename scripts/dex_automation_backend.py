@@ -10,6 +10,8 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from stack_backend.net import display_host, http_url
+
 STACK_DIR = Path(__file__).resolve().parent.parent
 STACK_UV_PYTHON = "3.14"
 DEFAULT_DEX_AUTOMATION_PORT = 38280
@@ -19,14 +21,6 @@ _PID_PATH = _PROCESS_DIR / "dex-automation.pid"
 _LOG_PATH = _PROCESS_DIR / "dex-automation.log"
 _CONFIG_PATH = _PROCESS_DIR / "config.yaml"
 _WALLET_KEY_PATH = _PROCESS_DIR / "wallet.key"
-
-
-def display_host(host: str) -> str:
-    if host == "0.0.0.0":
-        return "127.0.0.1"
-    if host == "::":
-        return "::1"
-    return host
 
 
 def resolve_repo_dir(
@@ -85,7 +79,7 @@ def dex_automation_endpoints(
     public_host: str | None = None,
 ) -> dict[str, str]:
     public_host = public_host or display_host(bind_host)
-    base_url = f"http://{public_host}:{port}"
+    base_url = http_url(public_host, port)
     return {
         "dex_automation": base_url,
         "dex_automation_health": f"{base_url}/health",

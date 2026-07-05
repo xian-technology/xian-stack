@@ -345,6 +345,19 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
             endpoints["shielded_relayer_metrics"],
         )
 
+    def test_backend_endpoints_bracket_ipv6_relayer_routes(self) -> None:
+        endpoints = shielded_relayer_endpoints(bind_host="::1", port=38180)
+
+        self.assertEqual("http://[::1]:38180", endpoints["shielded_relayer"])
+        self.assertEqual(
+            "http://[::1]:38180/v1/info",
+            endpoints["shielded_relayer_info"],
+        )
+        self.assertEqual(
+            "http://[::1]:38180/metrics",
+            endpoints["shielded_relayer_metrics"],
+        )
+
     def test_backend_status_removes_stale_pid_file(self) -> None:
         with self.subTest("stale pid"):
             with self._temporary_relayer_paths() as paths:

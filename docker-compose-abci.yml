@@ -65,10 +65,22 @@ services:
       - xian-net
       - xian-db
     ports:
-      - "${XIAN_COMETBFT_RPC_HOST}:${XIAN_COMETBFT_RPC_PORT}:26657"
-      - "${XIAN_COMETBFT_P2P_HOST}:${XIAN_COMETBFT_P2P_PORT}:26656"
-      - "${XIAN_COMETBFT_METRICS_HOST}:${XIAN_COMETBFT_METRICS_PORT}:26660"
-      - "${XIAN_APP_METRICS_HOST}:${XIAN_APP_METRICS_PORT}:9108"
+      - target: 26657
+        published: "${XIAN_COMETBFT_RPC_PORT}"
+        host_ip: "${XIAN_COMETBFT_RPC_HOST}"
+        protocol: tcp
+      - target: 26656
+        published: "${XIAN_COMETBFT_P2P_PORT}"
+        host_ip: "${XIAN_COMETBFT_P2P_HOST}"
+        protocol: tcp
+      - target: 26660
+        published: "${XIAN_COMETBFT_METRICS_PORT}"
+        host_ip: "${XIAN_COMETBFT_METRICS_HOST}"
+        protocol: tcp
+      - target: 9108
+        published: "${XIAN_APP_METRICS_PORT}"
+        host_ip: "${XIAN_APP_METRICS_HOST}"
+        protocol: tcp
     healthcheck: *x-rpc-healthcheck
 
   dashboard:
@@ -105,7 +117,10 @@ services:
     networks:
       - xian-net
     ports:
-      - "${XIAN_DASHBOARD_HOST}:${XIAN_DASHBOARD_PORT}:8080"
+      - target: 8080
+        published: "${XIAN_DASHBOARD_PORT}"
+        host_ip: "${XIAN_DASHBOARD_HOST}"
+        protocol: tcp
 
   abci-app:
     profiles: ["fidelity"]
@@ -140,7 +155,10 @@ services:
       - xian-net
       - xian-db
     ports:
-      - "${XIAN_APP_METRICS_HOST}:${XIAN_APP_METRICS_PORT}:9108"
+      - target: 9108
+        published: "${XIAN_APP_METRICS_PORT}"
+        host_ip: "${XIAN_APP_METRICS_HOST}"
+        protocol: tcp
 
   cometbft:
     profiles: ["fidelity"]
@@ -169,9 +187,18 @@ services:
     networks:
       - xian-net
     ports:
-      - "${XIAN_COMETBFT_RPC_HOST}:${XIAN_COMETBFT_RPC_PORT}:26657"
-      - "${XIAN_COMETBFT_P2P_HOST}:${XIAN_COMETBFT_P2P_PORT}:26656"
-      - "${XIAN_COMETBFT_METRICS_HOST}:${XIAN_COMETBFT_METRICS_PORT}:26660"
+      - target: 26657
+        published: "${XIAN_COMETBFT_RPC_PORT}"
+        host_ip: "${XIAN_COMETBFT_RPC_HOST}"
+        protocol: tcp
+      - target: 26656
+        published: "${XIAN_COMETBFT_P2P_PORT}"
+        host_ip: "${XIAN_COMETBFT_P2P_HOST}"
+        protocol: tcp
+      - target: 26660
+        published: "${XIAN_COMETBFT_METRICS_PORT}"
+        host_ip: "${XIAN_COMETBFT_METRICS_HOST}"
+        protocol: tcp
     healthcheck: *x-rpc-healthcheck
 
   dashboard-fidelity:
@@ -208,4 +235,7 @@ services:
     networks:
       - xian-net
     ports:
-      - "${XIAN_DASHBOARD_HOST}:${XIAN_DASHBOARD_PORT}:8080"
+      - target: 8080
+        published: "${XIAN_DASHBOARD_PORT}"
+        host_ip: "${XIAN_DASHBOARD_HOST}"
+        protocol: tcp

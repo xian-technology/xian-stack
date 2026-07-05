@@ -29,6 +29,18 @@ class DexAutomationBackendTests(unittest.TestCase):
             endpoints["dex_automation_health"],
         )
 
+    def test_endpoints_bracket_ipv6_hosts(self) -> None:
+        endpoints = dex_automation_backend.dex_automation_endpoints(
+            bind_host="::1",
+            port=38280,
+        )
+
+        self.assertEqual("http://[::1]:38280", endpoints["dex_automation"])
+        self.assertEqual(
+            "http://[::1]:38280/health",
+            endpoints["dex_automation_health"],
+        )
+
     def test_ensure_config_generates_wallet_and_config(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

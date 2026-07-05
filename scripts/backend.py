@@ -38,6 +38,7 @@ from shielded_relayer_backend import (
     start_shielded_relayer_runtime,
     stop_shielded_relayer_runtime,
 )
+from stack_backend.net import http_url, is_loopback_host, url_host
 from stack_backend.request import (
     args_from_backend_request,
     read_backend_request,
@@ -63,20 +64,12 @@ DEFAULT_PROMETHEUS_URL = "http://127.0.0.1:9090"
 DEFAULT_GRAFANA_URL = "http://127.0.0.1:3000"
 DEFAULT_GRAPHQL_URL = "http://127.0.0.1:5000/graphql"
 DEFAULT_INTENTKIT_S3_PORT = 39000
-DEFAULT_SHIELDED_RELAYER_URL = (
-    f"http://{DEFAULT_SHIELDED_RELAYER_HOST}:{DEFAULT_SHIELDED_RELAYER_PORT}"
+DEFAULT_SHIELDED_RELAYER_URL = http_url(
+    DEFAULT_SHIELDED_RELAYER_HOST,
+    DEFAULT_SHIELDED_RELAYER_PORT,
 )
 DEFAULT_BDS_SNAPSHOT_PATH = STACK_DIR / ".cometbft" / "snapshots" / "xian-bds-snapshot.tar.gz"
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
-LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
-
-
-def display_host(host: str) -> str:
-    if host == "0.0.0.0":
-        return "127.0.0.1"
-    if host == "::":
-        return "::1"
-    return host
 
 
 def env_truthy(value: str | None) -> bool:
@@ -87,12 +80,6 @@ def env_truthy(value: str | None) -> bool:
 
 def is_digest_pinned_image_ref(value: str | None) -> bool:
     return bool(re.search(r"@sha256:[0-9a-fA-F]{64}$", value or ""))
-
-
-def is_loopback_host(host: str | None) -> bool:
-    if host is None:
-        return True
-    return host in LOOPBACK_HOSTS
 
 
 def stack_secrets_env_path(env: dict[str, str]) -> Path:
@@ -302,6 +289,16 @@ def rpc_base_url(rpc_url: str) -> str:
         path = path[: -len("/status")]
     path = path.rstrip("/")
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def runtime_rpc_status_url(env: dict[str, str], rpc_url: str) -> str:
+    if rpc_url != DEFAULT_RPC_STATUS_URL:
+        return rpc_url
+    return http_url(
+        env.get("XIAN_COMETBFT_RPC_HOST", "127.0.0.1"),
+        env.get("XIAN_COMETBFT_RPC_PORT", "26657"),
+        "/status",
+    )
 
 
 def build_abci_query_url(*, rpc_url: str, path: str) -> str:
@@ -541,9 +538,8 @@ def _discover_runtime_endpoints(
 
     abci_rpc_binding = _docker_compose_binding(service="abci", container_port=26657)
     if abci_rpc_binding is not None:
-        rpc_host = display_host(abci_rpc_binding[0])
         rpc_port = abci_rpc_binding[1]
-        rpc_base = f"http://{rpc_host}:{rpc_port}"
+        rpc_base = http_url(abci_rpc_binding[0], rpc_port)
         endpoints["rpc"] = rpc_base
         endpoints["rpc_status"] = f"{rpc_base}/status"
         endpoints["abci_query"] = f"{rpc_base}/abci_query"
@@ -553,18 +549,24 @@ def _discover_runtime_endpoints(
         container_port=26660,
     )
     if comet_metrics_binding is not None:
-        metrics_host = display_host(comet_metrics_binding[0])
         metrics_port = comet_metrics_binding[1]
-        endpoints["cometbft_metrics"] = f"http://{metrics_host}:{metrics_port}/metrics"
+        endpoints["cometbft_metrics"] = http_url(
+            comet_metrics_binding[0],
+            metrics_port,
+            "/metrics",
+        )
 
     xian_metrics_binding = _docker_compose_binding(
         service="abci",
         container_port=9108,
     )
     if xian_metrics_binding is not None:
-        metrics_host = display_host(xian_metrics_binding[0])
         metrics_port = xian_metrics_binding[1]
-        endpoints["xian_metrics"] = f"http://{metrics_host}:{metrics_port}/metrics"
+        endpoints["xian_metrics"] = http_url(
+            xian_metrics_binding[0],
+            metrics_port,
+            "/metrics",
+        )
 
     if bds_enabled:
         graphql_binding = _docker_compose_binding(
@@ -572,9 +574,8 @@ def _discover_runtime_endpoints(
             container_port=5000,
         )
         if graphql_binding is not None:
-            graphql_host = display_host(graphql_binding[0])
             graphql_port = graphql_binding[1]
-            endpoints["graphql"] = f"http://{graphql_host}:{graphql_port}/graphql"
+            endpoints["graphql"] = http_url(graphql_binding[0], graphql_port, "/graphql")
 
     if dashboard_enabled:
         dashboard_binding = _docker_compose_binding(
@@ -582,9 +583,8 @@ def _discover_runtime_endpoints(
             container_port=8080,
         )
         if dashboard_binding is not None:
-            dashboard_host = display_host(dashboard_binding[0])
             dashboard_port = dashboard_binding[1]
-            dashboard_url = f"http://{dashboard_host}:{dashboard_port}"
+            dashboard_url = http_url(dashboard_binding[0], dashboard_port)
             endpoints["dashboard"] = dashboard_url
             endpoints["dashboard_status"] = f"{dashboard_url}/api/status"
 
@@ -594,18 +594,16 @@ def _discover_runtime_endpoints(
             container_port=9090,
         )
         if prometheus_binding is not None:
-            prometheus_host = display_host(prometheus_binding[0])
             prometheus_port = prometheus_binding[1]
-            endpoints["prometheus"] = f"http://{prometheus_host}:{prometheus_port}"
+            endpoints["prometheus"] = http_url(prometheus_binding[0], prometheus_port)
 
         grafana_binding = _docker_compose_binding(
             service="grafana",
             container_port=3000,
         )
         if grafana_binding is not None:
-            grafana_host = display_host(grafana_binding[0])
             grafana_port = grafana_binding[1]
-            endpoints["grafana"] = f"http://{grafana_host}:{grafana_port}"
+            endpoints["grafana"] = http_url(grafana_binding[0], grafana_port)
 
     return endpoints
 
@@ -654,22 +652,36 @@ def runtime_env(
     env["XIAN_PUBLIC_METRICS_ENABLED"] = (
         "1" if public_metrics_enabled else env.get("XIAN_PUBLIC_METRICS_ENABLED", "0")
     )
+    explicit_rpc_host = bool(env.get("XIAN_COMETBFT_RPC_HOST"))
+    explicit_query_host = bool(env.get("XIAN_POSTGRAPHILE_HOST"))
+    explicit_comet_metrics_host = bool(env.get("XIAN_COMETBFT_METRICS_HOST"))
+    explicit_app_metrics_host = bool(env.get("XIAN_APP_METRICS_HOST"))
     env.setdefault("XIAN_COMETBFT_RPC_HOST", "127.0.0.1")
     env.setdefault("XIAN_COMETBFT_METRICS_HOST", "127.0.0.1")
     env.setdefault("XIAN_APP_METRICS_HOST", "127.0.0.1")
     env.setdefault("XIAN_POSTGRAPHILE_HOST", "127.0.0.1")
-    if env_truthy(env.get("XIAN_PUBLIC_RPC_ENABLED")):
+    if env_truthy(env.get("XIAN_PUBLIC_RPC_ENABLED")) and not explicit_rpc_host:
         env["XIAN_COMETBFT_RPC_HOST"] = "0.0.0.0"
-    if env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED")) and bds_enabled:
+    if (
+        env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED"))
+        and bds_enabled
+        and not explicit_query_host
+    ):
         env["XIAN_POSTGRAPHILE_HOST"] = "0.0.0.0"
     if env_truthy(env.get("XIAN_PUBLIC_METRICS_ENABLED")):
-        env["XIAN_COMETBFT_METRICS_HOST"] = "0.0.0.0"
-        env["XIAN_APP_METRICS_HOST"] = "0.0.0.0"
+        if not explicit_comet_metrics_host:
+            env["XIAN_COMETBFT_METRICS_HOST"] = "0.0.0.0"
+        if not explicit_app_metrics_host:
+            env["XIAN_APP_METRICS_HOST"] = "0.0.0.0"
     env["XIAN_INTENTKIT_ENABLED"] = "1" if intentkit_enabled else "0"
     env["XIAN_INTENTKIT_DIR"] = str(resolve_repo_dir("xian-intentkit", "XIAN_INTENTKIT_DIR"))
     env["XIAN_INTENTKIT_RELEASE"] = env.get("XIAN_INTENTKIT_RELEASE", "local")
     env["XIAN_INTENTKIT_PROJECT_NAME"] = env.get(
         "XIAN_INTENTKIT_PROJECT_NAME", "xian-intentkit-stack"
+    )
+    env["XIAN_STACK_DOCKER_NETWORK"] = env.get(
+        "XIAN_STACK_DOCKER_NETWORK",
+        f"{env.get('COMPOSE_PROJECT_NAME', STACK_DIR.name)}_xian-net",
     )
     env["XIAN_INTENTKIT_ENV_FILE"] = env.get(
         "XIAN_INTENTKIT_ENV_FILE",
@@ -677,7 +689,9 @@ def runtime_env(
     )
     env["XIAN_INTENTKIT_NETWORK_ID"] = intentkit_network_id
     env["XIAN_INTENTKIT_HOST"] = intentkit_host
-    env["XIAN_INTENTKIT_PUBLIC_HOST"] = display_host(intentkit_host)
+    env["XIAN_INTENTKIT_PUBLIC_HOST"] = url_host(
+        env.get("XIAN_INTENTKIT_PUBLIC_HOST") or intentkit_host
+    )
     env["XIAN_INTENTKIT_PORT"] = str(intentkit_port)
     env["XIAN_INTENTKIT_API_PORT"] = str(intentkit_api_port)
     if not env.get("XIAN_INTENTKIT_S3_PORT"):
@@ -692,13 +706,17 @@ def runtime_env(
         resolve_repo_dir("xian-dex-automation", "XIAN_DEX_AUTOMATION_DIR")
     )
     env["XIAN_DEX_AUTOMATION_HOST"] = dex_automation_host
-    env["XIAN_DEX_AUTOMATION_PUBLIC_HOST"] = display_host(dex_automation_host)
+    env["XIAN_DEX_AUTOMATION_PUBLIC_HOST"] = url_host(
+        env.get("XIAN_DEX_AUTOMATION_PUBLIC_HOST") or dex_automation_host
+    )
     env["XIAN_DEX_AUTOMATION_PORT"] = str(dex_automation_port)
     if dex_automation_config is not None:
         env["XIAN_DEX_AUTOMATION_CONFIG"] = dex_automation_config
     env["XIAN_SHIELDED_RELAYER_ENABLED"] = "1" if shielded_relayer_enabled else "0"
     env["XIAN_SHIELDED_RELAYER_HOST"] = shielded_relayer_host
-    env["XIAN_SHIELDED_RELAYER_PUBLIC_HOST"] = display_host(shielded_relayer_host)
+    env["XIAN_SHIELDED_RELAYER_PUBLIC_HOST"] = url_host(
+        env.get("XIAN_SHIELDED_RELAYER_PUBLIC_HOST") or shielded_relayer_host
+    )
     env["XIAN_SHIELDED_RELAYER_PORT"] = str(shielded_relayer_port)
     return ensure_stack_security_env(env)
 
@@ -872,6 +890,7 @@ def backend_start(
         shielded_relayer_host=shielded_relayer_host,
         shielded_relayer_port=shielded_relayer_port,
     )
+    rpc_url = runtime_rpc_status_url(env, rpc_url)
     env["XIAN_SHIELDED_RELAYER_NODE_URL"] = rpc_base_url(rpc_url)
 
     run_make_target(node_target, stream_output=True, env=env)
@@ -904,18 +923,26 @@ def backend_start(
     }
     if dashboard_enabled:
         result["dashboard_target"] = dashboard_target
-        result["dashboard_url"] = f"http://{display_host(dashboard_host)}:{dashboard_port}"
+        result["dashboard_url"] = http_url(dashboard_host, dashboard_port)
     if monitoring_enabled:
         result["monitoring_target"] = monitoring_target
-        result["prometheus_url"] = "http://127.0.0.1:9090"
-        result["grafana_url"] = "http://127.0.0.1:3000"
+        result["prometheus_url"] = http_url(
+            env.get("XIAN_PROMETHEUS_HOST", "127.0.0.1"),
+            env.get("XIAN_PROMETHEUS_PORT", "9090"),
+        )
+        result["grafana_url"] = http_url(
+            env.get("XIAN_GRAFANA_HOST", "127.0.0.1"),
+            env.get("XIAN_GRAFANA_PORT", "3000"),
+        )
     if shielded_relayer_enabled:
-        result["shielded_relayer_url"] = (
-            f"http://{display_host(shielded_relayer_host)}:{shielded_relayer_port}"
+        result["shielded_relayer_url"] = http_url(
+            env.get("XIAN_SHIELDED_RELAYER_PUBLIC_HOST") or shielded_relayer_host,
+            shielded_relayer_port,
         )
     if dex_automation_enabled:
-        result["dex_automation_url"] = (
-            f"http://{display_host(dex_automation_host)}:{dex_automation_port}"
+        result["dex_automation_url"] = http_url(
+            env.get("XIAN_DEX_AUTOMATION_PUBLIC_HOST") or dex_automation_host,
+            dex_automation_port,
         )
     rpc_status = None
     if wait_for_health or intentkit_enabled or dex_automation_enabled or shielded_relayer_enabled:
@@ -1351,22 +1378,21 @@ def backend_endpoints(
         shielded_relayer_host=shielded_relayer_host,
         shielded_relayer_port=shielded_relayer_port,
     )
-    rpc_host = display_host(env.get("XIAN_COMETBFT_RPC_HOST", "127.0.0.1"))
     rpc_port = env.get("XIAN_COMETBFT_RPC_PORT", "26657")
-    rpc_base = f"http://{rpc_host}:{rpc_port}"
+    rpc_base = http_url(env.get("XIAN_COMETBFT_RPC_HOST", "127.0.0.1"), rpc_port)
     endpoints = {
         "rpc": rpc_base,
         "rpc_status": f"{rpc_base}/status",
         "abci_query": f"{rpc_base}/abci_query",
-        "cometbft_metrics": (
-            "http://"
-            f"{display_host(env.get('XIAN_COMETBFT_METRICS_HOST', '127.0.0.1'))}:"
-            f"{env.get('XIAN_COMETBFT_METRICS_PORT', '26660')}/metrics"
+        "cometbft_metrics": http_url(
+            env.get("XIAN_COMETBFT_METRICS_HOST", "127.0.0.1"),
+            env.get("XIAN_COMETBFT_METRICS_PORT", "26660"),
+            "/metrics",
         ),
-        "xian_metrics": (
-            "http://"
-            f"{display_host(env.get('XIAN_APP_METRICS_HOST', '127.0.0.1'))}:"
-            f"{env.get('XIAN_APP_METRICS_PORT', '9108')}/metrics"
+        "xian_metrics": http_url(
+            env.get("XIAN_APP_METRICS_HOST", "127.0.0.1"),
+            env.get("XIAN_APP_METRICS_PORT", "9108"),
+            "/metrics",
         ),
     }
     if bds_enabled:
@@ -1378,27 +1404,26 @@ def backend_endpoints(
             rpc_url=endpoints["rpc_status"],
             path="/bds_spool/limit=20/offset=0",
         )
-        endpoints["graphql"] = (
-            "http://"
-            f"{display_host(env.get('XIAN_POSTGRAPHILE_HOST', '127.0.0.1'))}:"
-            f"{env.get('XIAN_POSTGRAPHILE_PORT', '5000')}/graphql"
+        endpoints["graphql"] = http_url(
+            env.get("XIAN_POSTGRAPHILE_HOST", "127.0.0.1"),
+            env.get("XIAN_POSTGRAPHILE_PORT", "5000"),
+            "/graphql",
         )
     if dashboard_enabled:
-        display_dashboard_host = display_host(dashboard_host)
-        endpoints["dashboard"] = f"http://{display_dashboard_host}:{dashboard_port}"
-        endpoints["dashboard_status"] = (
-            f"http://{display_dashboard_host}:{dashboard_port}/api/status"
+        endpoints["dashboard"] = http_url(dashboard_host, dashboard_port)
+        endpoints["dashboard_status"] = http_url(
+            dashboard_host,
+            dashboard_port,
+            "/api/status",
         )
     if monitoring_enabled:
-        endpoints["prometheus"] = (
-            "http://"
-            f"{display_host(env.get('XIAN_PROMETHEUS_HOST', '127.0.0.1'))}:"
-            f"{env.get('XIAN_PROMETHEUS_PORT', '9090')}"
+        endpoints["prometheus"] = http_url(
+            env.get("XIAN_PROMETHEUS_HOST", "127.0.0.1"),
+            env.get("XIAN_PROMETHEUS_PORT", "9090"),
         )
-        endpoints["grafana"] = (
-            "http://"
-            f"{display_host(env.get('XIAN_GRAFANA_HOST', '127.0.0.1'))}:"
-            f"{env.get('XIAN_GRAFANA_PORT', '3000')}"
+        endpoints["grafana"] = http_url(
+            env.get("XIAN_GRAFANA_HOST", "127.0.0.1"),
+            env.get("XIAN_GRAFANA_PORT", "3000"),
         )
     if intentkit_enabled:
         endpoints.update(
@@ -1406,6 +1431,7 @@ def backend_endpoints(
                 bind_host=intentkit_host,
                 frontend_port=intentkit_port,
                 api_port=intentkit_api_port,
+                public_host=env.get("XIAN_INTENTKIT_PUBLIC_HOST"),
                 s3_port=int(env.get("XIAN_INTENTKIT_S3_PORT", DEFAULT_INTENTKIT_S3_PORT)),
             )
         )
@@ -1414,6 +1440,7 @@ def backend_endpoints(
             dex_automation_endpoints(
                 bind_host=dex_automation_host,
                 port=dex_automation_port,
+                public_host=env.get("XIAN_DEX_AUTOMATION_PUBLIC_HOST"),
             )
         )
     if shielded_relayer_enabled:
@@ -1421,6 +1448,7 @@ def backend_endpoints(
             shielded_relayer_endpoints(
                 bind_host=shielded_relayer_host,
                 port=shielded_relayer_port,
+                public_host=env.get("XIAN_SHIELDED_RELAYER_PUBLIC_HOST"),
             )
         )
     endpoints.update(
@@ -1512,6 +1540,8 @@ def backend_health(
         shielded_relayer_port=shielded_relayer_port,
     )
     endpoints = status["endpoints"]
+    if rpc_url == DEFAULT_RPC_STATUS_URL:
+        rpc_url = str(endpoints["rpc_status"])
 
     checks: dict[str, dict[str, object]] = {
         "backend": {
