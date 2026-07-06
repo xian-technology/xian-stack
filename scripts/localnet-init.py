@@ -63,7 +63,7 @@ COMPOSE_DEFAULTS = {
     "XIAN_CONTRACTING_DIR": "../xian-contracting",
     "XIAN_PY_DIR": "../xian-py",
     "XIAN_COMETBFT_VERSION": "0.39.3",
-    "XIAN_S6_OVERLAY_VERSION": "3.2.1.0",
+    "XIAN_S6_OVERLAY_VERSION": "3.2.3.0",
     "XIAN_S6_VERBOSITY": "1",
     "XIAN_DOCKER_POSTGRES_MEMORY_LIMIT": "1024m",
     "XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION": "512m",
@@ -694,7 +694,7 @@ def write_compose_file(
     }
     if bds_enabled:
         services[LOCALNET_POSTGRES_SERVICE] = {
-            "image": "postgres:17",
+            "image": "postgres:17.10",
             "restart": "always",
             "init": True,
             "stop_grace_period": "30s",

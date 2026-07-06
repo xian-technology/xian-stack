@@ -15,36 +15,36 @@ jobs:
 
     steps:
       - name: Check out xian-stack
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: xian-stack
 
       - name: Check out xian-abci
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-abci
           path: xian-abci
 
       - name: Check out xian-contracting
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-contracting
           path: xian-contracting
 
       - name: Check out xian-py
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-py
           path: xian-py
 
       - name: Check out xian-configs
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-configs
           path: xian-configs
 
       - name: Check out xian-cli
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-cli
           path: xian-cli
@@ -81,36 +81,36 @@ jobs:
 
     steps:
       - name: Check out xian-stack
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: xian-stack
 
       - name: Check out xian-abci
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-abci
           path: xian-abci
 
       - name: Check out xian-contracting
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-contracting
           path: xian-contracting
 
       - name: Check out xian-py
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-py
           path: xian-py
 
       - name: Check out xian-configs
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-configs
           path: xian-configs
 
       - name: Check out xian-cli
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-cli
           path: xian-cli

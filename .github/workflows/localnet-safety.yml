@@ -12,36 +12,36 @@ jobs:
 
     steps:
       - name: Check out xian-stack
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: xian-stack
 
       - name: Check out xian-abci
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-abci
           path: xian-abci
 
       - name: Check out xian-contracting
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-contracting
           path: xian-contracting
 
       - name: Check out xian-py
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-py
           path: xian-py
 
       - name: Check out xian-configs
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-configs
           path: xian-configs
 
       - name: Check out xian-cli
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-cli
           path: xian-cli
@@ -75,7 +75,7 @@ jobs:
 
       - name: Upload protocol safety artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: xian-stack-protocol-safety-localnet
           path: |
@@ -89,42 +89,42 @@ jobs:
 
     steps:
       - name: Check out xian-stack
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: xian-stack
 
       - name: Check out xian-abci
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-abci
           path: xian-abci
 
       - name: Check out xian-contracting
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-contracting
           path: xian-contracting
 
       - name: Check out xian-py
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-py
           path: xian-py
 
       - name: Check out xian-configs
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-configs
           path: xian-configs
 
       - name: Check out xian-cli
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-cli
           path: xian-cli
 
       - name: Check out xian-contracts
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-contracts
           path: xian-contracts
@@ -156,7 +156,7 @@ jobs:
 
       - name: Upload localnet safety artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: xian-stack-release-safety-localnet
           path: |

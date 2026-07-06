@@ -151,9 +151,9 @@ def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
     env.setdefault("XIAN_DEX_AUTOMATION_HOST", DEFAULT_DEX_AUTOMATION_HOST)
     env.setdefault("XIAN_DEX_AUTOMATION_PORT", str(DEFAULT_DEX_AUTOMATION_PORT))
     env.setdefault("XIAN_BDS_ENABLED", "0")
-    env.setdefault("XIAN_POSTGRES_IMAGE", "postgres:17")
-    env.setdefault("XIAN_PROMETHEUS_IMAGE", "prom/prometheus:v3.10.0")
-    env.setdefault("XIAN_GRAFANA_IMAGE", "grafana/grafana:12.2.0")
+    env.setdefault("XIAN_POSTGRES_IMAGE", "postgres:17.10")
+    env.setdefault("XIAN_PROMETHEUS_IMAGE", "prom/prometheus:v3.12.0")
+    env.setdefault("XIAN_GRAFANA_IMAGE", "grafana/grafana:12.4.5")
 
     secrets_path = stack_secrets_env_path(env)
     loaded_secrets = load_env_file(secrets_path)

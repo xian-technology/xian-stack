@@ -174,13 +174,13 @@ validate_stack_security_env() {
   fi
 
   if _stack_truthy "${require_digest_pinned_third_party_images}"; then
-    if ! _stack_is_digest_pinned_image "${XIAN_POSTGRES_IMAGE:-postgres:17}"; then
+    if ! _stack_is_digest_pinned_image "${XIAN_POSTGRES_IMAGE:-postgres:17.10}"; then
       errors+=("XIAN_POSTGRES_IMAGE must be digest-pinned when XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1")
     fi
-    if ! _stack_is_digest_pinned_image "${XIAN_PROMETHEUS_IMAGE:-prom/prometheus:v3.10.0}"; then
+    if ! _stack_is_digest_pinned_image "${XIAN_PROMETHEUS_IMAGE:-prom/prometheus:v3.12.0}"; then
       errors+=("XIAN_PROMETHEUS_IMAGE must be digest-pinned when XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1")
     fi
-    if ! _stack_is_digest_pinned_image "${XIAN_GRAFANA_IMAGE:-grafana/grafana:12.2.0}"; then
+    if ! _stack_is_digest_pinned_image "${XIAN_GRAFANA_IMAGE:-grafana/grafana:12.4.5}"; then
       errors+=("XIAN_GRAFANA_IMAGE must be digest-pinned when XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1")
     fi
   fi
@@ -272,7 +272,7 @@ export_stack_env() {
   export XIAN_STACK_DISK_FREE_WARN_BYTES="${XIAN_STACK_DISK_FREE_WARN_BYTES:-10737418240}"
   export XIAN_CONTRACTS_DIR="${XIAN_CONTRACTS_DIR:-${stack_root}/contracts}"
   export XIAN_COMETBFT_VERSION="${XIAN_COMETBFT_VERSION:-0.39.3}"
-  export XIAN_S6_OVERLAY_VERSION="${XIAN_S6_OVERLAY_VERSION:-3.2.1.0}"
+  export XIAN_S6_OVERLAY_VERSION="${XIAN_S6_OVERLAY_VERSION:-3.2.3.0}"
   export XIAN_S6_VERBOSITY="${XIAN_S6_VERBOSITY:-1}"
   export XIAN_NODE_IMAGE_MODE="${XIAN_NODE_IMAGE_MODE:-local_build}"
   export XIAN_NODE_INTEGRATED_IMAGE="${XIAN_NODE_INTEGRATED_IMAGE:-xian-node-integrated:local}"
@@ -298,12 +298,12 @@ export_stack_env() {
   export XIAN_PERF_RECENT_BLOCKS="${XIAN_PERF_RECENT_BLOCKS:-64}"
   export XIAN_LOCALNET_PROFILE_ENABLED="${XIAN_LOCALNET_PROFILE_ENABLED:-${XIAN_PERF_ENABLED}}"
   export XIAN_LOCALNET_PROFILE_RECENT_BLOCKS="${XIAN_LOCALNET_PROFILE_RECENT_BLOCKS:-${XIAN_PERF_RECENT_BLOCKS}}"
-  export XIAN_POSTGRES_IMAGE="${XIAN_POSTGRES_IMAGE:-postgres:17}"
-  export XIAN_PROMETHEUS_IMAGE="${XIAN_PROMETHEUS_IMAGE:-prom/prometheus:v3.10.0}"
+  export XIAN_POSTGRES_IMAGE="${XIAN_POSTGRES_IMAGE:-postgres:17.10}"
+  export XIAN_PROMETHEUS_IMAGE="${XIAN_PROMETHEUS_IMAGE:-prom/prometheus:v3.12.0}"
   export XIAN_PROMETHEUS_CONFIG="${XIAN_PROMETHEUS_CONFIG:-./monitoring/prometheus/integrated.yml}"
   export XIAN_PROMETHEUS_HOST="${XIAN_PROMETHEUS_HOST:-127.0.0.1}"
   export XIAN_PROMETHEUS_PORT="${XIAN_PROMETHEUS_PORT:-9090}"
-  export XIAN_GRAFANA_IMAGE="${XIAN_GRAFANA_IMAGE:-grafana/grafana:12.2.0}"
+  export XIAN_GRAFANA_IMAGE="${XIAN_GRAFANA_IMAGE:-grafana/grafana:12.4.5}"
   export XIAN_GRAFANA_HOST="${XIAN_GRAFANA_HOST:-127.0.0.1}"
   export XIAN_GRAFANA_PORT="${XIAN_GRAFANA_PORT:-3000}"
   export XIAN_STACK_TOPOLOGY="${XIAN_STACK_TOPOLOGY:-integrated}"
