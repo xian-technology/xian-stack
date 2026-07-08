@@ -2321,19 +2321,32 @@ def get_status():
                 arg=self.nodes[1].account_public_key,
                 label_prefix="auto-unjail-member",
             )
-            active_after_unjail = await node0.call(
+            unjailed_validator = await node0.call(
                 "validators",
-                "get_active_validators",
-                {},
+                "get_validator",
+                {"account": self.nodes[1].account_public_key},
             )
-            active_after_unjail_accounts = [entry["account"] for entry in active_after_unjail]
             assert_equal(
-                active_after_unjail_accounts,
-                [
+                unjailed_validator["jailed"],
+                False,
+                label="node1 jailed flag after unjail",
+            )
+            rebalance_after_unjail = await self.submit_tx(
+                node0,
+                "validators",
+                "rebalance",
+                {},
+                label="auto-rebalance-after-unjail",
+                chi=GOVERNANCE_TX_CHI,
+            )
+            active_after_unjail = await self.wait_for_active_validators(
+                node0,
+                expected_accounts=[
                     self.nodes[3].account_public_key,
                     self.nodes[1].account_public_key,
                     self.nodes[2].account_public_key,
                 ],
+                timeout_seconds=45.0,
                 label="active validators after unjail",
             )
 
@@ -2474,6 +2487,8 @@ def get_status():
             "active_after_jail": active_after_jail,
             "jailed_validator": jailed_validator,
             "unjail_vote": unjail_vote,
+            "unjailed_validator": unjailed_validator,
+            "rebalance_after_unjail": rebalance_after_unjail,
             "active_after_unjail": active_after_unjail,
             "slash_vote": slash_vote,
             "validator_after_slash": validator_after_slash,
