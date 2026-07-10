@@ -63,6 +63,7 @@ INTENTKIT_UV_EXTRA_PACKAGES = ("psycopg-binary",)
 DEFAULT_EXECUTION_MODE = "xian_vm_v1"
 DEFAULT_LOCALNET_NODES = 5
 DEFAULT_GENESIS_NETWORK = "testnet"
+MAX_CANONICAL_JSON_DEPTH = 128
 DEFAULT_TX_CHI = 15_000
 DEFAULT_TRANSFER_CHI = 2_000
 GOVERNANCE_TX_CHI = 200_000
@@ -207,6 +208,13 @@ def load_network() -> dict[str, Any]:
 def derive_wallet(seed: str, label: str) -> Wallet:
     digest = hashlib.sha256(f"{seed}:{label}".encode("utf-8")).hexdigest()
     return Wallet(private_key=digest)
+
+
+def nested_json_value(depth: int) -> dict[str, Any]:
+    value: Any = "leaf"
+    for _ in range(depth):
+        value = {"next": value}
+    return value
 
 
 @functools.lru_cache(maxsize=1)
@@ -711,9 +719,7 @@ def bds_result_contains_tx_hash(value: Any, tx_hash: str) -> bool:
 
 def assert_bds_surface_query_result(spec: BdsSurfaceQuerySpec, value: Any) -> None:
     if spec.expected_shape == "dict" and not isinstance(value, dict):
-        raise E2EError(
-            f"BDS query {spec.name} expected object, got {type(value).__name__}"
-        )
+        raise E2EError(f"BDS query {spec.name} expected object, got {type(value).__name__}")
     if spec.expected_shape == "list" and not isinstance(value, list):
         raise E2EError(f"BDS query {spec.name} expected list, got {type(value).__name__}")
     if spec.expected_shape not in {"dict", "list", "any"}:
@@ -722,8 +728,7 @@ def assert_bds_surface_query_result(spec: BdsSurfaceQuerySpec, value: Any) -> No
     count = bds_result_count(value)
     if spec.min_count > 0 and (count is None or count < spec.min_count):
         raise E2EError(
-            f"BDS query {spec.name} returned {count or 0} rows, expected at least "
-            f"{spec.min_count}"
+            f"BDS query {spec.name} returned {count or 0} rows, expected at least {spec.min_count}"
         )
 
     if spec.canonical_txs:
@@ -1271,9 +1276,7 @@ def assert_bds_db_schema_snapshot(snapshot: dict[str, Any]) -> None:
 
     row_counts = snapshot.get("row_counts") or {}
     empty_tables = [
-        table
-        for table in sorted(BDS_NON_EMPTY_TABLES)
-        if int(row_counts.get(table) or 0) <= 0
+        table for table in sorted(BDS_NON_EMPTY_TABLES) if int(row_counts.get(table) or 0) <= 0
     ]
     if empty_tables:
         raise E2EError(f"BDS DB expected indexed rows in tables: {empty_tables}")
@@ -3380,6 +3383,9 @@ class E2ERunner:
         permit_recipient = derive_wallet(self.seed, "contract-orchestration-permit-recipient")
         duplicate_sender = derive_wallet(self.seed, "contract-orchestration-duplicate-sender")
         duplicate_recipient = derive_wallet(self.seed, "contract-orchestration-duplicate-recipient")
+        compiler_security_sender = derive_wallet(
+            self.seed, "contract-orchestration-compiler-security"
+        )
         await self.fund_wallets(
             session,
             [
@@ -3388,6 +3394,7 @@ class E2ERunner:
                 permit_spender,
                 invalid_permit_spender,
                 duplicate_sender,
+                compiler_security_sender,
             ],
             amount=20_000,
         )
@@ -3399,6 +3406,8 @@ class E2ERunner:
         root_name = f"con_orch_root_{suffix}"
         overlay_controller_name = f"con_orch_overlay_controller_{suffix}"
         overlay_adapter_name = f"con_orch_overlay_adapter_{suffix}"
+        compiler_probe_name = f"con_orch_compiler_probe_{suffix}"
+        bad_fstring_name = f"con_orch_bad_fstring_{suffix}"
         family_prefix = f"con_orch_family_{suffix}"
         failed_prefix = f"con_orch_fail_{suffix}"
         alpha_name = family_prefix + "_alpha"
@@ -3413,6 +3422,8 @@ class E2ERunner:
         root_code = read_text(WORKLOADS_DIR / "e2e" / "orchestration_root.py")
         overlay_controller_code = read_text(WORKLOADS_DIR / "e2e" / "pending_overlay_controller.py")
         overlay_adapter_code = read_text(WORKLOADS_DIR / "e2e" / "pending_overlay_adapter.py")
+        compiler_probe_code = read_text(WORKLOADS_DIR / "e2e" / "compiler_security_probe.py")
+        bad_fstring_source = "@export\ndef render(value: int):\n    return f'{value:04d}'\n"
 
         self.contracts.update(
             {
@@ -3422,6 +3433,7 @@ class E2ERunner:
                 "orchestration_root": root_name,
                 "orchestration_overlay_controller": overlay_controller_name,
                 "orchestration_overlay_adapter": overlay_adapter_name,
+                "compiler_security_probe": compiler_probe_name,
                 "orchestrated_alpha": alpha_name,
                 "orchestrated_beta": beta_name,
             }
@@ -3441,6 +3453,7 @@ class E2ERunner:
                     overlay_adapter_code,
                     {"controller_contract": overlay_controller_name},
                 ),
+                (compiler_probe_name, compiler_probe_code, None),
             ):
                 existing_contract = await client.get_contract_source(name)
                 if existing_contract is not None:
@@ -3560,6 +3573,104 @@ class E2ERunner:
             bad_artifact_absent = bad_artifact_source is None
             if not bad_artifact_absent:
                 raise E2EError("obsolete deployment_artifacts unexpectedly persisted a contract")
+
+            bad_fstring_receipt = ensure_failed_submission(
+                await client.send_tx(
+                    "submission",
+                    "submit_contract",
+                    {
+                        "name": bad_fstring_name,
+                        "code": bad_fstring_source,
+                    },
+                    chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
+                    wait_for_tx=True,
+                ),
+                label="orchestration-bad-fstring-source",
+                expected_message_fragment="f-string format specifications are not supported",
+            )
+            bad_fstring_absent = await client.get_contract_source(bad_fstring_name) is None
+            if not bad_fstring_absent:
+                raise E2EError("unsupported f-string source unexpectedly persisted a contract")
+
+            shadowed_now = await client.call(compiler_probe_name, "read_shadowed_now", {})
+            if shadowed_now != 7:
+                raise E2EError("compiler security probe resolved local now as a host binding")
+
+            storage_shadow_receipt = ensure_positive_submission(
+                await client.send_tx(
+                    compiler_probe_name,
+                    "record_storage_shadow",
+                    {"account": operator.public_key},
+                    chi=DEFAULT_TX_CHI,
+                    wait_for_tx=True,
+                ),
+                label="orchestration-storage-shadow",
+            )
+            storage_shadow_state = await self.wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract=compiler_probe_name,
+                variable="last_shadow",
+                expected=42,
+                label="compiler local storage shadow",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+
+        deep_nonce = await tr.get_nonce_async(
+            self.nodes[0].rpc_url,
+            compiler_security_sender.public_key,
+            session=session,
+        )
+        deep_payload = {
+            "chain_id": self.network["chain_id"],
+            "contract": compiler_probe_name,
+            "function": "accept_nested",
+            "kwargs": {
+                "nested": nested_json_value(MAX_CANONICAL_JSON_DEPTH + 1),
+                "to": operator.public_key,
+            },
+            "nonce": deep_nonce,
+            "sender": compiler_security_sender.public_key,
+            "chi_supplied": DEFAULT_TX_CHI,
+        }
+        deep_response = await tr.broadcast_tx_wait_async(
+            self.nodes[1].rpc_url,
+            tr.create_tx(deep_payload, compiler_security_sender),
+            session=session,
+        )
+        deep_result_raw = deep_response.get("result", {}) if isinstance(deep_response, dict) else {}
+        deep_error_raw = deep_response.get("error", {}) if isinstance(deep_response, dict) else {}
+        deep_result = deep_result_raw if isinstance(deep_result_raw, dict) else {}
+        deep_error = deep_error_raw if isinstance(deep_error_raw, dict) else {}
+        deep_code = int(deep_result.get("code", 1) or 0)
+        deep_log = (
+            deep_result.get("log") or deep_error.get("data") or deep_error.get("message") or ""
+        )
+        if deep_code == 0:
+            raise E2EError("over-depth canonical transaction unexpectedly passed CheckTx")
+        if "recursion limit exceeded" not in str(deep_log):
+            raise E2EError(f"over-depth canonical transaction failed unexpectedly: {deep_log!r}")
+
+        async with self.client(compiler_security_sender, 2, session) as security_client:
+            post_depth_receipt = ensure_positive_submission(
+                await security_client.send_tx(
+                    compiler_probe_name,
+                    "record_storage_shadow",
+                    {"account": compiler_security_sender.public_key},
+                    chi=DEFAULT_TX_CHI,
+                    wait_for_tx=True,
+                ),
+                label="orchestration-post-depth-valid-tx",
+            )
+            post_depth_state = await self.wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract=compiler_probe_name,
+                variable="last_shadow",
+                expected=42,
+                label="post-depth valid transaction state",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
 
         node_recoveries.append(
             await self.stabilize_nodes(
@@ -3984,9 +4095,8 @@ class E2ERunner:
             "chi_supplied": DEFAULT_TRANSFER_CHI,
         }
         duplicate_tx = tr.create_tx(duplicate_payload, duplicate_sender)
-        duplicate_tx_hash = (
-            hashlib.sha256(json.dumps(duplicate_tx).encode("utf-8")).hexdigest().upper()
-        )
+        duplicate_prepared_tx = tr.prepare_transaction(duplicate_tx)
+        duplicate_tx_hash = duplicate_prepared_tx.tx_hash
 
         def summarize_duplicate_broadcast(
             response: dict[str, Any],
@@ -4020,7 +4130,7 @@ class E2ERunner:
         duplicate_first_response = summarize_duplicate_broadcast(
             await tr.broadcast_tx_wait_async(
                 self.nodes[0].rpc_url,
-                duplicate_tx,
+                duplicate_prepared_tx,
                 session=session,
             ),
             node=self.nodes[0],
@@ -4029,16 +4139,21 @@ class E2ERunner:
         duplicate_second_response = summarize_duplicate_broadcast(
             await tr.broadcast_tx_wait_async(
                 self.nodes[1].rpc_url,
-                duplicate_tx,
+                duplicate_prepared_tx,
                 session=session,
             ),
             node=self.nodes[1],
+        )
+        duplicate_wait_hash = (
+            duplicate_first_response["hash"]
+            or duplicate_second_response["hash"]
+            or duplicate_tx_hash
         )
         async with self.client(duplicate_sender, 4, session) as duplicate_client:
             duplicate_receipt = normalize_value(
                 (
                     await duplicate_client.wait_for_tx(
-                        duplicate_tx_hash,
+                        duplicate_wait_hash,
                         timeout_seconds=15.0,
                         poll_interval_seconds=0.25,
                     )
@@ -4148,6 +4263,17 @@ class E2ERunner:
                 "invalid_artifact_receipt": artifact_failure_receipt,
                 "tampered_contract_absent": bad_artifact_absent,
             },
+            "compiler_security_path": {
+                "contract": compiler_probe_name,
+                "shadowed_now": shadowed_now,
+                "storage_shadow_receipt": storage_shadow_receipt,
+                "storage_shadow_state": storage_shadow_state,
+                "bad_fstring_receipt": bad_fstring_receipt,
+                "bad_fstring_absent": bad_fstring_absent,
+                "over_depth_checktx": normalize_value(deep_response),
+                "post_depth_receipt": post_depth_receipt,
+                "post_depth_state": post_depth_state,
+            },
             "chain_preview": normalize_value(chain_preview),
             "pending_overlay_path": {
                 "controller": overlay_controller_name,
@@ -4178,6 +4304,7 @@ class E2ERunner:
             },
             "duplicate_submission_path": {
                 "tx_hash": duplicate_tx_hash,
+                "wait_hash": duplicate_wait_hash,
                 "nonce_before": duplicate_nonce_before,
                 "nonce_after": duplicate_nonce_after,
                 "first_broadcast": normalize_value(duplicate_first_response),

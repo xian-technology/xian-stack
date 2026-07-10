@@ -263,6 +263,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         workload_dir = Path(__file__).resolve().parents[1] / "workloads" / "e2e"
         controller_source = (workload_dir / "pending_overlay_controller.py").read_text()
         adapter_source = (workload_dir / "pending_overlay_adapter.py").read_text()
+        compiler_security_source = (workload_dir / "compiler_security_probe.py").read_text()
         phase_source = inspect.getsource(localnet_e2e.E2ERunner.contract_orchestration_phase)
 
         self.assertIn("adapter_spend_public", controller_source)
@@ -270,6 +271,11 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertIn("adapter did not see the controller's pending spend budget", adapter_source)
         self.assertIn("pending_overlay_path", phase_source)
         self.assertIn("orchestration-pending-overlay", phase_source)
+        self.assertIn("read_shadowed_now", compiler_security_source)
+        self.assertIn("record_storage_shadow", compiler_security_source)
+        self.assertIn("compiler_security_path", phase_source)
+        self.assertIn("orchestration-bad-fstring-source", phase_source)
+        self.assertIn("over-depth canonical transaction", phase_source)
 
     def test_validator_governance_phase_covers_selection_mode_switches(self) -> None:
         phase_source = inspect.getsource(localnet_e2e.E2ERunner.validator_governance_phase)
