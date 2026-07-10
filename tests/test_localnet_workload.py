@@ -329,6 +329,57 @@ def test_require_matching_state_reports_mismatched_samples() -> None:
         raise AssertionError("expected WorkloadError")
 
 
+def test_compare_state_retries_until_sampled_nodes_match() -> None:
+    context = localnet_workload.WorkloadContext(
+        _network(),
+        sample_nodes=3,
+        submit_node_index=0,
+        round_robin_submission=True,
+    )
+    context._session = object()
+    context.healthy_state_sample_nodes = AsyncMock(
+        return_value=([context.nodes[0], context.nodes[1]], [])
+    )
+    reads = []
+
+    class FakeXianAsync:
+        def __init__(self, *, node_url, chain_id, wallet, session):
+            self.node_url = node_url
+
+        async def get_state(self, contract, variable, *keys):
+            port = int(self.node_url.rsplit(":", 1)[1])
+            round_index = min(len(reads) // 2, 1)
+            reads.append((round_index, port, contract, variable, keys))
+            return {
+                0: {27657: "old", 27757: "new"},
+                1: {27657: "new", 27757: "new"},
+            }[round_index][port]
+
+    with (
+        patch.object(localnet_workload, "XianAsync", FakeXianAsync),
+        patch.object(localnet_workload.asyncio, "sleep", new=AsyncMock()),
+    ):
+        state = asyncio.run(
+            context.compare_state(
+                [
+                    {
+                        "label": "eventual value",
+                        "contract": "con_probe",
+                        "variable": "values",
+                        "keys": ["latest"],
+                    }
+                ],
+                timeout_seconds=5.0,
+                poll_interval_seconds=0.01,
+            )
+        )
+
+    assert state["ok"] is True
+    assert state["queries"][0]["values"] == {"node-0": "new", "node-1": "new"}
+    assert len(reads) == 4
+    assert context.healthy_state_sample_nodes.await_count == 2
+
+
 def test_broadcast_tx_retries_transport_timeout_on_next_healthy_node() -> None:
     context = localnet_workload.WorkloadContext(
         _network(),

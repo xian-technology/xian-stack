@@ -669,10 +669,7 @@ class WorkloadContext:
             or "tx already exists in mempool" in normalized
         )
 
-    async def compare_state(
-        self,
-        queries: list[dict[str, Any]],
-    ) -> dict[str, Any]:
+    async def _compare_state_once(self, queries: list[dict[str, Any]]) -> dict[str, Any]:
         details = []
         all_match = True
         founder = self.founder_wallet
@@ -729,6 +726,21 @@ class WorkloadContext:
             "skipped_nodes": skipped_nodes,
             "queries": details,
         }
+
+    async def compare_state(
+        self,
+        queries: list[dict[str, Any]],
+        *,
+        timeout_seconds: float = 0.0,
+        poll_interval_seconds: float = 1.0,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + max(timeout_seconds, 0.0)
+        summary = await self._compare_state_once(queries)
+        while not summary["ok"] and time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            await asyncio.sleep(min(max(remaining, 0.0), max(poll_interval_seconds, 0.0)))
+            summary = await self._compare_state_once(queries)
+        return summary
 
     async def healthy_state_sample_nodes(self) -> tuple[list[LocalnetNode], list[str]]:
         statuses: list[tuple[LocalnetNode, int, bool]] = []
@@ -2598,7 +2610,8 @@ async def run_parallel_probe(
                 "variable": "values",
                 "keys": [prefix_scan_group, "seed"],
             },
-        ]
+        ],
+        timeout_seconds=min(receipt_timeout_seconds, 30.0),
     )
 
     overall_heights = [
@@ -3193,7 +3206,10 @@ async def async_main(argv: list[str] | None = None) -> int:
         if not consensus_summary["ok"]:
             raise WorkloadError("app_hash mismatch detected across localnet nodes")
         if not state_summary["ok"]:
-            raise WorkloadError("state mismatch detected across sampled localnet nodes")
+            raise WorkloadError(
+                "state mismatch detected across sampled localnet nodes: "
+                + json.dumps(normalize_value(state_summary), sort_keys=True)
+            )
 
         elapsed = time.monotonic() - started_at
         final_summary = {
