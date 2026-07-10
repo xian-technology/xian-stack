@@ -2098,7 +2098,8 @@ class E2ERunner:
             "chi_supplied": chi,
         }
         tx = tr.create_tx(payload, wallet)
-        tx_hash = XianAsync._local_tx_hash(tx)
+        prepared_tx = tr.prepare_transaction(tx)
+        tx_hash = prepared_tx.tx_hash
         response: dict[str, Any] = {}
         errors: list[str] = []
         tried: set[int] = set()
@@ -2121,7 +2122,7 @@ class E2ERunner:
                 async with aiohttp.ClientSession(timeout=timeout) as broadcast_session:
                     response = await tr.broadcast_tx_wait_async(
                         self.nodes[node_index].rpc_url,
-                        tx,
+                        prepared_tx,
                         session=broadcast_session,
                     )
             except Exception as exc:  # noqa: BLE001

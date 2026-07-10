@@ -813,7 +813,6 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
 
         with (
             patch.object(localnet_e2e.tr, "create_tx", return_value={"signed": "tx"}),
-            patch.object(localnet_e2e.XianAsync, "_local_tx_hash", return_value="local-hash"),
             patch.object(
                 localnet_e2e.tr,
                 "broadcast_tx_wait_async",

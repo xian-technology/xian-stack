@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import functools
 import hashlib
 import json
 import random
@@ -80,7 +79,7 @@ class BroadcastRecord:
     expected_success: bool
     expected_message: str | None
     response: TransactionSubmission
-    tx: dict[str, Any] | None = None
+    tx: tr.PreparedTransaction | dict[str, Any] | None = None
     tx_hash: str | None = None
     final_success: bool | None = None
     final_message: str | None = None
@@ -438,7 +437,8 @@ class WorkloadContext:
             "chi_supplied": chi,
         }
         tx = tr.create_tx(payload, wallet)
-        local_tx_hash = XianAsync._local_tx_hash(tx)
+        prepared_tx = tr.prepare_transaction(tx)
+        local_tx_hash = prepared_tx.tx_hash
         response: TransactionSubmission | None = None
         last_error: TransportError | None = None
 
@@ -482,7 +482,7 @@ class WorkloadContext:
             expected_success=expected_success,
             expected_message=expected_message,
             response=response,
-            tx=tx,
+            tx=prepared_tx,
             tx_hash=response.tx_hash
             or broadcast_response_tx_hash(getattr(response, "response", None))
             or local_tx_hash,
