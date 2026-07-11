@@ -91,6 +91,20 @@ Package-facing changes under `packages/` remain release-relevant.
 All non-stack workflows create the GitHub release from the pushed tag automatically.
 No separate “publish a GitHub release first” step is needed.
 
+## Independent App Releases
+
+`xian-wallet-mobile` and `xian-contracting-hub-web` also have tag-driven GitHub
+Release workflows, but they are not part of the coordinated stack image release
+order. Release them only when their own repo has release-relevant changes, after
+their `main` validation is green:
+
+- `xian-wallet-mobile`: push `vX.Y.Z`; the workflow validates version metadata,
+  builds sibling `xian-js`, runs typecheck/tests, exports the Android bundle,
+  and attaches checksummed artifacts to the GitHub Release.
+- `xian-contracting-hub-web`: push `vX.Y.Z`; the workflow validates
+  `pyproject.toml`, runs Ruff/unit/Reflex export checks, builds Python
+  distributions, and attaches them to the GitHub Release.
+
 ## Python Package Releases
 
 Each Python release workflow:
