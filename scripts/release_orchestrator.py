@@ -82,7 +82,6 @@ REPOS = {
         "xian-linter",
         "xian-js",
         "xian-wallet-browser",
-        "xian-intentkit",
         "xian-stack",
         "xian-configs",
     )
@@ -188,13 +187,6 @@ UNITS = {
             trigger_units=("xian-js",),
         ),
         ReleaseUnit(
-            key="xian-intentkit",
-            repo="xian-intentkit",
-            display_name="xian-tech-intentkit",
-            tag_glob="v*",
-            tag_prefix="v",
-        ),
-        ReleaseUnit(
             key="xian-stack",
             repo="xian-stack",
             display_name="xian-stack",
@@ -223,7 +215,6 @@ RELEASE_ORDER = (
     "xian-linter",
     "xian-js",
     "xian-wallet-browser",
-    "xian-intentkit",
     "xian-stack",
 )
 
@@ -524,14 +515,6 @@ def read_source_version(unit: ReleaseUnit) -> str | None:
     repo_path = REPOS[unit.repo].path
     if unit.key == "xian-abci":
         return read_module_version(repo_path / "src/abci/__init__.py")
-    if unit.key == "xian-intentkit":
-        return ensure_matching_versions(
-            "xian-intentkit",
-            {
-                "pyproject.toml": read_pyproject_version(repo_path / "pyproject.toml"),
-                "intentkit/__init__.py": read_module_version(repo_path / "intentkit/__init__.py"),
-            },
-        )
     if unit.key == "xian-js":
         return ensure_matching_versions(
             "xian-js",
@@ -973,24 +956,6 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
             repo_path / "src/abci/__init__.py",
             set_module_version(repo_path / "src/abci/__init__.py", version),
         )
-    elif plan.unit.key == "xian-intentkit":
-        record_change(
-            changed_paths,
-            repo_path / "pyproject.toml",
-            set_pyproject_version(repo_path / "pyproject.toml", version),
-        )
-        record_change(
-            changed_paths,
-            repo_path / "intentkit/__init__.py",
-            set_module_version(repo_path / "intentkit/__init__.py", version),
-        )
-        lock_path = repo_path / "uv.lock"
-        if lock_path.exists():
-            record_change(
-                changed_paths,
-                lock_path,
-                update_uv_lock_version(lock_path, "xian-tech-intentkit", version),
-            )
     elif plan.unit.key == "xian-js":
         record_change(
             changed_paths,
@@ -1223,7 +1188,6 @@ def commit_message(plan: ReleasePlan) -> str:
         "xian-linter": "xian-linter",
         "xian-js": "xian-js",
         "xian-wallet-browser": "xian-wallet-browser",
-        "xian-intentkit": "xian-intentkit",
         "xian-stack": "xian-stack",
     }[plan.unit.key]
     return f"release({subject}): prepare {plan.tag}"

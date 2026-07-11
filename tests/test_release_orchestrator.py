@@ -54,6 +54,11 @@ def release_plan() -> orchestrator.ReleasePlan:
 
 
 class ReleaseOrchestratorGithubCheckTests(unittest.TestCase):
+    def test_xian_intentkit_is_not_a_coordinated_release_unit(self) -> None:
+        self.assertNotIn("xian-intentkit", orchestrator.RELEASE_ORDER)
+        self.assertNotIn("xian-intentkit", orchestrator.UNITS)
+        self.assertNotIn("xian-intentkit", orchestrator.REPOS)
+
     def test_ensure_github_checks_green_accepts_completed_green_checks(self) -> None:
         states = {
             "xian-configs": repo_state("a" * 40),

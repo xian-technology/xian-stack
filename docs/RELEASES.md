@@ -29,9 +29,7 @@ Recommended release order:
      `@xian-tech/provider`, and `@xian-tech/web-kit` from the same tag
 8. `xian-wallet-browser`:
    - `vX.Y.Z`
-9. `xian-intentkit`:
-   - `vX.Y.Z`
-10. `xian-stack`:
+9. `xian-stack`:
    - `vX.Y.Z`
 
 `xian-wallet-browser` intentionally rolls after `xian-js` because its release build
@@ -91,6 +89,21 @@ Package-facing changes under `packages/` remain release-relevant.
 All non-stack workflows create the GitHub release from the pushed tag automatically.
 No separate “publish a GitHub release first” step is needed.
 
+## Fork-Managed IntentKit Releases
+
+`xian-intentkit` is intentionally not part of the coordinated release
+orchestrator. It is an upstream IntentKit fork, and upstream keeps
+`pyproject.toml` at `0.0.0` while release CI injects the GitHub Release tag into
+both `pyproject.toml` and `intentkit/__init__.py` at build time. Changing that
+metadata model in the fork would create avoidable merge pressure on future
+upstream updates.
+
+Release `xian-intentkit` through its repo-local GitHub Release flow when the
+fork itself changes. In the Xian fork, the PyPI publish job is intentionally
+skipped; GitHub Release events build the fork's GHCR images and integration
+artifacts. Keep the Xian release orchestrator focused on the package and stack
+repos whose workflows are tag-driven from `origin/main`.
+
 ## Independent App Releases
 
 `xian-wallet-mobile` and `xian-contracting-hub-web` also have tag-driven GitHub
@@ -125,7 +138,6 @@ Trusted Publishing setup still has to be completed once in PyPI for each project
 - `xian-tech-cli`: `pypi`
 - `xian-tech-py`: `pypi`
 - `xian-tech-linter`: `pypi`
-- `xian-intentkit`: `pypi`
 
 ### PyPI Trusted Publisher Setup
 
@@ -153,7 +165,6 @@ Current publisher matrix:
 | `xian-tech-cli` | `xian-technology` | `xian-cli` | `release.yml` | `pypi` |
 | `xian-tech-py` | `xian-technology` | `xian-py` | `release.yml` | `pypi` |
 | `xian-tech-linter` | `xian-technology` | `xian-linter` | `release.yml` | `pypi` |
-| `xian-tech-intentkit` | `xian-technology` | `xian-intentkit` | `release.yml` | `pypi` |
 
 Notes:
 
