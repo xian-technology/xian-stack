@@ -44,6 +44,17 @@ class RepoState:
     behind: int
 
 
+@dataclass(frozen=True)
+class GithubCheckRun:
+    name: str
+    status: str
+    conclusion: str | None
+    url: str
+    started_at: str
+    completed_at: str
+    database_id: int
+
+
 @dataclass
 class ReleasePlan:
     unit: ReleaseUnit
@@ -222,6 +233,8 @@ SEMVER_RE = re.compile(
 )
 PYPROJECT_VERSION_RE = re.compile(r'^version = "([^"]+)"$', re.MULTILINE)
 MODULE_VERSION_RE = re.compile(r'^__version__ = "([^"]+)"$', re.MULTILINE)
+GITHUB_OWNER = "xian-technology"
+GREEN_CHECK_CONCLUSIONS = {"success", "neutral", "skipped"}
 
 
 class ReleaseError(RuntimeError):
@@ -251,6 +264,10 @@ def run(
 
 def run_git(repo: RepoConfig, *args: str, capture: bool = True) -> str:
     return run(["git", *args], cwd=repo.path, capture=capture)
+
+
+def run_gh(*args: str) -> str:
+    return run(["gh", *args], cwd=WORKSPACE_ROOT)
 
 
 def fetch_repo(repo: RepoConfig) -> None:
@@ -1212,12 +1229,16 @@ def commit_message(plan: ReleasePlan) -> str:
     return f"release({subject}): prepare {plan.tag}"
 
 
-def ensure_apply_ready(repo_states: dict[str, RepoState], plans: list[ReleasePlan]) -> None:
+def required_repos_for_apply(plans: list[ReleasePlan]) -> set[str]:
     required_repos = {"xian-configs"}
     required_repos.update(plan.unit.repo for plan in plans)
     if any(plan.unit.key == "xian-wallet-browser" for plan in plans):
         required_repos.add("xian-js")
-    for repo_name in sorted(required_repos):
+    return required_repos
+
+
+def ensure_apply_ready(repo_states: dict[str, RepoState], plans: list[ReleasePlan]) -> None:
+    for repo_name in sorted(required_repos_for_apply(plans)):
         state = repo_states[repo_name]
         problems = []
         if state.branch != "main":
@@ -1228,6 +1249,85 @@ def ensure_apply_ready(repo_states: dict[str, RepoState], plans: list[ReleasePla
             problems.append(f"ahead/behind is {state.ahead}/{state.behind}")
         if problems:
             raise ReleaseError(f"{repo_name}: " + ", ".join(problems))
+
+
+def github_check_runs(repo_name: str, sha: str) -> list[GithubCheckRun]:
+    endpoint = f"repos/{GITHUB_OWNER}/{repo_name}/commits/{sha}/check-runs?per_page=100"
+    output = run_gh("api", endpoint)
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise ReleaseError(f"{repo_name}: failed to parse GitHub check runs") from exc
+
+    check_runs = payload.get("check_runs")
+    if not isinstance(check_runs, list):
+        raise ReleaseError(f"{repo_name}: GitHub check run response is missing check_runs")
+
+    parsed: list[GithubCheckRun] = []
+    for check_run in check_runs:
+        if not isinstance(check_run, dict):
+            continue
+        database_id_raw = check_run.get("id")
+        database_id = database_id_raw if isinstance(database_id_raw, int) else 0
+        conclusion = check_run.get("conclusion")
+        parsed.append(
+            GithubCheckRun(
+                name=str(check_run.get("name") or "<unnamed>"),
+                status=str(check_run.get("status") or ""),
+                conclusion=str(conclusion) if conclusion is not None else None,
+                url=str(check_run.get("html_url") or check_run.get("details_url") or ""),
+                started_at=str(check_run.get("started_at") or ""),
+                completed_at=str(check_run.get("completed_at") or ""),
+                database_id=database_id,
+            )
+        )
+    return parsed
+
+
+def latest_check_runs_by_name(check_runs: list[GithubCheckRun]) -> list[GithubCheckRun]:
+    latest: dict[str, GithubCheckRun] = {}
+    for check_run in check_runs:
+        previous = latest.get(check_run.name)
+        sort_key = (
+            check_run.completed_at or check_run.started_at,
+            check_run.database_id,
+        )
+        previous_sort_key = (
+            (previous.completed_at or previous.started_at, previous.database_id)
+            if previous is not None
+            else ("", 0)
+        )
+        if previous is None or sort_key > previous_sort_key:
+            latest[check_run.name] = check_run
+    return [latest[name] for name in sorted(latest)]
+
+
+def ensure_github_checks_green(
+    repo_states: dict[str, RepoState],
+    plans: list[ReleasePlan],
+) -> None:
+    failures: list[str] = []
+    for repo_name in sorted(required_repos_for_apply(plans)):
+        state = repo_states[repo_name]
+        check_runs = latest_check_runs_by_name(github_check_runs(repo_name, state.origin_sha))
+        if not check_runs:
+            failures.append(f"{repo_name}@{state.origin_sha[:12]}: no GitHub check runs found")
+            continue
+        for check_run in check_runs:
+            if (
+                check_run.status != "completed"
+                or check_run.conclusion not in GREEN_CHECK_CONCLUSIONS
+            ):
+                status = f"{check_run.status}/{check_run.conclusion or 'pending'}"
+                detail = f"{repo_name}@{state.origin_sha[:12]} {check_run.name}: {status}"
+                if check_run.url:
+                    detail += f" ({check_run.url})"
+                failures.append(detail)
+    if failures:
+        raise ReleaseError(
+            "GitHub checks are not green for the release input refs:\n- "
+            + "\n- ".join(failures)
+        )
 
 
 def print_repo_warnings(repo_states: dict[str, RepoState]) -> None:
@@ -1281,6 +1381,7 @@ def print_plan(plans: list[ReleasePlan]) -> None:
 
 def apply_plan(plans: list[ReleasePlan], repo_states: dict[str, RepoState]) -> None:
     ensure_apply_ready(repo_states, plans)
+    ensure_github_checks_green(repo_states, plans)
     plans_by_key = {plan.unit.key: plan for plan in plans}
 
     for plan in plans:

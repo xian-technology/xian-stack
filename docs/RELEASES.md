@@ -50,6 +50,9 @@ python3 ./scripts/release_orchestrator.py plan
 python3 ./scripts/release_orchestrator.py apply
 ```
 
+Use the default stable flow unless a prerelease was explicitly requested. Do not
+pass `--beta` for normal releases.
+
 For the beta channel, pass the channel option before the subcommand:
 
 ```bash
@@ -63,13 +66,18 @@ The orchestrator:
 - detects changed release units against `origin/main`
 - reuses a pre-bumped version if `main` already carries it
 - otherwise applies a conservative patch bump
+- checks the latest GitHub check runs for every `origin/main` ref it will use
+  before any release commit or tag is pushed
 - creates release-prep commits only where the source tree still needs version edits
 - pushes tags in dependency order
 - updates `release-manifest.json` and tags `xian-stack` last
 - ignores docs-only `xian-stack` changes for image-release planning
 
 `apply` refuses to run if any repo it needs is dirty, off `main`, or ahead/behind
-`origin/main`. That keeps the release set anchored to the exact state already on GitHub.
+`origin/main`. It also refuses to run when the latest GitHub check run for any
+required release input ref is missing, pending, cancelled, or failed. That keeps
+the release set anchored to the exact state already on GitHub and prevents
+tagging code that has not passed GitHub validation.
 
 The `xian-js` release unit is intentionally repo-wide. Changes under
 `xian-js/packages/web-kit/` are released by the `xian-js` tag workflow, which
