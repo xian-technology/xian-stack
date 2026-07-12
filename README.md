@@ -97,6 +97,11 @@ make localnet-dex-bootstrap
 XIAN_DEX_BOOTSTRAP_RPC_URL=http://127.0.0.1:26657 make localnet-dex-bootstrap
 ```
 
+DEX bootstrap submissions use xian-py's simulation-based automatic chi
+estimation by default. Set `XIAN_DEX_CHI_BUDGET_MODE=fixed` only when a
+diagnostic or release check must exercise the bundle and bootstrap ceilings
+directly.
+
 Higher-level harnesses:
 
 ```bash

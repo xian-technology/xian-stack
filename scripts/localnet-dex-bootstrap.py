@@ -173,6 +173,7 @@ def receipt_payload(submission: TransactionSubmission) -> dict[str, Any]:
         "tx_hash": submission.tx_hash,
         "nonce": submission.nonce,
         "chi_supplied": submission.chi_supplied,
+        "chi_estimated": submission.chi_estimated,
         "success": receipt.success if receipt is not None else None,
         "message": receipt.message if receipt is not None else submission.message,
     }
@@ -208,6 +209,15 @@ def _contract_default_chi(
     if isinstance(value, int) and not isinstance(value, bool) and value > 0:
         return value
     return fallback
+
+
+def submission_chi(fixed_chi: int, *, chi_budget_mode: str) -> int | None:
+    """Resolve the xian-py chi argument for an automatic or fixed submission."""
+    if chi_budget_mode == "auto":
+        return None
+    if chi_budget_mode == "fixed":
+        return fixed_chi
+    raise DexBootstrapError(f"unsupported chi budget mode: {chi_budget_mode!r}")
 
 
 def _require_bundle_support() -> None:
@@ -345,7 +355,7 @@ def submit_contract_if_missing(
     name: str,
     code: str,
     constructor_args: dict[str, Any] | None,
-    chi: int,
+    chi: int | None,
     mode: str,
     receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
@@ -378,7 +388,7 @@ def send_call(
     contract: str,
     function: str,
     kwargs: dict[str, Any],
-    chi: int,
+    chi: int | None,
     mode: str,
     receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
@@ -446,6 +456,7 @@ def approve_for_dex(
     *,
     token: str,
     amount: Decimal,
+    chi_budget_mode: str,
     mode: str,
     receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
@@ -455,7 +466,7 @@ def approve_for_dex(
         contract=token,
         function="approve",
         kwargs={"amount": amount, "to": "con_dex"},
-        chi=TOKEN_TX_CHI,
+        chi=submission_chi(TOKEN_TX_CHI, chi_budget_mode=chi_budget_mode),
         mode=mode,
         receipt_timeout_seconds=receipt_timeout_seconds,
     )
@@ -469,6 +480,7 @@ def seed_demo_pool(
     liquidity_currency_amount: Decimal,
     liquidity_demo_token_amount: Decimal,
     top_up_liquidity: bool,
+    chi_budget_mode: str,
     mode: str,
     receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
@@ -507,7 +519,7 @@ def seed_demo_pool(
                         "tokenB": token1,
                         "lpToken": lp_contract,
                     },
-                    chi=DEX_TX_CHI,
+                    chi=submission_chi(DEX_TX_CHI, chi_budget_mode=chi_budget_mode),
                     mode=mode,
                     receipt_timeout_seconds=receipt_timeout_seconds,
                 )
@@ -523,6 +535,7 @@ def seed_demo_pool(
             client,
             token="currency",
             amount=liquidity_currency_amount,
+            chi_budget_mode=chi_budget_mode,
             mode=mode,
             receipt_timeout_seconds=receipt_timeout_seconds,
         )
@@ -532,6 +545,7 @@ def seed_demo_pool(
             client,
             token=token_contract,
             amount=liquidity_demo_token_amount,
+            chi_budget_mode=chi_budget_mode,
             mode=mode,
             receipt_timeout_seconds=receipt_timeout_seconds,
         )
@@ -555,7 +569,7 @@ def seed_demo_pool(
             contract="con_dex",
             function="addLiquidity",
             kwargs=kwargs,
-            chi=DEX_TX_CHI,
+            chi=submission_chi(DEX_TX_CHI, chi_budget_mode=chi_budget_mode),
             mode=mode,
             receipt_timeout_seconds=receipt_timeout_seconds,
         )
@@ -576,6 +590,7 @@ def emit_test_swap(
     *,
     token_contract: str,
     amount: Decimal,
+    chi_budget_mode: str,
     mode: str,
     receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
@@ -587,6 +602,7 @@ def emit_test_swap(
             client,
             token="currency",
             amount=amount,
+            chi_budget_mode=chi_budget_mode,
             mode=mode,
             receipt_timeout_seconds=receipt_timeout_seconds,
         )
@@ -605,7 +621,7 @@ def emit_test_swap(
                 "to": client.wallet.public_key,
                 "deadline": deadline_value(seconds_from_now=300),
             },
-            chi=DEX_TX_CHI,
+            chi=submission_chi(DEX_TX_CHI, chi_budget_mode=chi_budget_mode),
             mode=mode,
             receipt_timeout_seconds=receipt_timeout_seconds,
         )
@@ -650,7 +666,10 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                     name=name,
                     code=source_info["code"],
                     constructor_args=None,
-                    chi=source_info["chi"],
+                    chi=submission_chi(
+                        source_info["chi"],
+                        chi_budget_mode=args.chi_budget_mode,
+                    ),
                     mode=args.submission_mode,
                     receipt_timeout_seconds=args.receipt_timeout_seconds,
                 )
@@ -669,7 +688,10 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                         "token_symbol": args.demo_token_symbol,
                         "precision": args.demo_token_precision,
                     },
-                    chi=source_bundle.get("demo_token_chi", TOKEN_DEPLOY_CHI),
+                    chi=submission_chi(
+                        source_bundle.get("demo_token_chi", TOKEN_DEPLOY_CHI),
+                        chi_budget_mode=args.chi_budget_mode,
+                    ),
                     mode=args.submission_mode,
                     receipt_timeout_seconds=args.receipt_timeout_seconds,
                 )
@@ -685,7 +707,10 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                         "operator_address": deployer_wallet.public_key,
                         "minter_address": "con_pairs",
                     },
-                    chi=source_bundle.get("lp_token_chi", LP_TOKEN_DEPLOY_CHI),
+                    chi=submission_chi(
+                        source_bundle.get("lp_token_chi", LP_TOKEN_DEPLOY_CHI),
+                        chi_budget_mode=args.chi_budget_mode,
+                    ),
                     mode=args.submission_mode,
                     receipt_timeout_seconds=args.receipt_timeout_seconds,
                 )
@@ -700,6 +725,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 liquidity_currency_amount=args.liquidity_currency_amount,
                 liquidity_demo_token_amount=args.liquidity_demo_token_amount,
                 top_up_liquidity=args.top_up_liquidity,
+                chi_budget_mode=args.chi_budget_mode,
                 mode=args.submission_mode,
                 receipt_timeout_seconds=args.receipt_timeout_seconds,
             )
@@ -710,6 +736,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
                 client,
                 token_contract=args.demo_token_contract,
                 amount=args.test_swap_amount,
+                chi_budget_mode=args.chi_budget_mode,
                 mode=args.submission_mode,
                 receipt_timeout_seconds=args.receipt_timeout_seconds,
             )
@@ -723,6 +750,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "rpc_url": rpc_url,
         "deployer": deployer_wallet.public_key,
         "execution_mode": "xian_vm_v1",
+        "chi_budget_mode": args.chi_budget_mode,
         "dex_source": source_bundle["kind"],
         "dex_bundle": (
             str(source_bundle["bundle_path"]) if source_bundle["bundle_path"] is not None else None
@@ -823,6 +851,15 @@ def parse_args() -> argparse.Namespace:
         "--submission-mode",
         choices=("checktx", "commit"),
         default="checktx",
+    )
+    parser.add_argument(
+        "--chi-budget-mode",
+        choices=("auto", "fixed"),
+        default="auto",
+        help=(
+            "use xian-py simulation-based chi estimation (auto, default), or "
+            "submit bundle/constant ceilings directly (fixed)"
+        ),
     )
     parser.add_argument("--rpc-timeout-seconds", type=float, default=90.0)
     parser.add_argument("--receipt-timeout-seconds", type=float, default=60.0)
