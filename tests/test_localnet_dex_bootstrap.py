@@ -53,6 +53,17 @@ def test_parse_args_keeps_dex_demo_amounts_as_decimal(monkeypatch) -> None:
     assert args.liquidity_currency_amount == Decimal("10.5")
     assert args.liquidity_demo_token_amount == Decimal("20.25")
     assert args.test_swap_amount == Decimal("0.3")
+    assert args.chi_budget_mode == "auto"
+
+
+def test_parse_args_accepts_fixed_chi_budget_mode(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["localnet-dex-bootstrap.py", "--chi-budget-mode", "fixed"],
+    )
+
+    assert bootstrap.parse_args().chi_budget_mode == "fixed"
 
 
 def test_deadline_value_uses_xian_vm_time_payload(monkeypatch) -> None:
@@ -79,6 +90,67 @@ def test_require_success_accepts_submission_without_receipt() -> None:
             receipt=None,
         ),
     )
+
+
+def test_xian_py_submissions_receive_none_in_auto_mode_and_ceiling_in_fixed_mode() -> None:
+    calls: list[tuple[str, int | None]] = []
+
+    class FakeClient:
+        contract_deployed = False
+
+        def get_contract_source(self, name):
+            assert name == "con_test"
+            return "code" if self.contract_deployed else None
+
+        def submit_contract(self, name, code, *, args, chi, **kwargs):
+            assert name == "con_test"
+            assert code == "code"
+            assert args is None
+            calls.append(("deploy", chi))
+            self.contract_deployed = True
+            return _successful_submission(chi)
+
+        def send_tx(self, contract, function, kwargs, *, chi, **options):
+            assert contract == "con_test"
+            assert function == "run"
+            assert kwargs == {"value": 1}
+            calls.append(("call", chi))
+            return _successful_submission(chi)
+
+    def _successful_submission(chi):
+        return SimpleNamespace(
+            submitted=True,
+            accepted=True,
+            message=None,
+            tx_hash="abc",
+            nonce=1,
+            chi_supplied=chi,
+            chi_estimated=42 if chi is None else None,
+            receipt=SimpleNamespace(success=True, message=None),
+        )
+
+    client = FakeClient()
+    bootstrap.submit_contract_if_missing(
+        client,
+        name="con_test",
+        code="code",
+        constructor_args=None,
+        chi=bootstrap.submission_chi(123_000, chi_budget_mode="auto"),
+        mode="checktx",
+        receipt_timeout_seconds=1,
+    )
+    bootstrap.send_call(
+        client,
+        label="Calling con_test...",
+        contract="con_test",
+        function="run",
+        kwargs={"value": 1},
+        chi=bootstrap.submission_chi(7_500, chi_budget_mode="fixed"),
+        mode="checktx",
+        receipt_timeout_seconds=1,
+    )
+
+    assert calls == [("deploy", None), ("call", 7_500)]
 
 
 def test_seed_demo_pool_registers_lp_before_auto_creating_pair(monkeypatch) -> None:
@@ -133,6 +205,7 @@ def test_seed_demo_pool_registers_lp_before_auto_creating_pair(monkeypatch) -> N
         liquidity_currency_amount=Decimal("10"),
         liquidity_demo_token_amount=Decimal("20"),
         top_up_liquidity=False,
+        chi_budget_mode="fixed",
         mode="sync",
         receipt_timeout_seconds=1,
     )

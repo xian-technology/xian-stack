@@ -1938,6 +1938,7 @@ def backend_localnet_up(
             dex_contracts_dir=None,
             liquidity_currency_amount=10_000.0,
             liquidity_demo_token_amount=10_000.0,
+            chi_budget_mode="auto",
         )
     return result
 
@@ -1969,6 +1970,7 @@ def backend_localnet_dex_bootstrap(
     dex_contracts_dir: str | None,
     liquidity_currency_amount: float,
     liquidity_demo_token_amount: float,
+    chi_budget_mode: str,
 ) -> dict:
     script_args = [
         "--json-only",
@@ -1984,6 +1986,8 @@ def backend_localnet_dex_bootstrap(
         str(liquidity_currency_amount),
         "--liquidity-demo-token-amount",
         str(liquidity_demo_token_amount),
+        "--chi-budget-mode",
+        chi_budget_mode,
     ]
     if dex_bundle is not None:
         script_args.extend(["--dex-bundle", dex_bundle])
@@ -2473,6 +2477,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=10_000.0,
     )
+    localnet_dex_bootstrap.add_argument(
+        "--chi-budget-mode",
+        choices=("auto", "fixed"),
+        default="auto",
+        help=(
+            "use xian-py automatic chi estimation (default), or the bundle and "
+            "bootstrap fixed budgets"
+        ),
+    )
 
     localnet_node_report = subparsers.add_parser("localnet-node-report")
     localnet_node_report.add_argument(
@@ -2905,6 +2918,7 @@ def main(argv: list[str] | None = None) -> int:
             dex_contracts_dir=args.dex_contracts_dir,
             liquidity_currency_amount=args.liquidity_currency_amount,
             liquidity_demo_token_amount=args.liquidity_demo_token_amount,
+            chi_budget_mode=args.chi_budget_mode,
         )
     elif args.command == "localnet-node-report":
         payload = backend_localnet_node_report(
