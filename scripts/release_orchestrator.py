@@ -87,6 +87,14 @@ REPOS = {
     )
 }
 
+XIAN_JS_PUBLISHABLE_PACKAGE_PATHS = (
+    "packages/client",
+    "packages/dex",
+    "packages/provider",
+    "packages/types",
+    "packages/web-kit",
+)
+
 
 UNITS = {
     unit.key: unit
@@ -520,21 +528,12 @@ def read_source_version(unit: ReleaseUnit) -> str | None:
             "xian-js",
             {
                 "package.json": read_json(repo_path / "package.json")["version"],
-                "examples/browser-dapp/package.json": read_json(
-                    repo_path / "examples/browser-dapp/package.json"
-                )["version"],
-                "packages/client/package.json": read_json(
-                    repo_path / "packages/client/package.json"
-                )["version"],
-                "packages/provider/package.json": read_json(
-                    repo_path / "packages/provider/package.json"
-                )["version"],
-                "packages/types/package.json": read_json(repo_path / "packages/types/package.json")[
-                    "version"
-                ],
-                "packages/web-kit/package.json": read_json(
-                    repo_path / "packages/web-kit/package.json"
-                )["version"],
+                **{
+                    f"{package_path}/package.json": read_json(
+                        repo_path / package_path / "package.json"
+                    )["version"]
+                    for package_path in XIAN_JS_PUBLISHABLE_PACKAGE_PATHS
+                },
             },
         )
     if unit.key == "xian-wallet-browser":
@@ -962,31 +961,13 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
             repo_path / "package.json",
             set_json_version(repo_path / "package.json", version),
         )
-        record_change(
-            changed_paths,
-            repo_path / "examples/browser-dapp/package.json",
-            set_json_version(repo_path / "examples/browser-dapp/package.json", version),
-        )
-        record_change(
-            changed_paths,
-            repo_path / "packages/client/package.json",
-            set_json_version(repo_path / "packages/client/package.json", version),
-        )
-        record_change(
-            changed_paths,
-            repo_path / "packages/provider/package.json",
-            set_json_version(repo_path / "packages/provider/package.json", version),
-        )
-        record_change(
-            changed_paths,
-            repo_path / "packages/types/package.json",
-            set_json_version(repo_path / "packages/types/package.json", version),
-        )
-        record_change(
-            changed_paths,
-            repo_path / "packages/web-kit/package.json",
-            set_json_version(repo_path / "packages/web-kit/package.json", version),
-        )
+        for package_path in XIAN_JS_PUBLISHABLE_PACKAGE_PATHS:
+            manifest_path = repo_path / package_path / "package.json"
+            record_change(
+                changed_paths,
+                manifest_path,
+                set_json_version(manifest_path, version),
+            )
         record_change(
             changed_paths,
             repo_path / "examples/browser-dapp/package.json",
@@ -1029,11 +1010,8 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
                 repo_path / "package-lock.json",
                 root_version=version,
                 package_versions={
-                    "examples/browser-dapp": version,
-                    "packages/client": version,
-                    "packages/provider": version,
-                    "packages/types": version,
-                    "packages/web-kit": version,
+                    package_path: version
+                    for package_path in XIAN_JS_PUBLISHABLE_PACKAGE_PATHS
                 },
                 dependency_updates={
                     "examples/browser-dapp": {
