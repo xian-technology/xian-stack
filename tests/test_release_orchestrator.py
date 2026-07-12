@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
+from tempfile import TemporaryDirectory
 from pathlib import Path
 from unittest.mock import patch
 
@@ -120,6 +122,45 @@ class ReleaseOrchestratorGithubCheckTests(unittest.TestCase):
         latest = check_run(conclusion="success", database_id=2)
 
         self.assertEqual(orchestrator.latest_check_runs_by_name([stale, latest]), [latest])
+
+    def test_xian_js_source_version_ignores_private_example_version(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            (repo / "examples/browser-dapp").mkdir(parents=True)
+            (repo / "examples/browser-dapp/package.json").write_text(
+                json.dumps({"version": "0.2.0"})
+            )
+            (repo / "package.json").write_text(json.dumps({"version": "0.3.0"}))
+            for package_path in orchestrator.XIAN_JS_PUBLISHABLE_PACKAGE_PATHS:
+                manifest = repo / package_path / "package.json"
+                manifest.parent.mkdir(parents=True, exist_ok=True)
+                manifest.write_text(json.dumps({"version": "0.3.0"}))
+
+            with patch.dict(
+                orchestrator.REPOS,
+                {"xian-js": orchestrator.RepoConfig(name="xian-js", path=repo)},
+            ):
+                self.assertEqual(
+                    orchestrator.read_source_version(orchestrator.UNITS["xian-js"]),
+                    "0.3.0",
+                )
+
+    def test_xian_js_source_version_includes_dex_package(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            (repo / "package.json").write_text(json.dumps({"version": "0.3.0"}))
+            for package_path in orchestrator.XIAN_JS_PUBLISHABLE_PACKAGE_PATHS:
+                manifest = repo / package_path / "package.json"
+                manifest.parent.mkdir(parents=True, exist_ok=True)
+                package_version = "0.2.0" if package_path == "packages/dex" else "0.3.0"
+                manifest.write_text(json.dumps({"version": package_version}))
+
+            with patch.dict(
+                orchestrator.REPOS,
+                {"xian-js": orchestrator.RepoConfig(name="xian-js", path=repo)},
+            ):
+                with self.assertRaisesRegex(orchestrator.ReleaseError, "packages/dex"):
+                    orchestrator.read_source_version(orchestrator.UNITS["xian-js"])
 
 
 if __name__ == "__main__":
