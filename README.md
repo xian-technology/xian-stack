@@ -66,6 +66,8 @@ The stack defaults to fail-closed host bindings:
 - PostGraphile binds to `127.0.0.1` unless you run a BDS node and pass
   `--public-query` (read-only BDS surface; does not expose live RPC, mempool,
   or raw ABCI traffic).
+- The GraphiQL browser UI is available at `http://127.0.0.1:5000/graphiql`
+  for interactive queries against the read-only `/graphql` endpoint.
 - Local credentials are generated once into `.stack-secrets.env`, which is
   ignored by git.
 - BDS uses a dedicated read-only PostgreSQL role for PostGraphile rather than

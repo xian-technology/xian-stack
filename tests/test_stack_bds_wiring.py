@@ -204,6 +204,7 @@ class StackBdsWiringTests(unittest.TestCase):
         self.assertIn('-C "${POSTGRAPHILE_CONFIG', launcher)
         self.assertIn("wait-for-bds-schema.mjs", launcher)
         self.assertIn("disableDefaultMutations", graphile_config)
+        self.assertIn("graphiql: true", graphile_config)
         self.assertIn("simpleCollections", graphile_config)
         self.assertIn("bodySizeLimit", graphile_config)
 

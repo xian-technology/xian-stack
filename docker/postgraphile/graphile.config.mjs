@@ -41,7 +41,7 @@ const preset = {
     makeV4Preset({
       bodySizeLimit: envPositiveInteger("POSTGRAPHILE_BODY_SIZE_LIMIT_BYTES", 1048576),
       disableDefaultMutations: envFlag("POSTGRAPHILE_DISABLE_DEFAULT_MUTATIONS", true),
-      graphiql: false,
+      graphiql: true,
       simpleCollections: envSimpleCollections("POSTGRAPHILE_SIMPLE_COLLECTIONS", "omit"),
     }),
     PgAggregatesPreset,
