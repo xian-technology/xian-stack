@@ -23,7 +23,11 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
-from governance_vote_helpers import cast_votes_until_status, wait_for_status
+from governance_vote_helpers import (
+    cast_votes_until_status,
+    read_freshest_status,
+    wait_for_status,
+)
 from localnet_common import compare_app_hash_window, fetch_json
 from localnet_e2e_phases import bind_phase_sequence, phase_names
 from localnet_e2e_support import (
@@ -2332,10 +2336,19 @@ class E2ERunner:
         async def read_proposal_status(proposal_id: int) -> dict[str, Any]:
             if proposal_status_reader is not None:
                 return await proposal_status_reader(proposal_id)
-            return await proposer.call(
-                "governance",
-                "get_proposal",
-                {"proposal_id": proposal_id},
+            status_readers = [proposer, *[voter for _name, voter in voters]]
+            return await read_freshest_status(
+                [
+                    functools.partial(
+                        reader.call,
+                        "governance",
+                        "get_proposal",
+                        {"proposal_id": proposal_id},
+                    )
+                    for reader in status_readers
+                ],
+                completed_statuses={expected_final_status},
+                label=f"governance proposal {proposal_id}",
             )
 
         proposal_id = await read_proposal_count()
@@ -2407,7 +2420,24 @@ class E2ERunner:
             mode="async",
         )
         proposal_id = int(await proposer.get_state("validators", "total_votes"))
-        proposal_pending = await proposer.get_state("validators", "votes", proposal_id)
+        status_readers = [proposer, *[voter for _name, voter in voters]]
+
+        async def read_vote_status() -> dict[str, Any]:
+            return await read_freshest_status(
+                [
+                    functools.partial(
+                        reader.get_state,
+                        "validators",
+                        "votes",
+                        proposal_id,
+                    )
+                    for reader in status_readers
+                ],
+                completed_statuses={"approved"},
+                label=f"members vote {proposal_id}",
+            )
+
+        proposal_pending = await read_vote_status()
         if proposal_pending["status"] != "pending":
             raise E2EError(
                 f"{label_prefix} expected pending vote, got {proposal_pending['status']!r}"
@@ -2428,15 +2458,18 @@ class E2ERunner:
         ]
         vote_receipts, proposal_final = await cast_votes_until_status(
             vote_senders,
-            fetch_status=lambda: proposer.get_state("validators", "votes", proposal_id),
+            fetch_status=read_vote_status,
             completed_statuses={"approved"},
         )
         if proposal_final is None:
-            proposal_final = await self.wait_for_members_vote_status(
-                proposer,
-                proposal_id,
-                expected_status="approved",
-            )
+            try:
+                proposal_final = await wait_for_status(
+                    read_vote_status,
+                    expected_status="approved",
+                    label=f"members vote {proposal_id}",
+                )
+            except RuntimeError as exc:
+                raise E2EError(str(exc)) from exc
 
         return {
             "proposal_id": proposal_id,

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
+from governance_vote_helpers import read_freshest_status
 from localnet_common import fetch_json
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -1128,12 +1129,16 @@ class ProtocolSafetyRunner:
         *,
         timeout_seconds: float = 5.0,
     ) -> dict[str, Any]:
-        return await self.read_contract_state(
-            clients,
-            "validators",
-            "votes",
-            proposal_id,
-            timeout_seconds=timeout_seconds,
+        async def read_from_client(client: XianAsync) -> dict[str, Any]:
+            return await asyncio.wait_for(
+                client.get_state("validators", "votes", proposal_id),
+                timeout=timeout_seconds,
+            )
+
+        return await read_freshest_status(
+            [functools.partial(read_from_client, client) for client in clients],
+            completed_statuses={"approved", "rejected", "expired"},
+            label=f"members vote {proposal_id}",
         )
 
     async def read_contract_state(

@@ -956,11 +956,14 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             args.resume_dir = tmpdir
             runner = localnet_e2e.E2ERunner(args)
         send_labels = []
-        vote_status_reads = 0
+        vote_submitted = False
 
         class FakeClient:
             async def send_tx(self, contract, function, kwargs, **options):
+                nonlocal vote_submitted
                 send_labels.append((contract, function, kwargs, options))
+                if function == "vote":
+                    vote_submitted = True
                 return SimpleNamespace(
                     submitted=True,
                     accepted=True,
@@ -978,12 +981,10 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                 )
 
             async def get_state(self, contract, variable, *keys):
-                nonlocal vote_status_reads
                 if (contract, variable) == ("validators", "total_votes"):
                     return 11
                 if (contract, variable) == ("validators", "votes"):
-                    vote_status_reads += 1
-                    if vote_status_reads >= 4:
+                    if vote_submitted:
                         return {"status": "approved"}
                     return {"status": "pending"}
                 raise AssertionError((contract, variable, keys))
@@ -1005,6 +1006,102 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             [(contract, function) for contract, function, *_rest in send_labels],
         )
         self.assertEqual(["async", "async"], [options["mode"] for *_args, options in send_labels])
+
+    def test_members_vote_stops_when_fresh_reader_sees_approval(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+
+        state = {
+            "status": "pending",
+            "yes": 0,
+            "no": 0,
+            "yes_weight": 0,
+            "no_weight": 0,
+            "voters": [],
+        }
+        send_labels = []
+
+        class FakeClient:
+            def __init__(self, name: str, *, stale_after_approval: bool = False):
+                self.name = name
+                self.stale_after_approval = stale_after_approval
+
+            async def get_state(self, contract, variable, *keys):
+                if (contract, variable) == ("validators", "total_votes"):
+                    return 4
+                if (contract, variable) != ("validators", "votes"):
+                    raise AssertionError((contract, variable, keys))
+                if self.stale_after_approval and state["status"] == "approved":
+                    return {
+                        **copy.deepcopy(state),
+                        "status": "pending",
+                        "yes": 3,
+                        "yes_weight": 30,
+                        "voters": ["node0", "node1", "node2"],
+                    }
+                return copy.deepcopy(state)
+
+        proposer = FakeClient("node0", stale_after_approval=True)
+        voters = [FakeClient(f"node{index}") for index in range(1, 5)]
+
+        async def fake_submit_tx(
+            client,
+            contract,
+            function,
+            kwargs,
+            *,
+            label,
+            chi,
+            mode=None,
+        ):
+            self.assertEqual("validators", contract)
+            self.assertEqual(localnet_e2e.GOVERNANCE_TX_CHI, chi)
+            self.assertEqual("async", mode)
+            send_labels.append(label)
+            if function == "propose_vote":
+                state.update(
+                    {
+                        "status": "pending",
+                        "yes": 1,
+                        "yes_weight": 10,
+                        "voters": [client.name],
+                    }
+                )
+            elif function == "vote":
+                state["yes"] += 1
+                state["yes_weight"] += 10 if client.name != "node3" else 12
+                state["voters"].append(client.name)
+                if state["yes"] == 4:
+                    state["status"] = "approved"
+            else:
+                raise AssertionError(function)
+            return {"label": label, "kwargs": kwargs}
+
+        runner.submit_tx = fake_submit_tx
+
+        result = asyncio.run(
+            runner.approve_members_vote(
+                proposer,
+                [(voter.name, voter) for voter in voters],
+                type_of_vote="update_policy",
+                arg={"selection_mode": "auto_top_n"},
+                label_prefix="auto-top-n-policy",
+            )
+        )
+
+        self.assertEqual("approved", result["proposal_final"]["status"])
+        self.assertEqual(3, len(result["vote_receipts"]))
+        self.assertEqual(
+            [
+                "auto-top-n-policy-propose",
+                "auto-top-n-policy-vote-1-node1",
+                "auto-top-n-policy-vote-2-node2",
+                "auto-top-n-policy-vote-3-node3",
+            ],
+            send_labels,
+        )
 
     def test_uniform_state_wait_requires_stable_nodes_before_retry(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])

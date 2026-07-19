@@ -168,6 +168,35 @@ class LocalnetProtocolSafetyTests(unittest.TestCase):
 
         self.assertEqual({"status": "approved"}, result)
 
+    def test_read_members_vote_prefers_fresh_terminal_status(self) -> None:
+        args = localnet_protocol_safety.build_parser().parse_args([])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.object(
+                localnet_protocol_safety,
+                "OUTPUT_ROOT",
+                Path(tmpdir),
+            ):
+                runner = localnet_protocol_safety.ProtocolSafetyRunner(args)
+
+        class StaleClient:
+            async def get_state(self, *_args):
+                return {"status": "pending", "yes": 3, "yes_weight": 30}
+
+        class FreshClient:
+            async def get_state(self, *_args):
+                return {"status": "approved", "yes": 4, "yes_weight": 42}
+
+        result = localnet_protocol_safety.asyncio.run(
+            runner.read_members_vote(
+                [StaleClient(), FreshClient()],
+                proposal_id=4,
+                timeout_seconds=1,
+            )
+        )
+
+        self.assertEqual("approved", result["status"])
+        self.assertEqual(42, result["yes_weight"])
+
     def test_read_contract_state_falls_back_to_next_client(self) -> None:
         args = localnet_protocol_safety.build_parser().parse_args([])
         with tempfile.TemporaryDirectory() as tmpdir:
