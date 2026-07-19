@@ -255,6 +255,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
         self.assertEqual("http://[::1]:26660/metrics", endpoints["cometbft_metrics"])
         self.assertEqual("http://[::1]:9108/metrics", endpoints["xian_metrics"])
         self.assertEqual("http://[::1]:5000/graphql", endpoints["graphql"])
+        self.assertEqual("http://[::1]:5000/graphiql", endpoints["graphiql"])
         self.assertEqual("http://[::1]:8080", endpoints["dashboard"])
         self.assertEqual("http://[::1]:9090", endpoints["prometheus"])
         self.assertEqual("http://[::1]:3000", endpoints["grafana"])

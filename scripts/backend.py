@@ -63,6 +63,7 @@ DEFAULT_XIAN_METRICS_URL = "http://127.0.0.1:9108/metrics"
 DEFAULT_PROMETHEUS_URL = "http://127.0.0.1:9090"
 DEFAULT_GRAFANA_URL = "http://127.0.0.1:3000"
 DEFAULT_GRAPHQL_URL = "http://127.0.0.1:5000/graphql"
+DEFAULT_GRAPHIQL_URL = "http://127.0.0.1:5000/graphiql"
 DEFAULT_INTENTKIT_S3_PORT = 39000
 DEFAULT_SHIELDED_RELAYER_URL = http_url(
     DEFAULT_SHIELDED_RELAYER_HOST,
@@ -585,7 +586,9 @@ def _discover_runtime_endpoints(
         )
         if graphql_binding is not None:
             graphql_port = graphql_binding[1]
-            endpoints["graphql"] = http_url(graphql_binding[0], graphql_port, "/graphql")
+            graphql_host = graphql_binding[0]
+            endpoints["graphql"] = http_url(graphql_host, graphql_port, "/graphql")
+            endpoints["graphiql"] = http_url(graphql_host, graphql_port, "/graphiql")
 
     if dashboard_enabled:
         dashboard_binding = _docker_compose_binding(
@@ -1184,6 +1187,23 @@ def backend_status(
         shielded_relayer_port=shielded_relayer_port,
     )["endpoints"]
     payload["endpoints"] = endpoints
+    if bds_enabled:
+        payload["graphql_url"] = str(endpoints.get("graphql", DEFAULT_GRAPHQL_URL))
+        payload["graphiql_url"] = str(endpoints.get("graphiql", DEFAULT_GRAPHIQL_URL))
+        try:
+            payload["graphiql_status"] = probe_http_endpoint(
+                payload["graphiql_url"],
+                timeout=2.0,
+            )
+            payload["graphiql_reachable"] = True
+        except (
+            OSError,
+            URLError,
+            TimeoutError,
+            ValueError,
+        ) as exc:
+            payload["graphiql_reachable"] = False
+            payload["graphiql_error"] = str(exc)
     if dashboard_enabled:
         dashboard_base_url = str(endpoints.get("dashboard", ""))
         dashboard_status_url = str(endpoints.get("dashboard_status", ""))
@@ -1418,6 +1438,11 @@ def backend_endpoints(
             env.get("XIAN_POSTGRAPHILE_HOST", "127.0.0.1"),
             env.get("XIAN_POSTGRAPHILE_PORT", "5000"),
             "/graphql",
+        )
+        endpoints["graphiql"] = http_url(
+            env.get("XIAN_POSTGRAPHILE_HOST", "127.0.0.1"),
+            env.get("XIAN_POSTGRAPHILE_PORT", "5000"),
+            "/graphiql",
         )
     if dashboard_enabled:
         endpoints["dashboard"] = http_url(dashboard_host, dashboard_port)
@@ -1677,6 +1702,13 @@ def backend_health(
                         "error": str(exc),
                     },
                 }
+        checks["graphiql"] = {
+            "ok": bool(status.get("graphiql_reachable")),
+            "detail": {
+                "url": endpoints.get("graphiql"),
+                "error": status.get("graphiql_error"),
+            },
+        }
 
     if dashboard_enabled:
         checks["dashboard"] = {

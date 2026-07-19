@@ -102,11 +102,14 @@ class BackendRequestTests(unittest.TestCase):
                     "xian_metrics": "http://app-metrics.local",
                     "prometheus": "http://prometheus.local",
                     "grafana": "http://grafana.local",
+                    "bds_status_query": "http://rpc.local/bds-status",
+                    "graphiql": "http://graphiql.local",
                     "intentkit": "http://intentkit.local",
                     "intentkit_api": "http://intentkit-api.local",
                 },
                 "prometheus_reachable": True,
                 "grafana_reachable": True,
+                "graphiql_reachable": True,
                 "intentkit_reachable": True,
                 "intentkit_api_reachable": True,
             }
@@ -143,6 +146,16 @@ class BackendRequestTests(unittest.TestCase):
                 "fetch_json",
                 return_value={"result": {"sync_info": {}, "node_info": {}}},
             ),
+            patch.object(
+                backend,
+                "fetch_abci_query_value",
+                return_value={
+                    "db_status": "ok",
+                    "worker_running": True,
+                    "alerts": [],
+                    "indexed": {},
+                },
+            ),
             patch.object(backend, "probe_http_endpoint", return_value={"ok": True}),
         ):
             monitoring_result = backend.backend_health(
@@ -155,10 +168,17 @@ class BackendRequestTests(unittest.TestCase):
                 monitoring_enabled=False,
                 intentkit_enabled=True,
             )
+            bds_result = backend.backend_health(
+                **{**base_kwargs, "bds_enabled": True},
+                monitoring_enabled=False,
+                intentkit_enabled=False,
+            )
 
         self.assertIn("grafana", monitoring_result["checks"])
         self.assertNotIn("grafana", intentkit_result["checks"])
         self.assertEqual(intentkit_result["state"], "healthy")
+        self.assertTrue(bds_result["checks"]["bds"]["ok"])
+        self.assertTrue(bds_result["checks"]["graphiql"]["ok"])
 
     def test_localnet_init_passes_chain_id_to_script(self) -> None:
         completed = subprocess.CompletedProcess(

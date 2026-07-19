@@ -42,14 +42,15 @@ python -m pip install -r requirements-test.txt
 python -m pytest -q
 ```
 
-Run a stack-managed local node:
+Run a stack-managed local development node with indexed reads and the local
+observability UIs:
 
 ```bash
-python3 ./scripts/backend.py start  --no-bds-enabled --dashboard --monitoring
-python3 ./scripts/backend.py status --no-bds-enabled --dashboard --monitoring
-python3 ./scripts/backend.py endpoints --no-bds-enabled --dashboard --monitoring
-python3 ./scripts/backend.py health --no-bds-enabled --dashboard --monitoring
-python3 ./scripts/backend.py stop   --no-bds-enabled --dashboard --monitoring
+python3 ./scripts/backend.py start  --bds-enabled --dashboard --monitoring
+python3 ./scripts/backend.py status --bds-enabled --dashboard --monitoring
+python3 ./scripts/backend.py endpoints --bds-enabled --dashboard --monitoring
+python3 ./scripts/backend.py health --bds-enabled --dashboard --monitoring
+python3 ./scripts/backend.py stop   --bds-enabled --dashboard --monitoring
 ```
 
 The stack-managed single node configures periodic empty blocks by default
@@ -68,6 +69,8 @@ The stack defaults to fail-closed host bindings:
   or raw ABCI traffic).
 - The GraphiQL browser UI is available at `http://127.0.0.1:5000/graphiql`
   for interactive queries against the read-only `/graphql` endpoint.
+- `endpoints`, `status`, and `health` report the GraphiQL URL, and health marks
+  the BDS surface degraded when the browser UI is not reachable.
 - Local credentials are generated once into `.stack-secrets.env`, which is
   ignored by git.
 - BDS uses a dedicated read-only PostgreSQL role for PostGraphile rather than
