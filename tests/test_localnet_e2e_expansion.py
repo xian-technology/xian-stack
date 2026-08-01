@@ -887,6 +887,90 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertFalse(result["before"]["node-1"]["ok"])
         self.assertTrue(result["after"]["node-1"]["abci_query_ready"])
 
+    def test_node_report_snapshot_waits_for_height_convergence(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.network = {"chain_id": "test-chain", "nodes": []}
+        lagging_report = {
+            "ok": False,
+            "checks": {
+                "uniform_execution_mode": True,
+                "all_nodes_report_xian_vm": True,
+                "all_nodes_not_catching_up": True,
+                "height_spread_within_tolerance": False,
+            },
+            "totals": {"height_spread": 3},
+            "errors": [],
+            "nodes": [
+                {"moniker": "node-0", "height": 42, "catching_up": False},
+                {"moniker": "node-1", "height": 39, "catching_up": False},
+            ],
+        }
+        healthy_report = {
+            **lagging_report,
+            "ok": True,
+            "checks": {
+                **lagging_report["checks"],
+                "height_spread_within_tolerance": True,
+            },
+            "totals": {"height_spread": 1},
+            "nodes": [
+                {"moniker": "node-0", "height": 43, "catching_up": False},
+                {"moniker": "node-1", "height": 42, "catching_up": False},
+            ],
+        }
+
+        with (
+            patch.object(
+                localnet_e2e,
+                "collect_localnet_node_report",
+                side_effect=[lagging_report, healthy_report],
+            ) as collect_report,
+            patch.object(localnet_e2e.asyncio, "sleep", AsyncMock()) as sleep,
+        ):
+            result = asyncio.run(runner.collect_node_report_snapshot(timeout_seconds=5.0))
+
+        self.assertIs(healthy_report, result)
+        self.assertEqual(2, collect_report.call_count)
+        sleep.assert_awaited_once()
+
+    def test_node_report_snapshot_reports_lagging_heights_after_timeout(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        runner.network = {"chain_id": "test-chain", "nodes": []}
+        lagging_report = {
+            "ok": False,
+            "checks": {
+                "uniform_execution_mode": True,
+                "all_nodes_report_xian_vm": True,
+                "all_nodes_not_catching_up": True,
+                "height_spread_within_tolerance": False,
+            },
+            "totals": {"height_spread": 3},
+            "errors": [],
+            "nodes": [
+                {"moniker": "node-0", "height": 42, "catching_up": False},
+                {"moniker": "node-1", "height": 39, "catching_up": False},
+            ],
+        }
+
+        with patch.object(
+            localnet_e2e,
+            "collect_localnet_node_report",
+            return_value=lagging_report,
+        ) as collect_report:
+            with self.assertRaisesRegex(
+                localnet_e2e.E2EError,
+                '"height_spread": 3',
+            ):
+                asyncio.run(runner.collect_node_report_snapshot(timeout_seconds=0.0))
+
+        collect_report.assert_called_once()
+
     def test_governance_approval_can_use_custom_status_readers(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
         with tempfile.TemporaryDirectory() as tmpdir:
