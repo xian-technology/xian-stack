@@ -71,6 +71,13 @@ MAX_CANONICAL_JSON_DEPTH = 128
 DEFAULT_TX_CHI = 15_000
 DEFAULT_TRANSFER_CHI = 2_000
 GOVERNANCE_TX_CHI = 200_000
+E2E_GOVERNED_REWARD_SPLIT = (
+    Decimal("0.60"),
+    Decimal("0.10"),
+    Decimal("0.10"),
+    Decimal("0.20"),
+)
+REWARD_DISTRIBUTION_TOLERANCE = Decimal("0.00000001")
 STATE_PATCH_DELAY_BLOCKS = 8
 STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS = 8
 SIMULATOR_BURST_REQUESTS = 128
@@ -455,6 +462,19 @@ def state_decimal(value: Any) -> Decimal:
     if isinstance(value, dict) and "__fixed__" in value:
         return Decimal(str(value["__fixed__"]))
     return Decimal(str(value))
+
+
+def reward_bucket_total(
+    rewards: dict[str, Any],
+    *bucket_names: str,
+) -> Decimal:
+    total = Decimal("0")
+    for bucket_name in bucket_names:
+        bucket = rewards.get(bucket_name) or {}
+        if not isinstance(bucket, dict):
+            raise E2EError(f"reward bucket {bucket_name!r} is not a mapping")
+        total += sum((state_decimal(value) for value in bucket.values()), Decimal("0"))
+    return total
 
 
 def build_nodes(network: dict[str, Any]) -> list[LocalnetNode]:
@@ -6173,6 +6193,131 @@ class E2ERunner:
             self.client(node2_wallet, 2, session) as node2,
             self.client(node3_wallet, 3, session) as node3,
         ):
+            requested_reward_split = [
+                tx_amount_from_decimal(ratio) for ratio in E2E_GOVERNED_REWARD_SPLIT
+            ]
+            reward_split_vote = await self.approve_members_vote(
+                node0,
+                [
+                    ("node1", node1),
+                    ("node2", node2),
+                    ("node3", node3),
+                ],
+                type_of_vote="reward_change",
+                arg=requested_reward_split,
+                label_prefix="reward-split",
+            )
+            applied_reward_split = await node0.call("rewards", "current_value", {})
+            applied_reward_ratios = tuple(state_decimal(value) for value in applied_reward_split)
+            if applied_reward_ratios != E2E_GOVERNED_REWARD_SPLIT:
+                raise E2EError(
+                    "governed reward split did not apply: "
+                    f"expected={E2E_GOVERNED_REWARD_SPLIT!r} "
+                    f"actual={applied_reward_ratios!r}"
+                )
+            applied_reward_state = await fetch_abci_query(
+                session,
+                self.nodes[0].rpc_url,
+                "/get/rewards.S:value",
+            )
+            if tuple(state_decimal(value) for value in applied_reward_state) != (
+                E2E_GOVERNED_REWARD_SPLIT
+            ):
+                raise E2EError(
+                    "governed reward split state did not match current_value: "
+                    f"state={applied_reward_state!r}"
+                )
+            reward_split_convergence = await self.wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract="rewards",
+                variable="S",
+                keys=["value"],
+                expected=applied_reward_state,
+                label="governed reward split",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+
+            reward_probe_contract = self.contracts["conflict"]
+            reward_probe_developer = await node0.get_state(
+                reward_probe_contract,
+                "__developer__",
+            )
+            if reward_probe_developer != self.founder_wallet.public_key:
+                raise E2EError(
+                    "reward probe contract developer drifted: "
+                    f"expected={self.founder_wallet.public_key!r} "
+                    f"actual={reward_probe_developer!r}"
+                )
+            reward_probe_submission = await node0.send_tx(
+                reward_probe_contract,
+                "claim",
+                {
+                    "slot": f"reward-split-{short_hash(self.run_id)}",
+                    "amount": 1,
+                },
+                chi=DEFAULT_TX_CHI,
+                wait_for_tx=True,
+            )
+            reward_probe_receipt = ensure_positive_submission(
+                reward_probe_submission,
+                label="governed-reward-split-probe",
+            )
+            reward_probe_execution = reward_probe_submission.receipt.execution or {}
+            reward_outputs = reward_probe_execution.get("rewards")
+            if not isinstance(reward_outputs, dict):
+                raise E2EError("governed reward probe did not expose reward outputs")
+
+            chi_used = state_decimal(reward_probe_execution.get("chi_used"))
+            chi_cost = state_decimal(await node0.get_state("chi_cost", "S", "value"))
+            if chi_used <= 0 or chi_cost <= 0:
+                raise E2EError(
+                    f"invalid reward probe fee inputs: chi_used={chi_used} chi_cost={chi_cost}"
+                )
+            total_fee = chi_used / chi_cost
+            reward_totals = {
+                "validators": reward_bucket_total(
+                    reward_outputs,
+                    "validator_reward",
+                    "delegator_reward",
+                ),
+                "foundation": reward_bucket_total(
+                    reward_outputs,
+                    "foundation_reward",
+                ),
+                "developers": reward_bucket_total(
+                    reward_outputs,
+                    "developer_reward",
+                ),
+            }
+            reward_totals["burn"] = total_fee - sum(
+                reward_totals.values(),
+                Decimal("0"),
+            )
+            expected_reward_totals = {
+                bucket: total_fee * ratio
+                for bucket, ratio in zip(
+                    ("validators", "burn", "foundation", "developers"),
+                    E2E_GOVERNED_REWARD_SPLIT,
+                    strict=True,
+                )
+            }
+            for bucket, expected_total in expected_reward_totals.items():
+                actual_total = reward_totals[bucket]
+                if abs(actual_total - expected_total) > REWARD_DISTRIBUTION_TOLERANCE:
+                    raise E2EError(
+                        "governed reward split was not applied to the probe transaction: "
+                        f"bucket={bucket} expected={expected_total} actual={actual_total}"
+                    )
+
+            foundation_owner = await node0.get_state("foundation", "owner")
+            foundation_rewards = reward_outputs.get("foundation_reward") or {}
+            developer_rewards = reward_outputs.get("developer_reward") or {}
+            if foundation_owner not in foundation_rewards:
+                raise E2EError("governed reward probe did not pay the foundation owner")
+            if reward_probe_developer not in developer_rewards:
+                raise E2EError("governed reward probe did not pay the contract developer")
+
             print(
                 "[localnet-e2e] 12-validator-governance intentionally stopping node-4 "
                 "while member power changes apply",
@@ -6487,6 +6632,20 @@ class E2ERunner:
                     raise E2EError("manual policy restore did not preserve the 5-node active set")
 
         return {
+            "reward_split": {
+                "vote": normalize_value(reward_split_vote),
+                "requested": normalize_value(requested_reward_split),
+                "applied": normalize_value(applied_reward_split),
+                "applied_state": normalize_value(applied_reward_state),
+                "convergence": normalize_value(reward_split_convergence),
+                "probe_contract": reward_probe_contract,
+                "probe_developer": reward_probe_developer,
+                "probe_receipt": reward_probe_receipt,
+                "probe_outputs": normalize_value(reward_outputs),
+                "probe_total_fee": normalize_value(total_fee),
+                "probe_totals": normalize_value(reward_totals),
+                "expected_probe_totals": normalize_value(expected_reward_totals),
+            },
             "node4_outage_during_power_vote": {
                 "stop": normalize_value(node4_stop),
                 "restart": normalize_value(node4_restart),

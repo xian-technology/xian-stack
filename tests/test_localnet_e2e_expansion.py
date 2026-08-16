@@ -7,6 +7,7 @@ import inspect
 import sys
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -32,6 +33,26 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         expected = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
         self.assertEqual(localnet_e2e.CURRENT_UV_PYTHON, expected)
+
+    def test_reward_bucket_total_combines_operator_and_delegator_rewards(self) -> None:
+        rewards = {
+            "validator_reward": {
+                "validator-1": {"__fixed__": "1.25"},
+                "validator-2": "0.75",
+            },
+            "delegator_reward": {
+                "delegator-1": Decimal("0.50"),
+            },
+        }
+
+        self.assertEqual(
+            Decimal("2.50"),
+            localnet_e2e.reward_bucket_total(
+                rewards,
+                "validator_reward",
+                "delegator_reward",
+            ),
+        )
 
     @staticmethod
     def _node(
@@ -285,6 +306,26 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertIn("hybrid-rebalance-before-standby-approval", phase_source)
         self.assertIn("hybrid mode admitted a registered candidate", phase_source)
         self.assertIn('"selection_mode": "manual"', phase_source)
+
+    def test_validator_governance_phase_applies_reward_split_to_fees(self) -> None:
+        phase_source = inspect.getsource(localnet_e2e.E2ERunner.validator_governance_phase)
+
+        self.assertEqual(
+            (
+                Decimal("0.60"),
+                Decimal("0.10"),
+                Decimal("0.10"),
+                Decimal("0.20"),
+            ),
+            localnet_e2e.E2E_GOVERNED_REWARD_SPLIT,
+        )
+        self.assertIn('type_of_vote="reward_change"', phase_source)
+        self.assertIn('label="governed reward split"', phase_source)
+        self.assertIn('"validator_reward"', phase_source)
+        self.assertIn('"delegator_reward"', phase_source)
+        self.assertIn('"foundation_reward"', phase_source)
+        self.assertIn('"developer_reward"', phase_source)
+        self.assertIn("governed reward split was not applied", phase_source)
 
     def test_shielded_phase_promotes_bundles_before_governance_binding(self) -> None:
         phase_source = inspect.getsource(localnet_e2e.E2ERunner.shielded_phase)
