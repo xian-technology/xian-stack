@@ -77,6 +77,8 @@ SIMULATOR_BURST_REQUESTS = 128
 DEFAULT_SIMULATOR_BURST_CONCURRENCY = 32
 SIMULATOR_MAX_TRANSPORT_FAILURE_RATIO = 0.25
 WEBSOCKET_TIMEOUT_SECONDS = 20.0
+NODE_REPORT_SETTLE_TIMEOUT_SECONDS = 30.0
+NODE_REPORT_SETTLE_POLL_SECONDS = 1.0
 DEFAULT_E2E_TRANSFER_FANOUT_OPS = 160
 DEFAULT_E2E_CONTRACT_HEAVY_OPS = 96
 DEFAULT_E2E_THROUGHPUT_WALLET_COUNT = 16
@@ -9841,26 +9843,73 @@ class E2ERunner:
             },
         }
 
-    async def collect_node_report_snapshot(self) -> dict[str, Any]:
+    async def collect_node_report_snapshot(
+        self,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
         if self.network is None:
             raise E2EError("node report snapshot requires a loaded network")
-        report = await asyncio.to_thread(
-            collect_localnet_node_report,
-            self.network,
-            timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
+        settle_timeout_seconds = (
+            min(self.args.rpc_timeout_seconds, NODE_REPORT_SETTLE_TIMEOUT_SECONDS)
+            if timeout_seconds is None
+            else max(timeout_seconds, 0.0)
         )
-        if not report["ok"]:
+        report_timeout_seconds = min(self.args.rpc_timeout_seconds, 10.0)
+
+        def raise_report_error(reason: str) -> None:
             raise E2EError(
-                "node report failed checks: "
+                f"node report failed checks {reason}: "
                 + json.dumps(
                     {
                         "checks": report["checks"],
                         "errors": report["errors"],
+                        "totals": report["totals"],
+                        "nodes": [
+                            {
+                                "moniker": node["moniker"],
+                                "height": node["height"],
+                                "catching_up": node["catching_up"],
+                            }
+                            for node in report["nodes"]
+                        ],
                     },
                     sort_keys=True,
                 )
             )
-        return report
+
+        report = await asyncio.to_thread(
+            collect_localnet_node_report,
+            self.network,
+            timeout_seconds=report_timeout_seconds,
+        )
+        if report["ok"]:
+            return report
+
+        deadline = time.monotonic() + settle_timeout_seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise_report_error("after convergence wait")
+
+            await asyncio.sleep(min(NODE_REPORT_SETTLE_POLL_SECONDS, remaining))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise_report_error("after convergence wait")
+
+            try:
+                report = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        collect_localnet_node_report,
+                        self.network,
+                        timeout_seconds=min(report_timeout_seconds, remaining),
+                    ),
+                    timeout=remaining,
+                )
+            except TimeoutError:
+                raise_report_error("after convergence wait timed out")
+            if report["ok"]:
+                return report
 
     async def wait_for_conflict_counter_convergence(
         self,
