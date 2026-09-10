@@ -83,10 +83,11 @@ def test_live_agreement_rejects_result_divergence_even_when_app_hashes_match():
                 }
             ),
         ),
-        patch.object(checks, "rpc", AsyncMock(side_effect=responses)),
+        patch.object(checks, "rpc", AsyncMock(side_effect=responses)) as rpc,
     ):
         with pytest.raises(E2EError, match="result/fee/event divergence"):
             asyncio.run(checks.agreement(object(), nodes))
+    assert [call.kwargs for call in rpc.await_args_list] == [{"height": 9}, {"height": 9}]
 
 
 def test_all_lifecycle_phases_are_in_the_regular_e2e_registry():

@@ -112,8 +112,9 @@ async def agreement(session, nodes, window=5):
     await asyncio.gather(*(wait_height(session, n, target) for n in nodes))
     result = await compare_app_hash_window(session, nodes, window=window)
     require(result["ok"], "Application hashes diverged")
-    # Application result fields are consensus relevant even if state roots agree.
-    for h in [x["height"] for x in result["checks"]]:
+    # Each checked header H commits the state from H-1. Compare that block's
+    # results too: /status may expose H while its execution is still in progress.
+    for h in [x["height"] - 1 for x in result["checks"] if x["height"] > 1]:
         responses = [await rpc(session, n, "block_results", height=h) for n in nodes]
         canonical = [
             json.dumps(
