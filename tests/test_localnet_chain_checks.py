@@ -206,3 +206,22 @@ def test_observer_readiness_hashes_exclude_mutable_peer_book(tmp_path):
     (config / "addrbook.json").write_text('{"peers": ["discovered-peer"]}')
     assert checks.config_hashes(tmp_path) == initial
     assert set(json.loads(initial)) == {"config/config.toml"}
+
+
+def test_replay_readiness_does_not_read_container_owned_signing_state(tmp_path):
+    from localnet_replay_corpus import replay_input_hashes
+
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/config.toml").write_text("[rpc]\n")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data/block.db").write_bytes(b"source blocks")
+    (tmp_path / "data/priv_validator_state.json").write_text("{}")
+    read_bytes = Path.read_bytes
+
+    def protected_read(path):
+        if path.name == "priv_validator_state.json":
+            raise PermissionError("container-owned mode 0600")
+        return read_bytes(path)
+
+    with patch.object(Path, "read_bytes", protected_read):
+        assert set(replay_input_hashes(tmp_path)) == {"config/config.toml", "data/block.db"}

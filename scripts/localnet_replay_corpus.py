@@ -44,8 +44,17 @@ async def export_corpus(runner, session):
     home = STACK / ".localnet" / node.moniker / ".cometbft"
     await runner.stop_node_runtime(node)
     try:
-        latest = json.loads((home / "xian/__latest_block.json").read_text())
         with tempfile.TemporaryDirectory(dir=output) as directory:
+            # Atomic node writes use mode 0600. Docker copies this stopped
+            # container's marker with ownership usable by the host caller.
+            latest_path = Path(directory) / "latest.json"
+            await command(
+                "docker",
+                "cp",
+                f"{node.abci_container}:/root/.cometbft/xian/__latest_block.json",
+                latest_path,
+            )
+            latest = json.loads(latest_path.read_text())
             staging = Path(directory) / "home"
             shutil.copytree(
                 home / "config",
@@ -135,6 +144,16 @@ async def export_corpus(runner, session):
     return output
 
 
+def replay_input_hashes(home):
+    expected = json.loads(config_hashes(home))
+    for path in (home / "data").rglob("*"):
+        # CometBFT creates this observer's signing state as root with mode 0600.
+        # It is not part of the source corpus or the replay determinism oracle.
+        if path.is_file() and path.name != "priv_validator_state.json":
+            expected[str(path.relative_to(home))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return expected
+
+
 async def verify_corpus(corpus, image, output):
     manifest = json.loads((corpus / "manifest.json").read_text())
     require(not output.exists(), f"Replay output already exists: {output}")
@@ -162,12 +181,7 @@ async def verify_corpus(corpus, image, output):
     hooks.mkdir()
     shutil.copy2(STACK / "scripts/e2e_replay_hooks/sitecustomize.py", hooks / "sitecustomize.py")
     shutil.copy2(STACK / "scripts/localnet_replay_capture.py", hooks / "localnet_replay_capture.py")
-    expected_files = json.loads(config_hashes(home))
-    for path in (home / "data").rglob("*"):
-        if path.is_file():
-            expected_files[str(path.relative_to(home))] = hashlib.sha256(
-                path.read_bytes()
-            ).hexdigest()
+    expected_files = replay_input_hashes(home)
     for path in hooks.iterdir():
         expected_files[f"/e2e-hooks/{path.name}"] = hashlib.sha256(path.read_bytes()).hexdigest()
     container = "xian-e2e-replay-" + str(time.time_ns())
