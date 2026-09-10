@@ -10082,40 +10082,61 @@ class E2ERunner:
             if timeout_seconds is None
             else max(timeout_seconds, 0.0)
         )
-        deadline = time.monotonic() + settle_timeout_seconds
+        report_timeout_seconds = min(self.args.rpc_timeout_seconds, 10.0)
 
-        while True:
-            report = await asyncio.to_thread(
-                collect_localnet_node_report,
-                self.network,
-                timeout_seconds=min(self.args.rpc_timeout_seconds, 10.0),
+        def raise_report_error(reason: str) -> None:
+            raise E2EError(
+                f"node report failed checks {reason}: "
+                + json.dumps(
+                    {
+                        "checks": report["checks"],
+                        "errors": report["errors"],
+                        "totals": report["totals"],
+                        "nodes": [
+                            {
+                                "moniker": node["moniker"],
+                                "height": node["height"],
+                                "catching_up": node["catching_up"],
+                            }
+                            for node in report["nodes"]
+                        ],
+                    },
+                    sort_keys=True,
+                )
             )
-            if report["ok"]:
-                return report
 
+        report = await asyncio.to_thread(
+            collect_localnet_node_report,
+            self.network,
+            timeout_seconds=report_timeout_seconds,
+        )
+        if report["ok"]:
+            return report
+
+        deadline = time.monotonic() + settle_timeout_seconds
+        while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise E2EError(
-                    "node report failed checks after convergence wait: "
-                    + json.dumps(
-                        {
-                            "checks": report["checks"],
-                            "errors": report["errors"],
-                            "totals": report["totals"],
-                            "nodes": [
-                                {
-                                    "moniker": node["moniker"],
-                                    "height": node["height"],
-                                    "catching_up": node["catching_up"],
-                                }
-                                for node in report["nodes"]
-                            ],
-                        },
-                        sort_keys=True,
-                    )
-                )
+                raise_report_error("after convergence wait")
 
             await asyncio.sleep(min(NODE_REPORT_SETTLE_POLL_SECONDS, remaining))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise_report_error("after convergence wait")
+
+            try:
+                report = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        collect_localnet_node_report,
+                        self.network,
+                        timeout_seconds=min(report_timeout_seconds, remaining),
+                    ),
+                    timeout=remaining,
+                )
+            except TimeoutError:
+                raise_report_error("after convergence wait timed out")
+            if report["ok"]:
+                return report
 
     async def wait_for_conflict_counter_convergence(
         self,
