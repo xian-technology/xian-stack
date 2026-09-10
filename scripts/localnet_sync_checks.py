@@ -58,8 +58,14 @@ print(json.dumps(m.export_snapshot()))
     )
     require(exported["chunks"] > 1, "Interrupted state sync requires a multi-chunk snapshot")
     for node in runner.nodes[1:2]:
-        destination = STACK / ".localnet" / node.moniker / ".cometbft/xian/snapshots"
-        shutil.copytree(source_home / "xian/snapshots", destination, dirs_exist_ok=True)
+        # The node creates this directory as root on Linux. Copy through the
+        # container API instead of writing into its bind mount as the host user.
+        await command(
+            "docker",
+            "cp",
+            str(source_home / "xian/snapshots") + "/.",
+            f"{node.abci_container}:/root/.cometbft/xian/snapshots",
+        )
     snapshot_height = int(exported["height"])
     await wait_height(session, source, snapshot_height + 2)
     trusted = await rpc(session, source, "block", height=snapshot_height)
