@@ -105,7 +105,8 @@ def test_all_lifecycle_phases_are_in_the_regular_e2e_registry():
 
 
 @pytest.mark.parametrize("address_reused", [False, True])
-def test_partition_restores_network_after_workload_failure(address_reused):
+@pytest.mark.parametrize("explicit_ip_supported", [False, True])
+def test_partition_restores_network_after_workload_failure(address_reused, explicit_ip_supported):
     import json
 
     import localnet_recovery_checks as recovery
@@ -124,6 +125,11 @@ def test_partition_restores_network_after_workload_failure(address_reused):
         if args[:2] == ("docker", "inspect"):
             return json.dumps([{"NetworkSettings": {"Networks": connected}}])
         if args[:3] == ("docker", "network", "connect"):
+            if "--ip" in args and not explicit_ip_supported:
+                raise E2EError(
+                    "user specified IP address is supported only when connecting "
+                    "to networks with user configured subnets"
+                )
             connected[args[-2]] = {}
         if args[:3] == ("docker", "network", "disconnect"):
             connected.pop(args[-2])
@@ -145,6 +151,9 @@ def test_partition_restores_network_after_workload_failure(address_reused):
         expected += ("--ip", "172.30.0.4")
     expected += ("--alias", "node-4", "--alias", "validator", "test_localnet", "validator-4")
     assert expected in calls
+    if not address_reused and not explicit_ip_supported:
+        retry = ("docker", "network", "connect") + expected[5:]
+        assert calls[calls.index(expected) + 1] == retry
     assert calls[-1] == ("docker", "network", "rm", "xian-e2e-partition-test")
 
 

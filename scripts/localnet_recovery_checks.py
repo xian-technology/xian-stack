@@ -23,6 +23,7 @@ from localnet_chain_checks import (
     wait_height,
     wallet,
 )
+from localnet_e2e_support import E2EError
 
 
 @asynccontextmanager
@@ -63,7 +64,20 @@ async def partition(runner, isolated):
                     args += ["--ip", endpoint["IPAddress"]]
                 for alias in endpoint.get("Aliases") or []:
                     args += ["--alias", alias]
-                await command(*args, network, container)
+                try:
+                    await command(*args, network, container)
+                except E2EError as exc:
+                    # Linux Engine can reject an explicit address on a bridge
+                    # whose subnet Docker allocated automatically. Persistent
+                    # peers use DNS aliases, so automatic allocation is safe.
+                    if "--ip" not in args or (
+                        "user specified IP address is supported only when connecting "
+                        "to networks with user configured subnets"
+                    ) not in str(exc):
+                        raise
+                    index = args.index("--ip")
+                    del args[index : index + 2]
+                    await command(*args, network, container)
             if name in connected:
                 await command("docker", "network", "disconnect", name, container)
         if created:
