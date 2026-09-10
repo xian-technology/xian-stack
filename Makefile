@@ -425,6 +425,7 @@ LOCALNET_E2E_RPC_TIMEOUT_SECONDS ?= 180
 LOCALNET_E2E_STATE_SAMPLE_NODES ?= 5
 LOCALNET_E2E_APP_HASH_WINDOW ?= 5
 LOCALNET_E2E_RECEIPT_WORKERS ?= 24
+LOCALNET_E2E_INVARIANT_ROUNDS ?= 48
 LOCALNET_E2E_PERIODIC_ROUNDS ?= 8
 LOCALNET_E2E_PERIODIC_INTERVAL_SECONDS ?= 0.35
 LOCALNET_E2E_BURST_COUNTER_OPS ?= 260
@@ -890,7 +891,7 @@ localnet-up:
 
 localnet-down:
 	@if [ -f docker-compose-localnet.yml ]; then \
-		$(LOCALNET_COMPOSE) down; \
+		$(LOCALNET_COMPOSE) down $(if $(filter 1,$(LOCALNET_REMOVE_VOLUMES)),--volumes); \
 	fi
 
 localnet-status:
@@ -961,6 +962,7 @@ localnet-e2e:
 		--state-sample-nodes $(LOCALNET_E2E_STATE_SAMPLE_NODES) \
 		--app-hash-window $(LOCALNET_E2E_APP_HASH_WINDOW) \
 		--receipt-workers $(LOCALNET_E2E_RECEIPT_WORKERS) \
+		--invariant-rounds $(LOCALNET_E2E_INVARIANT_ROUNDS) \
 		--periodic-rounds $(LOCALNET_E2E_PERIODIC_ROUNDS) \
 		--periodic-interval-seconds $(LOCALNET_E2E_PERIODIC_INTERVAL_SECONDS) \
 		--burst-counter-ops $(LOCALNET_E2E_BURST_COUNTER_OPS) \
@@ -1025,12 +1027,13 @@ localnet-shell:
 	@service="$$(python3 -c 'import json, pathlib; data=json.loads(pathlib.Path(".localnet/network.json").read_text()); print("node-0-abci" if data.get("topology") == "fidelity" else "node-0")')"; \
 	$(LOCALNET_COMPOSE) exec "$$service" /bin/bash
 
-localnet-clean: localnet-down
+localnet-clean:
 	@if [ "$(FORCE)" != "1" ]; then \
-		echo "localnet-clean will delete .localnet/ and docker-compose-localnet.yml."; \
+		echo "localnet-clean will delete .localnet/, its Docker volumes, and docker-compose-localnet.yml."; \
 		echo "All localnet state (keys, data, logs) will be lost."; \
 		echo "Re-run with FORCE=1 to confirm: make localnet-clean FORCE=1"; \
 		exit 1; \
 	fi
+	$(MAKE) localnet-down LOCALNET_REMOVE_VOLUMES=1
 	rm -rf .localnet
 	rm -f docker-compose-localnet.yml

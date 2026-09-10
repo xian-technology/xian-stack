@@ -30,6 +30,16 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertNotIn("capture_output", kwargs)
         self.assertEqual(kwargs["env"], {"XIAN_BDS_ENABLED": "1"})
 
+    def test_localnet_e2e_forwards_accounting_workload_size(self) -> None:
+        completed = subprocess.CompletedProcess([], 0, stdout='{"ok": true}', stderr="")
+        with (
+            patch("backend.run_python_script", return_value=completed) as run_mock,
+            patch("backend.sys.stdout"),
+        ):
+            self.assertEqual(backend.main(["localnet-e2e", "--invariant-rounds", "120"]), 0)
+        forwarded = run_mock.call_args.args[1:]
+        self.assertEqual(forwarded[forwarded.index("--invariant-rounds") + 1], "120")
+
     def test_dex_bootstrap_backend_forwards_chi_budget_mode(self) -> None:
         completed = subprocess.CompletedProcess(
             ["python", "localnet-dex-bootstrap.py"],

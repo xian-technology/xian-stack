@@ -37,6 +37,14 @@ tooling behind `xian-stack`.
 - `localnet_node_report.py`: collects fixed VM capability status from a running
   localnet and emits a node report as JSON;
   it reads the Xian app metrics exporter, not the CometBFT metrics endpoint
+- `localnet_*_checks.py`: live crash, partition, fresh-node sync, mixed
+  execution, nonce, independent accounting, and resource-boundary scenarios
+  used by the main E2E phase registry.
+- `e2e_hooks/`: one-shot crash instrumentation copied only into disposable
+  test containers; it is not included in the node image.
+- `localnet_replay_corpus.py`: exports public block-replay inputs and verifies
+  re-execution against the source network. `e2e_replay_hooks/` captures actual
+  replay results so persisted CometBFT responses cannot satisfy the comparison.
 - `make localnet-parallel-e2e`: wrapper around `localnet-e2e.py` that boots the same
   5-validator integrated stack with lower parallel-execution batching; it also
   enforces the node report through the generated `node_report.json`

@@ -172,7 +172,7 @@ Use the smallest recipe that proves the behavior you care about:
 | Single local node with optional services | `python3 ./scripts/backend.py start ...` | Compose wiring, node health, dashboard / monitoring / BDS sidecars |
 | Clean multi-node topology | `LOCALNET_NODES=5 make localnet-init && make localnet-up` | Validator topology, genesis distribution, peer connectivity |
 | Workload smoke on a running localnet | `make localnet-workload` | Basic contract submission and transaction flow |
-| Full 5-validator e2e harness | `make localnet-e2e` | Layered cross-repo behavior, workload phases, DEX coverage, catchup, governance, chaos / restart convergence |
+| Full 5-validator e2e harness | `make localnet-e2e` | Layered cross-repo behavior, DEX, governance, crash recovery, quorum partitions, fresh-node sync, execution parity, accounting, resource limits, and block replay |
 | IntentKit x402 buyer phase | `LOCALNET_E2E_INTENTKIT_X402=1 make localnet-e2e` | Adds a live IntentKit Xian-native x402 payment through a local seller/facilitator |
 | Parallel 5-validator harness | `make localnet-parallel-e2e` | The same e2e program with lower parallel-execution batching |
 | Protocol safety harness | `make localnet-protocol-safety` | Validator set, delegation, evidence, governance, and state-patch behavior |
@@ -182,6 +182,30 @@ The localnet harnesses are intentionally heavier than a clean topology. A
 clean five-node network tells you that the validators can start and peer. The
 e2e harness tells you that the product stack still behaves under realistic
 contract, indexer, governance, recovery, and restart pressure.
+
+The E2E run includes 48 seeded accounting operations by default. Set
+`LOCALNET_E2E_INVARIANT_ROUNDS` to increase that workload and
+`LOCALNET_E2E_SEED` to reproduce a sequence. Recovery checks create temporary
+non-validator observers and briefly install crash hooks in disposable test
+containers. The hooks are not part of the node image.
+
+Each successful run also exports `replay-corpus/`: public configuration,
+CometBFT block databases, expected transaction-result digests, and source
+revisions. It excludes application state and validator private keys. The
+harness rebuilds application state by replaying every block and compares the
+application root, transaction outcomes, chi usage, and events for every block. The scheduled
+Localnet Safety workflow repeats this replay on native ARM64 and x86-64 runners.
+To replay a retained corpus with another locally built image:
+
+```bash
+uv run python scripts/localnet_replay_corpus.py \
+  --corpus .artifacts/localnet-e2e/<run-id>/replay-corpus \
+  --image xian-node-integrated:local --output .artifacts/replay-check
+```
+
+Use a fresh output directory for each replay. See the
+[public E2E guide](../xian-docs-web/node/localnet-e2e.md) for the coverage and
+interpretation of these checks.
 
 `localnet-e2e` prints `[localnet-e2e] starting ...` and `completed ...` phase
 markers. Per-phase JSON, the final node report, and the summary live under

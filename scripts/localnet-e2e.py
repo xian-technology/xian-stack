@@ -28,6 +28,7 @@ from governance_vote_helpers import (
     read_freshest_status,
     wait_for_status,
 )
+from localnet_abci_queries import check_live_abci
 from localnet_common import compare_app_hash_window, fetch_json
 from localnet_e2e_phases import bind_phase_sequence, phase_names
 from localnet_e2e_support import (
@@ -121,6 +122,7 @@ sys.path.insert(0, str(XIAN_ZK_PYTHON_DIR))
 sys.path.insert(0, str(XIAN_ABCI_SRC))
 
 import xian_py.transaction as tr  # noqa: E402
+from abci import __version__ as ABCI_VERSION  # noqa: E402
 from xian_py.config import RetryPolicy, SubmissionConfig, XianClientConfig  # noqa: E402
 from xian_py.exception import SimulationError, TransportError, TxTimeoutError  # noqa: E402
 from xian_py.models import TransactionSubmission  # noqa: E402
@@ -2822,9 +2824,6 @@ class E2ERunner:
     def secondary_bds_home_dir(self) -> Path:
         return self.output_dir / "secondary-bds-home"
 
-    def secondary_bds_data_dir(self) -> Path:
-        return self.output_dir / "secondary-bds-postgres"
-
     def prepare_secondary_bds_home(self, source_node: LocalnetNode) -> Path:
         source_home = STACK_DIR / ".localnet" / source_node.moniker / ".cometbft"
         if not source_home.exists():
@@ -2855,11 +2854,9 @@ class E2ERunner:
     async def start_secondary_bds_postgres(self) -> dict[str, Any]:
         container_name = self.secondary_bds_container_name()
         host_port = self.secondary_bds_host_port()
-        data_dir = self.secondary_bds_data_dir()
-        data_dir.mkdir(parents=True, exist_ok=True)
 
         subprocess.run(
-            ["docker", "rm", "-f", container_name],
+            ["docker", "rm", "-f", "-v", container_name],
             cwd=STACK_DIR,
             capture_output=True,
             text=True,
@@ -2873,10 +2870,13 @@ class E2ERunner:
                 container_name,
                 "--health-cmd",
                 (
-                    "pg_isready "
+                    "psql "
                     f"-U {SECONDARY_BDS_POSTGRES_USER} "
-                    f"-d {SECONDARY_BDS_POSTGRES_DATABASE}"
+                    f"-d {SECONDARY_BDS_POSTGRES_DATABASE} "
+                    "-v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null"
                 ),
+                "--health-start-period",
+                "30s",
                 "--health-interval",
                 "1s",
                 "--health-timeout",
@@ -2886,7 +2886,7 @@ class E2ERunner:
                 "--publish",
                 f"{host_port}:5432",
                 "--volume",
-                f"{data_dir}:/var/lib/postgresql/data",
+                "/var/lib/postgresql/data",
                 "--env",
                 f"POSTGRES_USER={SECONDARY_BDS_POSTGRES_USER}",
                 "--env",
@@ -2928,7 +2928,7 @@ class E2ERunner:
 
     def cleanup_secondary_bds_postgres(self) -> None:
         subprocess.run(
-            ["docker", "rm", "-f", self.secondary_bds_container_name()],
+            ["docker", "rm", "-f", "-v", self.secondary_bds_container_name()],
             cwd=STACK_DIR,
             capture_output=True,
             text=True,
@@ -3024,13 +3024,16 @@ class E2ERunner:
         }
         if self.args.bootstrap:
             if (STACK_DIR / "docker-compose-localnet.yml").exists():
-                outputs["localnet_down"] = run_make("localnet-down", env=env).stdout
+                outputs["localnet_down"] = run_make(
+                    "localnet-down", env={**env, "LOCALNET_REMOVE_VOLUMES": "1"},
+                ).stdout
             outputs["localnet_init"] = run_make("localnet-init", env=env).stdout
             if self.args.build:
                 outputs["localnet_build"] = run_make("localnet-build", env=env).stdout
             outputs["localnet_up"] = run_make("localnet-up", env=env).stdout
 
         self.network = load_network()
+        shutil.copy2(STACK_DIR / "docker-compose-localnet.yml", self.output_dir / "docker-compose-localnet.yml")
         self.nodes = build_nodes(self.network)
         self.bds_node = next(
             (node for node in self.nodes if node.bds_node),
@@ -3110,6 +3113,71 @@ class E2ERunner:
             "nodes": statuses,
             "consensus": consensus,
             "service_bds": service_bds,
+        }
+
+    async def abci_consistency_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
+        source = read_text(SCRIPT_DIR / "localnet_abci_probe.py")
+        probes = []
+        for node in self.nodes:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                [
+                    "docker",
+                    "exec",
+                    "-i",
+                    node.abci_container,
+                    "python",
+                    "-",
+                    self.network["chain_id"],
+                    ABCI_VERSION,
+                ],
+                input=source,
+                text=True,
+                capture_output=True,
+                timeout=90,
+            )
+            if result.returncode != 0:
+                raise E2EError(f"ABCI consistency probe failed on {node.moniker}: {result.stderr}")
+            probes.append({"node": node.moniker, "runtime_callbacks": json.loads(result.stdout)})
+
+        name = "con_" + hashlib.sha256(f"{self.run_id}:name-boundary".encode()).hexdigest()[:60]
+        code = (
+            "number = Variable()\n\n@construct\ndef seed():\n    number.set(7)\n"
+            "\n@export\ndef value():\n    return number.get()"
+        )
+        async with self.client(self.founder_wallet, 0, session) as client:
+            deployment = await client.deploy_contract(
+                name=name,
+                source=code,
+                chi=120_000,
+                wait_for_tx=True,
+            )
+            receipt = ensure_positive_submission(deployment, label="deploy 64-character contract name")
+        # Constructor state must be visible through real RPC on every validator.
+        await self.wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract=name,
+            variable="number",
+            label="64-character contract deployment",
+            expected=7,
+        )
+        for node, probe in zip(self.nodes, probes, strict=True):
+            probe["live_rpc"] = await check_live_abci(
+                session, node, expected_version=ABCI_VERSION,
+                state_path=f"/get/{name}.number",
+                invalid_txs=probe["runtime_callbacks"].pop("invalid_txs"),
+            )
+        app_hash = await compare_app_hash_window(
+            session, self.nodes, window=self.args.app_hash_window
+        )
+        if not app_hash["ok"]:
+            raise E2EError("app hashes diverged after ABCI consistency checks")
+        return {
+            "nodes": probes,
+            "boundary_contract": name,
+            "deployment": receipt,
+            "app_hash": app_hash,
         }
 
     def client(
@@ -10405,6 +10473,46 @@ class E2ERunner:
             "final_node_report": await self.collect_node_report_snapshot(),
         }
 
+    async def crash_recovery_phase(self, session):
+        from localnet_recovery_checks import crash_phase
+
+        return await crash_phase(self, session)
+
+    async def quorum_recovery_phase(self, session):
+        from localnet_recovery_checks import quorum_phase
+
+        return await quorum_phase(self, session)
+
+    async def fresh_node_phase(self, session):
+        from localnet_sync_checks import sync_phase
+
+        return await sync_phase(self, session)
+
+    async def mixed_execution_phase(self, session):
+        from localnet_execution_checks import mixed_phase
+
+        return await mixed_phase(self, session)
+
+    async def nonce_recovery_phase(self, session):
+        from localnet_execution_checks import nonce_phase
+
+        return await nonce_phase(self, session)
+
+    async def accounting_invariants_phase(self, session):
+        from localnet_accounting_checks import accounting_phase
+
+        return await accounting_phase(self, session)
+
+    async def block_limits_phase(self, session):
+        from localnet_execution_checks import limits_phase
+
+        return await limits_phase(self, session)
+
+    async def replay_corpus_phase(self, session):
+        from localnet_replay_corpus import corpus_phase
+
+        return await corpus_phase(self, session)
+
     async def finalize_summary(self) -> dict[str, Any]:
         summary = {
             "ok": all(phase.ok for phase in self.phase_results),
@@ -10558,6 +10666,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="00-bootstrap",
         choices=E2ERunner.phase_names(),
     )
+    parser.add_argument("--invariant-rounds", type=int, default=48)
     parser.add_argument("--resume-dir")
     return parser
 

@@ -675,11 +675,7 @@ def runtime_env(
     env.setdefault("XIAN_POSTGRAPHILE_HOST", "127.0.0.1")
     if env_truthy(env.get("XIAN_PUBLIC_RPC_ENABLED")) and not explicit_rpc_host:
         env["XIAN_COMETBFT_RPC_HOST"] = "0.0.0.0"
-    if (
-        env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED"))
-        and bds_enabled
-        and not explicit_query_host
-    ):
+    if env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED")) and bds_enabled and not explicit_query_host:
         env["XIAN_POSTGRAPHILE_HOST"] = "0.0.0.0"
     if env_truthy(env.get("XIAN_PUBLIC_METRICS_ENABLED")):
         if not explicit_comet_metrics_host:
@@ -2123,6 +2119,7 @@ def backend_localnet_e2e(
     intentkit_x402: bool,
     start_phase: str,
     resume_dir: str | None,
+    invariant_rounds: int = 48,
 ) -> dict:
     args = [
         "--nodes",
@@ -2147,6 +2144,8 @@ def backend_localnet_e2e(
         str(app_hash_window),
         "--receipt-workers",
         str(receipt_workers),
+        "--invariant-rounds",
+        str(invariant_rounds),
         "--periodic-rounds",
         str(periodic_rounds),
         "--periodic-interval-seconds",
@@ -2683,6 +2682,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=24,
     )
+    localnet_e2e.add_argument("--invariant-rounds", type=int, default=48)
     localnet_e2e.add_argument(
         "--periodic-rounds",
         type=int,
@@ -3023,6 +3023,7 @@ def main(argv: list[str] | None = None) -> int:
             state_sample_nodes=args.state_sample_nodes,
             app_hash_window=args.app_hash_window,
             receipt_workers=args.receipt_workers,
+            invariant_rounds=args.invariant_rounds,
             periodic_rounds=args.periodic_rounds,
             periodic_interval_seconds=args.periodic_interval_seconds,
             burst_counter_ops=args.burst_counter_ops,

@@ -17,6 +17,7 @@ class PhaseSpec:
 PHASE_SPECS: tuple[PhaseSpec, ...] = (
     PhaseSpec("00-bootstrap", "bootstrap"),
     PhaseSpec("01-health", "health_phase"),
+    PhaseSpec("02-abci-consistency", "abci_consistency_phase"),
     PhaseSpec("02-xian-py-smoke", "xian_py_smoke"),
     PhaseSpec("03-contract-orchestration", "contract_orchestration_phase"),
     PhaseSpec("03-atomic-rollback", "atomic_rollback_phase"),
@@ -38,6 +39,14 @@ PHASE_SPECS: tuple[PhaseSpec, ...] = (
     PhaseSpec("16-parallel-execution", "parallel_execution_phase"),
     PhaseSpec("17-chaos-convergence", "chaos_convergence_phase"),
     PhaseSpec("18-soak-abuse", "soak_abuse_phase"),
+    PhaseSpec("19-crash-recovery", "crash_recovery_phase"),
+    PhaseSpec("20-quorum-recovery", "quorum_recovery_phase"),
+    PhaseSpec("21-fresh-node-sync", "fresh_node_phase"),
+    PhaseSpec("22-mixed-execution", "mixed_execution_phase"),
+    PhaseSpec("23-nonce-recovery", "nonce_recovery_phase"),
+    PhaseSpec("24-accounting-invariants", "accounting_invariants_phase"),
+    PhaseSpec("25-block-limits", "block_limits_phase"),
+    PhaseSpec("26-replay-determinism", "replay_corpus_phase"),
 )
 
 

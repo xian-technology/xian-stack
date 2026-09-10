@@ -718,14 +718,15 @@ def write_compose_file(
             "healthcheck": {
                 "test": [
                     "CMD-SHELL",
-                    "pg_isready -U xian -d xian",
+                    "psql -U xian -d xian -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null",
                 ],
                 "interval": "5s",
                 "timeout": "5s",
                 "retries": 12,
+                "start_period": "30s",
             },
             "volumes": [
-                "./.localnet/postgres:/var/lib/postgresql/data",
+                "localnet-postgres-data:/var/lib/postgresql/data",
             ],
             "expose": ["5432"],
             "networks": ["localnet"],
@@ -845,6 +846,14 @@ def write_compose_file(
         },
     }
     compose["services"] = services
+    if bds_enabled:
+        # Native Docker storage avoids host-filesystem ownership changes during
+        # initdb. A fresh generation must never reuse another chain's BDS data.
+        compose["volumes"] = {
+            "localnet-postgres-data": {
+                "name": f"xian-localnet-postgres-{secrets.token_hex(8)}",
+            },
+        }
 
     compose_path = STACK_DIR / "docker-compose-localnet.yml"
     compose_path.write_text(json.dumps(compose, indent=2) + "\n", encoding="utf-8")

@@ -7,10 +7,11 @@ import inspect
 import sys
 import tempfile
 import unittest
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, create_autospec, patch
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "localnet-e2e.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
@@ -29,6 +30,70 @@ else:
 
 
 class LocalnetE2EExpansionTests(unittest.TestCase):
+    def test_abci_consistency_phase_fails_when_a_live_probe_fails(self) -> None:
+        args = localnet_e2e.build_parser().parse_args([])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+            runner.nodes = [self._node(0, "http://127.0.0.1:26657")]
+            runner.network = {"chain_id": "local-test"}
+            with patch.object(
+                localnet_e2e.subprocess, "run",
+                return_value=SimpleNamespace(returncode=1, stderr="wrong proposal selection"),
+            ):
+                with self.assertRaisesRegex(localnet_e2e.E2EError, "probe failed on node-0"):
+                    asyncio.run(runner.abci_consistency_phase(object()))
+
+    def test_abci_consistency_phase_fails_on_app_hash_divergence(self) -> None:
+        args = localnet_e2e.build_parser().parse_args([])
+        deployment_client = create_autospec(localnet_e2e.XianAsync, instance=True)
+        deployment_client.deploy_contract.return_value = object()
+
+        @asynccontextmanager
+        async def client(*_args):
+            yield deployment_client
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+            runner.nodes = [self._node(0, "http://127.0.0.1:26657")]
+            runner.network = {"chain_id": "local-test"}
+            with (
+                patch.object(localnet_e2e.subprocess, "run", return_value=SimpleNamespace(
+                    returncode=0, stdout='{"application_version":"0.9.0","invalid_txs":[]}',
+                )),
+                patch.object(runner, "client", client),
+                patch.object(runner, "wait_for_uniform_node_state", new_callable=AsyncMock),
+                patch.object(localnet_e2e, "ensure_positive_submission", return_value={}),
+                patch.object(localnet_e2e, "check_live_abci", new_callable=AsyncMock),
+                patch.object(localnet_e2e, "compare_app_hash_window", new_callable=AsyncMock,
+                             return_value={"ok": False}),
+            ):
+                with self.assertRaisesRegex(localnet_e2e.E2EError, "app hashes diverged"):
+                    asyncio.run(runner.abci_consistency_phase(object()))
+
+    def test_secondary_bds_owns_and_cleans_up_its_database_volume(self) -> None:
+        args = localnet_e2e.build_parser().parse_args([])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+            with (
+                patch.object(localnet_e2e.subprocess, "run") as remove,
+                patch.object(localnet_e2e, "run_cmd") as run,
+                patch.object(localnet_e2e, "wait_for_container_state",
+                             new_callable=AsyncMock, return_value="healthy"),
+            ):
+                asyncio.run(runner.start_secondary_bds_postgres())
+                command = run.call_args.args[0]
+                self.assertEqual(command[command.index("--volume") + 1],
+                                 "/var/lib/postgresql/data")
+                self.assertIn("SELECT 1", command[command.index("--health-cmd") + 1])
+                self.assertIn("-v", remove.call_args.args[0])
+                runner.cleanup_secondary_bds_postgres()
+                self.assertEqual(remove.call_args.args[0], [
+                    "docker", "rm", "-f", "-v", runner.secondary_bds_container_name(),
+                ])
+
     def test_nested_uv_commands_preserve_patch_python_version(self) -> None:
         expected = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
