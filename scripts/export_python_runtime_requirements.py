@@ -13,6 +13,7 @@ def export_requirements(abci_root: Path) -> str:
         "export",
         "--frozen",
         "--no-dev",
+        "--no-emit-local",
         "--format",
         "requirements-txt",
     ]
@@ -24,21 +25,6 @@ def export_requirements(abci_root: Path) -> str:
         text=True,
     )
     return result.stdout
-
-
-def strip_local_editables(exported: str) -> str:
-    filtered: list[str] = []
-    skip_editable_comments = False
-    for line in exported.splitlines():
-        if line.startswith("-e "):
-            skip_editable_comments = True
-            continue
-        if skip_editable_comments:
-            if not line.strip() or line.startswith("    #"):
-                continue
-            skip_editable_comments = False
-        filtered.append(line)
-    return "\n".join(filtered).strip() + "\n"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -66,8 +52,7 @@ def main() -> int:
     args = build_parser().parse_args()
     workspace_root = args.workspace_root.resolve()
     exported = export_requirements(workspace_root / "xian-abci")
-    filtered = strip_local_editables(exported)
-    args.output.write_text(filtered, encoding="utf-8")
+    args.output.write_text(exported.strip() + "\n", encoding="utf-8")
     return 0
 
 
