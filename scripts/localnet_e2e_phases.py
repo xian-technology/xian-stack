@@ -32,6 +32,7 @@ PHASE_SPECS: tuple[PhaseSpec, ...] = (
     PhaseSpec("09-bds-catchup", "bds_catchup_phase"),
     PhaseSpec("10-retrieval-surfaces", "retrieval_phase"),
     PhaseSpec("11-determinism", "determinism_phase"),
+    PhaseSpec("11-storage-scan-determinism", "storage_scan_phase"),
     PhaseSpec("12-validator-governance", "validator_governance_phase"),
     PhaseSpec("13-state-patch", "state_patch_phase"),
     PhaseSpec("14-logging", "logging_phase"),

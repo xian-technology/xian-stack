@@ -577,7 +577,7 @@ source = { directory = "../xian-contracting/packages/xian-compiler-core" }
 
 [[package]]
 name = "xian-tech-contracting"
-version = "1.1.2"
+version = "1.1.3"
 source = { editable = "../xian-contracting" }
 dependencies = [
     { name = "cachetools" },
@@ -614,7 +614,7 @@ dev = [
 
 [[package]]
 name = "xian-tech-py"
-version = "0.5.1"
+version = "0.5.2"
 source = { editable = "../xian-py" }
 dependencies = [
     { name = "aiohttp" },
@@ -652,7 +652,7 @@ source = { editable = "../xian-contracting/packages/xian-runtime-types" }
 
 [[package]]
 name = "xian-tech-vm-core"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "../xian-contracting/packages/xian-vm-core" }
 dependencies = [
     { name = "xian-tech-contracting" },

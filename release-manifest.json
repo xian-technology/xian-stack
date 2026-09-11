@@ -3,7 +3,7 @@
   "components": {
     "xian-abci": {
       "repository": "xian-technology/xian-abci",
-      "ref": "33f95f75806ab6124516a71b4af9189b83476d17"
+      "ref": "9699bab13384a7a9aa37aa2ac22fe5ae4b4040da"
     },
     "xian-configs": {
       "repository": "xian-technology/xian-configs",
@@ -11,11 +11,11 @@
     },
     "xian-contracting": {
       "repository": "xian-technology/xian-contracting",
-      "ref": "f01914c2727b0b670c7a946135905d72a4573528"
+      "ref": "d250e988019556fe872c56732b55dc3ca04f10d8"
     },
     "xian-py": {
       "repository": "xian-technology/xian-py",
-      "ref": "148fe96a2232349b4d0bf6859cdf6ebd6c42ae24"
+      "ref": "293931ceaac36d6b84990c9690089ef384b612f6"
     }
   },
   "build": {
