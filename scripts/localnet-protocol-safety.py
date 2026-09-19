@@ -23,6 +23,7 @@ from typing import Any
 import aiohttp
 from governance_vote_helpers import read_freshest_status
 from localnet_common import fetch_json
+from localnet_diagnostics import collect_failure_diagnostics
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent
@@ -520,6 +521,8 @@ def normalize_receipt(submission, *, label: str) -> dict[str, Any]:
         events = execution.get("events", []) or []
     success = None if submission.receipt is None else submission.receipt.success
     message = submission.message if submission.receipt is None else submission.receipt.message
+    raw = getattr(submission.receipt, "raw", {}) if submission.receipt else {}
+    height = raw.get("result", {}).get("height") or raw.get("height")
     if submission.receipt is None and submission.mode == "commit":
         success = bool(submission.accepted and submission.finalized)
         if success and message is None:
@@ -532,6 +535,7 @@ def normalize_receipt(submission, *, label: str) -> dict[str, Any]:
         "success": success,
         "message": message,
         "tx_hash": submission.tx_hash,
+        "height": int(height) if height is not None else None,
         "nonce": submission.nonce,
         "chi_supplied": submission.chi_supplied,
         "chi_used": None if execution is None else execution.get("chi_used"),
@@ -2326,6 +2330,7 @@ def get_status():
                 arg=self.nodes[1].account_public_key,
                 label_prefix="auto-unjail-member",
             )
+            await self.wait_for_vote_application(session, self.nodes[0], unjail_vote)
             unjailed_validator = await node0.call(
                 "validators",
                 "get_validator",
@@ -2934,30 +2939,55 @@ def get_status():
             "validator_after_rebalance": validator_after_rebalance,
         }
 
+    async def wait_for_vote_application(self, session, node, vote):
+        """Wait for the reader to commit the approving vote before inspecting state."""
+        heights = [
+            receipt["height"]
+            for receipt in vote["vote_receipts"]
+            if receipt.get("height") is not None
+        ]
+        if not heights:
+            raise RunnerError("Approved vote has no committed receipt height")
+        # /status may expose H while FinalizeBlock(H) is still running.
+        # Seeing H+1 proves the state written by the vote in H is committed.
+        return await wait_for_height(
+            session,
+            node.rpc_url,
+            max(heights) + 1,
+            timeout_seconds=self.args.rpc_timeout_seconds,
+        )
+
     async def run(self) -> dict[str, Any]:
         async with aiohttp.ClientSession() as session:
             summary = {
                 "run_id": self.run_id,
                 "started_at": datetime.now(UTC).isoformat(),
             }
-            summary["bootstrap"] = await self.bootstrap(session)
-            self.write_json("00-bootstrap", summary["bootstrap"])
-            summary["health"] = await self.health(session)
-            self.write_json("01-health", summary["health"])
-            summary["generic_governance"] = await self.generic_governance_phase(session)
-            self.write_json("02-generic-governance", summary["generic_governance"])
-            summary["state_patch"] = await self.state_patch_phase(session)
-            self.write_json("03-state-patch", summary["state_patch"])
-            summary["manual_members"] = await self.manual_members_phase(session)
-            self.write_json("04-manual-members", summary["manual_members"])
-            summary["auto_delegation"] = await self.auto_delegation_phase(session)
-            self.write_json("05-auto-delegation", summary["auto_delegation"])
-            summary["hybrid"] = await self.hybrid_phase(session)
-            self.write_json("06-hybrid", summary["hybrid"])
-            summary["evidence"] = await self.evidence_phase(session)
-            self.write_json("07-evidence", summary["evidence"])
-            summary["leave_announcement"] = await self.leave_announcement_phase(session)
-            self.write_json("08-leave-announcement", summary["leave_announcement"])
+            phases = [
+                ("bootstrap", "00-bootstrap", self.bootstrap),
+                ("health", "01-health", self.health),
+                ("generic_governance", "02-generic-governance", self.generic_governance_phase),
+                ("state_patch", "03-state-patch", self.state_patch_phase),
+                ("manual_members", "04-manual-members", self.manual_members_phase),
+                ("auto_delegation", "05-auto-delegation", self.auto_delegation_phase),
+                ("hybrid", "06-hybrid", self.hybrid_phase),
+                ("evidence", "07-evidence", self.evidence_phase),
+                ("leave_announcement", "08-leave-announcement", self.leave_announcement_phase),
+            ]
+            for key, name, phase in phases:
+                try:
+                    summary[key] = await phase(session)
+                except Exception as exc:
+                    failure = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                    try:
+                        failure["diagnostics"] = await collect_failure_diagnostics(
+                            session, self.nodes, self.output_dir / f"{name}-failure"
+                        )
+                    except Exception as diagnostic_error:
+                        failure["diagnostics_error"] = str(diagnostic_error)
+                    self.write_json(name, failure)
+                    raise
+                self.write_json(name, summary[key])
             summary["ended_at"] = datetime.now(UTC).isoformat()
             summary["coverage_notes"] = [
                 "Covered: generic governance contract calls and proposal voting.",

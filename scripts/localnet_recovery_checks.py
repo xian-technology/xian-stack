@@ -67,9 +67,9 @@ async def partition(runner, isolated):
                 try:
                     await command(*args, network, container)
                 except E2EError as exc:
-                    # Linux Engine can reject an explicit address on a bridge
-                    # whose subnet Docker allocated automatically. Persistent
-                    # peers use DNS aliases, so automatic allocation is safe.
+                    # Legacy localnets can reject --ip on automatic subnets.
+                    # E2E bootstrap uses explicit IPAM and fixed service IPs:
+                    # DNS aliases alone do not refresh cached peer addresses.
                     if "--ip" not in args or (
                         "user specified IP address is supported only when connecting "
                         "to networks with user configured subnets"

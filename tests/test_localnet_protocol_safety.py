@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "localnet-protocol-safety.py"
@@ -25,6 +26,59 @@ else:
 
 
 class LocalnetProtocolSafetyTests(unittest.TestCase):
+    def test_receipt_keeps_the_commit_height_for_cross_node_reads(self):
+        submission = SimpleNamespace(
+            receipt=SimpleNamespace(execution={}, success=True, message="ok",
+                                    raw={"result": {"height": "43"}}),
+            submitted=True, accepted=True, finalized=True, tx_hash="vote", nonce=0,
+            chi_supplied=100,
+        )
+        receipt = localnet_protocol_safety.normalize_receipt(submission, label="unjail")
+        self.assertEqual(receipt["height"], 43)
+
+    def test_protocol_failure_keeps_original_error_and_writes_diagnostics_failure(self):
+        import json
+
+        args = localnet_protocol_safety.build_parser().parse_args([])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.object(localnet_protocol_safety, "OUTPUT_ROOT", Path(tmpdir)):
+                runner = localnet_protocol_safety.ProtocolSafetyRunner(args)
+            runner.bootstrap = AsyncMock(side_effect=ValueError("original failure"))
+            with patch.object(localnet_protocol_safety, "collect_failure_diagnostics",
+                              AsyncMock(side_effect=RuntimeError("Docker unavailable"))):
+                with self.assertRaisesRegex(ValueError, "original failure"):
+                    localnet_protocol_safety.asyncio.run(runner.run())
+            failure = json.loads((runner.output_dir / "00-bootstrap.json").read_text())
+        self.assertFalse(failure["ok"])
+        self.assertIn("original failure", failure["error"])
+        self.assertIn("Docker unavailable", failure["diagnostics_error"])
+
+    def test_vote_reader_waits_past_the_approving_block(self):
+        args = localnet_protocol_safety.build_parser().parse_args([])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.object(localnet_protocol_safety, "OUTPUT_ROOT", Path(tmpdir)):
+                runner = localnet_protocol_safety.ProtocolSafetyRunner(args)
+        node = self._node(0, "http://node-0")
+        vote = {"vote_receipts": [{"height": 41}, {"height": 43}]}
+        with (
+            patch.object(localnet_protocol_safety, "latest_height",
+                         AsyncMock(side_effect=[41, 43, 44])) as heights,
+            patch.object(localnet_protocol_safety.asyncio, "sleep", AsyncMock()),
+        ):
+            result = localnet_protocol_safety.asyncio.run(
+                runner.wait_for_vote_application(object(), node, vote)
+            )
+        self.assertEqual(result, 44)
+        self.assertEqual(heights.await_count, 3)
+        self.assertEqual(heights.await_args.args[1], "http://node-0")
+
+    def test_vote_reader_rejects_missing_commit_evidence(self):
+        runner = object.__new__(localnet_protocol_safety.ProtocolSafetyRunner)
+        with self.assertRaisesRegex(localnet_protocol_safety.RunnerError, "receipt height"):
+            localnet_protocol_safety.asyncio.run(runner.wait_for_vote_application(
+                object(), self._node(0, "http://node-0"), {"vote_receipts": []}
+            ))
+
     def _node(self, index: int, rpc_url: str):
         return localnet_protocol_safety.LocalnetNode(
             index=index,

@@ -95,15 +95,23 @@ async def query(session, node, path):
 
 async def wait_height(session, node, target, timeout=180):
     end = time.monotonic() + timeout
+    current = None
+    last_error = None
     while time.monotonic() < end:
         try:
-            current = await height(session, node)
+            current = await asyncio.wait_for(
+                height(session, node), timeout=min(5, max(0.01, end - time.monotonic()))
+            )
+            last_error = None
             if current >= target:
                 return current
-        except Exception:
-            pass
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
         await asyncio.sleep(0.5)
-    raise E2EError(f"{node.moniker} did not reach height {target}")
+    raise E2EError(
+        f"{node.moniker} did not reach height {target}; "
+        f"last_height={current}; last_rpc_error={last_error}"
+    )
 
 
 async def agreement(session, nodes, window=5):

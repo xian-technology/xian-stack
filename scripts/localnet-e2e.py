@@ -30,6 +30,7 @@ from governance_vote_helpers import (
 )
 from localnet_abci_queries import check_live_abci
 from localnet_common import compare_app_hash_window, fetch_json
+from localnet_diagnostics import collect_failure_diagnostics
 from localnet_e2e_phases import bind_phase_sequence, phase_names
 from localnet_e2e_support import (
     E2EError,
@@ -38,6 +39,7 @@ from localnet_e2e_support import (
     short_hash,
     write_private_json,
 )
+from localnet_network import pin_localnet_addresses
 from localnet_node_report import collect_localnet_node_report
 from shielded_relayer_backend import (
     DEFAULT_SHIELDED_RELAYER_HOST,
@@ -1973,8 +1975,25 @@ class E2ERunner:
         print(f"[localnet-e2e] starting {name}", flush=True)
         try:
             details = await fn()
-        except Exception:
+        except Exception as exc:
             print(f"[localnet-e2e] failed {name}", flush=True)
+            details = {"error": f"{type(exc).__name__}: {exc}"}
+            try:
+                async with aiohttp.ClientSession() as diagnostics_session:
+                    details["diagnostics"] = await collect_failure_diagnostics(
+                        diagnostics_session, self.nodes, self.output_dir / f"{name}-failure"
+                    )
+            except Exception as diagnostic_error:
+                details["diagnostics_error"] = str(diagnostic_error)
+            self.write_phase(
+                PhaseResult(
+                    name=name,
+                    ok=False,
+                    started_at=started,
+                    ended_at=datetime.now(UTC).isoformat(),
+                    details=details,
+                )
+            )
             raise
         ended = datetime.now(UTC).isoformat()
         phase = PhaseResult(
@@ -3028,6 +3047,9 @@ class E2ERunner:
                     "localnet-down", env={**env, "LOCALNET_REMOVE_VOLUMES": "1"},
                 ).stdout
             outputs["localnet_init"] = run_make("localnet-init", env=env).stdout
+            outputs["network_addresses"] = await pin_localnet_addresses(
+                STACK_DIR / "docker-compose-localnet.yml"
+            )
             if self.args.build:
                 outputs["localnet_build"] = run_make("localnet-build", env=env).stdout
             outputs["localnet_up"] = run_make("localnet-up", env=env).stdout

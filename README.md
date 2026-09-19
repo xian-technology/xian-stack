@@ -211,6 +211,8 @@ interpretation of these checks.
 markers. Per-phase JSON, the final node report, and the summary live under
 `.artifacts/localnet-e2e/<run-id>/`; use those files to resume or debug a long
 run without guessing which layer is active.
+Failed phases also retain their error and bounded node/peer/container diagnostics
+under `<phase>-failure/nodes.json` before release-gate cleanup.
 
 For automation, prefer the backend command equivalents where available:
 

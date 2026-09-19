@@ -30,6 +30,24 @@ else:
 
 
 class LocalnetE2EExpansionTests(unittest.TestCase):
+    def test_failed_phase_is_saved_even_when_diagnostics_fail(self):
+        import json
+
+        args = localnet_e2e.build_parser().parse_args([])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+            with patch.object(localnet_e2e, "collect_failure_diagnostics",
+                              AsyncMock(side_effect=RuntimeError("Docker unavailable"))):
+                with self.assertRaisesRegex(ValueError, "original failure"):
+                    asyncio.run(runner.run_phase(
+                        "23-nonce-recovery", AsyncMock(side_effect=ValueError("original failure"))
+                    ))
+            result = json.loads((runner.output_dir / "23-nonce-recovery.json").read_text())
+        self.assertFalse(result["ok"])
+        self.assertIn("original failure", result["details"]["error"])
+        self.assertIn("Docker unavailable", result["details"]["diagnostics_error"])
+
     def test_abci_consistency_phase_fails_when_a_live_probe_fails(self) -> None:
         args = localnet_e2e.build_parser().parse_args([])
         with tempfile.TemporaryDirectory() as tmpdir:
