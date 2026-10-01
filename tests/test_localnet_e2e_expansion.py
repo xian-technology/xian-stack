@@ -1225,7 +1225,15 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                     receipt=SimpleNamespace(
                         success=True,
                         message="ok",
-                        execution={"state": [], "events": [], "chi_used": 10},
+                        execution={
+                            "state": [],
+                            "events": [{
+                                "contract": "validators",
+                                "event": "ValidatorProposalSubmitted",
+                                "data_indexed": {"proposal_id": 11},
+                            }] if function == "propose_vote" else [],
+                            "chi_used": 10,
+                        },
                     ),
                 )
 
@@ -1255,6 +1263,76 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             [(contract, function) for contract, function, *_rest in send_labels],
         )
         self.assertEqual(["async", "async"], [options["mode"] for *_args, options in send_labels])
+
+    def test_members_vote_uses_receipt_id_and_waits_for_committed_state(self) -> None:
+        args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "1"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        state_reads = []
+        counter_reads = []
+        vote_ids = []
+
+        class FakeClient:
+            async def get_state(self, contract, variable, *keys):
+                if variable == "total_votes":
+                    counter_reads.append(variable)
+                    return 0
+                state_reads.append((contract, variable, keys))
+                # Every node initially serves state from before the proposal's commit.
+                if len(state_reads) <= 4:
+                    return None
+                return {"status": "approved" if vote_ids else "pending"}
+
+        async def submit_tx(_client, _contract, function, kwargs, **_options):
+            if function == "vote":
+                vote_ids.append(kwargs["proposal_id"])
+                return {}
+            return {
+                "tx_hash": "proposal-tx",
+                "events": [
+                    {"contract": "other", "event": "ValidatorProposalSubmitted",
+                     "data_indexed": {"proposal_id": 99}},
+                    {"contract": "validators", "event": "ValidatorProposalSubmitted",
+                     "data_indexed": {"proposal_id": 1}},
+                ],
+            }
+
+        runner.submit_tx = submit_tx
+        result = asyncio.run(runner.approve_members_vote(
+            FakeClient(), [(f"node{i}", FakeClient()) for i in range(1, 4)],
+            type_of_vote="reward_change", arg=[0.6, 0.1, 0.1, 0.2],
+            label_prefix="reward-split",
+        ))
+
+        self.assertEqual(1, result["proposal_id"])
+        self.assertEqual("approved", result["proposal_final"]["status"])
+        self.assertEqual([], counter_reads)
+        self.assertEqual([1], vote_ids)
+        self.assertGreater(len(state_reads), 4)
+        self.assertTrue(all(read == ("validators", "votes", (1,)) for read in state_reads))
+
+    def test_members_vote_rejects_missing_or_invalid_receipt_id(self) -> None:
+        args = localnet_e2e.build_parser().parse_args([])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args.resume_dir = tmpdir
+            runner = localnet_e2e.E2ERunner(args)
+        for ids in ([], [0], [True], ["1"], [1, 2]):
+            with self.subTest(ids=ids):
+                runner.submit_tx = AsyncMock(return_value={
+                    "tx_hash": "proposal-tx",
+                    "events": [{
+                        "contract": "validators", "event": "ValidatorProposalSubmitted",
+                        "data_indexed": {"proposal_id": proposal_id},
+                    } for proposal_id in ids],
+                })
+                client = SimpleNamespace(get_state=AsyncMock())
+                with self.assertRaisesRegex(localnet_e2e.E2EError, "proposal-tx"):
+                    asyncio.run(runner.approve_members_vote(
+                        client, [], type_of_vote="reward_change", arg=[],
+                        label_prefix="reward-split",
+                    ))
+                client.get_state.assert_not_awaited()
 
     def test_members_vote_stops_when_fresh_reader_sees_approval(self) -> None:
         args = localnet_e2e.build_parser().parse_args(["--rpc-timeout-seconds", "30"])
@@ -1326,7 +1404,11 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                     state["status"] = "approved"
             else:
                 raise AssertionError(function)
-            return {"label": label, "kwargs": kwargs}
+            return {"label": label, "kwargs": kwargs, "events": [{
+                "contract": "validators",
+                "event": "ValidatorProposalSubmitted",
+                "data_indexed": {"proposal_id": 4},
+            }] if function == "propose_vote" else []}
 
         runner.submit_tx = fake_submit_tx
 

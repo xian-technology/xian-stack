@@ -76,6 +76,29 @@ async def wait_for_status(
     raise RuntimeError(f"{label} did not reach {expected_status!r}; last={last_status}")
 
 
+async def wait_for_readable_status(
+    fetch_status: StatusFetcher,
+    *,
+    label: str,
+    timeout_seconds: float = 15.0,
+    poll_interval_seconds: float = 0.25,
+) -> dict[str, Any]:
+    """Wait for receipt-backed state to become visible through committed queries."""
+    last_error = None
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            while True:
+                try:
+                    return await fetch_status()
+                except RuntimeError as exc:
+                    last_error = str(exc)
+                await asyncio.sleep(poll_interval_seconds)
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"{label} did not become readable within {timeout_seconds}s; last={last_error}"
+        ) from exc
+
+
 async def cast_votes_until_status(
     vote_senders: Sequence[VoteSender],
     *,

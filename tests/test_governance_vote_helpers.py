@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from governance_vote_helpers import (
     cast_votes_until_status,
     read_freshest_status,
+    wait_for_readable_status,
     wait_for_status,
 )
 
@@ -33,6 +35,40 @@ class ProposalHarness:
 
 
 class GovernanceVoteHelpersTests(unittest.IsolatedAsyncioTestCase):
+    async def test_readable_status_retries_missing_committed_state(self) -> None:
+        reads = 0
+
+        async def fetch_status():
+            nonlocal reads
+            reads += 1
+            if reads == 1:
+                raise RuntimeError("all readers returned None")
+            return {"status": "pending"}
+
+        status = await wait_for_readable_status(
+            fetch_status, label="members vote 1", poll_interval_seconds=0.0
+        )
+        self.assertEqual({"status": "pending"}, status)
+        self.assertEqual(2, reads)
+
+    async def test_readable_status_times_out_with_last_error(self) -> None:
+        async def fetch_status():
+            raise RuntimeError("all readers returned None")
+
+        with self.assertRaisesRegex(RuntimeError, "members vote 1.*last=all readers"):
+            await wait_for_readable_status(
+                fetch_status, label="members vote 1", timeout_seconds=0.01
+            )
+
+    async def test_readable_status_bounds_a_stalled_reader(self) -> None:
+        async def fetch_status():
+            await asyncio.Event().wait()
+
+        with self.assertRaisesRegex(RuntimeError, "members vote 1 did not become readable"):
+            await wait_for_readable_status(
+                fetch_status, label="members vote 1", timeout_seconds=0.01
+            )
+
     async def test_freshest_status_prefers_terminal_snapshot(self) -> None:
         async def stale_reader() -> dict[str, int | str]:
             return {

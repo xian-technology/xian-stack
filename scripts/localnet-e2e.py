@@ -26,6 +26,7 @@ import aiohttp
 from governance_vote_helpers import (
     cast_votes_until_status,
     read_freshest_status,
+    wait_for_readable_status,
     wait_for_status,
 )
 from localnet_abci_queries import check_live_abci
@@ -2462,10 +2463,25 @@ class E2ERunner:
             chi=GOVERNANCE_TX_CHI,
             mode="async",
         )
-        proposal_id = int(await proposer.get_state("validators", "total_votes"))
+        proposal_ids = [
+            (event.get("data_indexed") or {}).get("proposal_id")
+            for event in proposal_receipt["events"]
+            if event.get("contract") == "validators"
+            and event.get("event") == "ValidatorProposalSubmitted"
+        ]
+        if (
+            len(proposal_ids) != 1
+            or type(proposal_ids[0]) is not int
+            or proposal_ids[0] < 1
+        ):
+            raise E2EError(
+                f"{label_prefix}: expected one positive proposal ID in receipt "
+                f"{proposal_receipt.get('tx_hash')}; got {proposal_ids!r}"
+            )
+        proposal_id = proposal_ids[0]
         status_readers = [proposer, *[voter for _name, voter in voters]]
 
-        async def read_vote_status() -> dict[str, Any]:
+        async def fetch_vote_status() -> dict[str, Any]:
             return await read_freshest_status(
                 [
                     functools.partial(
@@ -2478,6 +2494,13 @@ class E2ERunner:
                 ],
                 completed_statuses={"approved"},
                 label=f"members vote {proposal_id}",
+            )
+
+        async def read_vote_status() -> dict[str, Any]:
+            return await wait_for_readable_status(
+                fetch_vote_status,
+                label=f"members vote {proposal_id}",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 15.0),
             )
 
         proposal_pending = await read_vote_status()
