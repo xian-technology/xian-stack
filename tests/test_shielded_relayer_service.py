@@ -466,3 +466,24 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_hybrid_relayer_custody_and_mixed_configuration(tmp_path, monkeypatch):
+    import pytest
+    from xian_py.hybrid import AccountTransitionDraft
+    from xian_py.wallet import Wallet
+
+    legacy = Wallet()
+    draft = AccountTransitionDraft("local-test", legacy.public_key, 0)
+    path = tmp_path / "active.json"
+    path.write_text(draft.export_backup("active", "backup test password"))
+    monkeypatch.delenv("XIAN_SHIELDED_RELAYER_PRIVATE_KEY", raising=False)
+    monkeypatch.delenv("XIAN_SHIELDED_RELAYER_PRIVATE_KEY_FILE", raising=False)
+    monkeypatch.setenv("XIAN_SHIELDED_RELAYER_ACTIVE_BACKUP_FILE", str(path))
+    monkeypatch.setenv("XIAN_SHIELDED_RELAYER_BACKUP_PASSWORD", "backup test password")
+    config = load_config_from_env()
+    service = ShieldedRelayerService(config)
+    assert service._xian.wallet.public_key == legacy.public_key
+    monkeypatch.setenv("XIAN_SHIELDED_RELAYER_PRIVATE_KEY", legacy.private_key)
+    with pytest.raises(ValueError, match="exactly one"):
+        ShieldedRelayerService(load_config_from_env())

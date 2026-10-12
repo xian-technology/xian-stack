@@ -42,9 +42,8 @@ class LocalnetX402PhaseTests(unittest.TestCase):
         self.assertEqual("04-periodic-load", phase_names[x402_index + 2])
 
     def test_x402_phase_inputs_are_wired_for_runner_and_cli(self) -> None:
-        self.assertTrue(localnet_e2e.X402_CONTRACT_SOURCE.exists())
+        self.assertFalse(hasattr(localnet_e2e, "X402_CONTRACT_SOURCE"))
         self.assertTrue(localnet_e2e.INTENTKIT_X402_SMOKE_SCRIPT.exists())
-        self.assertEqual(Decimal("0.001"), localnet_e2e.X402_PAYMENT_AMOUNT)
         self.assertIn("psycopg-binary", localnet_e2e.INTENTKIT_UV_EXTRA_PACKAGES)
 
         args = localnet_e2e.build_parser().parse_args(
@@ -130,3 +129,14 @@ class LocalnetX402PhaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RetiredX402Tests(unittest.IsolatedAsyncioTestCase):
+    async def test_no_legacy_deployment_or_payment_is_attempted(self):
+        for phase in (
+            localnet_e2e.E2ERunner.x402_exact_phase,
+            localnet_e2e.E2ERunner.intentkit_x402_phase,
+        ):
+            result = await phase(None, None)
+            self.assertEqual(result["status"], "skipped")
+            self.assertIn("retired", result["reason"])

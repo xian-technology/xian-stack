@@ -9,6 +9,14 @@ class PythonRuntimeRequirementsTests(unittest.TestCase):
         path = Path(__file__).resolve().parents[1] / "docker" / "python-runtime-requirements.txt"
         lines = path.read_text(encoding="utf-8").splitlines()
         self.assertTrue(lines)
+        self.assertTrue(
+            any(line.startswith("cryptography==") for line in lines),
+            "bundled SDK must be able to decrypt hybrid active backups",
+        )
+        self.assertTrue(
+            any(line.startswith("pqcrypto==") for line in lines),
+            "node image must include the ML-DSA verifier required by account authorization",
+        )
         self.assertFalse(any(line.startswith("-e ") for line in lines))
         self.assertTrue(
             any("--hash=sha256:" in line for line in lines),

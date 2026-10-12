@@ -526,8 +526,7 @@ def seed_demo_pool(
             )
         elif registered_lp_token != lp_contract:
             raise DexBootstrapError(
-                f"registered demo LP token is {registered_lp_token!r}, "
-                f"expected {lp_contract!r}"
+                f"registered demo LP token is {registered_lp_token!r}, expected {lp_contract!r}"
             )
 
     operations.append(
@@ -647,7 +646,21 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     wait_for_rpc_ready(rpc_url, timeout_seconds=args.rpc_timeout_seconds)
 
     source_bundle = load_dex_contract_sources(args)
-    deployer_wallet = Wallet(private_key=resolve_deployer_private_key(args=args, network=network))
+    backup = os.environ.get("XIAN_ACTIVE_BACKUP_FILE")
+    if backup:
+        from xian_py.signers import load_signing_wallet
+
+        deployer_wallet = load_signing_wallet(
+            private_key=args.deployer_private_key
+            or os.environ.get("XIAN_DEX_DEPLOYER_PRIVATE_KEY"),
+            active_backup_file=backup,
+            backup_password=os.environ.get("XIAN_BACKUP_PASSWORD"),
+            chain_id=args.chain_id,
+        )
+    else:
+        deployer_wallet = Wallet(
+            private_key=resolve_deployer_private_key(args=args, network=network)
+        )
 
     core_sources = source_bundle["core_sources"]
     demo_token_source = source_bundle["demo_token_source"]

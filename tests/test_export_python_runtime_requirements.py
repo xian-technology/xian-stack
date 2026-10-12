@@ -48,3 +48,17 @@ hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
         "typing-extensions==4.15.0 \\",
         "    --hash=sha256:" + "0" * 64,
     ]
+
+
+def test_image_export_includes_sdk_crypto_and_rejects_conflicting_pins():
+    import pytest
+    from export_python_runtime_requirements import merge_requirements
+
+    node = "cffi==2.0.0 \\\n    --hash=sha256:abc\n"
+    sdk = node + "cryptography==48.0.1 \\\n    --hash=sha256:def\n"
+    merged = merge_requirements(node, sdk)
+    assert merged.count("cffi==2.0.0") == 1
+    assert "cryptography==48.0.1" in merged
+    assert "--hash=sha256:def" in merged
+    with pytest.raises(ValueError, match="lock conflict"):
+        merge_requirements(node, sdk.replace("cffi==2.0.0", "cffi==1.0.0"))

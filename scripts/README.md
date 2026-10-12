@@ -23,15 +23,17 @@ tooling behind `xian-stack`.
   optional `con_dex_helper`, and a reusable local demo pool for DEX UI and
   event testing
 - `localnet-workload.py`: deterministic workload execution against the localnet
+- `account-load-rehearsal.py`: isolated five-validator sustained account load,
+  malformed traffic, crash recovery and receipt-based balance checks with
+  enrollment closed; see [the drill](../docs/ACCOUNT_LOAD_REHEARSAL.md)
 - `localnet-tps-bench.py`: repeatable throughput sweeps for a running localnet;
   it writes benchmark artifacts under `.artifacts/tps-bench/` and reports both
   committed chain throughput and end-to-end client workload throughput
 - `localnet-e2e.py`: the layered 5-validator testnet-shaped end-to-end program
-  that exercises the live stack phase by phase, including direct and
-  permit-authorized `currency.approvals` flows, live contract rollback probes,
+  that exercises the live stack phase by phase, including direct
+  authenticated `currency.approvals` flows, live contract rollback probes,
   native transfer fan-out, VM-heavy contract workloads,
-  restart-and-convergence chaos coverage, timed soak/abuse coverage, an opt-in
-  IntentKit Xian-native x402 buyer phase via `--intentkit-x402`, and writes
+  restart-and-convergence chaos coverage, timed soak/abuse coverage, and writes
   artifacts under
   `.artifacts/localnet-e2e/<run-id>/`
 - `localnet_node_report.py`: collects fixed VM capability status from a running
@@ -103,3 +105,12 @@ flowchart LR
   ProtocolSafety --> ReleaseSafety["release-safety"]
   RuntimeReport --> ReleaseSafety
 ```
+
+## Deployed authorization audit
+
+`deployed_contract_audit.py` collects agreeing source, IR and storage evidence
+from explicitly supplied validator RPCs at one height.
+It never enables enrollment or submits transactions. The fresh-chain migration
+uses `rehearse_balance_import.py` to compare a bounded legacy balance sample
+against a disposable genesis. See
+[the migration plan](../docs/DEPLOYED_CONTRACT_UPGRADE_PLAN.md).

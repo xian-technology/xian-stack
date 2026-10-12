@@ -170,6 +170,7 @@ RUN uv pip install --system --no-cache --no-index --find-links /tmp/wheels --req
     /tmp/wheels/xian_tech_py-*.whl \
     /tmp/wheels/xian_tech_contracting-*.whl \
     /tmp/wheels/xian_tech_abci-*.whl \
+    && python -B -c "from xian_py.hybrid import AccountTransitionDraft; from pqcrypto.sign import ml_dsa_65 as m; p, s = m.generate_keypair(); assert m.verify(p, b'image-probe', m.sign(s, b'image-probe'))" \
     && rm -rf /tmp/wheels /tmp/python-runtime-requirements.txt /root/.cache/uv \
     && find /usr/local/lib -name uv_cache.json -delete \
     && find /usr/local/lib -name RECORD -exec sed -i '/uv_cache\.json,/d' {} +

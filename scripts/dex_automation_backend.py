@@ -120,6 +120,8 @@ def _probe_health(url: str, *, timeout: float = 1.5) -> bool:
 def _ensure_wallet_key(path: Path) -> None:
     if path.exists() and path.read_text(encoding="utf-8").strip():
         return
+    if path.exists():
+        raise RuntimeError("existing automation key file is empty; restore custody before starting")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"{secrets.token_hex(32)}\n", encoding="utf-8")
     try:
@@ -140,9 +142,8 @@ def ensure_dex_automation_config(
     state_path = _PROCESS_DIR / "state.sqlite3"
 
     _PROCESS_DIR.mkdir(parents=True, exist_ok=True)
-    _ensure_wallet_key(wallet_key_path)
-
     if not config_path.exists():
+        _ensure_wallet_key(wallet_key_path)
         config_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "network": {
@@ -207,10 +208,6 @@ def _build_runtime_env(env: dict[str, str] | None = None) -> dict[str, str]:
     source_env.setdefault(
         "XIAN_DEX_AUTOMATION_CONFIG",
         str(resolve_dex_automation_config_path(env=source_env)),
-    )
-    source_env.setdefault(
-        "XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE",
-        str(resolve_dex_automation_wallet_key_path(env=source_env)),
     )
     source_env.setdefault(
         "XIAN_PY_DIR",

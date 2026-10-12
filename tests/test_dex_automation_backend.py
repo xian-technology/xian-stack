@@ -159,3 +159,22 @@ class DexAutomationBackendTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_existing_hybrid_config_never_generates_replacement_key(tmp_path, monkeypatch):
+    import dex_automation_backend as backend
+
+    config_path = tmp_path / "config.yaml"
+    key_path = tmp_path / "wallet.key"
+    config_path.write_text("wallet:\n  active_backup_file: active.json\n")
+    monkeypatch.setattr(backend, "require_dex_automation_repo", lambda **_: tmp_path)
+    monkeypatch.setattr(backend, "_PROCESS_DIR", tmp_path)
+    backend.ensure_dex_automation_config(
+        rpc_url="http://127.0.0.1:26657",
+        env={
+            "XIAN_DEX_AUTOMATION_CONFIG": str(config_path),
+            "XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE": str(key_path),
+        },
+    )
+    assert not key_path.exists()
+    assert "active_backup_file" in config_path.read_text()

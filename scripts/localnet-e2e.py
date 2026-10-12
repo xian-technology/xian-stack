@@ -36,9 +36,11 @@ from localnet_e2e_phases import bind_phase_sequence, phase_names
 from localnet_e2e_support import (
     E2EError,
     normalize_value,
-    parse_json_stdout,
     short_hash,
     write_private_json,
+)
+from localnet_e2e_support import (
+    parse_json_stdout as parse_json_stdout,
 )
 from localnet_network import pin_localnet_addresses
 from localnet_node_report import collect_localnet_node_report
@@ -108,11 +110,6 @@ CONTRACT_ORCHESTRATION_TX_CHI = {
     "deploy_family": 100_000,
     "dynamic_call": 50_000,
 }
-X402_CONTRACT_SOURCE = (
-    ROOT_DIR / "xian-py" / "examples" / "x402_exact" / "contracts" / "x402_settlement.s.py"
-)
-X402_PAYMENT_AMOUNT = Decimal("0.001")
-X402_SETTLEMENT_TX_CHI = 15_000
 SHIELDED_TX_CHI = {
     "deposit": 8_000_000,
     "transfer": 10_000_000,
@@ -131,13 +128,6 @@ from xian_py.exception import SimulationError, TransportError, TxTimeoutError  #
 from xian_py.models import TransactionSubmission  # noqa: E402
 from xian_py.shielded_relayer import ShieldedRelayerAsyncClient  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
-from xian_py.x402 import (  # noqa: E402
-    XianX402Facilitator,
-    XianX402PaymentRequirement,
-    sign_xian_x402_payment,
-    verify_xian_x402_payment,
-    xian_network_id,
-)
 from xian_py.xian_async import XianAsync  # noqa: E402
 from xian_runtime_types.decimal import ContractingDecimal  # noqa: E402
 from xian_runtime_types.time import Datetime as RuntimeDatetime  # noqa: E402
@@ -416,36 +406,6 @@ async def wait_for_abci_query_responsive(
             last_error = f"{type(exc).__name__}: {exc}"
             await asyncio.sleep(0.5)
     raise E2EError(f"node {rpc_url} did not answer ABCI queries; last={last_error}")
-
-
-def construct_token_permit_message(
-    *,
-    token_contract: str,
-    owner: str,
-    spender: str,
-    value: int | float,
-    deadline: str,
-    authorizer_contract: str,
-    chain_id: str,
-    nonce: int,
-) -> str:
-    amount = Decimal(str(value))
-    amount_text = format(amount.normalize(), "f")
-    if "." in amount_text:
-        amount_text = amount_text.rstrip("0").rstrip(".")
-    return "\n".join(
-        [
-            "xian-permit-v2",
-            f"chain_id:{chain_id}",
-            f"authorizer:{authorizer_contract}",
-            f"token_contract:{token_contract}",
-            f"owner:{owner}",
-            f"spender:{spender}",
-            f"amount:{amount_text}",
-            f"deadline:{deadline}",
-            f"nonce:{int(nonce)}",
-        ]
-    )
 
 
 def tx_amount_from_decimal(value: Decimal) -> int | ContractingDecimal:
@@ -1933,10 +1893,6 @@ class E2ERunner:
             rollback = self._load_resume_json("03-atomic-rollback")
             self.contracts["atomic_rollback"] = rollback["details"]["contract"]
 
-        if "03-x402-exact" in completed_phase_names:
-            x402 = self._load_resume_json("03-x402-exact")
-            self.contracts["x402_settlement"] = x402["details"]["contract"]
-
         if "06-conflict-invalid" in completed_phase_names:
             conflict = self._load_resume_json("06-conflict-invalid")
             self.contracts["conflict"] = conflict["details"]["conflict_contract"]
@@ -2469,11 +2425,7 @@ class E2ERunner:
             if event.get("contract") == "validators"
             and event.get("event") == "ValidatorProposalSubmitted"
         ]
-        if (
-            len(proposal_ids) != 1
-            or type(proposal_ids[0]) is not int
-            or proposal_ids[0] < 1
-        ):
+        if len(proposal_ids) != 1 or type(proposal_ids[0]) is not int or proposal_ids[0] < 1:
             raise E2EError(
                 f"{label_prefix}: expected one positive proposal ID in receipt "
                 f"{proposal_receipt.get('tx_hash')}; got {proposal_ids!r}"
@@ -3067,7 +3019,8 @@ class E2ERunner:
         if self.args.bootstrap:
             if (STACK_DIR / "docker-compose-localnet.yml").exists():
                 outputs["localnet_down"] = run_make(
-                    "localnet-down", env={**env, "LOCALNET_REMOVE_VOLUMES": "1"},
+                    "localnet-down",
+                    env={**env, "LOCALNET_REMOVE_VOLUMES": "1"},
                 ).stdout
             outputs["localnet_init"] = run_make("localnet-init", env=env).stdout
             outputs["network_addresses"] = await pin_localnet_addresses(
@@ -3078,7 +3031,10 @@ class E2ERunner:
             outputs["localnet_up"] = run_make("localnet-up", env=env).stdout
 
         self.network = load_network()
-        shutil.copy2(STACK_DIR / "docker-compose-localnet.yml", self.output_dir / "docker-compose-localnet.yml")
+        shutil.copy2(
+            STACK_DIR / "docker-compose-localnet.yml",
+            self.output_dir / "docker-compose-localnet.yml",
+        )
         self.nodes = build_nodes(self.network)
         self.bds_node = next(
             (node for node in self.nodes if node.bds_node),
@@ -3197,7 +3153,9 @@ class E2ERunner:
                 chi=120_000,
                 wait_for_tx=True,
             )
-            receipt = ensure_positive_submission(deployment, label="deploy 64-character contract name")
+            receipt = ensure_positive_submission(
+                deployment, label="deploy 64-character contract name"
+            )
         # Constructor state must be visible through real RPC on every validator.
         await self.wait_for_uniform_node_state(
             session,
@@ -3209,7 +3167,9 @@ class E2ERunner:
         )
         for node, probe in zip(self.nodes, probes, strict=True):
             probe["live_rpc"] = await check_live_abci(
-                session, node, expected_version=ABCI_VERSION,
+                session,
+                node,
+                expected_version=ABCI_VERSION,
                 state_path=f"/get/{name}.number",
                 invalid_txs=probe["runtime_callbacks"].pop("invalid_txs"),
             )
@@ -3543,12 +3503,7 @@ class E2ERunner:
     ) -> dict[str, Any]:
         operator = derive_wallet(self.seed, "contract-orchestration-operator")
         spender = derive_wallet(self.seed, "contract-orchestration-spender")
-        permit_spender = derive_wallet(self.seed, "contract-orchestration-permit-spender")
-        invalid_permit_spender = derive_wallet(
-            self.seed, "contract-orchestration-invalid-permit-spender"
-        )
         recipient = derive_wallet(self.seed, "contract-orchestration-recipient")
-        permit_recipient = derive_wallet(self.seed, "contract-orchestration-permit-recipient")
         duplicate_sender = derive_wallet(self.seed, "contract-orchestration-duplicate-sender")
         duplicate_recipient = derive_wallet(self.seed, "contract-orchestration-duplicate-recipient")
         compiler_security_sender = derive_wallet(
@@ -3559,8 +3514,6 @@ class E2ERunner:
             [
                 operator,
                 spender,
-                permit_spender,
-                invalid_permit_spender,
                 duplicate_sender,
                 compiler_security_sender,
             ],
@@ -3973,28 +3926,9 @@ class E2ERunner:
 
         direct_allowance = 321
         direct_spend = 123
-        permit_allowance = 222
-        permit_spend = 111
-        permit_deadline = (
-            datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=10)
-        ).strftime("%Y-%m-%d %H:%M:%S")
-        permit_msg = construct_token_permit_message(
-            token_contract="currency",
-            owner=operator.public_key,
-            spender=permit_spender.public_key,
-            value=permit_allowance,
-            deadline=permit_deadline,
-            authorizer_contract="permit_authorizer",
-            chain_id=self.network["chain_id"],
-            nonce=0,
-        )
-        permit_signature = operator.sign_msg(permit_msg)
-
         async with (
             self.client(operator, 0, session) as owner_client,
             self.client(spender, 1, session) as spender_client,
-            self.client(permit_spender, 2, session) as permit_spender_client,
-            self.client(invalid_permit_spender, 3, session) as invalid_permit_client,
         ):
             direct_approve_receipt = ensure_positive_submission(
                 await owner_client.send_tx(
@@ -4048,189 +3982,6 @@ class E2ERunner:
                 keys=[recipient.public_key],
                 expected=direct_spend,
                 label="direct transfer recipient balance",
-                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-            )
-
-            permit_receipt = ensure_positive_submission(
-                await permit_spender_client.send_tx(
-                    "permit_authorizer",
-                    "permit",
-                    {
-                        "token_contract": "currency",
-                        "owner": operator.public_key,
-                        "spender": permit_spender.public_key,
-                        "value": permit_allowance,
-                        "deadline": permit_deadline,
-                        "nonce": 0,
-                        "signature": permit_signature,
-                    },
-                    chi=DEFAULT_TX_CHI,
-                    wait_for_tx=True,
-                ),
-                label="currency-permit-approve",
-            )
-            permit_allowance_state = await self.wait_for_uniform_node_state(
-                session,
-                self.nodes,
-                contract="currency",
-                variable="approvals",
-                keys=[operator.public_key, permit_spender.public_key],
-                expected=permit_allowance,
-                label="permit allowance state",
-                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-            )
-            permit_transfer_receipt = ensure_positive_submission(
-                await permit_spender_client.send_tx(
-                    "currency",
-                    "transfer_from",
-                    {
-                        "amount": permit_spend,
-                        "to": permit_recipient.public_key,
-                        "main_account": operator.public_key,
-                    },
-                    chi=DEFAULT_TRANSFER_CHI,
-                    wait_for_tx=True,
-                ),
-                label="currency-permit-transfer-from",
-            )
-            permit_remaining_allowance = await self.wait_for_uniform_node_state(
-                session,
-                self.nodes,
-                contract="currency",
-                variable="approvals",
-                keys=[operator.public_key, permit_spender.public_key],
-                expected=permit_allowance - permit_spend,
-                label="permit remaining allowance",
-                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-            )
-            permit_recipient_balance = await self.wait_for_uniform_node_state(
-                session,
-                self.nodes,
-                contract="currency",
-                variable="balances",
-                keys=[permit_recipient.public_key],
-                expected=permit_spend,
-                label="permit transfer recipient balance",
-                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-            )
-
-            expired_deadline = (
-                datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=5)
-            ).strftime("%Y-%m-%d %H:%M:%S")
-            expired_signature = operator.sign_msg(
-                construct_token_permit_message(
-                    token_contract="currency",
-                    owner=operator.public_key,
-                    spender=invalid_permit_spender.public_key,
-                    value=77,
-                    deadline=expired_deadline,
-                    authorizer_contract="permit_authorizer",
-                    chain_id=self.network["chain_id"],
-                    nonce=1,
-                )
-            )
-            expired_permit_receipt = ensure_failed_submission(
-                await invalid_permit_client.send_tx(
-                    "permit_authorizer",
-                    "permit",
-                    {
-                        "token_contract": "currency",
-                        "owner": operator.public_key,
-                        "spender": invalid_permit_spender.public_key,
-                        "value": 77,
-                        "deadline": expired_deadline,
-                        "nonce": 1,
-                        "signature": expired_signature,
-                    },
-                    chi=DEFAULT_TX_CHI,
-                    wait_for_tx=True,
-                ),
-                label="currency-permit-expired",
-                expected_message_fragment="Permit has expired.",
-            )
-            expired_allowance_state = await self.wait_for_uniform_node_state(
-                session,
-                self.nodes,
-                contract="currency",
-                variable="approvals",
-                keys=[operator.public_key, invalid_permit_spender.public_key],
-                expected=None,
-                label="expired permit allowance remains zero",
-                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-            )
-
-            invalid_signature_deadline = (
-                datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=10)
-            ).strftime("%Y-%m-%d %H:%M:%S")
-            wrong_signature = operator.sign_msg(
-                construct_token_permit_message(
-                    token_contract="currency",
-                    owner=operator.public_key,
-                    spender=permit_spender.public_key,
-                    value=88,
-                    deadline=invalid_signature_deadline,
-                    authorizer_contract="permit_authorizer",
-                    chain_id=self.network["chain_id"],
-                    nonce=1,
-                )
-            )
-            invalid_signature_receipt = ensure_failed_submission(
-                await invalid_permit_client.send_tx(
-                    "permit_authorizer",
-                    "permit",
-                    {
-                        "token_contract": "currency",
-                        "owner": operator.public_key,
-                        "spender": invalid_permit_spender.public_key,
-                        "value": 88,
-                        "deadline": invalid_signature_deadline,
-                        "nonce": 1,
-                        "signature": wrong_signature,
-                    },
-                    chi=DEFAULT_TX_CHI,
-                    wait_for_tx=True,
-                ),
-                label="currency-permit-invalid-signature",
-                expected_message_fragment="Invalid signature.",
-            )
-            invalid_signature_allowance_state = await self.wait_for_uniform_node_state(
-                session,
-                self.nodes,
-                contract="currency",
-                variable="approvals",
-                keys=[operator.public_key, invalid_permit_spender.public_key],
-                expected=None,
-                label="invalid signature allowance remains zero",
-                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-            )
-
-            replay_permit_receipt = ensure_failed_submission(
-                await permit_spender_client.send_tx(
-                    "permit_authorizer",
-                    "permit",
-                    {
-                        "token_contract": "currency",
-                        "owner": operator.public_key,
-                        "spender": permit_spender.public_key,
-                        "value": permit_allowance,
-                        "deadline": permit_deadline,
-                        "nonce": 0,
-                        "signature": permit_signature,
-                    },
-                    chi=DEFAULT_TX_CHI,
-                    wait_for_tx=True,
-                ),
-                label="currency-permit-replay",
-                expected_message_fragment="Invalid permit nonce.",
-            )
-            replay_allowance_state = await self.wait_for_uniform_node_state(
-                session,
-                self.nodes,
-                contract="currency",
-                variable="approvals",
-                keys=[operator.public_key, permit_spender.public_key],
-                expected=permit_allowance - permit_spend,
-                label="replayed permit allowance unchanged",
                 timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
             )
 
@@ -4458,17 +4209,6 @@ class E2ERunner:
                 "direct_transfer_receipt": direct_transfer_receipt,
                 "direct_remaining_allowance": direct_remaining_allowance,
                 "direct_recipient_balance": direct_recipient_balance,
-                "permit_receipt": permit_receipt,
-                "permit_allowance_state": permit_allowance_state,
-                "permit_transfer_receipt": permit_transfer_receipt,
-                "permit_remaining_allowance": permit_remaining_allowance,
-                "permit_recipient_balance": permit_recipient_balance,
-                "expired_permit_receipt": expired_permit_receipt,
-                "expired_allowance_state": expired_allowance_state,
-                "invalid_signature_receipt": invalid_signature_receipt,
-                "invalid_signature_allowance_state": invalid_signature_allowance_state,
-                "replay_permit_receipt": replay_permit_receipt,
-                "replay_allowance_state": replay_allowance_state,
             },
             "duplicate_submission_path": {
                 "tx_hash": duplicate_tx_hash,
@@ -4676,448 +4416,16 @@ class E2ERunner:
             },
         }
 
-    async def x402_exact_phase(
-        self,
-        session: aiohttp.ClientSession,
-    ) -> dict[str, Any]:
-        buyer = derive_wallet(self.seed, "x402-exact-buyer")
-        seller = derive_wallet(self.seed, "x402-exact-seller")
-        facilitator = derive_wallet(self.seed, "x402-exact-facilitator")
-        buyer_funding = await self.fund_wallets(session, [buyer], amount=100)
-        facilitator_funding = await self.fund_wallets(
-            session,
-            [facilitator],
-            amount=250_000,
-        )
-
-        contract_name = f"con_x402_{short_hash(f'{self.run_id}:x402')}"
-        self.contracts["x402_settlement"] = contract_name
-        resource = f"https://e2e.xian.local/x402/{self.run_id}/data"
-        payment_id = f"pay_{short_hash(f'{self.run_id}:x402:payment')}{'0' * 16}"
-        deadline = (datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=15)).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-
-        buyer_balance_before = Decimal(
-            str(
-                await fetch_abci_query(
-                    session,
-                    self.nodes[0].rpc_url,
-                    f"/get/currency.balances:{buyer.public_key}",
-                )
-                or 0
-            )
-        )
-        seller_balance_before = Decimal(
-            str(
-                await fetch_abci_query(
-                    session,
-                    self.nodes[0].rpc_url,
-                    f"/get/currency.balances:{seller.public_key}",
-                )
-                or 0
-            )
-        )
-
-        async with self.client(facilitator, 0, session) as client:
-            existing_contract = await client.get_contract_source(contract_name)
-            if existing_contract is None:
-                deployment = ensure_positive_submission(
-                    await client.submit_contract(
-                        name=contract_name,
-                        **self.contract_submission_kwargs(
-                            name=contract_name,
-                            code=read_text(X402_CONTRACT_SOURCE),
-                        ),
-                        chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
-                        mode="commit",
-                    ),
-                    label=f"deploy {contract_name}",
-                )
-            else:
-                deployment = {
-                    "accepted": True,
-                    "reused": True,
-                    "contract": contract_name,
-                }
-
-            requirement = XianX402PaymentRequirement(
-                network=xian_network_id(self.network["chain_id"]),
-                asset="currency",
-                amount=X402_PAYMENT_AMOUNT,
-                pay_to=seller.public_key,
-                resource=resource,
-                settlement_contract=contract_name,
-                description="5-node x402 exact payment e2e",
-            )
-            payload = sign_xian_x402_payment(
-                requirement,
-                buyer,
-                payment_id=payment_id,
-                deadline=deadline,
-            )
-            verification = verify_xian_x402_payment(payload, requirement)
-            if not verification.valid:
-                raise E2EError(f"x402 verification failed: {verification.error}")
-
-            invalid_requirement = XianX402PaymentRequirement(
-                network=requirement.network,
-                asset=requirement.asset,
-                amount=Decimal("0.002"),
-                pay_to=requirement.pay_to,
-                resource=requirement.resource,
-                settlement_contract=requirement.settlement_contract,
-            )
-            invalid_verification = verify_xian_x402_payment(
-                payload,
-                invalid_requirement,
-            )
-            if invalid_verification.valid:
-                raise E2EError("tampered x402 requirement unexpectedly verified")
-
-            facilitator_api = XianX402Facilitator(
-                client=client,
-                requirement=requirement,
-            )
-            settlement = await facilitator_api.settle(
-                payload,
-                mode="checktx",
-                wait_for_tx=True,
-                chi=X402_SETTLEMENT_TX_CHI,
-            )
-            if not settlement.success or settlement.submission is None:
-                raise E2EError(f"x402 settlement failed: {settlement.error}")
-            settlement_receipt = ensure_positive_submission(
-                settlement.submission,
-                label="x402-settlement",
-            )
-
-            replay = await facilitator_api.settle(
-                payload,
-                mode="checktx",
-                wait_for_tx=True,
-                chi=X402_SETTLEMENT_TX_CHI,
-            )
-            if replay.success:
-                raise E2EError("x402 replay unexpectedly succeeded")
-            if "Payment has already been settled." not in str(replay.error):
-                raise E2EError(f"x402 replay failed for wrong reason: {replay.error}")
-            replay_receipt = (
-                normalize_receipt(replay.submission, label="x402-replay")
-                if replay.submission is not None
-                else replay.to_dict()
-            )
-
-        expected_payment_state = {
-            "amount": str(X402_PAYMENT_AMOUNT),
-            "amount_text": str(X402_PAYMENT_AMOUNT),
-            "facilitator": facilitator.public_key,
-            "pay_to": seller.public_key,
-            "payer": buyer.public_key,
-            "resource": resource,
-            "token_contract": "currency",
-        }
-        payment_state = await self.wait_for_uniform_node_state(
-            session,
-            self.nodes,
-            contract=contract_name,
-            variable="payments",
-            keys=[payload.payment_id],
-            expected=expected_payment_state,
-            label="x402 payment state",
-            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-        )
-        allowance_state = await self.wait_for_uniform_node_state(
-            session,
-            self.nodes,
-            contract="currency",
-            variable="approvals",
-            keys=[buyer.public_key, contract_name],
-            expected="0",
-            label="x402 allowance consumed",
-            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-        )
-        buyer_balance = await self.wait_for_uniform_node_state(
-            session,
-            self.nodes,
-            contract="currency",
-            variable="balances",
-            keys=[buyer.public_key],
-            expected=buyer_balance_before - X402_PAYMENT_AMOUNT,
-            label="x402 buyer balance",
-            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-        )
-        seller_balance = await self.wait_for_uniform_node_state(
-            session,
-            self.nodes,
-            contract="currency",
-            variable="balances",
-            keys=[seller.public_key],
-            expected=seller_balance_before + X402_PAYMENT_AMOUNT,
-            label="x402 seller balance",
-            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-        )
-
-        bds_event_match = None
-        bds_status = None
-        if self.bds_node is not None:
-            async with self.client(
-                facilitator,
-                self.bds_node.index,
-                session,
-            ) as service_client:
-                target_height = await latest_height(
-                    session,
-                    self.bds_node.rpc_url,
-                )
-                bds_status = await wait_for_bds_indexed(
-                    service_client,
-                    target_height=target_height,
-                    timeout_seconds=min(self.args.rpc_timeout_seconds, 60.0),
-                )
-                events = await service_client.list_events(
-                    contract_name,
-                    "X402PaymentSettled",
-                    limit=20,
-                )
-                bds_event_match = next(
-                    (
-                        normalize_value(event.raw)
-                        for event in events
-                        if (event.data_indexed or {}).get("payment_id") == payload.payment_id
-                    ),
-                    None,
-                )
-                if bds_event_match is None:
-                    raise E2EError("BDS did not index X402PaymentSettled")
-
+    async def x402_exact_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         return {
-            "contract": contract_name,
-            "funding": {
-                "buyer": buyer_funding,
-                "facilitator": facilitator_funding,
-            },
-            "deployment": deployment,
-            "payment": payload.to_dict(),
-            "verification": verification.to_dict(),
-            "tampered_verification": invalid_verification.to_dict(),
-            "settlement": settlement.to_dict(),
-            "settlement_receipt": settlement_receipt,
-            "replay": replay.to_dict(),
-            "replay_receipt": replay_receipt,
-            "payment_state": payment_state,
-            "allowance_state": allowance_state,
-            "buyer_balance": buyer_balance,
-            "seller_balance": seller_balance,
-            "bds_status": bds_status,
-            "bds_event": bds_event_match,
+            "status": "skipped",
+            "reason": "Permit-based x402 is retired; a new authenticated profile is required.",
         }
 
-    async def intentkit_x402_phase(
-        self,
-        session: aiohttp.ClientSession,
-    ) -> dict[str, Any]:
-        if not self.args.intentkit_x402:
-            return {
-                "skipped": True,
-                "reason": "enable with --intentkit-x402 or LOCALNET_E2E_INTENTKIT_X402=1",
-            }
-
-        if not (INTENTKIT_DIR / "pyproject.toml").exists():
-            raise E2EError(
-                f"IntentKit x402 phase requires the xian-intentkit sibling repo at {INTENTKIT_DIR}"
-            )
-        if not INTENTKIT_X402_SMOKE_SCRIPT.exists():
-            raise E2EError(f"IntentKit x402 smoke script not found: {INTENTKIT_X402_SMOKE_SCRIPT}")
-
-        contract_name = self.contracts.get("x402_settlement")
-        if not contract_name:
-            raise E2EError("x402 settlement contract is not available")
-
-        buyer = derive_wallet(self.seed, "intentkit-x402-buyer")
-        seller = derive_wallet(self.seed, "intentkit-x402-seller")
-        facilitator = derive_wallet(self.seed, "intentkit-x402-facilitator")
-        buyer_funding = await self.fund_wallets(session, [buyer], amount=100)
-        facilitator_funding = await self.fund_wallets(
-            session,
-            [facilitator],
-            amount=50_000,
-        )
-
-        buyer_balance_before = Decimal(
-            str(
-                await fetch_abci_query(
-                    session,
-                    self.nodes[0].rpc_url,
-                    f"/get/currency.balances:{buyer.public_key}",
-                )
-                or 0
-            )
-        )
-        seller_balance_before = Decimal(
-            str(
-                await fetch_abci_query(
-                    session,
-                    self.nodes[0].rpc_url,
-                    f"/get/currency.balances:{seller.public_key}",
-                )
-                or 0
-            )
-        )
-
-        env = os.environ.copy()
-        env.setdefault("REDIS_HOST", "localhost")
-        env["XIAN_LOCALNET_RPC_URL"] = self.nodes[0].rpc_url
-        env["XIAN_LOCALNET_CHAIN_ID"] = self.network["chain_id"]
-        env["XIAN_INTENTKIT_DIR"] = str(INTENTKIT_DIR)
-
-        smoke_config_path = self.output_dir / ".intentkit-x402-smoke-config.json"
-        write_private_json(
-            smoke_config_path,
-            {
-                "agent_id": "localnet-intentkit-x402-agent",
-                "amount": str(X402_PAYMENT_AMOUNT),
-                "buyer_private_key": buyer.private_key,
-                "chain_id": self.network["chain_id"],
-                "chat_id": f"localnet-intentkit-x402-{short_hash(self.run_id)}",
-                "facilitator_private_key": facilitator.private_key,
-                "max_value": 1,
-                "rpc_url": self.nodes[0].rpc_url,
-                "run_id": self.run_id,
-                "seller_private_key": seller.private_key,
-                "settlement_chi": X402_SETTLEMENT_TX_CHI,
-                "settlement_contract": contract_name,
-            },
-        )
-        try:
-            result = run_cmd(
-                [
-                    "uv",
-                    "run",
-                    "--project",
-                    str(INTENTKIT_DIR),
-                    "--python",
-                    CURRENT_UV_PYTHON,
-                    *[
-                        item
-                        for package in INTENTKIT_UV_EXTRA_PACKAGES
-                        for item in ("--with", package)
-                    ],
-                    "python3",
-                    str(INTENTKIT_X402_SMOKE_SCRIPT),
-                    "--config",
-                    str(smoke_config_path),
-                ],
-                cwd=STACK_DIR,
-                env=env,
-            )
-        finally:
-            try:
-                smoke_config_path.unlink()
-            except FileNotFoundError:
-                pass
-        payload = parse_json_stdout(
-            result.stdout,
-            label="IntentKit x402 smoke script",
-        )
-        if not isinstance(payload, dict):
-            raise E2EError("IntentKit x402 smoke script returned non-object JSON")
-
-        payment_id = payload.get("payment_id")
-        if not payment_id:
-            raise E2EError("IntentKit x402 smoke did not return a payment_id")
-        if payload.get("buyer") != buyer.public_key:
-            raise E2EError("IntentKit x402 smoke used an unexpected buyer")
-        if payload.get("seller") != seller.public_key:
-            raise E2EError("IntentKit x402 smoke used an unexpected seller")
-
-        order = payload.get("order") or {}
-        expected_order_fields = {
-            "agent_id": "localnet-intentkit-x402-agent",
-            "amount": 0,
-            "amount_text": str(X402_PAYMENT_AMOUNT),
-            "asset": "currency",
-            "network": f"xian:{self.network['chain_id']}",
-            "pay_to": seller.public_key,
-            "payer": buyer.public_key,
-            "payment_id": payment_id,
-            "status": "success",
-        }
-        for key, expected in expected_order_fields.items():
-            if order.get(key) != expected:
-                raise E2EError(
-                    f"IntentKit x402 order field {key!r} mismatch: "
-                    f"expected {expected!r}, got {order.get(key)!r}"
-                )
-
-        settlement = payload.get("settlement") or {}
-        settlement_tx_hash = settlement.get("tx_hash")
-        if not settlement_tx_hash:
-            raise E2EError("IntentKit x402 settlement did not return a tx hash")
-        if order.get("tx_hash") != settlement_tx_hash:
-            raise E2EError("IntentKit x402 order tx hash did not match settlement")
-
-        expected_payment_state = {
-            "amount": str(X402_PAYMENT_AMOUNT),
-            "amount_text": str(X402_PAYMENT_AMOUNT),
-            "facilitator": facilitator.public_key,
-            "pay_to": seller.public_key,
-            "payer": buyer.public_key,
-            "resource": payload["resource"],
-            "token_contract": "currency",
-        }
-        payment_state = await self.wait_for_uniform_node_state(
-            session,
-            self.nodes,
-            contract=contract_name,
-            variable="payments",
-            keys=[payment_id],
-            expected=expected_payment_state,
-            label="intentkit x402 payment state",
-            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-        )
-        allowance_state = await self.wait_for_uniform_node_state(
-            session,
-            self.nodes,
-            contract="currency",
-            variable="approvals",
-            keys=[buyer.public_key, contract_name],
-            expected="0",
-            label="intentkit x402 allowance consumed",
-            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-        )
-        buyer_balance = await self.wait_for_uniform_node_state(
-            session,
-            self.nodes,
-            contract="currency",
-            variable="balances",
-            keys=[buyer.public_key],
-            expected=buyer_balance_before - X402_PAYMENT_AMOUNT,
-            label="intentkit x402 buyer balance",
-            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-        )
-        seller_balance = await self.wait_for_uniform_node_state(
-            session,
-            self.nodes,
-            contract="currency",
-            variable="balances",
-            keys=[seller.public_key],
-            expected=seller_balance_before + X402_PAYMENT_AMOUNT,
-            label="intentkit x402 seller balance",
-            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-        )
-
+    async def intentkit_x402_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         return {
-            "contract": contract_name,
-            "funding": {
-                "buyer": buyer_funding,
-                "facilitator": facilitator_funding,
-            },
-            "smoke": payload,
-            "payment_state": payment_state,
-            "allowance_state": allowance_state,
-            "buyer_balance": buyer_balance,
-            "seller_balance": seller_balance,
+            "status": "skipped",
+            "reason": "Permit-based x402 is retired; a new authenticated profile is required.",
         }
 
     async def periodic_load(self, session: aiohttp.ClientSession) -> dict[str, Any]:
@@ -10683,7 +9991,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--intentkit-x402",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Run the optional IntentKit-backed Xian x402 payment phase.",
+        help="Retired legacy flag; x402 phases report skipped on fresh chains.",
     )
     parser.add_argument("--rpc-timeout-seconds", type=float, default=180.0)
     parser.add_argument("--state-sample-nodes", type=int, default=DEFAULT_LOCALNET_NODES)

@@ -19,7 +19,6 @@ from typing import Any, Callable, Literal
 from aiohttp import web
 from xian_py import (
     SubmissionConfig,
-    Wallet,
     XianAsync,
     XianClientConfig,
     to_contract_time,
@@ -266,6 +265,8 @@ class ShieldedRelayerServiceConfig:
     port: int = 38180
     node_url: str = "http://127.0.0.1:26657"
     relayer_private_key: str = ""
+    active_backup_file: str | None = None
+    backup_password: str | None = field(default=None, repr=False)
     auth_token: str | None = None
     access_policy: ShieldedRelayerAccessPolicy = field(default_factory=ShieldedRelayerAccessPolicy)
     submission_mode: Literal["async", "checktx", "commit"] = "checktx"
@@ -306,7 +307,13 @@ class ShieldedRelayerService:
         self._chain_id_lock = asyncio.Lock()
         self._owns_client = xian_client is None
         if xian_client is None:
-            wallet = Wallet(private_key=config.relayer_private_key)
+            from xian_py.signers import load_signing_wallet
+
+            wallet = load_signing_wallet(
+                private_key=config.relayer_private_key or None,
+                active_backup_file=config.active_backup_file,
+                backup_password=config.backup_password,
+            )
             submission = SubmissionConfig(
                 mode=config.submission_mode,
                 wait_for_tx=config.wait_for_tx,
@@ -1145,6 +1152,8 @@ def _load_private_key() -> str:
     if private_key:
         return private_key
     key_file = (os.environ.get("XIAN_SHIELDED_RELAYER_PRIVATE_KEY_FILE") or "").strip()
+    if not key_file and os.environ.get("XIAN_SHIELDED_RELAYER_ACTIVE_BACKUP_FILE"):
+        return ""
     if not key_file:
         raise RuntimeError(
             "set XIAN_SHIELDED_RELAYER_PRIVATE_KEY or XIAN_SHIELDED_RELAYER_PRIVATE_KEY_FILE"
@@ -1192,6 +1201,8 @@ def load_config_from_env() -> ShieldedRelayerServiceConfig:
             "http://127.0.0.1:26657",
         ).rstrip("/"),
         relayer_private_key=_load_private_key(),
+        active_backup_file=os.environ.get("XIAN_SHIELDED_RELAYER_ACTIVE_BACKUP_FILE") or None,
+        backup_password=os.environ.get("XIAN_SHIELDED_RELAYER_BACKUP_PASSWORD") or None,
         auth_token=(os.environ.get("XIAN_SHIELDED_RELAYER_AUTH_TOKEN") or "").strip() or None,
         access_policy=ShieldedRelayerAccessPolicy(
             public_info=_env_bool(

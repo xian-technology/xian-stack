@@ -173,7 +173,6 @@ Use the smallest recipe that proves the behavior you care about:
 | Clean multi-node topology | `LOCALNET_NODES=5 make localnet-init && make localnet-up` | Validator topology, genesis distribution, peer connectivity |
 | Workload smoke on a running localnet | `make localnet-workload` | Basic contract submission and transaction flow |
 | Full 5-validator e2e harness | `make localnet-e2e` | Layered cross-repo behavior, DEX, governance, crash recovery, quorum partitions, fresh-node sync, execution parity, accounting, resource limits, and block replay |
-| IntentKit x402 buyer phase | `LOCALNET_E2E_INTENTKIT_X402=1 make localnet-e2e` | Adds a live IntentKit Xian-native x402 payment through a local seller/facilitator |
 | Parallel 5-validator harness | `make localnet-parallel-e2e` | The same e2e program with lower parallel-execution batching |
 | Protocol safety harness | `make localnet-protocol-safety` | Validator set, delegation, evidence, governance, and state-patch behavior |
 | Release gate | `make release-safety` | Repo validation plus the release-grade localnet gates |
@@ -316,3 +315,67 @@ before tagging this repo.
 - [docs/RUNTIME_RELEASE_BACKLOG.md](docs/RUNTIME_RELEASE_BACKLOG.md) — runtime release follow-ups
 - [docs/LOCALNET_PROTOCOL_SAFETY.md](docs/LOCALNET_PROTOCOL_SAFETY.md) — 5-validator protocol safety harness
 - [docs/LOCALNET_WORKLOAD_BACKLOG.md](docs/LOCALNET_WORKLOAD_BACKLOG.md) — localnet workload follow-ups
+
+## Isolated account migration rehearsal
+
+Build the sibling JavaScript SDK (`npm --prefix ../xian-js run build`) and sync
+this repo's development environment. Run:
+
+```bash
+uv run python scripts/account-migration-rehearsal.py --cometbft /path/to/cometbft
+```
+
+Use the release-pinned CometBFT version (currently 0.39.3). The drill creates five
+native validators with new keys, separate node homes, loopback ports and a
+throwaway chain under `.artifacts/account-migration/`. It never uses `.localnet`
+or existing Docker nodes. Enrollment is enabled only in this disposable genesis.
+It checks balances, ownership, allowances, legacy permit rejection, single-node
+and quorum failures, exact-byte retries, cold recovery, full restart, obsolete
+keys and live JavaScript restoration of Python backups. Reports include source
+working-tree hashes, the binary hash, reported CLI version and Go module build
+identity when Go is available. CometBFT v0.39.3 source currently reports 0.39.0
+through its version command; use the module identity and binary hash as well. It uses `free_metered` to
+separate asset conservation from fee accounting; paid failures have separate
+ABCI tests. Test backup passwords are ephemeral and not retained. This is not
+a reusable custody backup or an enrollment activation command.
+
+DEX bootstrap accepts `XIAN_ACTIVE_BACKUP_FILE` / `XIAN_BACKUP_PASSWORD` for an
+already enrolled deployer. Explicit legacy credentials cannot be mixed with it.
+The shielded relayer accepts `XIAN_SHIELDED_RELAYER_ACTIVE_BACKUP_FILE` and
+`XIAN_SHIELDED_RELAYER_BACKUP_PASSWORD` instead of its legacy key inputs.
+These change the outer transaction signer only: shielded proofs, validator
+consensus and genesis/snapshot signatures retain their separate protocols.
+
+The node image's hash-pinned runtime requirements include `pqcrypto` and the
+bundled SDK's `cryptography` backup dependency; its build imports the hybrid SDK
+and runs an ML-DSA sign/verify probe. Refresh requirements from the node and SDK locks with
+`python scripts/export_python_runtime_requirements.py` when runtime crypto
+dependencies change. Automation startup does not generate a replacement key for
+an existing config or inject a default legacy key into hybrid custody.
+
+### Deployed contract authorization
+
+The read-only audit tools inspect deployed sources, executable IR and persistent
+permissions. A fresh-chain balance import instead copies explicitly reconciled
+currency allocations and installs the target bundle's current contracts.
+The [deployed-contract upgrade plan](docs/DEPLOYED_CONTRACT_UPGRADE_PLAN.md)
+documents the read-only inventory, isolated rehearsal, known blockers and
+state-preserving rollout. The tooling never enables enrollment or deploys patches.
+
+## Sustained account load rehearsal
+
+The [closed-enrollment load drill](docs/ACCOUNT_LOAD_REHEARSAL.md) runs five new
+loopback validators with ordinary and hybrid spending, malformed traffic,
+validator crashes, recovery from verified backups and spending after restart.
+Use `scripts/account-load-rehearsal.py` with a new output directory. Its fixture
+genesis pre-registers hybrid accounts while enrollment stays closed. Reports
+include receipt-based balance checks and per-phase latency/resource evidence;
+this is not a production capacity or enrollment approval test.
+
+## Legacy balance-import rehearsal
+
+Run `scripts/rehearse_balance_import.py` with the sibling ABCI Python environment
+and an explicit `--rpc`, `--configs` contract directory and new `--output` path.
+It reads a bounded live legacy BDS sample and compares imported account balances
+against a disposable genesis. This cannot certify a complete finalized snapshot.
+Legacy permit-based x402 phases report skipped; their deployment example is retired.

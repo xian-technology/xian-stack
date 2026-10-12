@@ -141,6 +141,13 @@ def _build_runtime_env(env: dict[str, str] | None = None) -> dict[str, str]:
 def _require_relayer_credentials(env: dict[str, str]) -> None:
     private_key = (env.get("XIAN_SHIELDED_RELAYER_PRIVATE_KEY") or "").strip()
     key_file = (env.get("XIAN_SHIELDED_RELAYER_PRIVATE_KEY_FILE") or "").strip()
+    backup = env.get("XIAN_SHIELDED_RELAYER_ACTIVE_BACKUP_FILE")
+    if backup:
+        if private_key or key_file or not env.get("XIAN_SHIELDED_RELAYER_BACKUP_PASSWORD"):
+            raise RuntimeError(
+                "active backup requires its password and cannot be combined with a legacy key"
+            )
+        return
     if private_key or key_file:
         return
     raise RuntimeError(
