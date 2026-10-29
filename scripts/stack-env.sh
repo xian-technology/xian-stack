@@ -241,7 +241,10 @@ export_stack_env() {
   export XIAN_DEX_AUTOMATION_PUBLIC_HOST="$(_stack_url_host "${XIAN_DEX_AUTOMATION_PUBLIC_HOST:-${XIAN_DEX_AUTOMATION_HOST}}")"
   export XIAN_DEX_AUTOMATION_PORT="${XIAN_DEX_AUTOMATION_PORT:-38280}"
   export XIAN_DEX_AUTOMATION_CONFIG="${XIAN_DEX_AUTOMATION_CONFIG:-${stack_root}/.artifacts/dex-automation/config.yaml}"
-  export XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE="${XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE:-${stack_root}/.artifacts/dex-automation/wallet.key}"
+  # Preserve config-owned custody unless the operator explicitly overrides it.
+  if [[ -n "${XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE:-}" ]]; then
+    export XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE
+  fi
   export XIAN_COMETBFT_HOME="${XIAN_COMETBFT_HOME:-${stack_root}/.cometbft}"
   export XIAN_BLOCK_POLICY_MODE="${XIAN_BLOCK_POLICY_MODE:-periodic}"
   export XIAN_BLOCK_POLICY_INTERVAL="${XIAN_BLOCK_POLICY_INTERVAL:-5s}"

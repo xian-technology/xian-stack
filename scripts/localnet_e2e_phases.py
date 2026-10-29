@@ -18,6 +18,7 @@ PHASE_SPECS: tuple[PhaseSpec, ...] = (
     PhaseSpec("00-bootstrap", "bootstrap"),
     PhaseSpec("01-health", "health_phase"),
     PhaseSpec("02-abci-consistency", "abci_consistency_phase"),
+    PhaseSpec("02-ed25519-genesis", "signature_phase"),
     PhaseSpec("02-xian-py-smoke", "xian_py_smoke"),
     PhaseSpec("03-contract-orchestration", "contract_orchestration_phase"),
     PhaseSpec("03-atomic-rollback", "atomic_rollback_phase"),

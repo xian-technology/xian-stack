@@ -10559,6 +10559,11 @@ class E2ERunner:
 
         return await storage_scan_phase(self, session)
 
+    async def signature_phase(self, session):
+        from localnet_signature_checks import signature_phase
+
+        return await signature_phase(self, session)
+
     async def mixed_execution_phase(self, session):
         from localnet_execution_checks import mixed_phase
 

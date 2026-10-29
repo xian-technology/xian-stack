@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -11,6 +13,65 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import dex_automation_backend
+import pytest
+
+
+@pytest.mark.parametrize("contents", ["", " \n\t"])
+def test_existing_empty_key_is_not_replaced(tmp_path, contents):
+    path = tmp_path / "wallet.key"
+    path.write_text(contents)
+    with pytest.raises(RuntimeError, match="empty.*restore"):
+        dex_automation_backend._ensure_wallet_key(path)
+    assert path.read_text() == contents
+
+
+def test_existing_config_does_not_generate_a_default_key(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    contents = "wallet:\n  private_key_file: existing-keeper.key\n"
+    config_path.write_text(contents)
+    default_key = tmp_path / "wallet.key"
+    monkeypatch.setattr(dex_automation_backend, "require_dex_automation_repo", lambda **_: tmp_path)
+    monkeypatch.setattr(dex_automation_backend, "_PROCESS_DIR", tmp_path)
+    dex_automation_backend.ensure_dex_automation_config(
+        rpc_url="http://127.0.0.1:26657",
+        env={
+            "XIAN_DEX_AUTOMATION_CONFIG": str(config_path),
+            "XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE": str(default_key),
+        },
+    )
+    assert not default_key.exists()
+    assert config_path.read_text() == contents
+
+
+@pytest.mark.parametrize("configured", [None, "/explicit/keeper.key"])
+def test_runtime_env_preserves_explicit_key_source_without_injecting_one(monkeypatch, configured):
+    variable = "XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE"
+    monkeypatch.delenv(variable, raising=False)
+    supplied = {} if configured is None else {variable: configured}
+    actual = dex_automation_backend._build_runtime_env(supplied).get(variable)
+    assert actual == configured
+
+
+@pytest.mark.parametrize("configured", [None, "/explicit/keeper.key"])
+def test_shell_env_preserves_explicit_key_source_without_injecting_one(configured):
+    variable = "XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE"
+    env = {k: v for k, v in os.environ.items() if k != variable}
+    if configured is not None:
+        env[variable] = configured
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source scripts/stack-env.sh; export_stack_env; '
+            'printf "%s" "${XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE:-}"',
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert result.stdout.strip() == (configured or "")
 
 
 class DexAutomationBackendTests(unittest.TestCase):

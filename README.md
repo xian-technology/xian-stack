@@ -143,6 +143,12 @@ key file are written under `.artifacts/dex-automation/`. Execution stays
 disabled until `wallet.execute=true` in the config. Binding the admin UI to
 a non-loopback host requires the same explicit `--public-query` opt-in.
 
+The backend generates a service key only when creating a new configuration.
+An existing configuration owns its key source; set
+`XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE` only for an intentional override.
+An existing empty key file is treated as damaged custody and is never replaced
+automatically. Restore the intended key before starting or bootstrapping.
+
 ### Releases
 
 Plan or apply a coordinated workspace release:
@@ -188,6 +194,12 @@ The E2E run includes 48 seeded accounting operations by default. Set
 `LOCALNET_E2E_SEED` to reproduce a sequence. Recovery checks create temporary
 non-validator observers and briefly install crash hooks in disposable test
 containers. The hooks are not part of the node image.
+
+The `02-ed25519-genesis` phase checks all five validators reject forged and
+noncanonical Ed25519 transactions for a signature error, then commits a contract
+verification matrix and compares its results across validators. It also checks
+that genesis contract submission timestamps match the shared genesis time in
+both the generated state and live node queries.
 
 Each successful run also exports `replay-corpus/`: public configuration,
 CometBFT block databases, expected transaction-result digests, and source
