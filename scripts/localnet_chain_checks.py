@@ -90,7 +90,12 @@ async def query(session, node, path):
     response = (await rpc(session, node, "abci_query", path=json.dumps(path)))["response"]
     require(int(response.get("code", 0)) == 0, f"query {path} failed: {response}")
     raw = base64.b64decode(response.get("value") or "")
-    return json.loads(raw) if raw else None
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw.decode("utf-8")
 
 
 async def wait_height(session, node, target, timeout=180):
