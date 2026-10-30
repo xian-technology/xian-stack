@@ -149,6 +149,13 @@ An existing configuration owns its key source; set
 An existing empty key file is treated as damaged custody and is never replaced
 automatically. Restore the intended key before starting or bootstrapping.
 
+Automation status reports the effective credential source in
+`dex_automation_credential_source`: `kind` is `file`, `environment`, or `null`,
+and `source` is the absolute file path or environment-variable name. The
+`dex_automation_wallet_key_path` field is `null` unless a file is selected.
+Missing or invalid configuration produces a generic
+`dex_automation_credential_source_error`, without exposing config or key values.
+
 ### Releases
 
 Plan or apply a coordinated workspace release:

@@ -44,20 +44,20 @@ def resolve_dex_automation_repo_dir(*, env: dict[str, str] | None = None) -> Pat
     )
 
 
-def resolve_dex_automation_config_path(*, env: dict[str, str] | None = None) -> Path:
+def _resolve_env_path(name: str, default: Path, env: dict[str, str] | None) -> Path:
     source_env = os.environ if env is None else env
-    explicit = source_env.get("XIAN_DEX_AUTOMATION_CONFIG")
+    explicit = source_env.get(name)
     if explicit:
         return Path(explicit).expanduser().resolve()
-    return _CONFIG_PATH
+    return default
+
+
+def resolve_dex_automation_config_path(*, env: dict[str, str] | None = None) -> Path:
+    return _resolve_env_path("XIAN_DEX_AUTOMATION_CONFIG", _CONFIG_PATH, env)
 
 
 def resolve_dex_automation_wallet_key_path(*, env: dict[str, str] | None = None) -> Path:
-    source_env = os.environ if env is None else env
-    explicit = source_env.get("XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE")
-    if explicit:
-        return Path(explicit).expanduser().resolve()
-    return _WALLET_KEY_PATH
+    return _resolve_env_path("XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE", _WALLET_KEY_PATH, env)
 
 
 def require_dex_automation_repo(*, env: dict[str, str] | None = None) -> Path:
@@ -136,7 +136,7 @@ def ensure_dex_automation_config(
     *,
     rpc_url: str,
     env: dict[str, str] | None = None,
-) -> dict[str, str]:
+) -> dict[str, object]:
     source_env = os.environ if env is None else env
     repo_dir = require_dex_automation_repo(env=source_env)
     config_path = resolve_dex_automation_config_path(env=source_env)
@@ -194,7 +194,7 @@ def ensure_dex_automation_config(
     return {
         "dex_automation_repo_dir": str(repo_dir),
         "dex_automation_config_path": str(config_path),
-        "dex_automation_wallet_key_path": str(wallet_key_path),
+        **_credential_metadata(source_env),
     }
 
 
@@ -216,6 +216,69 @@ def _build_runtime_env(env: dict[str, str] | None = None) -> dict[str, str]:
         str(resolve_repo_dir("xian-py", "XIAN_PY_DIR", env=source_env)),
     )
     return source_env
+
+
+def _runtime_python_command(env: dict[str, str]) -> list[str]:
+    return [
+        "uv",
+        "run",
+        "--project",
+        env["XIAN_DEX_AUTOMATION_DIR"],
+        "--with",
+        env["XIAN_PY_DIR"],
+        "--python",
+        STACK_UV_PYTHON,
+        "python",
+    ]
+
+
+def _credential_description(env: dict[str, str]) -> dict[str, str | None]:
+    if not resolve_dex_automation_config_path(env=env).is_file():
+        raise ValueError("configuration unavailable")
+    repo = require_dex_automation_repo(env=env)
+    environment = Path(env.get("UV_PROJECT_ENVIRONMENT", ".venv"))
+    interpreter = repo / environment / "bin" / "python"
+    if not interpreter.is_file():
+        raise ValueError("service environment unavailable")
+    result = subprocess.run(
+        [
+            str(interpreter),
+            "-B",
+            "-m",
+            "xian_dex_automation.credentials",
+            "--config",
+            env["XIAN_DEX_AUTOMATION_CONFIG"],
+        ],
+        cwd=STACK_DIR,
+        env=env,
+        capture_output=True,
+        timeout=30,
+        check=True,
+    )
+    description = json.loads(result.stdout)
+    kind, source = description["kind"], description["source"]
+    if kind not in (None, "file", "environment"):
+        raise ValueError("invalid credential source")
+    if (kind is None and source is not None) or (kind is not None and not isinstance(source, str)):
+        raise ValueError("invalid credential source")
+    return {"kind": kind, "source": source}
+
+
+def _credential_metadata(env: dict[str, str]) -> dict[str, object]:
+    description = {"kind": None, "source": None}
+    error = None
+    try:
+        description = _credential_description(_build_runtime_env(env))
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        # Subprocess/validation errors can contain config values: expose no details.
+        error = "credential source unavailable"
+    return {
+        "dex_automation_wallet_key_path": (
+            description["source"] if description["kind"] == "file" else None
+        ),
+        "dex_automation_credential_source": description,
+        "dex_automation_credential_source_error": error,
+    }
 
 
 def _wait_for_ready(url: str, *, timeout_seconds: float = 180.0) -> None:
@@ -253,9 +316,7 @@ def get_dex_automation_status(
         "dex_automation_log_path": str(_LOG_PATH),
         "dex_automation_pid_path": str(_PID_PATH),
         "dex_automation_config_path": str(resolve_dex_automation_config_path(env=source_env)),
-        "dex_automation_wallet_key_path": str(
-            resolve_dex_automation_wallet_key_path(env=source_env)
-        ),
+        **_credential_metadata(source_env),
         **endpoints,
     }
 
@@ -281,15 +342,7 @@ def start_dex_automation_runtime(
     _PROCESS_DIR.mkdir(parents=True, exist_ok=True)
     log_handle = _LOG_PATH.open("a", encoding="utf-8")
     command = [
-        "uv",
-        "run",
-        "--project",
-        source_env["XIAN_DEX_AUTOMATION_DIR"],
-        "--with",
-        source_env["XIAN_PY_DIR"],
-        "--python",
-        STACK_UV_PYTHON,
-        "python",
+        *_runtime_python_command(source_env),
         "-m",
         "xian_dex_automation.cli",
         "--config",

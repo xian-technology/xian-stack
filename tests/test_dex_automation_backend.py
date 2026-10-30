@@ -16,6 +16,181 @@ import dex_automation_backend
 import pytest
 
 
+@pytest.mark.parametrize("response", ["status", "config"])
+@pytest.mark.parametrize(
+    ("credentials", "expected_kind", "expected_source"),
+    [
+        ({}, "file", "config/keeper.key"),
+        ({"CUSTOM_FILE": "override.key"}, "file", "override.key"),
+        (
+            {"CUSTOM_KEY": "secret-sentinel", "CUSTOM_FILE": "override.key"},
+            "environment",
+            "CUSTOM_KEY",
+        ),
+    ],
+)
+def test_metadata_matches_config_owned_runtime_source(
+    tmp_path, monkeypatch, response, credentials, expected_kind, expected_source
+):
+    config_path = tmp_path / "config/automation.yaml"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        "wallet:\n  private_key_file: keeper.key\n"
+        "  private_key_env: CUSTOM_KEY\n  private_key_file_env: CUSTOM_FILE\n"
+    )
+    monkeypatch.setattr(dex_automation_backend, "_PROCESS_DIR", tmp_path)
+    monkeypatch.setattr(dex_automation_backend, "_PID_PATH", tmp_path / "absent.pid")
+    monkeypatch.setattr(dex_automation_backend, "STACK_DIR", tmp_path)
+    env = {
+        **credentials,
+        "XIAN_DEX_AUTOMATION_CONFIG": str(config_path),
+        "XIAN_DEX_AUTOMATION_DIR": str(Path(__file__).resolve().parents[2] / "xian-dex-automation"),
+        "XIAN_PY_DIR": str(Path(__file__).resolve().parents[2] / "xian-py"),
+    }
+    if response == "status":
+        result = dex_automation_backend.get_dex_automation_status(
+            bind_host="127.0.0.1",
+            port=38280,
+            env=env,
+        )
+    else:
+        result = dex_automation_backend.ensure_dex_automation_config(
+            rpc_url="http://127.0.0.1:26657",
+            env=env,
+        )
+    expected = str(tmp_path / expected_source) if expected_kind == "file" else expected_source
+    assert result["dex_automation_credential_source"] == {"kind": expected_kind, "source": expected}
+    assert result["dex_automation_wallet_key_path"] == (
+        expected if expected_kind == "file" else None
+    )
+    assert result["dex_automation_credential_source_error"] is None
+    assert "secret-sentinel" not in json.dumps(result)
+    assert not (tmp_path / "wallet.key").exists()
+
+
+@pytest.mark.parametrize("contents", [None, "wallet: [secret-sentinel]", "{}"])
+def test_status_missing_invalid_or_unconfigured_custody_is_not_a_default_file(
+    tmp_path, monkeypatch, contents
+):
+    path = tmp_path / "config.yaml"
+    if contents is not None:
+        path.write_text(contents)
+    monkeypatch.setattr(dex_automation_backend, "_PID_PATH", tmp_path / "absent.pid")
+    env = {"XIAN_DEX_AUTOMATION_CONFIG": str(path)}
+    if contents is None:
+        monkeypatch.setattr(
+            dex_automation_backend.subprocess,
+            "run",
+            lambda *_a, **_k: pytest.fail("missing config must not launch uv"),
+        )
+    result = dex_automation_backend.get_dex_automation_status(
+        bind_host="127.0.0.1",
+        port=38280,
+        env=env,
+    )
+    assert result["dex_automation_wallet_key_path"] is None
+    assert result["dex_automation_credential_source"] == {"kind": None, "source": None}
+    assert bool(result["dex_automation_credential_source_error"]) == (contents != "{}")
+    assert "secret-sentinel" not in json.dumps(result)
+
+
+def test_status_absent_optional_repository_does_not_launch_dependencies(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text("{}")
+    monkeypatch.setattr(dex_automation_backend, "_PID_PATH", tmp_path / "absent.pid")
+    monkeypatch.setattr(
+        dex_automation_backend.subprocess,
+        "run",
+        lambda *_a, **_k: pytest.fail("missing repo must not launch uv"),
+    )
+    result = dex_automation_backend.get_dex_automation_status(
+        bind_host="127.0.0.1",
+        port=38280,
+        env={
+            "XIAN_DEX_AUTOMATION_CONFIG": str(path),
+            "XIAN_DEX_AUTOMATION_DIR": str(tmp_path / "missing-repo"),
+        },
+    )
+    assert result["dex_automation_wallet_key_path"] is None
+    assert result["dex_automation_credential_source_error"] == "credential source unavailable"
+
+
+@pytest.mark.parametrize("environment", [None, "custom-env"])
+def test_status_uses_only_existing_service_interpreter(tmp_path, monkeypatch, environment):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text("[project]\nname='xian-dex-automation'\n")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("{}")
+    env = {
+        "XIAN_DEX_AUTOMATION_DIR": str(repo),
+        "XIAN_DEX_AUTOMATION_CONFIG": str(config_path),
+    }
+    if environment:
+        env["UV_PROJECT_ENVIRONMENT"] = environment
+    interpreter = repo / (environment or ".venv") / "bin/python"
+    monkeypatch.setattr(dex_automation_backend, "_PID_PATH", tmp_path / "absent.pid")
+    run = unittest.mock.Mock(return_value=SimpleNamespace(stdout='{"kind":null,"source":null}'))
+    monkeypatch.setattr(dex_automation_backend.subprocess, "run", run)
+    result = dex_automation_backend.get_dex_automation_status(
+        bind_host="127.0.0.1",
+        port=38280,
+        env=env,
+    )
+    run.assert_not_called()
+    assert result["dex_automation_credential_source_error"]
+    interpreter.parent.mkdir(parents=True)
+    interpreter.touch()
+    result = dex_automation_backend.get_dex_automation_status(
+        bind_host="127.0.0.1",
+        port=38280,
+        env=env,
+    )
+    assert result["dex_automation_credential_source_error"] is None
+    command = run.call_args.args[0]
+    assert command == [
+        str(interpreter),
+        "-B",
+        "-m",
+        "xian_dex_automation.credentials",
+        "--config",
+        str(config_path),
+    ]
+    assert run.call_args.kwargs["cwd"] == dex_automation_backend.STACK_DIR
+
+
+@pytest.mark.parametrize(
+    ("payload", "exit_code"),
+    [
+        ({"kind": "unexpected", "source": "secret-sentinel"}, 0),
+        ({"kind": None, "source": "secret-sentinel"}, 0),
+        ({"kind": "file", "source": None}, 0),
+        ({"kind": "environment", "source": 123}, 0),
+        ({"kind": "environment", "source": "CUSTOM_KEY"}, 1),
+    ],
+)
+def test_metadata_rejects_invalid_inspection_output(tmp_path, monkeypatch, payload, exit_code):
+    repo = tmp_path / "repo"
+    interpreter = repo / ".venv/bin/python"
+    interpreter.parent.mkdir(parents=True)
+    (repo / "pyproject.toml").write_text("[project]\nname='xian-dex-automation'\n")
+    interpreter.write_text(
+        "#!/bin/sh\nprintf '%s' '" + json.dumps(payload) + f"'\nexit {exit_code}\n"
+    )
+    interpreter.chmod(0o700)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("{}")
+    monkeypatch.setattr(dex_automation_backend, "_PID_PATH", tmp_path / "absent.pid")
+    result = dex_automation_backend.get_dex_automation_status(
+        bind_host="127.0.0.1",
+        port=38280,
+        env={"XIAN_DEX_AUTOMATION_DIR": str(repo), "XIAN_DEX_AUTOMATION_CONFIG": str(config_path)},
+    )
+    assert result["dex_automation_wallet_key_path"] is None
+    assert result["dex_automation_credential_source_error"] == "credential source unavailable"
+    assert "secret-sentinel" not in json.dumps(result)
+
+
 @pytest.mark.parametrize("contents", ["", " \n\t"])
 def test_existing_empty_key_is_not_replaced(tmp_path, contents):
     path = tmp_path / "wallet.key"
@@ -62,7 +237,7 @@ def test_shell_env_preserves_explicit_key_source_without_injecting_one(configure
         [
             "bash",
             "-c",
-            'source scripts/stack-env.sh; export_stack_env; '
+            "source scripts/stack-env.sh; export_stack_env; "
             'printf "%s" "${XIAN_DEX_AUTOMATION_PRIVATE_KEY_FILE:-}"',
         ],
         cwd=Path(__file__).resolve().parents[1],
