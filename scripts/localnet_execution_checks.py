@@ -88,6 +88,9 @@ async def mixed_phase(runner, session):
 
 
 async def nonce_phase(runner, session):
+    from localnet_runtime_safety_checks import zero_chi_check
+
+    zero_chi = await zero_chi_check(runner, session)
     signer, recipient = wallet(runner, "nonce-signer"), wallet(runner, "nonce-recipient")
     await runner.fund_wallets(session, [signer], amount=100)
 
@@ -145,7 +148,11 @@ async def nonce_phase(runner, session):
     checks["committed_replay_rejected"] = await broadcast(
         session, runner.nodes[0], transfer(0, 2), accepted=False
     )
-    return {"checks": checks, "consensus": await agreement(session, runner.nodes)}
+    return {
+        "checks": checks,
+        "zero_chi_rejection": zero_chi,
+        "consensus": await agreement(session, runner.nodes),
+    }
 
 
 async def limits_phase(runner, session):

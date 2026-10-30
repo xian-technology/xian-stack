@@ -40,7 +40,9 @@ async def storage_scan_phase(runner, session):
     reader = await deploy(runner, session, "scan-reader", reader_source(data))
     hashes = []
     for seed in range(12):
-        async with runner.client(runner.founder_wallet, seed % len(runner.nodes), session) as client:
+        async with runner.client(
+            runner.founder_wallet, seed % len(runner.nodes), session
+        ) as client:
             submission = await client.send_tx(
                 reader, "probe", {"target": data, "seed": seed}, chi=100_000, wait_for_tx=True
             )
@@ -53,5 +55,14 @@ async def storage_scan_phase(runner, session):
         expected = [[seed + offset for offset in range(1, 6)]] * 3
         for node in runner.nodes:
             actual = await query(session, node, f"/get/{reader}.result")
-            require(actual == expected, f"Incorrect persisted scan order on {node.moniker}: {actual}")
-    return {"transaction_hashes": hashes, "consensus": await agreement(session, runner.nodes)}
+            require(
+                actual == expected, f"Incorrect persisted scan order on {node.moniker}: {actual}"
+            )
+    from localnet_runtime_safety_checks import stored_value_checks
+
+    stored_values = await stored_value_checks(runner, session)
+    return {
+        "transaction_hashes": hashes,
+        "stored_value_rejection": stored_values,
+        "consensus": await agreement(session, runner.nodes),
+    }

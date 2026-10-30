@@ -4405,7 +4405,13 @@ class E2ERunner:
             if failed_good_source is not None or failed_bad_source is not None:
                 raise E2EError("failed batch deployment left child contracts behind")
 
+        from localnet_runtime_safety_checks import authority_checks, constructor_budget_checks
+
+        authority = await authority_checks(self, session)
+        constructor_budgets = await constructor_budget_checks(self, session)
         return {
+            "runtime_authority": authority,
+            "constructor_budgets": constructor_budgets,
             "contracts": normalize_value(self.contracts),
             "deployments": deployments,
             "family_receipt": family_receipt,
@@ -6291,6 +6297,9 @@ class E2ERunner:
             node3_wallet,
             node4_wallet,
         ) = self.validator_wallets
+        from localnet_runtime_safety_checks import invalid_registration_check
+
+        invalid_registration = await invalid_registration_check(self, session)
         node3_key = self.nodes[3].account_public_key
         node4 = self.nodes[4]
         standby_wallet = derive_wallet(self.seed, "validator-policy-standby")
@@ -6772,6 +6781,7 @@ class E2ERunner:
             "re_register_approval": approval_receipt,
             "add_receipt": add_receipt,
             "add_vote": normalize_value(add_vote),
+            "invalid_registration": invalid_registration,
             "validators_after_remove": normalize_value(validators_after_remove),
             "validators_after_add": normalize_value(validators_after_add),
             "node3_validator_record": normalize_value(validator_record),

@@ -208,6 +208,14 @@ verification matrix and compares its results across validators. It also checks
 that genesis contract submission timestamps match the shared genesis time in
 both the generated state and live node queries.
 
+Runtime regressions run inside the existing contract orchestration, storage,
+validator governance, and nonce phases. They check owned-contract access and
+metadata permissions, a shared chi budget across serial and nested constructors,
+failed-constructor billing and rollback, zero-chi admission rejection without
+consuming a nonce, and invalid stored values without interrupting later blocks.
+The validator phase rejects registration through an intermediary contract while
+retaining the valid validator removal and re-registration flow.
+
 Each successful run also exports `replay-corpus/`: public configuration,
 CometBFT block databases, expected transaction-result digests, and source
 revisions. It excludes application state and validator private keys. The
