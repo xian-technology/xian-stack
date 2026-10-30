@@ -6329,25 +6329,19 @@ class E2ERunner:
                 arg=requested_reward_split,
                 label_prefix="reward-split",
             )
-            applied_reward_split = await node0.call("rewards", "current_value", {})
-            applied_reward_ratios = tuple(state_decimal(value) for value in applied_reward_split)
-            if applied_reward_ratios != E2E_GOVERNED_REWARD_SPLIT:
-                raise E2EError(
-                    "governed reward split did not apply: "
-                    f"expected={E2E_GOVERNED_REWARD_SPLIT!r} "
-                    f"actual={applied_reward_ratios!r}"
-                )
+            # Rewards is owned by validators: read committed state without executing
+            # an owner-restricted export as an individual validator account.
             applied_reward_state = await fetch_abci_query(
                 session,
                 self.nodes[0].rpc_url,
                 "/get/rewards.S:value",
             )
-            if tuple(state_decimal(value) for value in applied_reward_state) != (
-                E2E_GOVERNED_REWARD_SPLIT
-            ):
+            applied_reward_ratios = tuple(state_decimal(value) for value in applied_reward_state)
+            if applied_reward_ratios != E2E_GOVERNED_REWARD_SPLIT:
                 raise E2EError(
-                    "governed reward split state did not match current_value: "
-                    f"state={applied_reward_state!r}"
+                    "governed reward split did not apply: "
+                    f"expected={E2E_GOVERNED_REWARD_SPLIT!r} "
+                    f"actual={applied_reward_ratios!r}"
                 )
             reward_split_convergence = await self.wait_for_uniform_node_state(
                 session,
@@ -6757,7 +6751,7 @@ class E2ERunner:
             "reward_split": {
                 "vote": normalize_value(reward_split_vote),
                 "requested": normalize_value(requested_reward_split),
-                "applied": normalize_value(applied_reward_split),
+                "applied": normalize_value(applied_reward_state),
                 "applied_state": normalize_value(applied_reward_state),
                 "convergence": normalize_value(reward_split_convergence),
                 "probe_contract": reward_probe_contract,

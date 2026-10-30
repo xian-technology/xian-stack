@@ -410,6 +410,50 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertIn('"developer_reward"', phase_source)
         self.assertIn("governed reward split was not applied", phase_source)
 
+    def test_reward_governance_reads_owned_contract_state_without_simulation(self):
+        class RewardReadCompleted(Exception):
+            pass
+
+        for split, expected_error in (
+            ([0.60, 0.10, 0.10, 0.20], RewardReadCompleted),
+            ([0.70, 0, 0, 0.30], localnet_e2e.E2EError),
+        ):
+            with self.subTest(split=split), tempfile.TemporaryDirectory() as tmpdir:
+                args = localnet_e2e.build_parser().parse_args([])
+                args.resume_dir = tmpdir
+                runner = localnet_e2e.E2ERunner(args)
+                runner.validator_wallets = [object() for _ in range(5)]
+                runner.nodes = [self._node(i, f"http://node-{i}") for i in range(5)]
+                runner.contracts["conflict"] = "con_probe"
+                runner.fund_wallets = AsyncMock()
+                runner.approve_members_vote = AsyncMock()
+                runner.wait_for_uniform_node_state = AsyncMock()
+                client = create_autospec(localnet_e2e.XianAsync, instance=True)
+                client.call.side_effect = AssertionError("Owned contract simulation forbidden")
+                client.get_state.side_effect = RewardReadCompleted
+
+                @asynccontextmanager
+                async def connected(*args):
+                    yield client
+
+                runner.client = connected
+                with (
+                    patch("localnet_runtime_safety_checks.invalid_registration_check", AsyncMock()),
+                    patch.object(localnet_e2e, "fetch_abci_query", AsyncMock(return_value=split)) as query,
+                    self.assertRaises(expected_error),
+                ):
+                    asyncio.run(runner.validator_governance_phase(object()))
+                query.assert_awaited_once()
+                self.assertEqual(query.await_args.args[2], "/get/rewards.S:value")
+                client.call.assert_not_awaited()
+                if expected_error is RewardReadCompleted:
+                    runner.wait_for_uniform_node_state.assert_awaited_once()
+                    self.assertEqual(
+                        runner.wait_for_uniform_node_state.await_args.kwargs["expected"], split
+                    )
+                else:
+                    runner.wait_for_uniform_node_state.assert_not_awaited()
+
     def test_shielded_phase_promotes_bundles_before_governance_binding(self) -> None:
         phase_source = inspect.getsource(localnet_e2e.E2ERunner.shielded_phase)
 
