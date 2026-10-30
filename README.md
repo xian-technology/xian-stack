@@ -125,6 +125,10 @@ reverted swap followed by a successful swap, and an unrelated wallet transfer
 while automation is pending. All five nodes must agree on receipts and balances;
 nonce and input-debit checks reject duplicate execution. Private test-wallet
 inputs are temporary and removed on completion or failure.
+The phase also hides receipts for successful and reverted swaps while retaining
+real committed nonce reads. Independent rules must trade from the same wallet,
+and the original decision must not repeat across worker recreation, RPC reload,
+or eventual receipt restoration. Both cases are required in the probe report.
 
 ### Optional Sidecars
 

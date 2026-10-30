@@ -83,6 +83,11 @@ async def run_recovery_smoke(repo: Path, output: Path, settings: dict) -> dict:
         )
         if payload.get("nodes_verified") != 5:
             raise E2EError("DEX recovery probe did not confirm all five validators")
+        cases = payload.get("consumed_nonce_missing_receipts") or []
+        if len(cases) != 2 or {case.get("original_success") for case in cases} != {True, False}:
+            raise E2EError(
+                "DEX recovery probe must verify missing receipt recovery for success and revert"
+            )
         return payload
     finally:
         private_config.unlink(missing_ok=True)
