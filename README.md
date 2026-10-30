@@ -229,6 +229,11 @@ consuming a nonce, and invalid stored values without interrupting later blocks.
 The validator phase rejects registration through an intermediary contract while
 retaining the valid validator removal and re-registration flow.
 
+The storage phase also verifies dictionary key equality and duplicate replacement,
+large integer/float distinctions, nested list removal, and rollback of writes and
+events after an unhashable key. All five validators must agree on receipts and
+persisted results, and a follow-up transaction must succeed after the failure.
+
 Each successful run also exports `replay-corpus/`: public configuration,
 CometBFT block databases, expected transaction-result digests, and source
 revisions. It excludes application state and validator private keys. The
