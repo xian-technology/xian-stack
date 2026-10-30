@@ -5398,6 +5398,38 @@ class E2ERunner:
         payload["approx_tps"] = round(tx_count / float(payload["elapsed_seconds"]), 3)
         return payload
 
+    async def dex_automation_recovery_phase(self, session) -> dict[str, Any]:
+        from localnet_dex_recovery import bootstrap_recovery_pool, run_recovery_smoke
+
+        if len(self.nodes) != 5:
+            raise E2EError("DEX automation recovery requires five validators")
+        pool = await bootstrap_recovery_pool(ROOT_DIR, NETWORK_PATH, short_hash(self.run_id))
+        wallet = derive_wallet(f"{self.seed}:{self.run_id}", "automation-recovery")
+        unrelated = derive_wallet(f"{self.seed}:{self.run_id}", "automation-unrelated")
+        await self.fund_wallets(session, [wallet, unrelated], amount=1000)
+        submission = await self.send_tx_with_broadcast_failover(
+            session, self.founder_wallet, pool["contracts"]["demo_token"], "transfer",
+            {"amount": Decimal("10"), "to": wallet.public_key},
+            preferred_index=None, excluded_indices=None, chi=DEFAULT_TRANSFER_CHI,
+            label="fund automation recovery token input",
+        )
+        ensure_positive_submission(submission, label="automation recovery token funding")
+        result = await run_recovery_smoke(
+            ROOT_DIR / "xian-dex-automation",
+            self.output_dir / "dex-automation-recovery",
+            {
+                "rpc_urls": [node.rpc_url for node in self.nodes],
+                "chain_id": self.network["chain_id"],
+                "router": pool["contracts"]["router"],
+                "pairs": pool["contracts"]["pairs"],
+                "pair_id": pool["pair"]["pair_id"],
+                "token_in": pool["contracts"]["demo_token"],
+                "private_key": wallet.private_key,
+                "unrelated_private_key": unrelated.private_key,
+            },
+        )
+        return {**result, "dex_bundle": pool["dex_bundle"], "pair": pool["pair"]}
+
     async def throughput_mix_phase(self) -> dict[str, Any]:
         transfer_fanout = await self.run_localnet_workload(
             scenario="transfer_fanout",

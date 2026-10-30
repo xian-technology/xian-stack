@@ -112,6 +112,20 @@ jobs:
           ref: main
           path: xian-contracts
 
+      - name: Check out canonical DEX bundle
+        uses: actions/checkout@v7
+        with:
+          repository: xian-technology/xian-dex
+          ref: 3acf3414a79cf1558eacdb31e00328073d96020e
+          path: xian-dex
+
+      - name: Check out DEX recovery probe
+        uses: actions/checkout@v7
+        with:
+          repository: xian-technology/xian-dex-automation
+          ref: f44360ab5c93c719b01379d34005092de595bb0e
+          path: xian-dex-automation
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:

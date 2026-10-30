@@ -171,7 +171,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         )
         self.assertEqual(
             "08-throughput-mix",
-            phase_names[phase_names.index("07-dex-mixed") + 1],
+            phase_names[phase_names.index("07-dex-automation-recovery") + 1],
         )
         self.assertEqual(
             "08-simulator-load",

@@ -28,6 +28,7 @@ PHASE_SPECS: tuple[PhaseSpec, ...] = (
     PhaseSpec("05-burst-load", "burst_phase", uses_session=False),
     PhaseSpec("06-conflict-invalid", "conflict_phase"),
     PhaseSpec("07-dex-mixed", "dex_phase", uses_session=False),
+    PhaseSpec("07-dex-automation-recovery", "dex_automation_recovery_phase"),
     PhaseSpec("08-throughput-mix", "throughput_mix_phase", uses_session=False),
     PhaseSpec("08-simulator-load", "simulator_phase"),
     PhaseSpec("09-bds-catchup", "bds_catchup_phase"),

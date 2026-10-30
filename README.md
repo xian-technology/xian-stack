@@ -117,6 +117,15 @@ make localnet-vm-tps-bench           # tuned VM throughput sweep
 make release-safety                  # full release-grade safety gate
 ```
 
+The mandatory `07-dex-automation-recovery` E2E phase requires the `xian-dex` and
+`xian-dex-automation` siblings. It deploys the hash-pinned canonical DEX bundle
+and a dedicated pool, then checks concurrent evaluation, a killed automation
+writer, recovery through another validator during configuration reload, a
+reverted swap followed by a successful swap, and an unrelated wallet transfer
+while automation is pending. All five nodes must agree on receipts and balances;
+nonce and input-debit checks reject duplicate execution. Private test-wallet
+inputs are temporary and removed on completion or failure.
+
 ### Optional Sidecars
 
 Shielded relayer (proof-bound private-submission HTTP surface):
