@@ -81,3 +81,53 @@ def test_minimal_charged_failure_and_success_are_distinct():
     with pytest.raises(E2EError):
         successful(result(success=True, finalized=False), "uncommitted transaction")
     assert successful(result(success=True), "success")["chi_used"] == 12
+
+
+@pytest.mark.parametrize(
+    "message, accepted_reason",
+    [
+        ("TransactionException: Transaction chi_supplied must be greater than zero", True),
+        ("TransactionException: Payload key 'chi_supplied' is missing", True),
+        ("TransactionException: Wrong nonce", False),
+    ],
+)
+def test_zero_chi_probe_accepts_backend_diagnostics_and_reuses_nonce(
+    monkeypatch, message, accepted_reason
+):
+    import asyncio
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
+
+    import localnet_runtime_safety_checks as checks
+
+    valid = result(success=True)
+    valid.tx_hash = "recovery"
+    client = SimpleNamespace(send_tx=AsyncMock(return_value=valid))
+
+    @asynccontextmanager
+    async def connected(*args):
+        yield client
+
+    runner = SimpleNamespace(
+        seed="zero-budget-test", run_id="run", network={"chain_id": "local-test"},
+        founder_wallet=SimpleNamespace(public_key="a" * 64),
+        fund_wallets=AsyncMock(), client=connected,
+        nodes=[SimpleNamespace(moniker=f"node-{i}") for i in range(5)],
+    )
+    broadcast = AsyncMock(return_value={"code": 1, "log": message})
+    monkeypatch.setattr(checks, "broadcast", broadcast)
+    monkeypatch.setattr(checks, "agreement", AsyncMock())
+    monkeypatch.setattr(checks, "uniform_state", AsyncMock())
+    if not accepted_reason:
+        with pytest.raises(E2EError, match="wrong reason"):
+            asyncio.run(checks.zero_chi_check(runner, object()))
+        client.send_tx.assert_not_awaited()
+        return
+    output = asyncio.run(checks.zero_chi_check(runner, object()))
+    assert len(output["rejected"]) == broadcast.await_count == 5
+    for call in broadcast.await_args_list:
+        assert call.kwargs["accepted"] is False
+    client.send_tx.assert_awaited_once()
+    assert client.send_tx.await_args.kwargs["nonce"] == 0
+    assert client.send_tx.await_args.kwargs["chi"] > 0
+    assert output["recovery_tx"] == "recovery"

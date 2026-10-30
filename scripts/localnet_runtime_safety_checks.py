@@ -347,8 +347,12 @@ async def zero_chi_check(runner, session):
     rejected = []
     for node in runner.nodes:
         rejection = await broadcast(session, node, tx, accepted=False)
+        # Native static validation rejects zero as an absent required value;
+        # Python validation reaches the fee-policy positive-budget check.
+        message = rejection.get("log", "").lower()
         require(
-            "chi_supplied must be greater than zero" in rejection.get("log", "").lower(),
+            "chi_supplied must be greater than zero" in message
+            or "payload key 'chi_supplied' is missing" in message,
             f"{node.moniker}: zero-chi transaction rejected for wrong reason: {rejection}",
         )
         rejected.append({"node": node.moniker, "rejection": rejection})
