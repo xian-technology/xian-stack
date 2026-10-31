@@ -18,6 +18,7 @@ ROLES = (
     "inspector",
     "commitments",
     "compatibility",
+    "surface",
 )
 
 
@@ -696,7 +697,124 @@ def cases(names, accounts, signature):
         *compatibility_cases(names),
         *decimal_cases(names),
         *surface_cases(names),
+        *completed_surface_cases(names),
     ]
+
+
+def completed_surface_cases(names):
+    contract = names["surface"]
+    outcomes = {
+        "callables": [
+            [4, 3, 2, 1],
+            ["a", "b,c"],
+            ["item=03", "item=01"],
+            [[1, 5], [1, 5], True],
+        ],
+        "numerics": [
+            9,
+            2,
+            "0101",
+            257,
+            [10, -1, -3, 1, 3],
+            [3, 2],
+            "0x1.8000000000000p+0",
+            True,
+            [257, 0, 257, 1],
+            [1, True],
+        ],
+        "mappings": [
+            ["b", 2],
+            ["a", "c"],
+            3,
+            ["a"],
+            ["a", "c", "z"],
+            True,
+            True,
+            [["a", 1]],
+            ["problem", 7],
+        ],
+        "text": [
+            "strasse",
+            "ǲabc",
+            "a   b",
+            "value",
+            ["left:right", ":", "end"],
+            ["a,b", "c"],
+            [" a", "b", "c "],
+            "XYcXY",
+            [False, True, True, True],
+            "-00042",
+            "..xy..",
+            "Ος",
+        ],
+        "binary": [
+            "637861",
+            True,
+            "c",
+            ["6c656674", "3a", "7269676874"],
+            "612d62",
+            "01:02:03",
+            "636166c3a9",
+            "café",
+            "e9",
+            "\ufffd",
+            "4142",
+            1,
+            "4142",
+        ],
+        "time_policy": [
+            518400,
+            172806,
+            7464873601,
+            [2024, 1, 1],
+            [2025, 12, 28],
+            "-1 day, 23:59:59",
+        ],
+        "formatting": ["alice: 0007 'ok'", "x/3", "b:7", "   x", "'alice':0007"],
+    }
+    scenarios = [
+        Case(
+            f"completed-surface-{function}",
+            contract,
+            function,
+            result=value,
+            state={f"{contract}.result": value}
+            | (
+                {f"{names['inspector']}.result": "cross-contract callee entered"}
+                if function == "callables"
+                else {}
+            ),
+        )
+        for function, value in outcomes.items()
+    ]
+    for mode, error in [
+        ("bound_storage", "bound methods cannot cross the vm boundary"),
+        ("keyword", "keyword"),
+        ("time_extension", "unsupported datetime format"),
+        ("time_duplicate", "unsupported datetime format"),
+        ("decode", "invalid utf-8"),
+        ("format", "conversion"),
+        ("encoding", "unsupported deterministic encoding"),
+        ("cross_bound", "bound methods cannot cross contract boundaries"),
+        ("cross_proxy", "mapping proxies cannot cross contract boundaries"),
+        ("cross_inject", "bound methods cannot cross contract boundaries"),
+    ]:
+        function = "fail_cross_contract" if mode.startswith("cross_") else "fail"
+        scenarios.append(
+            Case(f"completed-{mode}-rollback", contract, function, {"mode": mode}, error=error)
+        )
+        label = f"recovered {mode}"
+        scenarios.append(
+            Case(
+                f"completed-{mode}-recovery",
+                contract,
+                "recover",
+                {"label": label},
+                label,
+                {f"{contract}.result": label},
+            )
+        )
+    return scenarios
 
 
 def initial_state(names, accounts, scenarios):

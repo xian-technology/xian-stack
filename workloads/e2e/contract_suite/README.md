@@ -1,7 +1,7 @@
 # Authored contract functionality suite
 
-`03-contract-functionality` deploys nine source contracts and executes 81 ordered
-interactions (49 successes, 32 expected failures) in the default five-validator
+`03-contract-functionality` deploys ten source contracts and executes 108 ordered
+interactions (66 successes, 42 expected failures) in the default five-validator
 E2E run. Run `make localnet-e2e` from `xian-stack`; run the fast native equivalent
 with `uv run pytest tests/test_contract_suite.py`.
 
@@ -16,6 +16,7 @@ with `uv run pytest tests/test_contract_suite.py`.
 | `inspector.py` | Medium | Static/dynamic ForeignHash, ForeignVariable, deterministic scans, snapshot cloning, bulk deletion, metadata reads, dynamic calls and foreign-write denial |
 | `compatibility.py` | Medium | Ordered module bindings, starred calls/unpacking, streaming dictionary methods, in-place reverse, hex decoding, dictionary mutation/compaction, Unicode numbers, raw Decimal quantum/type and all 53 public method names, fractional powers, exact float construction, DecimalTuple, NaN identity, non-finite transport/storage rejection, typed storage, prefix clears, self-cloning, rollback and recovery |
 | `commitments.py` | Medium | Ed25519 key/signature validation, application nonces, tampering/replay rejection, datetime parsing/arithmetic and deterministic random bridge invariants |
+| `surface.py` | Medium/complex | Bound mutators and callbacks, keyword signatures, range and numeric methods, live mapping views/proxies, Unicode transformations, binary mutation/codecs, deterministic time policy, field formatting and failure recovery |
 
 Sources are ordinary authored contracts with the ledger import name substituted
 before deployment. `scripts/contract_suite_cases.py` supplies explicit expected
@@ -73,3 +74,25 @@ and mixed format numbering each follow a pending write; the runner verifies
 rollback and then a successful same-wallet recovery call. The broad per-method
 matrix remains in the runtime repository rather than duplicating hundreds of
 unit-level combinations as network transactions.
+
+The completed-surface flows retrieve methods before mutating their receivers,
+then invoke them directly and through `map`. They check live mapping views after
+removal/insertion, numeric byte round trips, range indexing, pinned Unicode
+transformations, binary aliases, explicit encodings, nested format fields and
+f-string conversions with a dynamic format width.
+Time expectations preserve the historical wrapper's normalized-component
+duration multiplication, including a negative-duration example; numeric ISO/week
+formats have explicit calendar results. Unsupported time directives, duplicate
+directives, codecs, format conversions, invalid keywords and bound-method storage
+each follow an authored write and event. Every failure must roll both back and is
+followed by a successful same-wallet transaction through the next entry node.
+Nested bound storage methods and mapping proxies are also rejected at a
+cross-contract call boundary. Both failures discard pending caller writes and
+events, keep the callee's tracked state unchanged, and recover with the next
+ordinary call. A successful shared-list call separately verifies
+that ordinary cross-contract mutation and returned-object identity remain intact.
+A callee also attempts to insert its bound storage method into a shared caller
+list while returning `None`. The call must fail after revalidating shared inputs;
+pending writes and events from both contracts must roll back, even though the
+explicit result contains no capability. The following transaction verifies
+recovery.

@@ -2,6 +2,7 @@ foreign_admin = ForeignVariable(foreign_contract="__LEDGER__", foreign_name="adm
 foreign_balances = ForeignHash(foreign_contract="__LEDGER__", foreign_name="balances")
 mirror = Hash()
 result = Variable()
+Injected = LogEvent("Injected", {"count": int})
 
 
 @export
@@ -33,3 +34,19 @@ def clear_mirror(accounts: list):
 @export
 def echo_value(value: Any):
     return [value, str(value), isinstance(value, decimal)]
+
+
+@export
+def consume_payload(payload: dict):
+    result.set("cross-contract callee entered")
+    if "callback" in payload:
+        return payload["callback"][0]()
+    payload["items"].append(5)
+    return payload["items"]
+
+
+@export
+def inject_capability(values: list):
+    result.set("callee injection write must roll back")
+    values.append(result.get)
+    Injected({"count": len(values)})
