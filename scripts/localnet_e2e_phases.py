@@ -21,6 +21,7 @@ PHASE_SPECS: tuple[PhaseSpec, ...] = (
     PhaseSpec("02-ed25519-genesis", "signature_phase"),
     PhaseSpec("02-xian-py-smoke", "xian_py_smoke"),
     PhaseSpec("03-contract-orchestration", "contract_orchestration_phase"),
+    PhaseSpec("03-contract-functionality", "contract_functionality_phase"),
     PhaseSpec("03-atomic-rollback", "atomic_rollback_phase"),
     PhaseSpec("03-x402-exact", "x402_exact_phase"),
     PhaseSpec("03-intentkit-x402", "intentkit_x402_phase"),

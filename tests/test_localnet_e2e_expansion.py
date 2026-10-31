@@ -445,7 +445,9 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                     patch("localnet_runtime_safety_checks.invalid_registration_check", AsyncMock()),
                     patch.object(localnet_e2e, "query_state_from_all_nodes", observations),
                     patch.object(localnet_e2e, "latest_heights", AsyncMock(return_value={})),
-                    patch.object(localnet_e2e, "fetch_abci_query", AsyncMock(side_effect=read_node_zero)) as query,
+                    patch.object(
+                        localnet_e2e, "fetch_abci_query", AsyncMock(side_effect=read_node_zero)
+                    ) as query,
                     self.assertRaises(RewardReadCompleted),
                 ):
                     asyncio.run(runner.validator_governance_phase(object()))

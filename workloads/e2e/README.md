@@ -3,6 +3,8 @@
 This folder contains small, deterministic helper contracts used by the
 multi-phase localnet end-to-end runner.
 
+- [`contract_suite/`](contract_suite/README.md): eight authored contracts from a counter
+  to an escrow and atomic payment router, with shared native/five-node scenarios
 - `conflict_guard.py`: deterministic conflict and failure surface
 - `atomic_rollback.py`: live rollback probe for failed contract writes and
   failed cross-contract token transfers

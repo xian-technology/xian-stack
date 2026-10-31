@@ -221,6 +221,14 @@ verification matrix and compares its results across validators. It also checks
 that genesis contract submission timestamps match the shared genesis time in
 both the generated state and live node queries.
 
+The `03-contract-functionality` phase deploys eight authored contracts and runs
+40 interactions spanning builtin functions, collections, text/bytes, decimal
+ledgers, escrow, batch payments, foreign storage, signatures and time/random
+bridges. It checks explicit outcomes and state on all five validators, including
+rollback and recovery after expected failures. See the
+[contract coverage matrix](workloads/e2e/contract_suite/README.md) for scenarios
+and limits. The same sources run in a fast native test before network execution.
+
 Runtime regressions run inside the existing contract orchestration, storage,
 validator governance, and nonce phases. They check owned-contract access and
 metadata permissions, a shared chi budget across serial and nested constructors,

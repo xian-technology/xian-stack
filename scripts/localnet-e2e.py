@@ -3317,6 +3317,11 @@ class E2ERunner:
             return min(healthy)
         return max(candidates, key=lambda item: item[1])[0]
 
+    async def contract_functionality_phase(self, session):
+        from localnet_contract_suite import contract_suite_checks
+
+        return await contract_suite_checks(self, session)
+
     async def fund_wallets(
         self,
         session: aiohttp.ClientSession,
