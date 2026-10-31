@@ -233,6 +233,11 @@ The storage phase also verifies dictionary key equality and duplicate replacemen
 large integer/float distinctions, nested list removal, and rollback of writes and
 events after an unhashable key. All five validators must agree on receipts and
 persisted results, and a follow-up transaction must succeed after the failure.
+It also exercises shared references and shallow copies, receiver evaluation order,
+mutable defaults, live/lazy/consumable iterators and views, sorting and numeric
+builtins, historical hash aliases, selected-object identity, lazy huge ranges and
+storage snapshots. Cyclic return values and size-changing dictionary iteration
+must roll back writes/events, and the next valid call must still succeed.
 
 Each successful run also exports `replay-corpus/`: public configuration,
 CometBFT block databases, expected transaction-result digests, and source

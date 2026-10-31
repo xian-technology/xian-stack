@@ -58,14 +58,17 @@ async def storage_scan_phase(runner, session):
             require(
                 actual == expected, f"Incorrect persisted scan order on {node.moniker}: {actual}"
             )
+    from localnet_compatibility_checks import compatibility_checks
     from localnet_dictionary_checks import dictionary_checks
     from localnet_runtime_safety_checks import stored_value_checks
 
     stored_values = await stored_value_checks(runner, session)
     dictionary = await dictionary_checks(runner, session)
+    compatibility = await compatibility_checks(runner, session)
     return {
         "transaction_hashes": hashes,
         "stored_value_rejection": stored_values,
         "dictionary_compatibility": dictionary,
+        "runtime_compatibility": compatibility,
         "consensus": await agreement(session, runner.nodes),
     }

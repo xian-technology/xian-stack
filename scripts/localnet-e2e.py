@@ -2469,11 +2469,7 @@ class E2ERunner:
             if event.get("contract") == "validators"
             and event.get("event") == "ValidatorProposalSubmitted"
         ]
-        if (
-            len(proposal_ids) != 1
-            or type(proposal_ids[0]) is not int
-            or proposal_ids[0] < 1
-        ):
+        if len(proposal_ids) != 1 or type(proposal_ids[0]) is not int or proposal_ids[0] < 1:
             raise E2EError(
                 f"{label_prefix}: expected one positive proposal ID in receipt "
                 f"{proposal_receipt.get('tx_hash')}; got {proposal_ids!r}"
@@ -3067,7 +3063,8 @@ class E2ERunner:
         if self.args.bootstrap:
             if (STACK_DIR / "docker-compose-localnet.yml").exists():
                 outputs["localnet_down"] = run_make(
-                    "localnet-down", env={**env, "LOCALNET_REMOVE_VOLUMES": "1"},
+                    "localnet-down",
+                    env={**env, "LOCALNET_REMOVE_VOLUMES": "1"},
                 ).stdout
             outputs["localnet_init"] = run_make("localnet-init", env=env).stdout
             outputs["network_addresses"] = await pin_localnet_addresses(
@@ -3078,7 +3075,10 @@ class E2ERunner:
             outputs["localnet_up"] = run_make("localnet-up", env=env).stdout
 
         self.network = load_network()
-        shutil.copy2(STACK_DIR / "docker-compose-localnet.yml", self.output_dir / "docker-compose-localnet.yml")
+        shutil.copy2(
+            STACK_DIR / "docker-compose-localnet.yml",
+            self.output_dir / "docker-compose-localnet.yml",
+        )
         self.nodes = build_nodes(self.network)
         self.bds_node = next(
             (node for node in self.nodes if node.bds_node),
@@ -3197,7 +3197,9 @@ class E2ERunner:
                 chi=120_000,
                 wait_for_tx=True,
             )
-            receipt = ensure_positive_submission(deployment, label="deploy 64-character contract name")
+            receipt = ensure_positive_submission(
+                deployment, label="deploy 64-character contract name"
+            )
         # Constructor state must be visible through real RPC on every validator.
         await self.wait_for_uniform_node_state(
             session,
@@ -3209,7 +3211,9 @@ class E2ERunner:
         )
         for node, probe in zip(self.nodes, probes, strict=True):
             probe["live_rpc"] = await check_live_abci(
-                session, node, expected_version=ABCI_VERSION,
+                session,
+                node,
+                expected_version=ABCI_VERSION,
                 state_path=f"/get/{name}.number",
                 invalid_txs=probe["runtime_callbacks"].pop("invalid_txs"),
             )
@@ -3503,7 +3507,13 @@ class E2ERunner:
                         wait_for_tx=True,
                     ),
                     label=f"allocation-{function_name}",
-                    expected_message_fragment="maximum allowed allocation size",
+                    # Lazy ranges spend loop chi before materialization reaches
+                    # the collection limit; eager allocations fail immediately.
+                    expected_message_fragment=(
+                        "Out of chi"
+                        if function_name == "explode_range"
+                        else "maximum allowed allocation size"
+                    ),
                 )
                 allocation_limit_receipts.append(failed)
 
@@ -5408,9 +5418,14 @@ class E2ERunner:
         unrelated = derive_wallet(f"{self.seed}:{self.run_id}", "automation-unrelated")
         await self.fund_wallets(session, [wallet, unrelated], amount=1000)
         submission = await self.send_tx_with_broadcast_failover(
-            session, self.founder_wallet, pool["contracts"]["demo_token"], "transfer",
+            session,
+            self.founder_wallet,
+            pool["contracts"]["demo_token"],
+            "transfer",
             {"amount": Decimal("10"), "to": wallet.public_key},
-            preferred_index=None, excluded_indices=None, chi=DEFAULT_TRANSFER_CHI,
+            preferred_index=None,
+            excluded_indices=None,
+            chi=DEFAULT_TRANSFER_CHI,
             label="fund automation recovery token input",
         )
         ensure_positive_submission(submission, label="automation recovery token funding")
