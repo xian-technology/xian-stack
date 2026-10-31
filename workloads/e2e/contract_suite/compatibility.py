@@ -7,6 +7,38 @@ copy = Hash(default_value=0)
 seed = 1
 
 
+@export
+def float_sets():
+    a = float("nan")
+    b = float("-nan")
+    positive_zero = float("0")
+    negative_zero = float("-0")
+    values = [float(x) for x in ["10", "2", "-2", "-10", "inf", "-inf"]]
+    numbers = [str(x) for x in set(values)]
+    nested = [str(x[0]) for x in set([(x,) for x in values])]
+    frozen = [str(list(x)[0]) for x in set([frozenset([x]) for x in values])]
+    special = set([a, float("2"), b, float("10"), a])
+    popped = special.pop()
+    special.add(float("1"))
+    ordered = list(special.copy())
+    output = [
+        numbers,
+        nested,
+        frozen,
+        str(list(set([positive_zero, negative_zero]))[0]),
+        str(list(set([negative_zero, positive_zero]))[0]),
+        str(popped),
+        [str(x) for x in ordered],
+        ordered[2] is a,
+        ordered[3] is b,
+        a in special,
+        float("nan") in special,
+        a == a,
+    ]
+    result.set(output)
+    return output
+
+
 def first(value=seed):
     return value
 

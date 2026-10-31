@@ -428,6 +428,24 @@ def compatibility_cases(n):
 
     return [
         success("ordered-module-bindings", "bindings", [1, 2, 3]),
+        success(
+            "float-set-order-and-identity",
+            "float_sets",
+            [
+                ["-inf", "-10.0", "-2.0", "2.0", "10.0", "inf"],
+                ["-inf", "-10.0", "-2.0", "2.0", "10.0", "inf"],
+                ["-inf", "-10.0", "-2.0", "2.0", "10.0", "inf"],
+                "0.0",
+                "-0.0",
+                "2.0",
+                ["1.0", "10.0", "nan", "nan"],
+                True,
+                True,
+                True,
+                False,
+                False,
+            ],
+        ),
         success("starred-calls-and-unpacking", "unpacking", [0, [1, 2, 3], 4, 16]),
         success(
             "streaming-methods-and-aliases",
