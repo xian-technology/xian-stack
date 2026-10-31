@@ -6378,6 +6378,19 @@ class E2ERunner:
             )
             # Rewards is owned by validators: read committed state without executing
             # an owner-restricted export as an individual validator account.
+            # Approval may be observed on a voter before node0 has committed
+            # the same block. Wait for the requested value on every validator.
+            reward_split_convergence = await self.wait_for_uniform_node_state(
+                session,
+                self.nodes,
+                contract="rewards",
+                variable="S",
+                keys=["value"],
+                expected=requested_reward_split,
+                label="governed reward split",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
+
             applied_reward_state = await fetch_abci_query(
                 session,
                 self.nodes[0].rpc_url,
@@ -6390,16 +6403,6 @@ class E2ERunner:
                     f"expected={E2E_GOVERNED_REWARD_SPLIT!r} "
                     f"actual={applied_reward_ratios!r}"
                 )
-            reward_split_convergence = await self.wait_for_uniform_node_state(
-                session,
-                self.nodes,
-                contract="rewards",
-                variable="S",
-                keys=["value"],
-                expected=applied_reward_state,
-                label="governed reward split",
-                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-            )
 
             reward_probe_contract = self.contracts["conflict"]
             reward_probe_developer = await node0.get_state(
