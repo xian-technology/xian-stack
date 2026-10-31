@@ -2,6 +2,7 @@
 
 import hashlib
 from dataclasses import dataclass, field
+from decimal import Decimal as RawDecimal
 from pathlib import Path
 
 from xian_runtime_types.decimal import ContractingDecimal as Decimal
@@ -16,6 +17,7 @@ ROLES = (
     "router",
     "inspector",
     "commitments",
+    "compatibility",
 )
 
 
@@ -35,7 +37,10 @@ class Case:
 
 def sources(names):
     return {
-        role: (SOURCE_DIR / f"{role}.py").read_text().replace("__LEDGER__", names["ledger"])
+        role: (SOURCE_DIR / f"{role}.py")
+        .read_text()
+        .replace("__LEDGER__", names["ledger"])
+        .replace("__INSPECTOR__", names["inspector"])
         for role in ROLES
     }
 
@@ -415,11 +420,75 @@ def host_cases(n, a, signature):
     ]
 
 
+def compatibility_cases(n):
+    c = n["compatibility"]
+
+    def success(label, function, result, kwargs=None):
+        return Case(label, c, function, kwargs or {}, result, {f"{c}.result": result})
+
+    return [
+        success("ordered-module-bindings", "bindings", [1, 2, 3]),
+        success("starred-calls-and-unpacking", "unpacking", [0, [1, 2, 3], 4, 16]),
+        success(
+            "streaming-methods-and-aliases",
+            "methods",
+            [["first", "second", "shared"], [3], [3, 2, 1]],
+        ),
+        success("unvisited-key-replacement", "mutation", ["a", "c"], {"visited": False}),
+        Case(
+            "visited-key-replacement-rollback",
+            c,
+            "mutation",
+            {"visited": True},
+            error="dictionary keys changed",
+        ),
+        success("dictionary-compaction", "compaction", ["a", "c", "d", "e", "z"]),
+        success("unicode-numeric-strings", "unicode_numbers", [12, 15, 120.0]),
+        Case(
+            "decimal-quantum-and-boundaries",
+            c,
+            "quantum",
+            result=[
+                RawDecimal("2.00"),
+                RawDecimal("-0.00"),
+                "2.00",
+                "2.000",
+                "4.00",
+                [RawDecimal("2.00"), "2.00", False],
+            ],
+            state={f"{c}.result": "2", f"{c}.fixed": "2", f"{c}.entries:quantum": "-0.00"},
+        ),
+        Case("typed-variable-rollback", c, "typed_failure", error="type"),
+        Case(
+            "bulk-prefix-and-self-clone",
+            c,
+            "bulk",
+            result=[9, 0, 2, [9, 1, 2]],
+            state={
+                f"{c}.result": [9, 0, 2, [9, 1, 2]],
+                f"{c}.entries:a": 9,
+                f"{c}.entries:a:x": None,
+                f"{c}.entries:b:y": 2,
+                f"{c}.copy:a": 9,
+                f"{c}.copy:a:x": 1,
+                f"{c}.copy:b:y": 2,
+                f"{c}.copy:quantum": "-0.00",
+            },
+        ),
+        Case("bulk-clear-rollback", c, "bulk_failure", error="bulk deliberate"),
+        Case("malformed-hex-rollback", c, "malformed", {"kind": "hex"}, error="hex"),
+        Case("short-starred-rollback", c, "malformed", {"kind": "unpack"}, error="unpack"),
+        Case("decimal-precision-rollback", c, "malformed", {"kind": "decimal"}, error="decimal"),
+        success("compatibility-recovery", "bindings", [1, 2, 3]),
+    ]
+
+
 def cases(names, accounts, signature):
     return [
         *simple_cases(names, accounts),
         *application_cases(names, accounts),
         *host_cases(names, accounts, signature),
+        *compatibility_cases(names),
     ]
 
 

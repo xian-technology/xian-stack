@@ -17,6 +17,7 @@ def transform(text: str):
     data[0] = 90
     assert bytes(data) == b"ZBCD" and bytes(data)[::-1] == b"DCBZ"
     assert bytes([65, 66]).hex() == "4142"
+    assert bytes.fromhex("41 42") == b"AB"
     digest = hashlib.sha256_text(joined)
     assert hashlib.sha256("4142") == hashlib.sha256_hex("4142")
     assert hashlib.sha3("hello") == hashlib.sha3_text("hello")

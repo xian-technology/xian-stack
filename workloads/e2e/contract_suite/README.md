@@ -1,7 +1,7 @@
 # Authored contract functionality suite
 
-`03-contract-functionality` deploys eight source contracts and executes 40 ordered
-interactions (22 successes, 18 expected failures) in the default five-validator
+`03-contract-functionality` deploys nine source contracts and executes 55 ordered
+interactions (31 successes, 24 expected failures) in the default five-validator
 E2E run. Run `make localnet-e2e` from `xian-stack`; run the fast native equivalent
 with `uv run pytest tests/test_contract_suite.py`.
 
@@ -13,7 +13,8 @@ with `uv run pytest tests/test_contract_suite.py`.
 | `ledger.py` | Medium | Exact-decimal balances and allowances, multiple actors, private helpers, immediate caller/original signer/contract identity, transfer events |
 | `escrow.py` | Complex | Static imports, delegated funding, deadlines, buyer authorization, settlement/refund/replay prevention, rollback after nested transfer and emitted events |
 | `router.py` | Complex | Dynamic imports, export discovery, strict zip, atomic batch payments, second-call failure undoing the first transfer, private-function denial and recovery |
-| `inspector.py` | Medium | Static/dynamic ForeignHash, ForeignVariable, deterministic scans, explicit state copies/deletion, metadata reads, dynamic calls and foreign-write denial |
+| `inspector.py` | Medium | Static/dynamic ForeignHash, ForeignVariable, deterministic scans, snapshot cloning, bulk deletion, metadata reads, dynamic calls and foreign-write denial |
+| `compatibility.py` | Medium | Ordered module bindings, starred calls/unpacking, streaming dictionary methods, in-place reverse, hex decoding, dictionary mutation/compaction, Unicode numbers, raw Decimal quantum/type, typed storage, prefix clears, self-cloning, rollback and recovery |
 | `commitments.py` | Medium | Ed25519 key/signature validation, application nonces, tampering/replay rejection, datetime parsing/arithmetic and deterministic random bridge invariants |
 
 Sources are ordinary authored contracts with the ledger import name substituted
@@ -45,10 +46,9 @@ shielded proofs, signature adversaries, governance, DEX recovery, dictionary
 identity/equality, lazy/live iterator behavior, and node/indexer failure recovery.
 The runtime's native and pinned historical compatibility suites remain necessary.
 
-The authored suite uses the admitted syntax and implemented methods. In
-particular, it does not use starred calls/unpacking, `Hash.clear/clone_from`,
-`dict.update/setdefault`, `list.reverse`, or `bytes.fromhex`: these are separately
-reproduced compatibility gaps in the workspace review, pending implementation and
-consensus tests. Explicit per-key updates here do not close those gaps. Decimal
-quantum/type, Unicode numeric parsing, repeated module bindings and same-size
-dictionary key replacement during iteration also remain separate review items.
+All seven R10–R16 compatibility items have explicit network scenarios. The suite
+also checks foreign-source cloning in the inspector and common method calls in
+the collection/codec fixtures. The pinned historical and native suites add
+argument-error, boundary, allocation and metering cases beyond these network
+flows. General fractional raw Decimal powers, non-finite raw Decimal values and
+the rest of Python Decimal's method surface remain separate compatibility work.

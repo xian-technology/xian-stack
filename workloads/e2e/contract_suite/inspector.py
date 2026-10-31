@@ -8,8 +8,7 @@ result = Variable()
 def inspect(target: str, account: str, accounts: list):
     dynamic = ForeignHash(foreign_contract=target, foreign_name="balances")
     snapshot = foreign_balances.all()
-    for member in accounts:
-        mirror[member] = foreign_balances[member]
+    mirror.clone_from(foreign_balances)
     module = importlib.import_module(target)
     assert dynamic[account] == foreign_balances[account] == module.balance(account=account)
     assert importlib.call(target, "balance", {"account": account}) == dynamic[account]
@@ -27,6 +26,10 @@ def forbidden_write(account: str):
 
 @export
 def clear_mirror(accounts: list):
-    for member in accounts:
-        mirror[member] = None
+    mirror.clear()
     return mirror.all()
+
+
+@export
+def echo_value(value: Any):
+    return [value, str(value), isinstance(value, decimal)]

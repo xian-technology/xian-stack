@@ -41,7 +41,8 @@ def containers():
     mapping = dict.fromkeys(["a", "b"], shared)
     mapping["a"].append(1)
     assert mapping["a"] is mapping["b"] and mapping["b"] == [1]
-    mapping["c"] = [3]
+    mapping.update({"c": [3]})
+    assert mapping.setdefault("c", []) == [3]
     assert mapping.get("c", []) == [3]
     assert mapping.pop("missing", 8) == 8
     copied = dict(mapping)
@@ -52,7 +53,9 @@ def containers():
     values.insert(1, 9)
     assert values.pop(1) == 9
     values.remove(2)
-    values = list(reversed(values))
+    alias = values
+    values.reverse()
+    assert alias is values
     assert values == [1, 3] and values.count(1) == 1 and values.index(3) == 1
     assert values[::-1] == [3, 1] and [0] * 2 + values == [0, 0, 1, 3]
     keys = set(["a", "b"])
