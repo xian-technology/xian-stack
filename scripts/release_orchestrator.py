@@ -1010,8 +1010,7 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
                 repo_path / "package-lock.json",
                 root_version=version,
                 package_versions={
-                    package_path: version
-                    for package_path in XIAN_JS_PUBLISHABLE_PACKAGE_PATHS
+                    package_path: version for package_path in XIAN_JS_PUBLISHABLE_PACKAGE_PATHS
                 },
                 dependency_updates={
                     "examples/browser-dapp": {
@@ -1267,8 +1266,7 @@ def ensure_github_checks_green(
                 failures.append(detail)
     if failures:
         raise ReleaseError(
-            "GitHub checks are not green for the release input refs:\n- "
-            + "\n- ".join(failures)
+            "GitHub checks are not green for the release input refs:\n- " + "\n- ".join(failures)
         )
 
 

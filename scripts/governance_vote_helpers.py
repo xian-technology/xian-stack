@@ -49,9 +49,7 @@ async def read_freshest_status(
     if not statuses:
         raise RuntimeError(f"{label} could not be read; errors={errors}")
 
-    completed = [
-        status for status in statuses if status.get("status") in completed_statuses
-    ]
+    completed = [status for status in statuses if status.get("status") in completed_statuses]
     if completed:
         return max(completed, key=vote_status_progress)
     return max(statuses, key=vote_status_progress)

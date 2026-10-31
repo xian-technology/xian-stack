@@ -109,9 +109,12 @@ def test_zero_chi_probe_accepts_backend_diagnostics_and_reuses_nonce(
         yield client
 
     runner = SimpleNamespace(
-        seed="zero-budget-test", run_id="run", network={"chain_id": "local-test"},
+        seed="zero-budget-test",
+        run_id="run",
+        network={"chain_id": "local-test"},
         founder_wallet=SimpleNamespace(public_key="a" * 64),
-        fund_wallets=AsyncMock(), client=connected,
+        fund_wallets=AsyncMock(),
+        client=connected,
         nodes=[SimpleNamespace(moniker=f"node-{i}") for i in range(5)],
     )
     broadcast = AsyncMock(return_value={"code": 1, "log": message})

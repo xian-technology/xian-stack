@@ -37,10 +37,16 @@ def test_phase_removes_private_inputs_on_success_and_failure(tmp_path, monkeypat
             returncode=1 if failed else 0,
             communicate=AsyncMock(
                 return_value=(
-                    json.dumps({"ok": True, "nodes_verified": 5,
-                                "consumed_nonce_missing_receipts": [
-                                    {"original_success": True}, {"original_success": False},
-                                ]}).encode(),
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "nodes_verified": 5,
+                            "consumed_nonce_missing_receipts": [
+                                {"original_success": True},
+                                {"original_success": False},
+                            ],
+                        }
+                    ).encode(),
                     b"deliberate failure",
                 )
             ),
@@ -55,14 +61,28 @@ def test_phase_removes_private_inputs_on_success_and_failure(tmp_path, monkeypat
     assert not (output / "inputs.private.json").exists()
 
 
-@pytest.mark.parametrize("cases", [None, [], [{"original_success": True}],
-                                   [{"original_success": True}, {"original_success": True}]])
+@pytest.mark.parametrize(
+    "cases",
+    [
+        None,
+        [],
+        [{"original_success": True}],
+        [{"original_success": True}, {"original_success": True}],
+    ],
+)
 def test_phase_requires_missing_receipt_checks_for_success_and_revert(tmp_path, monkeypatch, cases):
     repo = tmp_path / "automation"
     (repo / "scripts").mkdir(parents=True)
     (repo / "scripts/recovery_smoke.py").touch()
-    monkeypatch.setattr("localnet_dex_recovery.run_json", AsyncMock(return_value={
-        "ok": True, "nodes_verified": 5, "consumed_nonce_missing_receipts": cases,
-    }))
+    monkeypatch.setattr(
+        "localnet_dex_recovery.run_json",
+        AsyncMock(
+            return_value={
+                "ok": True,
+                "nodes_verified": 5,
+                "consumed_nonce_missing_receipts": cases,
+            }
+        ),
+    )
     with pytest.raises(E2EError, match="missing receipt"):
         asyncio.run(run_recovery_smoke(repo, tmp_path / "output", {}))

@@ -18,9 +18,12 @@ def test_bds_volume_is_unique_per_generation_and_preserves_node_mounts(tmp_path,
     def generate():
         with patch.object(localnet_init, "STACK_DIR", tmp_path):
             localnet_init.write_compose_file(
-                [{"index": 0, "moniker": "node-0"}], topology,
-                bds_enabled=True, bds_node_index=0,
-                profiling_enabled=False, profiling_recent_blocks=20,
+                [{"index": 0, "moniker": "node-0"}],
+                topology,
+                bds_enabled=True,
+                bds_node_index=0,
+                profiling_enabled=False,
+                profiling_recent_blocks=20,
             )
         return json.loads((tmp_path / "docker-compose-localnet.yml").read_text())
 
@@ -38,9 +41,12 @@ def test_bds_volume_is_unique_per_generation_and_preserves_node_mounts(tmp_path,
 def test_no_database_volume_when_bds_is_disabled(tmp_path):
     with patch.object(localnet_init, "STACK_DIR", tmp_path):
         localnet_init.write_compose_file(
-            [{"index": 0, "moniker": "node-0"}], "integrated",
-            bds_enabled=False, bds_node_index=0,
-            profiling_enabled=False, profiling_recent_blocks=20,
+            [{"index": 0, "moniker": "node-0"}],
+            "integrated",
+            bds_enabled=False,
+            bds_node_index=0,
+            profiling_enabled=False,
+            profiling_recent_blocks=20,
         )
     compose = json.loads((tmp_path / "docker-compose-localnet.yml").read_text())
     assert "volumes" not in compose

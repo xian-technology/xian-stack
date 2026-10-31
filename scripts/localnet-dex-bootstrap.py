@@ -526,8 +526,7 @@ def seed_demo_pool(
             )
         elif registered_lp_token != lp_contract:
             raise DexBootstrapError(
-                f"registered demo LP token is {registered_lp_token!r}, "
-                f"expected {lp_contract!r}"
+                f"registered demo LP token is {registered_lp_token!r}, expected {lp_contract!r}"
             )
 
     operations.append(
