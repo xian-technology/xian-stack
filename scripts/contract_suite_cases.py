@@ -483,12 +483,154 @@ def compatibility_cases(n):
     ]
 
 
+def decimal_cases(n):
+    """R17 results copied from historical contracting at 3b82001f, Python 3.12.10."""
+    c = n["compatibility"]
+    successes = [
+        (
+            "decimal-classification",
+            "decimal_classification",
+            [
+                "True",
+                "True",
+                "False",
+                "False",
+                "True",
+                "False",
+                "False",
+                "False",
+                "False",
+                "False",
+                "+Normal",
+                "2.500",
+                "2.500",
+                "2.500",
+                "-2.500",
+                "-2.500",
+            ],
+        ),
+        (
+            "decimal-quantization",
+            "decimal_quantization",
+            ["2.5", "2.50", "False", "2.500", "2", "2", "2"],
+        ),
+        (
+            "decimal-math",
+            "decimal_math",
+            [
+                "0",
+                "12.18249396070347343807017595116796618318276779006316131156039834183818512614331441006025552",
+                "4.20000",
+                "0.9162907318741550651835272117680110714501012199082624677919678819807853657379630490242705511",
+                "0.3979400086720376095725222105510139464636202370757829173791450777457836214511509810261454958",
+                "0",
+                "1.581138830084189665999446772216359266859777569662608413428752426396297219319619110672124054",
+                "10",
+                "0.100",
+            ],
+        ),
+        (
+            "decimal-ordering",
+            "decimal_ordering",
+            [
+                "1",
+                "1",
+                "1",
+                "1",
+                "2.500",
+                "2.500",
+                "1.20",
+                "-1.20",
+                "2.499999999999999999999999999999999999999999999999999999999999999999999999999999999999999999",
+                "2.500000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+                "2.499999999999999999999999999999999999999999999999999999999999999999999999999999999999999999",
+                "25.000",
+                "250.0",
+                "25.000",
+            ],
+        ),
+        (
+            "decimal-logical",
+            "decimal_logical",
+            [
+                "1",
+                "111",
+                "110",
+                "1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111010",
+            ],
+        ),
+        (
+            "decimal-general-powers",
+            "decimal_powers",
+            [
+                "2.297396709994070013597253893555855178887701778195595011027422236987206412507026113622946226",
+                "0.4352752816480620695681350087398730494895627121740015241209297842533750088762390050941893824",
+            ],
+        ),
+        (
+            "decimal-tuple-exact-construction",
+            "decimal_tuple_exact",
+            [0, [2, 5, 0, 0], -3, "0.1000000000000000055511151231257827021181583404541015625"],
+        ),
+        (
+            "decimal-nonfinite-transport",
+            "decimal_nonfinite",
+            ["Infinity", "-Infinity", "Infinity", True, True, False, "NaN", True, True],
+        ),
+        (
+            "decimal-nan-identity",
+            "decimal_nan_identity",
+            [False, True, True, True, True, True, 2, 2, False],
+        ),
+    ]
+    result = [
+        Case(label, c, function, result=value, state={f"{c}.result": value})
+        for label, function, value in successes
+    ]
+    result.append(
+        Case("decimal-negative-fractional-domain", c, "decimal_negative_power", error="invalid")
+    )
+    for kind, target, nested in [
+        ("infinity", "variable", False),
+        ("nan", "variable", True),
+        ("nan", "hash", False),
+        ("infinity", "hash", True),
+    ]:
+        label = f"decimal-{kind}-{target}-{'nested' if nested else 'direct'}"
+        result.append(
+            Case(
+                label + "-rollback",
+                c,
+                "decimal_nonfinite_storage",
+                {"kind": kind, "target": target, "nested": nested},
+                error="finite",
+            )
+        )
+        marker = label + "-recovered"
+        result.append(
+            Case(
+                label + "-recovery",
+                c,
+                "decimal_recovery",
+                {"marker": marker},
+                marker,
+                {
+                    f"{c}.result": marker,
+                    f"{c}.entries:recovery": marker,
+                    f"{c}.entries:nonfinite": None,
+                },
+            )
+        )
+    return result
+
+
 def cases(names, accounts, signature):
     return [
         *simple_cases(names, accounts),
         *application_cases(names, accounts),
         *host_cases(names, accounts, signature),
         *compatibility_cases(names),
+        *decimal_cases(names),
     ]
 
 

@@ -116,3 +116,27 @@ def test_contract_suite_has_nominal_builtin_coverage():
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
     assert ALLOWED_BUILTINS - {"True", "False", "None", "import"} - calls == set()
+
+
+def test_contract_suite_has_nominal_decimal_method_coverage():
+    # The historical raw Decimal surface; this guards the network suite's API
+    # inventory, while test_native_contract_suite checks the actual outcomes.
+    methods = set(
+        """
+        adjusted as_integer_ratio as_tuple canonical compare compare_signal
+        compare_total compare_total_mag conjugate copy_abs copy_negate copy_sign
+        exp fma from_float is_canonical is_finite is_infinite is_nan is_normal
+        is_qnan is_signed is_snan is_subnormal is_zero ln log10 logb max max_mag
+        min min_mag next_minus next_plus next_toward normalize number_class
+        quantize radix remainder_near rotate same_quantum scaleb shift sqrt
+        to_eng_string to_integral to_integral_exact to_integral_value logical_and
+        logical_or logical_xor logical_invert
+    """.split()
+    )
+    source = sources({role: "con_suite_" + role for role in ROLES})["compatibility"]
+    calls = {
+        node.func.attr
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert methods - calls == set()

@@ -162,3 +162,215 @@ def malformed(kind: str):
         a, *b, c = [1]
         return [a, b, c]
     return round(decimal("1"), 1000000)
+
+
+# R17: raw Decimal results are observed before crossing finite storage boundaries.
+
+
+@export
+def decimal_classification():
+    x = round(decimal("2.500"), 3)
+    y = round(decimal("1.20"), 2)
+    assert x.canonical() is x and x.conjugate() is x and x.real is x
+    assert x.copy_abs() is not x and x.copy_negate() is not x
+    assert str(x.imag) == "0"
+    answer = [
+        str(x.is_canonical()),
+        str(x.is_finite()),
+        str(x.is_infinite()),
+        str(x.is_nan()),
+        str(x.is_normal()),
+        str(x.is_qnan()),
+        str(x.is_signed()),
+        str(x.is_snan()),
+        str(x.is_subnormal()),
+        str(x.is_zero()),
+        str(x.number_class()),
+        str(x.canonical()),
+        str(x.conjugate()),
+        str(x.copy_abs()),
+        str(x.copy_negate()),
+        str(x.copy_sign(-y)),
+    ]
+    result.set(answer)
+    return answer
+
+
+@export
+def decimal_quantization():
+    x = round(decimal("2.500"), 3)
+    y = round(decimal("1.20"), 2)
+    amount = round(decimal("2.555"), 3)
+    cent = round(decimal("0.01"), 2)
+    assert str(amount.quantize(cent, "ROUND_UP")) == "2.56"
+    assert str(amount.quantize(cent, rounding="ROUND_HALF_EVEN")) == "2.56"
+    assert str(amount.quantize(cent)) == "2.55"
+    answer = [
+        str(x.normalize()),
+        str(x.quantize(y)),
+        str(x.same_quantum(y)),
+        str(x.to_eng_string()),
+        str(x.to_integral()),
+        str(x.to_integral_exact()),
+        str(x.to_integral_value()),
+    ]
+    result.set(answer)
+    return answer
+
+
+@export
+def decimal_math():
+    x = round(decimal("2.500"), 3)
+    y = round(decimal("1.20"), 2)
+    answer = [
+        str(x.adjusted()),
+        str(x.exp()),
+        str(x.fma(y, y)),
+        str(x.ln()),
+        str(x.log10()),
+        str(x.logb()),
+        str(x.sqrt()),
+        str(x.radix()),
+        str(x.remainder_near(y)),
+    ]
+    result.set(answer)
+    return answer
+
+
+@export
+def decimal_ordering():
+    x = round(decimal("2.500"), 3)
+    y = round(decimal("1.20"), 2)
+    answer = [
+        str(x.compare(y)),
+        str(x.compare_signal(y)),
+        str(x.compare_total(y)),
+        str(x.compare_total_mag(-y)),
+        str(x.max(y)),
+        str(x.max_mag(-y)),
+        str(x.min(y)),
+        str(x.min_mag(-y)),
+        str(x.next_minus()),
+        str(x.next_plus()),
+        str(x.next_toward(y)),
+        str(x.rotate(1)),
+        str(x.scaleb(2)),
+        str(x.shift(1)),
+    ]
+    result.set(answer)
+    return answer
+
+
+@export
+def decimal_logical():
+    x = round(decimal("101"), 0)
+    y = round(decimal("11"), 0)
+    answer = [
+        str(x.logical_and(y)),
+        str(x.logical_or(y)),
+        str(x.logical_xor(y)),
+        str(x.logical_invert()),
+    ]
+    result.set(answer)
+    return answer
+
+
+@export
+def decimal_powers():
+    base = round(decimal("2"), 2)
+    power = round(decimal("1.2"), 1)
+    answer = [str(base**power), str(base**-power)]
+    result.set(answer)
+    return answer
+
+
+@export
+def decimal_negative_power():
+    result.set("uncommitted")
+    return round(decimal("-2"), 2) ** round(decimal("1.2"), 1)
+
+
+@export
+def decimal_tuple_exact():
+    raw = round(decimal("2.500"), 3)
+    parts = raw.as_tuple()
+    assert isinstance(parts, tuple) and len(parts) == 3
+    assert parts[0] == parts.sign and parts[1] == parts.digits and parts[2] == parts.exponent
+    assert list(parts) == [parts.sign, parts.digits, parts.exponent]
+    assert raw.as_integer_ratio() == (5, 2)
+    exact = raw.from_float(float("0.1"))
+    assert exact != round(exact, 17)
+    tiny = raw.from_float(float("5e-324")).as_tuple()
+    assert len(tiny.digits) == 751 and tiny.exponent == -1074
+    assert str(raw.from_float(10**150)) == "1" + "0" * 150
+    answer = [parts.sign, list(parts.digits), parts.exponent, str(exact)]
+    result.set(answer)
+    return answer
+
+
+@export
+def decimal_nonfinite():
+    raw = round(decimal("0"), 2)
+    infinity = raw**-1
+    echoed = inspector.echo_value(value=infinity)
+    assert str(echoed[0]) == "Infinity" and echoed[1] == "Infinity" and not echoed[2]
+    nan = raw.from_float(float("nan"))
+    assert nan.as_tuple().exponent == "n" and infinity.as_tuple().exponent == "F"
+    answer = [
+        str(infinity),
+        str(-infinity),
+        str(infinity + raw),
+        bool(infinity),
+        infinity.is_infinite(),
+        infinity.is_finite(),
+        str(nan),
+        nan.is_nan(),
+        nan.is_qnan(),
+    ]
+    result.set(answer)
+    return answer
+
+
+@export
+def decimal_nan_identity():
+    raw = round(decimal("0"), 2)
+    nan = raw.from_float(float("nan"))
+    other = raw.from_float(float("nan"))
+    assert nan.canonical() is nan and nan.conjugate() is nan and nan.real is nan
+    assert nan.copy_abs() is not nan
+    answer = [
+        nan == nan,
+        nan != nan,
+        nan in [nan],
+        [nan] == [nan],
+        nan in {nan: 1},
+        nan in set([nan]),
+        len({nan: 1, other: 2}),
+        len(set([nan, other])),
+        other is nan,
+    ]
+    result.set(answer)
+    return answer
+
+
+@export
+def decimal_nonfinite_storage(kind: str, target: str, nested: bool):
+    raw = round(decimal("0"), 2)
+    value = raw**-1 if kind == "infinity" else raw.from_float(float("nan"))
+    result.set("uncommitted")
+    entries["recovery"] = "uncommitted"
+    if nested:
+        value = {"payload": [value]}
+    if target == "variable":
+        result.set(value)
+    else:
+        entries["nonfinite"] = value
+
+
+@export
+def decimal_recovery(marker: str):
+    assert result.get() != "uncommitted" and entries["recovery"] != "uncommitted"
+    assert entries["nonfinite"] == 0
+    result.set(marker)
+    entries["recovery"] = marker
+    return marker

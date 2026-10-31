@@ -1,7 +1,7 @@
 # Authored contract functionality suite
 
-`03-contract-functionality` deploys nine source contracts and executes 55 ordered
-interactions (31 successes, 24 expected failures) in the default five-validator
+`03-contract-functionality` deploys nine source contracts and executes 73 ordered
+interactions (44 successes, 29 expected failures) in the default five-validator
 E2E run. Run `make localnet-e2e` from `xian-stack`; run the fast native equivalent
 with `uv run pytest tests/test_contract_suite.py`.
 
@@ -14,7 +14,7 @@ with `uv run pytest tests/test_contract_suite.py`.
 | `escrow.py` | Complex | Static imports, delegated funding, deadlines, buyer authorization, settlement/refund/replay prevention, rollback after nested transfer and emitted events |
 | `router.py` | Complex | Dynamic imports, export discovery, strict zip, atomic batch payments, second-call failure undoing the first transfer, private-function denial and recovery |
 | `inspector.py` | Medium | Static/dynamic ForeignHash, ForeignVariable, deterministic scans, snapshot cloning, bulk deletion, metadata reads, dynamic calls and foreign-write denial |
-| `compatibility.py` | Medium | Ordered module bindings, starred calls/unpacking, streaming dictionary methods, in-place reverse, hex decoding, dictionary mutation/compaction, Unicode numbers, raw Decimal quantum/type, typed storage, prefix clears, self-cloning, rollback and recovery |
+| `compatibility.py` | Medium | Ordered module bindings, starred calls/unpacking, streaming dictionary methods, in-place reverse, hex decoding, dictionary mutation/compaction, Unicode numbers, raw Decimal quantum/type and all 53 public method names, fractional powers, exact float construction, DecimalTuple, NaN identity, non-finite transport/storage rejection, typed storage, prefix clears, self-cloning, rollback and recovery |
 | `commitments.py` | Medium | Ed25519 key/signature validation, application nonces, tampering/replay rejection, datetime parsing/arithmetic and deterministic random bridge invariants |
 
 Sources are ordinary authored contracts with the ledger import name substituted
@@ -50,5 +50,13 @@ All seven R10–R16 compatibility items have explicit network scenarios. The sui
 also checks foreign-source cloning in the inspector and common method calls in
 the collection/codec fixtures. The pinned historical and native suites add
 argument-error, boundary, allocation and metering cases beyond these network
-flows. General fractional raw Decimal powers, non-finite raw Decimal values and
-the rest of Python Decimal's method surface remain separate compatibility work.
+flows. R17 interactions cover general fractional powers, all 53 publicly reachable
+Decimal method names, exact `from_float`, DecimalTuple fields and sequence behavior,
+NaN identity versus numeric equality, and non-finite values passed through a
+nested contract call. Results use strings and booleans to preserve special-value
+semantics across receipt transport. Four direct/nested Variable/Hash failures
+verify non-finite persistence rejection and rollback, each followed immediately
+by a successful write from the same wallet on the next entry node. Method and
+power expectations come from historical contracting revision `3b82001f` under
+Python 3.12.10. This is nominal method coverage, not every argument or resource
+boundary; the historical/native suites provide those deeper cases.
