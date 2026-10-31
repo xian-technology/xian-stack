@@ -31,6 +31,7 @@ async def query(session, node, path):
 
 
 def check_execution(case, submission, contracts):
+    require(submission.accepted, f"{case.label}: CheckTx rejected: {submission.message}")
     if case.error is not None:
         execution = failed_execution(submission, case.label, fragment=case.error)
         require(not execution["events"], f"{case.label}: failed call retained events")
@@ -113,7 +114,7 @@ async def contract_suite_checks(runner, session):
         actor: wallet(runner, "contract-suite-" + actor) for actor in ("alice", "bob", "carol")
     }
     accounts = {actor: value.public_key for actor, value in wallets.items()}
-    funding = await runner.fund_wallets(session, list(wallets.values()), amount=10_000)
+    funding = await runner.fund_wallets(session, list(wallets.values()), amount=100_000)
     deployments = await deploy_suite(runner, session, names, accounts)
     scenarios = cases(names, accounts, wallets["alice"].sign_msg("contract-suite authorization"))
     expected = initial_state(names, accounts, scenarios)

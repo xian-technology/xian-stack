@@ -18,7 +18,10 @@ def submission(success=True, **overrides):
     execution = {"result": "7", "chi_used": 5, "events": [], "state": []}
     execution.update(overrides)
     return SimpleNamespace(
-        finalized=True, receipt=SimpleNamespace(success=success, execution=execution)
+        accepted=True,
+        message=None,
+        finalized=True,
+        receipt=SimpleNamespace(success=success, execution=execution),
     )
 
 
