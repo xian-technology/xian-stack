@@ -69,6 +69,8 @@ INTENTKIT_DIR = (
 INTENTKIT_X402_SMOKE_SCRIPT = SCRIPT_DIR / "intentkit-x402-localnet-smoke.py"
 INTENTKIT_UV_EXTRA_PACKAGES = ("psycopg-binary",)
 DEFAULT_EXECUTION_MODE = "xian_vm_v1"
+INVALID_FSTRING_SOURCE = "@export\ndef render(value: int):\n    return f'{value!q}'\n"
+INVALID_FSTRING_DIAGNOSTIC = "f-string: invalid conversion character"
 DEFAULT_LOCALNET_NODES = 5
 DEFAULT_GENESIS_NETWORK = "testnet"
 MAX_CANONICAL_JSON_DEPTH = 128
@@ -3606,7 +3608,7 @@ class E2ERunner:
         overlay_controller_code = read_text(WORKLOADS_DIR / "e2e" / "pending_overlay_controller.py")
         overlay_adapter_code = read_text(WORKLOADS_DIR / "e2e" / "pending_overlay_adapter.py")
         compiler_probe_code = read_text(WORKLOADS_DIR / "e2e" / "compiler_security_probe.py")
-        bad_fstring_source = "@export\ndef render(value: int):\n    return f'{value:04d}'\n"
+        bad_fstring_source = INVALID_FSTRING_SOURCE
 
         self.contracts.update(
             {
@@ -3769,11 +3771,11 @@ class E2ERunner:
                     wait_for_tx=True,
                 ),
                 label="orchestration-bad-fstring-source",
-                expected_message_fragment="f-string format specifications are not supported",
+                expected_message_fragment=INVALID_FSTRING_DIAGNOSTIC,
             )
             bad_fstring_absent = await client.get_contract_source(bad_fstring_name) is None
             if not bad_fstring_absent:
-                raise E2EError("unsupported f-string source unexpectedly persisted a contract")
+                raise E2EError("invalid f-string source unexpectedly persisted a contract")
 
             shadowed_now = await client.call(compiler_probe_name, "read_shadowed_now", {})
             if shadowed_now != 7:

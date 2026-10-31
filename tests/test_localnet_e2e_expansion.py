@@ -30,6 +30,18 @@ else:
 
 
 class LocalnetE2EExpansionTests(unittest.TestCase):
+    def test_invalid_fstring_fixture_is_rejected_by_the_compiler(self) -> None:
+        import xian_compiler_core
+        from contracting.artifacts import compile_contract_source
+
+        with self.assertRaisesRegex(
+            xian_compiler_core.CompilerError, localnet_e2e.INVALID_FSTRING_DIAGNOSTIC
+        ):
+            compile_contract_source(
+                module_name="con_invalid_fstring",
+                source=localnet_e2e.INVALID_FSTRING_SOURCE,
+            )
+
     def test_failed_phase_is_saved_even_when_diagnostics_fail(self):
         import json
 
