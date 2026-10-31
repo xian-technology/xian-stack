@@ -1,13 +1,33 @@
 """Execute authored application flows and their failure paths on every validator."""
 
 import asyncio
+import base64
 import copy
+import json
 from uuid import uuid4
 
 from contract_suite_cases import ROLES, cases, constructors, initial_state, select_state, sources
-from localnet_chain_checks import agreement, query, receipt, require, wallet
+from localnet_chain_checks import agreement, receipt, require, rpc, wallet
 from localnet_e2e_support import normalize_value
 from localnet_runtime_safety_checks import failed_execution, successful
+
+
+async def query(session, node, path):
+    response = (await rpc(session, node, "abci_query", path=json.dumps(path)))["response"]
+    require(int(response.get("code", 0)) == 0, f"query {path} failed: {response}")
+    raw = base64.b64decode(response.get("value") or "").decode()
+    kind = response.get("info")
+    if kind in {"str", "decimal"}:
+        return raw
+    if kind == "bool":
+        require(raw in {"True", "False"}, f"query {path}: invalid boolean {raw!r}")
+        return raw == "True"
+    if kind == "int":
+        return int(raw)
+    if kind in {"dict", "list"}:
+        return json.loads(raw)
+    require(not raw, f"query {path}: unsupported type {kind!r}")
+    return None
 
 
 def check_execution(case, submission, contracts):

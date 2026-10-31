@@ -126,3 +126,33 @@ def test_phase_is_in_default_sequence():
 
     spec = next(item for item in PHASE_SPECS if item.name == "03-contract-functionality")
     assert spec.method_name == "contract_functionality_phase" and spec.uses_session
+
+
+@pytest.mark.parametrize(
+    ("info", "raw", "expected"),
+    [
+        ("decimal", "100", "100"),
+        ("decimal", "0.123456789123456789", "0.123456789123456789"),
+        ("str", "100", "100"),
+        ("str", "true", "true"),
+        ("str", "", ""),
+        ("int", "100", 100),
+        ("bool", "True", True),
+        ("bool", "False", False),
+        ("list", '["100", 2]', ["100", 2]),
+        ("dict", '{"status": "open"}', {"status": "open"}),
+        ("", "", None),
+    ],
+)
+def test_query_preserves_scalar_types(monkeypatch, info, raw, expected):
+    import base64
+
+    import localnet_contract_suite as checks
+
+    async def rpc(session, node, method, **params):
+        return {
+            "response": {"code": 0, "info": info, "value": base64.b64encode(raw.encode()).decode()}
+        }
+
+    monkeypatch.setattr(checks, "rpc", rpc)
+    assert asyncio.run(checks.query(None, None, "/get/con_a.value")) == expected
