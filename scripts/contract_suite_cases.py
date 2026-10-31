@@ -642,6 +642,52 @@ def decimal_cases(n):
     return result
 
 
+def surface_cases(names):
+    contract = names["compatibility"]
+    result = [
+        False,
+        False,
+        True,
+        "x",
+        "ος",
+        "\u1c89",
+        True,
+        "message",
+        True,
+        True,
+        [1900, 1, 1, 23, 45, 120000],
+        [-1, -1, -1, -1, -1],
+        "-1 day, 23:59:59",
+    ]
+
+    def success(label):
+        return Case(
+            label,
+            contract,
+            "surface_boundaries",
+            result=result,
+            state={f"{contract}.result": result},
+        )
+
+    scenarios = [success("allowed-surface-boundaries")]
+    for mode, error in [
+        ("classinfo", "classinfo"),
+        ("datetime", "invalid datetime"),
+        ("format", "numbering"),
+    ]:
+        scenarios.append(
+            Case(
+                f"surface-{mode}-rollback",
+                contract,
+                "surface_boundaries",
+                {"failure": mode},
+                error=error,
+            )
+        )
+        scenarios.append(success(f"surface-{mode}-recovery"))
+    return scenarios
+
+
 def cases(names, accounts, signature):
     return [
         *simple_cases(names, accounts),
@@ -649,6 +695,7 @@ def cases(names, accounts, signature):
         *host_cases(names, accounts, signature),
         *compatibility_cases(names),
         *decimal_cases(names),
+        *surface_cases(names),
     ]
 
 

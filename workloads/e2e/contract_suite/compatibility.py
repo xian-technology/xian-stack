@@ -8,6 +8,37 @@ seed = 1
 
 
 @export
+def surface_boundaries(failure: str = ""):
+    result.set("must roll back on failure")
+    if failure == "classinfo":
+        return isinstance(1, 1)
+    if failure == "datetime":
+        return datetime.datetime(2**32 + 2026, 1, 1)
+    if failure == "format":
+        return "{} {0}".format("x")
+    parsed = datetime.datetime.strptime("23:45:01.12", "%H:%M:%S.%f")
+    duration = datetime.timedelta(seconds=-1)
+    frozen = frozenset([2, 1])
+    output = [
+        "¼".isdigit(),
+        "\u0345".isalpha(),
+        "a中".islower(),
+        "\u001c x \u001c".strip(),
+        "ΟΣ".lower(),
+        "\u1c89".lower(),
+        frozen.copy() is frozen,
+        str(Exception("message")),
+        isinstance(1, (int, abs)),
+        issubclass(bool, (int, abs)),
+        [parsed.year, parsed.month, parsed.day, parsed.hour, parsed.minute, parsed.microsecond],
+        [duration.seconds, duration.minutes, duration.hours, duration.days, duration.weeks],
+        str(duration),
+    ]
+    result.set(output)
+    return output
+
+
+@export
 def float_sets():
     a = float("nan")
     b = float("-nan")

@@ -1,7 +1,7 @@
 # Authored contract functionality suite
 
-`03-contract-functionality` deploys nine source contracts and executes 74 ordered
-interactions (45 successes, 29 expected failures) in the default five-validator
+`03-contract-functionality` deploys nine source contracts and executes 81 ordered
+interactions (49 successes, 32 expected failures) in the default five-validator
 E2E run. Run `make localnet-e2e` from `xian-stack`; run the fast native equivalent
 with `uv run pytest tests/test_contract_suite.py`.
 
@@ -65,3 +65,11 @@ The float-set interaction checks numeric ordering, infinities, first-inserted
 signed zero, tuple/frozen-set keys, mutation, and NaN ordering and identity. It
 persists strings and booleans so receipt and state checks preserve the observed
 behavior without trying to persist non-finite float values.
+
+The allowed-surface boundary flow checks pinned Unicode predicates/casing,
+exception strings, ordered type checks, frozen-set copy identity, time parsing
+and negative duration fields. Invalid classinfo, overflowing datetime components
+and mixed format numbering each follow a pending write; the runner verifies
+rollback and then a successful same-wallet recovery call. The broad per-method
+matrix remains in the runtime repository rather than duplicating hundreds of
+unit-level combinations as network transactions.
