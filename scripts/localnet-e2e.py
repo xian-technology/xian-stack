@@ -5434,7 +5434,9 @@ class E2ERunner:
         pool = await bootstrap_recovery_pool(ROOT_DIR, NETWORK_PATH, short_hash(self.run_id))
         wallet = derive_wallet(f"{self.seed}:{self.run_id}", "automation-recovery")
         unrelated = derive_wallet(f"{self.seed}:{self.run_id}", "automation-unrelated")
-        await self.fund_wallets(session, [wallet, unrelated], amount=1000)
+        # Eight swaps (including reverts) and approval need fee headroom: a
+        # 4,096-chi budget per call costs 1,843.2 at the local chi price of 20.
+        await self.fund_wallets(session, [wallet, unrelated], amount=2000)
         submission = await self.send_tx_with_broadcast_failover(
             session,
             self.founder_wallet,
