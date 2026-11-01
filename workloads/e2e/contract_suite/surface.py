@@ -1,6 +1,7 @@
 import __INSPECTOR__ as inspector
 
 result = Variable()
+converted_set = Variable()
 Attempted = LogEvent("Attempted", {"mode": str})
 
 
@@ -186,6 +187,125 @@ def fail(mode: str):
 @export
 def recover(label: str):
     return save(label)
+
+
+@export
+def set_kinds():
+    entries = {"a": 1, "b": 2}
+    keys = entries.keys()
+    raw = keys | []
+    wrapped = set(["a", "b"])
+    comparisons = [
+        raw == wrapped,
+        wrapped == raw,
+        raw == keys,
+        isinstance(raw, set),
+        isinstance(raw, frozenset),
+    ]
+    methods = [
+        isinstance(raw.copy(), set),
+        isinstance(wrapped.union(raw), set),
+        isinstance(raw.union(wrapped), set),
+    ]
+    mutable = keys | []
+    alias = mutable
+    mutable |= {"c": 3}.keys() | []
+    same_kind = [sorted(alias), mutable is alias]
+    mutable |= {"d": 4}.keys()
+    view_operand = [sorted(alias), sorted(mutable), mutable is alias]
+    returned = inspector.retain_builtin_set(value=raw)
+    converted_set.set(set(returned))
+    return save(
+        [
+            comparisons,
+            methods,
+            same_kind,
+            view_operand,
+            [sorted(raw), returned is raw, isinstance(returned, set)],
+        ]
+    )
+
+
+@export
+def read_converted_set():
+    value = converted_set.get()
+    return save([sorted(value), isinstance(value, set)])
+
+
+@export
+def recover_set(label: str):
+    value = converted_set.get()
+    assert isinstance(value, set) and sorted(value) == ["a", "b", "z"]
+    return save(label)
+
+
+@export
+def host_aliases(target: str):
+    module = hashlib
+    callbacks = {"digest": module.sha3}
+    decimal_value = decimal
+    date = datetime.datetime
+    duration = datetime.timedelta
+    parse = date(2026, 1, 2).strptime
+    exists = importlib.exists
+    has_export = importlib.has_export
+    seed = random.seed
+    choose = random.choice
+    shuffle = random.shuffle
+    seed("host-aliases")
+    values = [[7]]
+    selected = choose(values)
+    selected.append(8)
+    shuffle(values)
+    return save(
+        [
+            list(map(callbacks["digest"], ["abc", ""])),
+            [str(value) for value in map(decimal_value, ["1.25", "2.5"])],
+            isinstance(decimal_value("2"), decimal_value),
+            str(date(2026, 1, 2) + duration(days=2)),
+            [
+                isinstance(parse("2024-01-02", "%Y-%m-%d"), date),
+                parse == date.strptime,
+                isinstance(list(map(parse, ["2024-01-02"], ["%Y-%m-%d"]))[0], date),
+            ],
+            [exists(target), has_export(target, "consume_payload")],
+            [values, selected is values[0]],
+        ]
+    )
+
+
+@export
+def fail_host_alias(mode: str):
+    result.set("host callable pending write must roll back")
+    Attempted({"mode": mode})
+    if mode == "constructor_storage":
+        constructor = decimal
+        return result.set({"nested": [constructor]})
+    if mode == "constructor_result":
+        constructor = datetime.datetime
+        return {"nested": [constructor]}
+    digest = hashlib.sha3
+    if mode == "host_storage":
+        return result.set({"nested": [digest]})
+    if mode == "host_result":
+        return {"nested": [digest]}
+    assert mode == "host_cross", "unknown host callable failure mode"
+    return inspector.consume_payload(payload={"callback": [digest]})
+
+
+@export
+def fail_set(mode: str):
+    result.set("set pending write must roll back")
+    Attempted({"mode": mode})
+    value = {"a": 1}.keys() | []
+    if mode == "set_storage":
+        return converted_set.set({"nested": [value]})
+    if mode == "set_result":
+        return {"nested": [value]}
+    if mode == "set_mixed_left":
+        return sorted(value | set(["b"]))
+    assert mode == "set_mixed_right", "unknown set failure mode"
+    return sorted(set(["b"]) | value)
 
 
 @export

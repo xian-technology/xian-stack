@@ -221,8 +221,8 @@ verification matrix and compares its results across validators. It also checks
 that genesis contract submission timestamps match the shared genesis time in
 both the generated state and live node queries.
 
-The `03-contract-functionality` phase deploys eight authored contracts and runs
-40 interactions spanning builtin functions, collections, text/bytes, decimal
+The `03-contract-functionality` phase deploys ten authored contracts and runs
+129 interactions spanning builtin functions, collections, text/bytes, decimal
 ledgers, escrow, batch payments, foreign storage, signatures and time/random
 bridges. It checks explicit outcomes and state on all five validators, including
 rollback and recovery after expected failures. See the

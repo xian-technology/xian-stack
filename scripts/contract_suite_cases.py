@@ -698,7 +698,114 @@ def cases(names, accounts, signature):
         *decimal_cases(names),
         *surface_cases(names),
         *completed_surface_cases(names),
+        *set_kind_cases(names),
+        *host_alias_cases(names),
     ]
+
+
+def host_alias_cases(names):
+    contract = names["surface"]
+    answer = [
+        [
+            "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532",
+            "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a",
+        ],
+        ["1.25", "2.5"],
+        True,
+        "2026-01-04 00:00:00",
+        [True, True, True],
+        [True, True],
+        [[[7, 8]], True],
+    ]
+    scenarios = [
+        Case(
+            "host-aliases-nominal",
+            contract,
+            "host_aliases",
+            {"target": names["inspector"]},
+            answer,
+            {f"{contract}.result": answer},
+        )
+    ]
+    for mode in [
+        "host_storage",
+        "host_result",
+        "host_cross",
+        "constructor_storage",
+        "constructor_result",
+    ]:
+        scenarios.append(
+            Case(
+                f"{mode}-rollback",
+                contract,
+                "fail_host_alias",
+                {"mode": mode},
+                error="cannot cross",
+            )
+        )
+        label = f"recovered {mode}"
+        scenarios.append(
+            Case(
+                f"{mode}-recovery",
+                contract,
+                "recover",
+                {"label": label},
+                label,
+                {f"{contract}.result": label},
+            )
+        )
+    return scenarios
+
+
+def set_kind_cases(names):
+    contract = names["surface"]
+    answer = [
+        [False, False, True, False, False],
+        [False, True, False],
+        [["a", "b", "c"], True],
+        [["a", "b", "c"], ["a", "b", "c", "d"], False],
+        [["a", "b", "z"], True, False],
+    ]
+    scenarios = [
+        Case(
+            "set-kinds-nominal",
+            contract,
+            "set_kinds",
+            result=answer,
+            state={
+                f"{contract}.result": answer,
+                f"{names['inspector']}.result": "builtin set retained",
+            },
+        ),
+        Case(
+            "set-explicit-conversion-persisted",
+            contract,
+            "read_converted_set",
+            result=[["a", "b", "z"], True],
+            state={f"{contract}.result": [["a", "b", "z"], True]},
+        ),
+    ]
+    for mode, error in [
+        ("set_storage", "builtin sets cannot cross the vm boundary"),
+        ("set_result", "builtin sets cannot cross the vm boundary"),
+        ("set_mixed_left", "set"),
+        ("set_mixed_right", "set"),
+    ]:
+        scenarios.append(
+            Case(f"{mode}-rollback", contract, "fail_set", {"mode": mode}, error=error)
+        )
+        label = f"recovered {mode}"
+        scenarios.append(
+            Case(
+                f"{mode}-recovery",
+                contract,
+                "recover_set",
+                {"label": label},
+                label,
+                {f"{contract}.result": label},
+            )
+        )
+    return scenarios
 
 
 def completed_surface_cases(names):

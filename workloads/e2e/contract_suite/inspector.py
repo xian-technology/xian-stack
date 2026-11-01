@@ -50,3 +50,12 @@ def inject_capability(values: list):
     result.set("callee injection write must roll back")
     values.append(result.get)
     Injected({"count": len(values)})
+
+
+@export
+def retain_builtin_set(value: Any):
+    assert not isinstance(value, set), "builtin set converted at contract boundary"
+    assert value == {"a": 1, "b": 2}.keys(), "builtin set comparison changed"
+    value.add("z")
+    result.set("builtin set retained")
+    return value

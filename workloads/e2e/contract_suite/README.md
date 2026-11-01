@@ -1,7 +1,7 @@
 # Authored contract functionality suite
 
-`03-contract-functionality` deploys ten source contracts and executes 108 ordered
-interactions (66 successes, 42 expected failures) in the default five-validator
+`03-contract-functionality` deploys ten source contracts and executes 129 ordered
+interactions (78 successes, 51 expected failures) in the default five-validator
 E2E run. Run `make localnet-e2e` from `xian-stack`; run the fast native equivalent
 with `uv run pytest tests/test_contract_suite.py`.
 
@@ -96,3 +96,23 @@ list while returning `None`. The call must fail after revalidating shared inputs
 pending writes and events from both contracts must roll back, even though the
 explicit result contains no capability. The following transaction verifies
 recovery.
+
+View-set scenarios distinguish the built-in set returned by dictionary-view
+algebra from the deterministic `set()` wrapper. They check equality, public type
+checks, method result kinds, augmented-assignment aliases and shared cross-contract
+mutation without changing kind. Explicit `set(value)` conversion is persisted and
+read back in a later transaction. Raw built-in sets in storage or public results,
+and mixed-kind operators in either direction, must fail after a pending write and
+event. Each recovery also verifies that the previously converted set survived.
+Set observations use Python 3.12.10 with the Python contracting wrappers as an
+independent oracle; storage and cross-contract boundaries are checked by native
+and network execution.
+
+Host-callable flows retrieve module functions and constructors, keep a hash
+callback in a dictionary, pass hash/decimal aliases through `map`, and check
+datetime class checks, introspection aliases and selected-object identity through
+random aliases. Nested function storage/results/cross-contract transfer and
+decimal-constructor storage and datetime-constructor results must roll back
+writes/events, then allow the next ordinary
+transaction. The exhaustive callable catalog and signature checks remain in the
+runtime suite; these network calls exercise representative compositions.
