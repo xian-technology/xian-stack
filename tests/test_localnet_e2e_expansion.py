@@ -30,6 +30,41 @@ else:
 
 
 class LocalnetE2EExpansionTests(unittest.TestCase):
+    def test_signed_admission_fixture_reaches_native_depth_rejection(self):
+        native_source = (
+            MODULE_PATH.parents[2] / "xian-contracting/packages/xian-fastpath-core/python"
+        )
+        with patch.object(sys, "path", [str(native_source), *sys.path]):
+            from xian_fastpath_core import decode_and_validate_transaction_static
+
+        wallet = localnet_e2e.Wallet(private_key="42" * 32)
+        payload = {
+            "chain_id": "local-fixture",
+            "contract": "con_probe",
+            "function": "accept_nested",
+            "kwargs": {"nested": {"next": "leaf"}},
+            "nonce": 0,
+            "sender": wallet.public_key,
+            "chi_supplied": 100,
+        }
+        ordinary = localnet_e2e.tr.prepare_transaction(localnet_e2e.tr.create_tx(payload, wallet))
+        fixture = localnet_e2e.tr.prepare_transaction(
+            localnet_e2e.signed_admission_fixture(payload, wallet)
+        )
+        self.assertEqual(fixture.json_bytes, ordinary.json_bytes)
+        decode_and_validate_transaction_static(fixture.submitted_bytes, payload["chain_id"])
+
+        payload["kwargs"]["nested"] = localnet_e2e.nested_json_value(
+            localnet_e2e.MAX_CANONICAL_JSON_DEPTH + 1
+        )
+        with self.assertRaisesRegex(ValueError, "persistent value traversal limit exceeded"):
+            localnet_e2e.tr.create_tx(payload, wallet)
+        prepared = localnet_e2e.tr.prepare_transaction(
+            localnet_e2e.signed_admission_fixture(payload, wallet)
+        )
+        with self.assertRaisesRegex(ValueError, "recursion limit exceeded"):
+            decode_and_validate_transaction_static(prepared.submitted_bytes, payload["chain_id"])
+
     def test_invalid_fstring_fixture_is_rejected_by_the_compiler(self) -> None:
         import xian_compiler_core
         from contracting.artifacts import compile_contract_source

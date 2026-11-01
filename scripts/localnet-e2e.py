@@ -242,6 +242,12 @@ def nested_json_value(depth: int) -> dict[str, Any]:
     return value
 
 
+def signed_admission_fixture(payload: dict[str, Any], wallet: Wallet) -> str:
+    """Sign raw JSON fixtures that must reach node admission instead of SDK preflight."""
+    signature = wallet.sign_msg(tr.canonical_json(payload))
+    return tr.canonical_json({"payload": payload, "metadata": {"signature": signature}})
+
+
 @functools.lru_cache(maxsize=1)
 def load_stack_env() -> dict[str, str]:
     shell_script = f"""
@@ -3825,7 +3831,7 @@ class E2ERunner:
         }
         deep_response = await tr.broadcast_tx_wait_async(
             self.nodes[1].rpc_url,
-            tr.create_tx(deep_payload, compiler_security_sender),
+            signed_admission_fixture(deep_payload, compiler_security_sender),
             session=session,
         )
         deep_result_raw = deep_response.get("result", {}) if isinstance(deep_response, dict) else {}
