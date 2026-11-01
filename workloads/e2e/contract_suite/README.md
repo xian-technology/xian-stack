@@ -1,7 +1,7 @@
 # Authored contract functionality suite
 
-`03-contract-functionality` deploys eleven source contracts and executes 194 ordered
-interactions (116 successes, 78 expected failures) in the default five-validator
+`03-contract-functionality` deploys eleven source contracts and executes 212 ordered
+interactions (126 successes, 86 expected failures) in the default five-validator
 E2E run. Run `make localnet-e2e` from `xian-stack`; run the fast native equivalent
 with `uv run pytest tests/test_contract_suite.py`.
 
@@ -188,3 +188,22 @@ from its constructor. Each denial rolls back writes/events and the following
 transaction verifies that no child or nested child remains. Successful helper
 adapter calls inside the submission context are covered by focused runtime tests;
 the surrounding orchestration phase covers successful canonical deployments.
+
+
+Custom `Func.is_of` and `Var.is_of` predicates receive immutable, execution-local
+metadata subjects. The suite exercises both accepted and rejected interfaces,
+wrapping the default matchers and persisting only the subjects' scalar metadata.
+It verifies canonical function names/arguments and storage family names, including
+private-function metadata, while callbacks remain in the inspecting contract's
+caller/signer frame. No target function or storage handle is exposed.
+
+Failures try to mutate metadata, invoke a private-function subject, access storage
+through a subject, and hide subjects in nested persistent values, public results
+or cross-contract arguments. A callback also writes state and emits an event
+before raising. All these calls must roll back, preserve the inspected contract's
+state, and allow the next ordinary transaction.
+
+A final interface check selects its exported predicate through
+`importlib.import_module(ctx.this)`. It compares caller, signer, owner and contract
+identity before, inside and after the callback, ensuring a local module lookup
+keeps the inspection frame instead of becoming a cross-contract self-call.

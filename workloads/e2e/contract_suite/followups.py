@@ -352,3 +352,133 @@ def fail_imported_alias(mode: str):
     if mode == "namespace":
         return inspector.namespace_alias
     raise Exception("unknown imported alias mode")
+
+
+subject_observations = []
+subject_box = []
+
+
+def observe_subject(subject):
+    subject_observations.append(
+        [
+            subject.kind,
+            subject.name,
+            list(subject.args) if subject.args is not None else None,
+            subject.storage_type,
+            ctx.caller,
+            ctx.signer,
+            ctx.this,
+        ]
+    )
+    if subject.kind == "function":
+        matches = importlib.Func(subject.name, args=subject.args).is_of(subject)
+        wrong = importlib.Var("value", Variable).is_of(subject)
+    else:
+        matches = importlib.Var("value", Variable).is_of(subject)
+        wrong = importlib.Func("consume_payload", args=("payload",)).is_of(subject)
+    return matches and not wrong
+
+
+def reject_function_subject(subject):
+    assert subject.kind == "function", "function callback received wrong metadata"
+    return importlib.Func("consume_payload", args=("wrong",)).is_of(subject)
+
+
+def reject_storage_subject(subject):
+    assert subject.kind == "storage", "storage callback received wrong metadata"
+    return importlib.Var("result", Hash).is_of(subject)
+
+
+@export
+def metadata_callbacks():
+    function = importlib.Func("consume_payload", args=("payload",))
+    variable = importlib.Var("result", Variable)
+    private = importlib.Func("hidden_alias_target", private=True)
+    function.is_of = observe_subject
+    variable.is_of = observe_subject
+    private.is_of = observe_subject
+    module = importlib.import_module("__INSPECTOR__")
+    accepted = importlib.enforce_interface(module, [function, variable, private])
+    function.is_of = reject_function_subject
+    rejected_function = importlib.enforce_interface(module, [function])
+    variable.is_of = reject_storage_subject
+    rejected_storage = importlib.enforce_interface(module, [variable])
+    return save(
+        [
+            accepted,
+            rejected_function,
+            rejected_storage,
+            subject_observations,
+            [ctx.caller, ctx.signer, ctx.this],
+        ]
+    )
+
+
+def capture_subject(subject):
+    subject_box.append(subject)
+    return True
+
+
+def failing_subject_callback(subject):
+    result.set("pending callback write must roll back")
+    Attempted({"mode": "callback body"})
+    assert subject.kind == "storage", "callback received wrong subject"
+    raise Exception("metadata callback deliberate failure")
+
+
+def interface_subject(storage):
+    descriptor = (
+        importlib.Var("result", Variable)
+        if storage
+        else importlib.Func("hidden_alias_target", private=True)
+    )
+    descriptor.is_of = capture_subject
+    module = importlib.import_module("__INSPECTOR__")
+    assert importlib.enforce_interface(module, [descriptor]), "metadata capture failed"
+    return subject_box[0]
+
+
+@export
+def fail_metadata_callback(mode: str):
+    result.set("pending metadata inspection must roll back")
+    Attempted({"mode": mode})
+    subject = interface_subject(mode in ["readonly", "storage_get", "storage_set", "public"])
+    if mode == "readonly":
+        subject.name = "changed"
+    if mode == "private_call":
+        return subject()
+    if mode == "storage_get":
+        return subject.get()
+    if mode == "storage_set":
+        return subject.set(argument_failure())
+    if mode == "storage":
+        return persisted.set({"subject": [subject]})
+    if mode == "public":
+        return {"subject": [subject]}
+    if mode == "cross_contract":
+        return inspector.consume_payload({"items": [subject]})
+    if mode == "callback_error":
+        descriptor = importlib.Var("result", Variable)
+        descriptor.is_of = failing_subject_callback
+        module = importlib.import_module("__INSPECTOR__")
+        return importlib.enforce_interface(module, [descriptor])
+    raise Exception("unknown metadata callback mode")
+
+
+@export
+def check_self_subject(subject: Any):
+    result.set(
+        [subject.kind, subject.name, list(subject.args), ctx.this, ctx.caller, ctx.owner, ctx.signer]
+    )
+    return importlib.Func("recover", args=("label",)).is_of(subject)
+
+
+@export
+def self_module_callback():
+    before = [ctx.this, ctx.caller, ctx.owner, ctx.signer]
+    module = importlib.import_module(ctx.this)
+    descriptor = importlib.Func("recover", args=("label",))
+    descriptor.is_of = module.check_self_subject
+    accepted = importlib.enforce_interface(module, [descriptor])
+    callback_frame = result.get()
+    return save([before, accepted, callback_frame, [ctx.this, ctx.caller, ctx.owner, ctx.signer]])

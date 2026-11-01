@@ -704,6 +704,7 @@ def cases(names, accounts, signature):
         *followup_cases(names),
         *adapter_cases(names, accounts),
         *imported_alias_cases(names, accounts),
+        *metadata_callback_cases(names, accounts),
     ]
 
 
@@ -1143,7 +1144,7 @@ def adapter_cases(names, accounts):
         ("orm_foreign_variable", "cannot write to foreign storage"),
         ("orm_foreign_clear", "cannot write to foreign storage"),
         ("orm_foreign_clone", "cannot write to foreign storage"),
-        ("interface_noncallable", "custom is_of"),
+        ("interface_noncallable", "value of type int is not callable"),
     ):
         scenarios.append(
             Case(
@@ -1215,4 +1216,63 @@ def imported_alias_cases(names, accounts):
                 {f"{contract}.result": label},
             )
         )
+    return scenarios
+
+
+def metadata_callback_cases(names, accounts):
+    contract = names["followups"]
+    frame = [accounts["alice"], accounts["alice"], contract]
+    observations = [
+        ["function", "consume_payload", ["payload"], None, *frame],
+        ["storage", "__result", None, "Variable", *frame],
+        ["function", "__hidden_alias_target", [], None, *frame],
+    ]
+    value = [True, False, False, observations, frame]
+    scenarios = [
+        Case(
+            "adapter-metadata-callbacks",
+            contract,
+            "metadata_callbacks",
+            result=value,
+            state={f"{contract}.result": value},
+        )
+    ]
+    for mode, error in (
+        ("readonly", "interfacesubject is read-only"),
+        ("private_call", "not callable"),
+        ("storage_get", "attribute"),
+        ("storage_set", "attribute"),
+        ("storage", "interface subjects cannot cross"),
+        ("public", "interface subjects cannot cross"),
+        ("cross_contract", "interface subjects cannot cross"),
+        ("callback_error", "metadata callback deliberate failure"),
+    ):
+        label = "adapter-metadata-" + mode
+        scenarios.append(
+            Case(
+                label + "-rollback", contract, "fail_metadata_callback", {"mode": mode}, error=error
+            )
+        )
+        scenarios.append(
+            Case(
+                label + "-recovery",
+                contract,
+                "recover",
+                {"label": label},
+                label,
+                {f"{contract}.result": label},
+            )
+        )
+    owner_frame = [contract, accounts["alice"], None, accounts["alice"]]
+    self_observation = ["function", "recover", ["label"], *owner_frame]
+    self_result = [owner_frame, True, self_observation, owner_frame]
+    scenarios.append(
+        Case(
+            "adapter-metadata-self-module-callback",
+            contract,
+            "self_module_callback",
+            result=self_result,
+            state={f"{contract}.result": self_result},
+        )
+    )
     return scenarios
