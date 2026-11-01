@@ -8,6 +8,7 @@ import json
 import math
 
 from localnet_chain_checks import (
+    CURRENCY_TRANSFER_CHI,
     PROBE_SOURCE,
     agreement,
     broadcast,
@@ -87,12 +88,17 @@ async def mixed_phase(runner, session):
         await runner.restart_localnet_and_wait_ready(session)
 
 
+# Leave enough for a 25-native admission reserve after paying both execution
+# fees, while the second 70-native transfer still exceeds the remaining balance.
+NONCE_INITIAL_BALANCE = 125
+
+
 async def nonce_phase(runner, session):
     from localnet_runtime_safety_checks import zero_chi_check
 
     zero_chi = await zero_chi_check(runner, session)
     signer, recipient = wallet(runner, "nonce-signer"), wallet(runner, "nonce-recipient")
-    await runner.fund_wallets(session, [signer], amount=100)
+    await runner.fund_wallets(session, [signer], amount=NONCE_INITIAL_BALANCE)
 
     def transfer(nonce, amount):
         return prepared(
@@ -102,7 +108,7 @@ async def nonce_phase(runner, session):
             "currency",
             "transfer",
             {"amount": amount, "to": recipient.public_key},
-            chi=100,
+            chi=CURRENCY_TRANSFER_CHI,
         )
 
     first, second = transfer(0, 70), transfer(1, 70)

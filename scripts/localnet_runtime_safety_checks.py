@@ -1,6 +1,7 @@
 """Live regressions for contract authority, shared metering, and stored values."""
 
 from localnet_chain_checks import (
+    CURRENCY_TRANSFER_CHI,
     agreement,
     broadcast,
     deploy,
@@ -370,7 +371,7 @@ async def zero_chi_check(runner, session):
             "currency",
             "transfer",
             {"amount": 1, "to": runner.founder_wallet.public_key},
-            chi=100,
+            chi=CURRENCY_TRANSFER_CHI,
             nonce=0,
             wait_for_tx=True,
         )

@@ -134,3 +134,46 @@ def test_zero_chi_probe_accepts_backend_diagnostics_and_reuses_nonce(
     assert client.send_tx.await_args.kwargs["nonce"] == 0
     assert client.send_tx.await_args.kwargs["chi"] > 0
     assert output["recovery_tx"] == "recovery"
+
+
+def test_nonce_fixture_budget_covers_native_currency_and_failed_followup(tmp_path):
+    from contracting.storage.driver import Driver
+    from localnet_chain_checks import CURRENCY_TRANSFER_CHI
+    from localnet_execution_checks import NONCE_INITIAL_BALANCE
+    from xian.execution_engine import build_vm_runtime, execute_vm_transaction
+    from xian_runtime_types.time import Datetime
+
+    source = Path(__file__).resolve().parents[2] / "xian-configs/contracts/currency.s.py"
+    sender, recipient = "a" * 64, "b" * 64
+    with Driver(storage_home=tmp_path) as driver:
+        driver.set_contract_from_source("currency", source.read_text())
+        driver.set(f"currency.balances:{sender}", NONCE_INITIAL_BALANCE)
+        driver.set(f"currency.balances:{recipient}", 0)
+        driver.commit()
+        runtime = build_vm_runtime()
+        for amount, expected_success in [(70, True), (70, False), (1, True)]:
+            # Admission reserves the full supplied budget before execution.
+            balance = driver.get(f"currency.balances:{sender}")
+            assert balance >= CURRENCY_TRANSFER_CHI / 20
+            outcome = execute_vm_transaction(
+                runtime,
+                driver,
+                sender=sender,
+                contract_name="currency",
+                function_name="transfer",
+                kwargs={"amount": amount, "to": recipient},
+                environment={"now": Datetime(2026, 11, 1), "chain_id": "local-test"},
+                chi_budget=CURRENCY_TRANSFER_CHI,
+                transaction_size_bytes=1024,
+                chi_cost=20,
+                meter=True,
+                apply_metering_on_success_only=False,
+            )
+            assert (outcome.output.status_code == 0) is expected_success, outcome.output.result
+            assert 0 < outcome.chi_used < CURRENCY_TRANSFER_CHI
+            if not expected_success:
+                assert "not enough coins" in str(outcome.output.result).lower()
+            for key, value in outcome.writes.items():
+                driver.set(key, value)
+            driver.commit()
+        assert driver.get(f"currency.balances:{recipient}") == 71

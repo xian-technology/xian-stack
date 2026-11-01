@@ -19,6 +19,8 @@ from xian_py import transaction as tr
 from xian_py.wallet import Wallet
 
 STACK = Path(__file__).resolve().parents[1]
+# Covers typed Transfer event validation as well as ordinary currency writes.
+CURRENCY_TRANSFER_CHI = 500
 
 # Both integrated and split images carry these executables. Temporary observers
 # run both locally, so they do not depend on an image-specific supervisor.

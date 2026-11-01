@@ -15,6 +15,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent
 
+from localnet_chain_checks import CURRENCY_TRANSFER_CHI  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian import Xian  # noqa: E402
 
@@ -137,7 +138,7 @@ def main():
         try:
             r = secrets.randbelow(3)
             if r == 0:
-                xian.send(amount=1, to_address=secrets.token_hex(32), chi=100)
+                xian.send(amount=1, to_address=secrets.token_hex(32), chi=CURRENCY_TRANSFER_CHI)
             elif r == 1:
                 xian.send_tx(contract="con_counter", function="increment", kwargs={}, chi=100)
             else:
