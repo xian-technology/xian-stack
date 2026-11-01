@@ -174,6 +174,24 @@ RUN uv pip install --system --no-cache --no-index --find-links /tmp/wheels --req
     && find /usr/local/lib -name uv_cache.json -delete \
     && find /usr/local/lib -name RECORD -exec sed -i '/uv_cache\.json,/d' {} +
 
+# Isolated simulation workers must not recompile the interpreter and installed
+# packages on every request. Keep runtime cache writes disabled, retain asserts,
+# and use source hashes rather than build timestamps for reproducible bytecode.
+RUN python - <<'PY'
+import compileall
+import py_compile
+import sysconfig
+
+if not compileall.compile_dir(
+    sysconfig.get_path("stdlib"),
+    quiet=1,
+    force=True,
+    optimize=0,
+    invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH,
+):
+    raise SystemExit("Python runtime bytecode compilation failed")
+PY
+
 FROM node-base AS split
 
 WORKDIR /opt/xian

@@ -4,6 +4,12 @@
 .mypy_cache
 .ruff_cache
 .coverage
+.coverage.*
+.metrics
+.tmp-home
+graphify-out
+htmlcov
+coverage.xml
 .DS_Store
 .idea
 .vscode
