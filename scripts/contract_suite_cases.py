@@ -714,7 +714,7 @@ def host_alias_cases(names):
         True,
         "2026-01-04 00:00:00",
         [True, True, True],
-        [True, True],
+        [True, True, True, True],
         [[[7, 8]], True],
     ]
     scenarios = [

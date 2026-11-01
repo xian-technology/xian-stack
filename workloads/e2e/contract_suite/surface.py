@@ -249,6 +249,8 @@ def host_aliases(target: str):
     parse = date(2026, 1, 2).strptime
     exists = importlib.exists
     has_export = importlib.has_export
+    interface_function = importlib.Func
+    check_interface = importlib.enforce_interface
     seed = random.seed
     choose = random.choice
     shuffle = random.shuffle
@@ -268,7 +270,14 @@ def host_aliases(target: str):
                 parse == date.strptime,
                 isinstance(list(map(parse, ["2024-01-02"], ["%Y-%m-%d"]))[0], date),
             ],
-            [exists(target), has_export(target, "consume_payload")],
+            [
+                exists(target),
+                has_export(target, "consume_payload"),
+                check_interface(target, [interface_function("consume_payload", args=("payload",))]),
+                not check_interface(
+                    target, [interface_function("consume_payload", args=("wrong",))]
+                ),
+            ],
             [values, selected is values[0]],
         ]
     )
