@@ -78,6 +78,11 @@ def invalid_set():
     InvalidStore({'attempt': 'set'})
     value.set(set([1, 2]))
 @export
+def invalid_frozenset():
+    progress.set(99)
+    InvalidStore({'attempt': 'frozenset'})
+    value.set(frozenset([1, 2]))
+@export
 def invalid_key():
     progress.set(99)
     InvalidStore({'attempt': 'key'})
@@ -302,7 +307,7 @@ async def stored_value_checks(runner, session):
     name = await deploy(runner, session, "runtime-storage-values", STORAGE_SOURCE)
     failures = {}
     async with runner.client(runner.founder_wallet, 0, session) as client:
-        for index, function in enumerate(("invalid_set", "invalid_key")):
+        for index, function in enumerate(("invalid_set", "invalid_frozenset", "invalid_key")):
             bad = await client.send_tx(name, function, {}, chi=100_000, wait_for_tx=True)
             failures[function] = failed_execution(bad, function)
             require(not failures[function].get("events"), "Invalid stored value retained an event")

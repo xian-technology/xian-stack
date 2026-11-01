@@ -774,11 +774,12 @@ def set_kind_cases(names):
             result=answer,
             state={
                 f"{contract}.result": answer,
+                f"{contract}.converted_members": ["a", "b", "z"],
                 f"{names['inspector']}.result": "builtin set retained",
             },
         ),
         Case(
-            "set-explicit-conversion-persisted",
+            "set-member-list-persisted-and-reconstructed",
             contract,
             "read_converted_set",
             result=[["a", "b", "z"], True],

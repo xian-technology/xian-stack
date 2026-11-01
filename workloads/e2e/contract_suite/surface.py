@@ -1,7 +1,7 @@
 import __INSPECTOR__ as inspector
 
 result = Variable()
-converted_set = Variable()
+converted_members = Variable()
 Attempted = LogEvent("Attempted", {"mode": str})
 
 
@@ -214,7 +214,9 @@ def set_kinds():
     mutable |= {"d": 4}.keys()
     view_operand = [sorted(alias), sorted(mutable), mutable is alias]
     returned = inspector.retain_builtin_set(value=raw)
-    converted_set.set(set(returned))
+    converted = set(returned)
+    assert isinstance(converted, set)
+    converted_members.set(sorted(converted))
     return save(
         [
             comparisons,
@@ -228,13 +230,13 @@ def set_kinds():
 
 @export
 def read_converted_set():
-    value = converted_set.get()
+    value = set(converted_members.get())
     return save([sorted(value), isinstance(value, set)])
 
 
 @export
 def recover_set(label: str):
-    value = converted_set.get()
+    value = set(converted_members.get())
     assert isinstance(value, set) and sorted(value) == ["a", "b", "z"]
     return save(label)
 
@@ -308,7 +310,7 @@ def fail_set(mode: str):
     Attempted({"mode": mode})
     value = {"a": 1}.keys() | []
     if mode == "set_storage":
-        return converted_set.set({"nested": [value]})
+        return converted_members.set({"nested": [value]})
     if mode == "set_result":
         return {"nested": [value]}
     if mode == "set_mixed_left":

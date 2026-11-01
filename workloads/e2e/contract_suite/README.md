@@ -100,10 +100,13 @@ recovery.
 View-set scenarios distinguish the built-in set returned by dictionary-view
 algebra from the deterministic `set()` wrapper. They check equality, public type
 checks, method result kinds, augmented-assignment aliases and shared cross-contract
-mutation without changing kind. Explicit `set(value)` conversion is persisted and
-read back in a later transaction. Raw built-in sets in storage or public results,
+mutation without changing kind. Explicit `set(value)` conversion is checked,
+then a sorted member list is persisted and reconstructed in a later transaction.
+The node separately rejects wrapper-set state writes in runtime-safety checks;
+runtime serialization support does not imply node state admission.
+Raw built-in sets in storage or public results,
 and mixed-kind operators in either direction, must fail after a pending write and
-event. Each recovery also verifies that the previously converted set survived.
+event. Each recovery also verifies that the saved member list survived.
 Set observations use Python 3.12.10 with the Python contracting wrappers as an
 independent oracle; storage and cross-contract boundaries are checked by native
 and network execution.

@@ -14,6 +14,7 @@ def test_native_contract_suite(tmp_path):
     import xian_vm_core
     from contracting.local import ContractingClient
     from contracting.storage.driver import Driver
+    from xian.utils.encoding import encode_abci_json
     from xian_py.wallet import Wallet
     from xian_runtime_types.time import Datetime
 
@@ -48,6 +49,8 @@ def test_native_contract_suite(tmp_path):
         )
 
     def commit(result):
+        # A native success must also satisfy the node's consensus-effects boundary.
+        encode_abci_json((result.writes, result.events))
         for key, value in result.writes.items():
             driver.set(key, value)
         driver.commit()
