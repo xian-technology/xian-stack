@@ -59,3 +59,37 @@ def retain_builtin_set(value: Any):
     value.add("z")
     result.set("builtin set retained")
     return value
+
+
+interface_constant = 7
+interface_none = None
+
+
+Frame = LogEvent("Frame", {"caller": str, "signer": str, "this": str})
+
+
+@export
+def event_frame():
+    frame = {"caller": ctx.caller, "signer": ctx.signer, "this": ctx.this}
+    emit = Frame.write_event
+    emit(frame)
+    result.set([ctx.caller, ctx.signer, ctx.this])
+    return [ctx.caller, ctx.signer, ctx.this, Contract.get_info(ctx.this)["owner"]]
+
+
+def hidden_alias_target():
+    result.set("private alias must never run")
+    return "private"
+
+
+info_alias = Contract.get_info
+digest_alias = hashlib.sha3_text
+integer_alias = int
+fromhex_alias = bytes.fromhex
+frame_alias = event_frame
+private_alias = hidden_alias_target
+storage_alias = result
+storage_method_alias = result.set
+event_alias = Frame
+constant_alias = 7
+namespace_alias = hashlib

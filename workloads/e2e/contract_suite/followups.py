@@ -1,4 +1,5 @@
 import __INSPECTOR__ as inspector
+import submission
 
 result = Variable()
 persisted = Variable()
@@ -187,3 +188,167 @@ def fail(mode: str):
 @export
 def recover(label: str):
     return save(label)
+
+
+Typed = LogEvent("Typed", {"value": indexed(int)})
+Text = LogEvent("Text", {"value": str})
+
+
+@export
+def event_helpers():
+    Attempted.write_event(event_data={"mode": "bound"})
+    write = Attempted.write_event
+    write({"mode": "aliased"})
+    event_type = importlib.Var("event", LogEvent).type
+    event_type.write_event(Attempted, {"mode": "class"})
+    emit = Attempted
+    emit(data={"mode": "call"})
+    Typed.write_event({"value": 7})
+    Text.write_event({"value": "é" * 512})
+    return save([7, 1024])
+
+
+@export
+def orm_helpers():
+    variable_type = importlib.Var("value", Variable).type
+    variable_type.set(result, "local")
+    read = variable_type.get
+    local = read(result)
+    foreign = ForeignVariable(foreign_contract="__LEDGER__", foreign_name="admin")
+    admin = read(foreign)
+    foreign_hash = ForeignHash(foreign_contract="__LEDGER__", foreign_name="balances")
+    hash_type = importlib.Var("items", Hash).type
+    clone = hash_type.clone_from
+    clone(slot, foreign_hash)
+    total = sum(hash_type.all(slot))
+    hash_type.clear(slot)
+    return save([local, admin, total == 100, hash_type.all(slot)])
+
+
+@export
+def interface_callback_order():
+    module = importlib.import_module("__INSPECTOR__")
+    descriptor = importlib.Func("missing_member")
+    descriptor.is_of = 7
+    missing = importlib.enforce_interface(module, [descriptor])
+    descriptor.name = "interface_none"
+    empty = importlib.enforce_interface(module, [descriptor])
+    descriptor.name = "interface_constant"
+    constant = importlib.enforce_interface(module, [descriptor])
+    return save([missing, empty, constant])
+
+
+@export
+def fail_adapter(mode: str):
+    result.set("pending adapter must roll back")
+    Attempted({"mode": mode})
+    variable_type = importlib.Var("value", Variable).type
+    hash_type = importlib.Var("items", Hash).type
+    if mode == "event_type":
+        return Typed.write_event({"value": "wrong"})
+    if mode == "event_oversize":
+        return Text.write_event({"value": "é" * 513})
+    if mode == "orm_wrong_receiver":
+        return variable_type.get(slot)
+    if mode == "orm_foreign_variable":
+        foreign = ForeignVariable(foreign_contract="__LEDGER__", foreign_name="admin")
+        return variable_type.set(foreign, "corrupted")
+    if mode == "orm_foreign_clear":
+        foreign = ForeignHash(foreign_contract="__LEDGER__", foreign_name="balances")
+        return hash_type.clear(foreign)
+    if mode == "orm_foreign_clone":
+        foreign = ForeignHash(foreign_contract="__LEDGER__", foreign_name="balances")
+        return hash_type.clone_from(foreign, slot)
+    if mode == "interface_noncallable":
+        descriptor = importlib.Func("consume_payload")
+        descriptor.is_of = 7
+        module = importlib.import_module("__INSPECTOR__")
+        return importlib.enforce_interface(module, [descriptor])
+    raise Exception("unknown adapter mode")
+
+
+@export
+def event_owner_frame():
+    before = [ctx.caller, ctx.signer, ctx.this]
+    nested = inspector.event_frame()
+    return save([before, nested, [ctx.caller, ctx.signer, ctx.this]])
+
+
+@export
+def forbidden_submit(name: str, unbound: bool):
+    result.set("pending deployment must roll back")
+    Attempted({"mode": "forbidden submit"})
+    helper = Contract()
+    source = "@export\ndef value():\n    return 7\n"
+    if unbound:
+        return Contract.submit(helper, name, source)
+    submit = helper.submit
+    return submit(name=name, code=source)
+
+
+@export
+def recover_submit(name: str, label: str):
+    assert not importlib.exists(name), "forbidden submit persisted a child contract"
+    return save(label)
+
+
+@export
+def constructor_submit(name: str, nested: str):
+    result.set("pending constructor deployment must roll back")
+    Attempted({"mode": "constructor submit"})
+    source = r"""
+marker = Variable()
+Started = LogEvent("Started", {"name": str})
+@construct
+def seed(name: str):
+    marker.set("pending child")
+    Started({"name": name})
+    Contract().submit(name, "@export\ndef value():\n    return 7\n")
+@export
+def value():
+    return marker.get()
+"""
+    submission.submit_contract(name=name, code=source, constructor_args={"name": nested})
+
+
+@export
+def recover_constructor_submit(name: str, nested: str):
+    assert not importlib.exists(name), "failed constructor persisted its child"
+    assert not importlib.exists(nested), "failed constructor persisted its nested deployment"
+    return save("recovered constructor submit")
+
+
+@export
+def imported_aliases():
+    callback = inspector.frame_alias
+    nested = callback()
+    return save(
+        [
+            inspector.info_alias(ctx.this)["owner"],
+            inspector.digest_alias("abc"),
+            inspector.integer_alias("17"),
+            inspector.fromhex_alias("6162").hex(),
+            callback is inspector.event_frame,
+            nested,
+            [ctx.caller, ctx.signer, ctx.this],
+        ]
+    )
+
+
+@export
+def fail_imported_alias(mode: str):
+    result.set("pending imported alias must roll back")
+    Attempted({"mode": mode})
+    if mode == "private":
+        return inspector.private_alias(argument_failure())
+    if mode == "storage":
+        return inspector.storage_alias
+    if mode == "storage_method":
+        return inspector.storage_method_alias(argument_failure())
+    if mode == "event":
+        return inspector.event_alias(argument_failure())
+    if mode == "constant":
+        return inspector.constant_alias
+    if mode == "namespace":
+        return inspector.namespace_alias
+    raise Exception("unknown imported alias mode")

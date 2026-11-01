@@ -1,7 +1,7 @@
 # Authored contract functionality suite
 
-`03-contract-functionality` deploys eleven source contracts and executes 157 ordered
-interactions (95 successes, 62 expected failures) in the default five-validator
+`03-contract-functionality` deploys eleven source contracts and executes 194 ordered
+interactions (116 successes, 78 expected failures) in the default five-validator
 E2E run. Run `make localnet-e2e` from `xian-stack`; run the fast native equivalent
 with `uv run pytest tests/test_contract_suite.py`.
 
@@ -103,8 +103,8 @@ algebra from the deterministic `set()` wrapper. They check equality, public type
 checks, method result kinds, augmented-assignment aliases and shared cross-contract
 mutation without changing kind. Explicit `set(value)` conversion is checked,
 then a sorted member list is persisted and reconstructed in a later transaction.
-The node separately rejects wrapper-set state writes in runtime-safety checks;
-runtime serialization support does not imply node state admission.
+Current nodes admit typed wrapper sets through the versioned set codec. The
+followup flows below verify their persisted representation and reconstruction.
 Raw built-in sets in storage or public results,
 and mixed-kind operators in either direction, must fail after a pending write and
 event. Each recovery also verifies that the saved member list survived.
@@ -133,8 +133,9 @@ and an unbound callable or storage receiver whose argument would raise a distinc
 error if evaluated too soon. Every failure rolls back a pending write and event,
 then the same wallet submits a successful recovery. Mutable Func/Var descriptors
 exercise shared argument identity, name/argument updates, `is_of`, interface
-enforcement and identity-key lookup. Descriptor storage and dynamically invoking
-an ORM class through descriptor metadata remain rejected.
+enforcement and identity-key lookup. Descriptor storage and constructing anonymous ORM storage through descriptor
+metadata remain rejected. Audited unbound read and mutation methods are tested
+separately against both writable local and read-only foreign receivers.
 
 Callable-bearing builtin view sets check receiver identity, deduplication,
 membership, stable encounter ordering and invoking the remaining bound method.
@@ -157,3 +158,33 @@ indexer must preserve the same values during initial RPC reindexing and after it
 own restart/resume. These are live PostgreSQL assertions; helper tests also prove
 that missing rows, flattened members, lost decimal quantum and stale transaction
 IDs fail the checks.
+
+
+The API adapter flows invoke event helpers directly, through a local alias and
+through the recovered event class. They verify indexed integer schemas, a
+1024-byte UTF-8 value at the event limit, wrong-type rejection and oversized-value
+rollback. A nested event helper call checks declaring-contract attribution,
+caller/signer identity and restoration of the original caller frame.
+
+Unbound Variable/Hash methods read and mutate local state and clone a foreign
+source into local storage. Wrong receiver families and writes through foreign
+Variable/Hash receivers fail, including attempts to clear or clone into a foreign
+receiver. Each failure is followed by a successful transaction.
+
+Imported public aliases exercise an admitted host helper, hashing function,
+builtin constructor, class-bound bytes factory and exported contract function.
+The exported alias retains its original contract frame. Private functions,
+storage handles/methods, events, constants and module namespaces remain
+inaccessible through this callable-only import surface. Rejected callable
+lookups are checked before their deliberately failing argument expressions.
+Interface checks also verify that missing/None members return false and ordinary
+constants return true without invoking a noncallable `is_of` override; an actual
+function member requires a callable check.
+
+`Contract.submit` remains restricted to the canonical submission context.
+Ordinary contracts attempt both bound and unbound helper calls. A contract
+submitted through the canonical factory also attempts another helper deployment
+from its constructor. Each denial rolls back writes/events and the following
+transaction verifies that no child or nested child remains. Successful helper
+adapter calls inside the submission context are covered by focused runtime tests;
+the surrounding orchestration phase covers successful canonical deployments.

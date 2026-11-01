@@ -702,6 +702,8 @@ def cases(names, accounts, signature):
         *set_kind_cases(names),
         *host_alias_cases(names),
         *followup_cases(names),
+        *adapter_cases(names, accounts),
+        *imported_alias_cases(names, accounts),
     ]
 
 
@@ -1046,3 +1048,171 @@ def select_state(value, selector):
             return None
         value = value[component]
     return value
+
+
+def adapter_cases(names, accounts):
+    contract = names["followups"]
+    outcomes = {
+        "event_helpers": [7, 1024],
+        "orm_helpers": ["local", accounts["alice"], True, []],
+        "interface_callback_order": [False, False, True],
+    }
+    events = (
+        *(
+            event(contract, "Attempted", mode=mode)
+            for mode in ("bound", "aliased", "class", "call")
+        ),
+        event(contract, "Typed", value=7),
+        event(contract, "Text", value="é" * 512),
+    )
+    scenarios = [
+        Case(
+            "adapter-" + function,
+            contract,
+            function,
+            result=value,
+            state={f"{contract}.result": value},
+            events=events if function == "event_helpers" else (),
+        )
+        for function, value in outcomes.items()
+    ]
+    inspector = names["inspector"]
+    caller_frame = [accounts["alice"], accounts["alice"], contract]
+    callee_frame = [contract, accounts["alice"], inspector]
+    nested_frame = [caller_frame, [*callee_frame, None], caller_frame]
+    scenarios.append(
+        Case(
+            "adapter-event-owner-frame",
+            contract,
+            "event_owner_frame",
+            result=nested_frame,
+            state={f"{contract}.result": nested_frame, f"{inspector}.result": callee_frame},
+            events=(
+                event(
+                    inspector, "Frame", caller=contract, signer=accounts["alice"], this=inspector
+                ),
+            ),
+        )
+    )
+    for unbound in (False, True):
+        child = contract + ("_class_child" if unbound else "_bound_child")
+        label = "adapter-submit-" + ("class" if unbound else "bound")
+        scenarios.append(
+            Case(
+                label + "-rollback",
+                contract,
+                "forbidden_submit",
+                {"name": child, "unbound": unbound},
+                error="contract metadata changes are restricted to submission",
+            )
+        )
+        scenarios.append(
+            Case(
+                label + "-recovery",
+                contract,
+                "recover_submit",
+                {"name": child, "label": label},
+                label,
+                {f"{contract}.result": label},
+            )
+        )
+    constructor_names = {"name": contract + "_ctor_child", "nested": contract + "_ctor_nested"}
+    scenarios.extend(
+        [
+            Case(
+                "adapter-submit-constructor-rollback",
+                contract,
+                "constructor_submit",
+                constructor_names,
+                error="contract metadata changes are restricted to submission",
+            ),
+            Case(
+                "adapter-submit-constructor-recovery",
+                contract,
+                "recover_constructor_submit",
+                constructor_names,
+                "recovered constructor submit",
+                {f"{contract}.result": "recovered constructor submit"},
+            ),
+        ]
+    )
+    for mode, error in (
+        ("event_type", "wrong type"),
+        ("event_oversize", "exceeds 1024 bytes"),
+        ("orm_wrong_receiver", "incompatible receiver"),
+        ("orm_foreign_variable", "cannot write to foreign storage"),
+        ("orm_foreign_clear", "cannot write to foreign storage"),
+        ("orm_foreign_clone", "cannot write to foreign storage"),
+        ("interface_noncallable", "custom is_of"),
+    ):
+        scenarios.append(
+            Case(
+                "adapter-" + mode + "-rollback",
+                contract,
+                "fail_adapter",
+                {"mode": mode},
+                error=error,
+            )
+        )
+        label = "recovered " + mode
+        scenarios.append(
+            Case(
+                "adapter-" + mode + "-recovery",
+                contract,
+                "recover",
+                {"label": label},
+                label,
+                {f"{contract}.result": label},
+            )
+        )
+    return scenarios
+
+
+def imported_alias_cases(names, accounts):
+    contract, inspector = names["followups"], names["inspector"]
+    callee_frame = [contract, accounts["alice"], inspector]
+    value = [
+        None,
+        hashlib.sha3_256(b"abc").hexdigest(),
+        17,
+        "6162",
+        True,
+        [*callee_frame, None],
+        [accounts["alice"], accounts["alice"], contract],
+    ]
+    scenarios = [
+        Case(
+            "adapter-imported-safe-aliases",
+            contract,
+            "imported_aliases",
+            result=value,
+            state={f"{contract}.result": value, f"{inspector}.result": callee_frame},
+            events=(
+                event(
+                    inspector, "Frame", caller=contract, signer=accounts["alice"], this=inspector
+                ),
+            ),
+        )
+    ]
+    for mode in ("private", "storage", "storage_method", "event", "constant", "namespace"):
+        label = "adapter-imported-" + mode
+        scenarios.append(
+            Case(
+                label + "-rollback",
+                contract,
+                "fail_imported_alias",
+                {"mode": mode},
+                error="module attribute is not an admitted public callable",
+            )
+        )
+        scenarios.append(
+            Case(
+                label + "-recovery",
+                contract,
+                "recover",
+                {"label": label},
+                label,
+                {f"{contract}.result": label},
+            )
+        )
+    return scenarios
