@@ -19,6 +19,7 @@ ROLES = (
     "commitments",
     "compatibility",
     "surface",
+    "followups",
 )
 
 
@@ -700,6 +701,7 @@ def cases(names, accounts, signature):
         *completed_surface_cases(names),
         *set_kind_cases(names),
         *host_alias_cases(names),
+        *followup_cases(names),
     ]
 
 
@@ -925,6 +927,98 @@ def completed_surface_cases(names):
     return scenarios
 
 
+def followup_cases(names):
+    contract = names["followups"]
+    members = [
+        ["tuple", [["str", "tuple"], ["int", "7"]]],
+        ["frozenset", [["int", "2"], ["int", "3"]]],
+        ["raw_decimal", 0, "12300", -4],
+    ]
+    outcomes = {
+        "scopes": [41, 9, [1, 2], [[1, 2], [3]], 9],
+        "hash_inputs": [
+            hashlib.sha256(("é" * 8192).encode()).hexdigest(),
+            hashlib.sha3_256(("é" * 8192).encode()).hexdigest(),
+            hashlib.sha256(b"abc").hexdigest(),
+        ],
+        "store_sets": [3, True, True],
+        "read_sets": [True, True, 3, 4, 3, True, "1.2300", -4],
+        "descriptors": [
+            True,
+            True,
+            ["payload", "extra"],
+            True,
+            True,
+            False,
+            False,
+            7,
+            "__result",
+            True,
+            True,
+        ],
+        "callable_keys": [["none", "two", "first", "second"], [4, True, True], [], [9], 0, 2, True],
+    }
+    scenarios = []
+    for function, value in outcomes.items():
+        state = {f"{contract}.result": value}
+        if function == "store_sets":
+            state.update(
+                {
+                    f"{contract}.persisted": {"__set__": {"codec": "xian-set-1", "items": members}},
+                    f"{contract}.frozen": {
+                        "__frozenset__": {"codec": "xian-set-1", "items": members}
+                    },
+                }
+            )
+        scenarios.append(
+            Case(f"followup-{function}", contract, function, result=value, state=state)
+        )
+    failures = [
+        ("scope_local", "cannot access local variable"),
+        ("scope_comprehension", "cannot access local variable"),
+        ("scope_call", "cannot access local variable"),
+        ("scope_storage", "cannot access local variable"),
+        ("crypto_key", "resource limit"),
+        ("crypto_signature", "resource limit"),
+        ("descriptor_storage", "interface descriptors cannot"),
+        ("unsafe_orm_alias", "not an instantiable constructor"),
+        ("callable_wrapper", "unhashable type"),
+        ("callable_builtin_storage", "local functions cannot cross the vm boundary"),
+    ]
+    for mode, error in failures:
+        scenarios.append(
+            Case(f"followup-{mode}-rollback", contract, "fail", {"mode": mode}, error=error)
+        )
+        label = f"recovered {mode}"
+        scenarios.append(
+            Case(
+                f"followup-{mode}-recovery",
+                contract,
+                "recover",
+                {"label": label},
+                label,
+                {f"{contract}.result": label},
+            )
+        )
+    scenarios.append(
+        Case(
+            "followup-hash-budget-rollback", contract, "hash_callbacks", error="out of chi", chi=80
+        )
+    )
+    answer = [hashlib.sha3_256(("é" * 8192).encode()).hexdigest()] * 2
+    scenarios.append(
+        Case(
+            "followup-hash-budget-recovery",
+            contract,
+            "hash_callbacks",
+            result=answer,
+            state={f"{contract}.result": answer},
+            events=(event(contract, "Attempted", mode="hash budget"),),
+        )
+    )
+    return scenarios
+
+
 def initial_state(names, accounts, scenarios):
     state = {key: None for case in scenarios for key in case.state}
     state.update(
@@ -943,6 +1037,10 @@ def initial_state(names, accounts, scenarios):
 
 
 def select_state(value, selector):
+    from xian_runtime_types.encoding import encode_set_value, is_wrapper_set
+
+    if is_wrapper_set(value):
+        value = encode_set_value(value)
     for component in selector.split("/")[1:]:
         if value is None:
             return None

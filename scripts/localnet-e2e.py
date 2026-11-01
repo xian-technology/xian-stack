@@ -42,6 +42,11 @@ from localnet_e2e_support import (
 )
 from localnet_network import pin_localnet_addresses
 from localnet_node_report import collect_localnet_node_report
+from localnet_set_storage_checks import (
+    authored_set_fixture,
+    check_typed_set_storage,
+    typed_set_storage_query,
+)
 from shielded_relayer_backend import (
     DEFAULT_SHIELDED_RELAYER_HOST,
     DEFAULT_SHIELDED_RELAYER_PORT,
@@ -5628,6 +5633,7 @@ class E2ERunner:
         service = self.bds_node
         if service is None:
             raise E2EError("BDS node not available for BDS catch-up phase")
+        typed_set_contract, typed_set_expected = authored_set_fixture(self.phase_results)
 
         async def post_graphql(
             *,
@@ -5758,6 +5764,23 @@ class E2ERunner:
             )
 
             submission_excluded_indices = {service.index}
+            typed_set_submission = await self.send_tx_with_broadcast_failover(
+                session,
+                catchup_wallets[0],
+                typed_set_contract,
+                "store_sets",
+                {"label": "bds-catchup"},
+                preferred_index=(service.index + 1) % len(self.nodes),
+                excluded_indices=submission_excluded_indices,
+                chi=DEFAULT_TX_CHI,
+                label="bds-typed-set-refresh",
+                timeout_seconds=self.args.rpc_timeout_seconds,
+            )
+            typed_set_receipt = ensure_positive_submission(
+                typed_set_submission, label="bds-typed-set-refresh"
+            )
+            typed_set_hash = typed_set_receipt["tx_hash"]
+            typed_set_sql = typed_set_storage_query(typed_set_expected, typed_set_hash)
             catchup_records = []
             for index, wallet in enumerate(catchup_wallets * 2):
                 node_index = index % len(self.nodes)
@@ -5831,6 +5854,13 @@ class E2ERunner:
                 if not indexed_events or not indexed_state:
                     raise E2EError("BDS catch-up did not restore indexed tx details")
 
+            typed_set_primary = check_typed_set_storage(
+                query_localnet_bds_db_json(typed_set_sql, label="primary recovered typed sets"),
+                typed_set_expected,
+                typed_set_hash,
+                label="primary spool recovery",
+            )
+
             secondary_start = await self.start_secondary_bds_postgres()
             initial_secondary_sync = self.run_secondary_bds_reindex(
                 source_node=service,
@@ -5842,6 +5872,15 @@ class E2ERunner:
             )
             if secondary_initial_height < catchup_height:
                 raise E2EError("secondary BDS initial sync did not reach the current chain height")
+
+            typed_set_secondary_initial = check_typed_set_storage(
+                parse_psql_json(
+                    self.query_secondary_bds_scalar(typed_set_sql), label="secondary typed sets"
+                ),
+                typed_set_expected,
+                typed_set_hash,
+                label="secondary initial RPC reindex",
+            )
 
             secondary_outage_state = await self.stop_secondary_bds_postgres()
 
@@ -5891,7 +5930,17 @@ class E2ERunner:
             if secondary_tx_count == 0:
                 raise E2EError("secondary BDS did not index the lagged transaction after restart")
 
+            typed_set_secondary_resumed = check_typed_set_storage(
+                parse_psql_json(
+                    self.query_secondary_bds_scalar(typed_set_sql), label="resumed typed sets"
+                ),
+                typed_set_expected,
+                typed_set_hash,
+                label="secondary restart RPC reindex",
+            )
             secondary_bds = {
+                "typed_sets_initial": typed_set_secondary_initial,
+                "typed_sets_resumed": typed_set_secondary_resumed,
                 "start": secondary_start,
                 "initial_sync": initial_secondary_sync,
                 "initial_indexed_height": secondary_initial_height,
@@ -5907,6 +5956,8 @@ class E2ERunner:
 
             self.sample_event_tx_hash = catchup_records[-1]["tx_hash"]
             return {
+                "typed_set_refresh": typed_set_receipt,
+                "typed_sets_primary_recovered": typed_set_primary,
                 "postgres_stopped_state": stopped_state,
                 "postgres_recovered_state": healthy_state,
                 "pre_catchup_node_recovery": pre_catchup_node_recovery,

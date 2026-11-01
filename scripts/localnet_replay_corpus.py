@@ -35,6 +35,40 @@ from localnet_replay_capture import result_digest
 from localnet_sync_checks import set_config
 
 REPOS = ("xian-stack", "xian-abci", "xian-contracting", "xian-py", "xian-configs")
+IMAGE_POLICY_PROBE = """import json
+from xian import execution_policy
+from xian.execution_engine import build_vm_runtime
+build_vm_runtime()
+policy = getattr(execution_policy, 'current_execution_policy', None)
+print(json.dumps(policy() if policy else None))
+"""
+
+
+async def inspect_replay_image(image):
+    image_id = await command("docker", "image", "inspect", "--format", "{{.Id}}", image)
+    policy = await command(
+        "docker", "run", "--rm", "--entrypoint", "python", image, "-c", IMAGE_POLICY_PROBE
+    )
+    return {"image_id": image_id.strip(), "execution_policy": json.loads(policy)}
+
+
+def validate_replay_policy(manifest, image, *, legacy_image_id=None):
+    policy = manifest.get("execution_policy")
+    if policy is None:
+        require(
+            legacy_image_id is not None
+            and image.get("image_id") == legacy_image_id
+            and image.get("execution_policy") is None,
+            "legacy corpus requires its explicitly pinned legacy image ID",
+        )
+        return
+    require(
+        isinstance(policy, dict)
+        and set(policy) == {"execution_revision", "gas_schedule", "bytecode_version", "set_codec"}
+        and all(isinstance(value, str) and value for value in policy.values())
+        and policy == image.get("execution_policy"),
+        "replay image execution policy does not match the corpus",
+    )
 
 
 async def export_corpus(runner, session):
@@ -140,6 +174,10 @@ async def export_corpus(runner, session):
         "repositories": revisions,
         "dirty_repositories": dirty_repositories,
     }
+    container_info = json.loads(await command("docker", "inspect", node.abci_container))[0]
+    image_info = await inspect_replay_image(container_info["Image"])
+    require(image_info["execution_policy"] is not None, "new corpus requires an execution policy")
+    manifest.update(image_info)
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return output
 
@@ -154,9 +192,11 @@ def replay_input_hashes(home):
     return expected
 
 
-async def verify_corpus(corpus, image, output):
+async def verify_corpus(corpus, image, output, *, legacy_image_id=None):
     manifest = json.loads((corpus / "manifest.json").read_text())
     require(not output.exists(), f"Replay output already exists: {output}")
+    image_info = await inspect_replay_image(image)
+    validate_replay_policy(manifest, image_info, legacy_image_id=legacy_image_id)
     output.mkdir(parents=True)
     with tarfile.open(corpus / "blocks.tar.gz") as archive:
         archive.extractall(output, filter="data")
@@ -255,6 +295,7 @@ async def verify_corpus(corpus, image, output):
             "architecture": architecture,
             "image": info["Image"],
             "dirty_source_repositories": manifest.get("dirty_repositories", []),
+            "execution_policy": image_info["execution_policy"],
         }
         (output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
         return result
@@ -276,10 +317,21 @@ def main():
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--image", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--legacy-image-id",
+        help="Exact sha256 image ID required for an unversioned historical corpus",
+    )
     args = parser.parse_args()
     print(
         json.dumps(
-            asyncio.run(verify_corpus(args.corpus.resolve(), args.image, args.output.resolve())),
+            asyncio.run(
+                verify_corpus(
+                    args.corpus.resolve(),
+                    args.image,
+                    args.output.resolve(),
+                    legacy_image_id=args.legacy_image_id,
+                )
+            ),
             indent=2,
         )
     )

@@ -1,7 +1,7 @@
 # Authored contract functionality suite
 
-`03-contract-functionality` deploys ten source contracts and executes 129 ordered
-interactions (78 successes, 51 expected failures) in the default five-validator
+`03-contract-functionality` deploys eleven source contracts and executes 157 ordered
+interactions (95 successes, 62 expected failures) in the default five-validator
 E2E run. Run `make localnet-e2e` from `xian-stack`; run the fast native equivalent
 with `uv run pytest tests/test_contract_suite.py`.
 
@@ -17,6 +17,7 @@ with `uv run pytest tests/test_contract_suite.py`.
 | `compatibility.py` | Medium | Ordered module bindings, starred calls/unpacking, streaming dictionary methods, in-place reverse, hex decoding, dictionary mutation/compaction, Unicode numbers, raw Decimal quantum/type and all 53 public method names, fractional powers, exact float construction, DecimalTuple, NaN identity, non-finite transport/storage rejection, typed storage, prefix clears, self-cloning, rollback and recovery |
 | `commitments.py` | Medium | Ed25519 key/signature validation, application nonces, tampering/replay rejection, datetime parsing/arithmetic and deterministic random bridge invariants |
 | `surface.py` | Medium/complex | Bound mutators and callbacks, keyword signatures, range and numeric methods, live mapping views/proxies, Unicode transformations, binary mutation/codecs, deterministic time policy, field formatting and failure recovery |
+| `followups.py` | Medium/complex | Lexical locals and comprehension isolation, hash/crypto byte costs and limits, typed wrapper-set persistence/query/readback, mutable interface descriptor identity/enforcement, callable-bearing builtin view sets and storage boundaries |
 
 Sources are ordinary authored contracts with the ledger import name substituted
 before deployment. `scripts/contract_suite_cases.py` supplies explicit expected
@@ -119,3 +120,40 @@ decimal-constructor storage and datetime-constructor results must roll back
 writes/events, then allow the next ordinary
 transaction. The exhaustive callable catalog and signature checks remain in the
 runtime suite; these network calls exercise representative compositions.
+
+
+The followup flows persist both mutable and frozen wrapper sets containing a
+nested tuple, frozen set and raw Decimal. All validators must return the exact
+versioned typed encoding from storage queries; a later transaction checks the
+reconstructed kinds, decimal quantum and detached read mutation. These checks
+complement the codec's exhaustive boundary fixtures.
+
+Lexical failures include reads before assignment, comprehension target isolation,
+and an unbound callable or storage receiver whose argument would raise a distinct
+error if evaluated too soon. Every failure rolls back a pending write and event,
+then the same wallet submits a successful recovery. Mutable Func/Var descriptors
+exercise shared argument identity, name/argument updates, `is_of`, interface
+enforcement and identity-key lookup. Descriptor storage and dynamically invoking
+an ORM class through descriptor metadata remain rejected.
+
+Callable-bearing builtin view sets check receiver identity, deduplication,
+membership, stable encounter ordering and invoking the remaining bound method.
+They cannot be converted into deterministic wrapper sets or persisted. The
+separate runtime-safety phase likewise rejects direct and nested builtin view
+sets; valid wrapper persistence is now covered by the positive followup flows.
+
+Hash calls use a 16KiB UTF-8 value through direct, aliased and callback routes.
+A constrained-budget callback transaction rolls back, followed by the identical
+work succeeding with a sufficient budget. Oversized Ed25519 key/signature inputs
+exercise the small network-safe admission limits. Full 1MiB message/hash input
+caps, metering-off behavior and exact per-byte cost deltas remain in native
+resource tests instead of inflating network transaction payloads.
+
+The later BDS catch-up phase recovers the authored contract name from its saved
+phase report and writes a different tuple label while PostgreSQL is offline.
+After spool recovery, current state and that transaction's state-change rows must
+contain the exact typed envelopes with null numeric projections. The secondary
+indexer must preserve the same values during initial RPC reindexing and after its
+own restart/resume. These are live PostgreSQL assertions; helper tests also prove
+that missing rows, flattened members, lost decimal quantum and stale transaction
+IDs fail the checks.

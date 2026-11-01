@@ -143,3 +143,38 @@ def test_contract_suite_has_nominal_decimal_method_coverage():
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     }
     assert methods - calls == set()
+
+
+def test_followup_set_state_preserves_typed_members():
+    from decimal import Decimal
+
+    from contract_suite_cases import followup_cases
+    from xian_runtime_types.collections import ContractingFrozenSet, ContractingSet
+    from xian_runtime_types.encoding import decode_set_value
+
+    stored = ContractingSet([("tuple", 7), ContractingFrozenSet([2, 3]), Decimal("1.2300")])
+    scenario = next(
+        case for case in followup_cases({"followups": "con_test"}) if case.function == "store_sets"
+    )
+    for name, value in [("persisted", stored), ("frozen", ContractingFrozenSet(stored))]:
+        expected = scenario.state[f"con_test.{name}"]
+        assert select_state(value, f"con_test.{name}") == expected
+        tag, payload = next(iter(expected.items()))
+        decoded = decode_set_value(tag, payload)
+        assert type(decoded) is type(value)
+        assert ("tuple", 7) in decoded
+        assert ContractingFrozenSet([3, 2]) in decoded
+        raw = next(item for item in decoded if isinstance(item, Decimal))
+        assert str(raw) == "1.2300" and raw.as_tuple().exponent == -4
+
+
+def test_followup_budget_failure_retries_the_same_work_successfully():
+    from contract_suite_cases import followup_cases
+
+    scenarios = followup_cases({"followups": "con_test"})
+    failure, recovery = scenarios[-2:]
+    assert failure.function == recovery.function == "hash_callbacks"
+    assert failure.error == "out of chi" and recovery.error is None
+    assert failure.chi < recovery.chi
+    assert recovery.state == {"con_test.result": recovery.result}
+    assert recovery.events[0]["data"] == {"mode": "hash budget"}
