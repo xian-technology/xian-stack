@@ -69,9 +69,23 @@ def phase_names(suite: str = "full") -> list[str]:
     return [phase.name for phase in suite_phases(suite)]
 
 
-def validate_suite(suite: str, *, intentkit_enabled: bool) -> None:
+def validate_suite(suite: str, *, intentkit_enabled: bool, require_shielded: bool = False) -> None:
     if suite == "intentkit-x402" and not intentkit_enabled:
         raise E2EError("intentkit-x402 suite requires --intentkit-x402")
+    if require_shielded and suite != "full":
+        raise E2EError("--require-shielded requires the full suite")
+
+
+def validate_shielded_runtime(*, required: bool, available: bool) -> None:
+    if required and not available:
+        raise E2EError(
+            "native ZK support is required but unavailable; run make localnet-e2e "
+            "using the locked xian-stack Python environment"
+        )
+
+
+def required_phase(name: str, *, suite: str, require_shielded: bool) -> bool:
+    return suite != "full" or (require_shielded and name == "15-shielded-note-token")
 
 
 def bind_phase(runner: Any, phase: PhaseSpec, session: Any) -> PhaseCallable:

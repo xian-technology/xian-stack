@@ -32,7 +32,13 @@ from governance_vote_helpers import (
 from localnet_abci_queries import check_live_abci
 from localnet_common import compare_app_hash_window, fetch_json
 from localnet_diagnostics import collect_failure_diagnostics
-from localnet_e2e_phases import bind_phase_sequence, phase_names, validate_suite
+from localnet_e2e_phases import (
+    bind_phase_sequence,
+    phase_names,
+    required_phase,
+    validate_shielded_runtime,
+    validate_suite,
+)
 from localnet_e2e_support import (
     E2EError,
     normalize_value,
@@ -64,7 +70,6 @@ NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 WORKLOADS_DIR = STACK_DIR / "workloads"
 OUTPUT_ROOT = STACK_DIR / ".artifacts" / "localnet-e2e"
 CONTRACTS_DIR = ROOT_DIR / "xian-contracts" / "contracts"
-XIAN_ZK_PYTHON_DIR = ROOT_DIR / "xian-contracting" / "packages" / "xian-zk" / "python"
 XIAN_CONTRACTING_SRC = ROOT_DIR / "xian-contracting" / "src"
 XIAN_ABCI_SRC = ROOT_DIR / "xian-abci" / "src"
 INTENTKIT_DIR = (
@@ -128,7 +133,6 @@ SHIELDED_TX_CHI = {
 CURRENT_UV_PYTHON = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
 sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
-sys.path.insert(0, str(XIAN_ZK_PYTHON_DIR))
 sys.path.insert(0, str(XIAN_ABCI_SRC))
 
 import xian_py.transaction as tr  # noqa: E402
@@ -1992,7 +1996,11 @@ class E2ERunner:
         print(f"[localnet-e2e] starting {name}", flush=True)
         try:
             details = await fn()
-            if getattr(self.args, "suite", "full") != "full" and details.get("skipped"):
+            if required_phase(
+                name,
+                suite=getattr(self.args, "suite", "full"),
+                require_shielded=getattr(self.args, "require_shielded", False),
+            ) and details.get("skipped"):
                 raise E2EError(f"required integration phase {name} was skipped")
         except Exception as exc:
             print(f"[localnet-e2e] failed {name}", flush=True)
@@ -7286,6 +7294,10 @@ class E2ERunner:
         }
 
     async def shielded_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
+        validate_shielded_runtime(
+            required=getattr(self.args, "require_shielded", False),
+            available=ShieldedNoteProver is not None,
+        )
         if ShieldedNoteProver is None:
             return {
                 "skipped": True,
@@ -10756,6 +10768,7 @@ class E2ERunner:
     async def finalize_summary(self) -> dict[str, Any]:
         summary = {
             "suite": getattr(self.args, "suite", "full"),
+            "require_shielded": getattr(self.args, "require_shielded", False),
             "ok": all(phase.ok for phase in self.phase_results),
             "run_id": self.run_id,
             "output_dir": str(self.output_dir),
@@ -10780,7 +10793,14 @@ class E2ERunner:
     async def run(self) -> int:
         start_phase = self.args.start_phase
         suite = getattr(self.args, "suite", "full")
-        validate_suite(suite, intentkit_enabled=self.args.intentkit_x402)
+        validate_suite(
+            suite,
+            intentkit_enabled=self.args.intentkit_x402,
+            require_shielded=self.args.require_shielded,
+        )
+        validate_shielded_runtime(
+            required=self.args.require_shielded, available=ShieldedNoteProver is not None
+        )
         valid_phase_names = phase_names(suite)
         if start_phase not in valid_phase_names:
             raise E2EError(f"unknown start phase: {start_phase}")
@@ -10843,6 +10863,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run a layered 5-validator testnet-shaped localnet end-to-end program",
     )
     parser.add_argument("--suite", choices=("full", "intentkit-x402"), default="full")
+    parser.add_argument(
+        "--require-shielded",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fail before network setup if native ZK support is unavailable; require its phase.",
+    )
     parser.add_argument("--bootstrap", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--build", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--nodes", type=int, default=DEFAULT_LOCALNET_NODES)

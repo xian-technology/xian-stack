@@ -210,6 +210,14 @@ clean five-node network tells you that the validators can start and peer. The
 e2e harness tells you that the product stack still behaves under realistic
 contract, indexer, governance, recovery, and restart pressure.
 
+E2E uses the locked `xian-stack` Python environment, including the native
+`xian_zk._native` binding used to generate shielded proofs. `make release-safety`
+requires this binding before starting the network and fails if the shielded
+phase is skipped. To enforce the same requirement in a standalone run, use
+`make localnet-e2e LOCALNET_E2E_REQUIRE_SHIELDED=1`. Direct developer runs default
+to optional shielded coverage; check the phase summary for skips. Building the
+native dependencies on a fresh host requires the Rust toolchain and a C compiler.
+
 The independent `IntentKit x402 Integration` workflow runs on manual dispatch,
 weekly, and on pull requests affecting its harness. Sibling repository revisions,
 including IntentKit, are pinned in `.github/workflows/intentkit-x402.yml`; update
