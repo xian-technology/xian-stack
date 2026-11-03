@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -78,3 +79,46 @@ def test_full_suite_retains_optional_skip_behavior(tmp_path, monkeypatch):
     )
     assert details["skipped"] is True
     assert runner.phase_results[-1].ok is True
+
+
+def test_focused_resume_loads_only_its_own_phase_history(tmp_path, monkeypatch):
+    args = e2e.build_parser().parse_args(
+        [
+            "--suite",
+            "intentkit-x402",
+            "--intentkit-x402",
+            "--start-phase",
+            "03-intentkit-x402",
+            "--resume-dir",
+            str(tmp_path),
+        ]
+    )
+    runner = e2e.E2ERunner(args)
+    wallet = e2e.derive_wallet(42, "focused-resume")
+    nodes = [
+        SimpleNamespace(bds_node=i == 0, account_private_key=wallet.private_key) for i in range(5)
+    ]
+    monkeypatch.setattr(e2e, "build_nodes", lambda network: nodes)
+    (tmp_path / "network.json").write_text(
+        json.dumps(
+            {
+                "founder_key": wallet.private_key,
+                "genesis_network": e2e.DEFAULT_GENESIS_NETWORK,
+            }
+        )
+    )
+    for name in EXPECTED[:-1]:
+        (tmp_path / e2e.json_file_name(name)).write_text(
+            json.dumps(
+                {
+                    "name": name,
+                    "ok": True,
+                    "started_at": "2026-11-03T00:00:00Z",
+                    "ended_at": "2026-11-03T00:00:01Z",
+                    "details": {"contract": "con_x402"},
+                }
+            )
+        )
+    runner.load_resume_context()
+    assert [phase.name for phase in runner.phase_results] == EXPECTED[:-1]
+    assert runner.contracts["x402_settlement"] == "con_x402"

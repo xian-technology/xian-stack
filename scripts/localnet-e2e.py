@@ -1918,7 +1918,8 @@ class E2ERunner:
                 f"{self.network.get('genesis_network')!r} does not match "
                 f"{DEFAULT_GENESIS_NETWORK!r}"
             )
-        prior_phase_names = self.phase_names()[: self.phase_names().index(self.args.start_phase)]
+        selected_phases = phase_names(getattr(self.args, "suite", "full"))
+        prior_phase_names = selected_phases[: selected_phases.index(self.args.start_phase)]
         self.phase_results = []
         for phase_name in prior_phase_names:
             path = self.output_dir / json_file_name(phase_name)
