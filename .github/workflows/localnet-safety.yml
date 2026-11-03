@@ -147,7 +147,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-dex-automation
-          ref: 82946dcac49e7b649763afe658c9776697cf4317
+          ref: 861364cd206c67afaa085d5427e5c4ad4fe28780
           path: xian-dex-automation
 
       - name: Use matching dependency branches when available

@@ -233,6 +233,8 @@ def write_node_config(
     app_log_json: bool,
     app_log_rotation_hours: int,
     app_log_retention_days: int,
+    app_log_max_file_mb: int,
+    app_log_max_total_mb: int,
 ):
     """Write all CometBFT config files for a single node."""
     home = LOCALNET_DIR / node["moniker"] / ".cometbft"
@@ -260,6 +262,8 @@ def write_node_config(
                 json_logging=app_log_json,
                 rotation_hours=app_log_rotation_hours,
                 retention_days=app_log_retention_days,
+                max_file_mb=app_log_max_file_mb,
+                max_total_mb=app_log_max_total_mb,
             ),
             parallel_execution=ParallelExecutionOptions(
                 enabled=parallel_execution_enabled,
@@ -426,6 +430,8 @@ def main():
     app_log_json = env_bool("XIAN_LOCALNET_APP_LOG_JSON", False)
     app_log_rotation_hours = env_int("XIAN_LOCALNET_APP_LOG_ROTATION_HOURS", 1)
     app_log_retention_days = env_int("XIAN_LOCALNET_APP_LOG_RETENTION_DAYS", 7)
+    app_log_max_file_mb = env_int("XIAN_LOCALNET_APP_LOG_MAX_FILE_MB", 50)
+    app_log_max_total_mb = env_int("XIAN_LOCALNET_APP_LOG_MAX_TOTAL_MB", 250)
     profiling_enabled = env_bool(
         "XIAN_LOCALNET_PROFILE_ENABLED",
         env_bool("XIAN_PERF_ENABLED", False),
@@ -547,6 +553,8 @@ def main():
             app_log_json=app_log_json,
             app_log_rotation_hours=app_log_rotation_hours,
             app_log_retention_days=app_log_retention_days,
+            app_log_max_file_mb=app_log_max_file_mb,
+            app_log_max_total_mb=app_log_max_total_mb,
         )
         (LOCALNET_DIR / node["moniker"] / "tmp").mkdir(parents=True, exist_ok=True)
         idx = node["index"]
@@ -644,6 +652,8 @@ def main():
             "app_log_json": app_log_json,
             "app_log_rotation_hours": app_log_rotation_hours,
             "app_log_retention_days": app_log_retention_days,
+            "app_log_max_file_mb": app_log_max_file_mb,
+            "app_log_max_total_mb": app_log_max_total_mb,
         },
     }
     (LOCALNET_DIR / "network.json").write_text(
@@ -845,6 +855,15 @@ def write_compose_file(
             },
         },
     }
+    for service in services.values():
+        service["logging"] = {
+            "driver": "local",
+            "options": {
+                "max-size": "${XIAN_DOCKER_LOG_MAX_FILE_MB:-50}m",
+                "max-file": "${XIAN_DOCKER_LOG_MAX_FILES:-5}",
+                "mode": "blocking",
+            },
+        }
     compose["services"] = services
     if bds_enabled:
         # Native Docker storage avoids host-filesystem ownership changes during

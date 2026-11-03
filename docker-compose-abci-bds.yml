@@ -1,3 +1,10 @@
+x-logging: &x-logging
+  driver: local
+  options:
+    max-size: "${XIAN_DOCKER_LOG_MAX_FILE_MB:-50}m"
+    max-file: "${XIAN_DOCKER_LOG_MAX_FILES:-5}"
+    mode: blocking
+
 networks:
   xian-net:
     internal: false
@@ -6,6 +13,7 @@ networks:
 
 services:
   abci:
+    logging: *x-logging
     environment:
       XIAN_BDS_DSN: ${XIAN_BDS_DSN}
       XIAN_BDS_HOST: ${XIAN_BDS_HOST}
@@ -28,6 +36,7 @@ services:
       XIAN_BDS_DISK_FREE_WARN_BYTES: ${XIAN_BDS_DISK_FREE_WARN_BYTES}
 
   postgres:
+    logging: *x-logging
     restart: always
     init: true
     stop_grace_period: 30s
@@ -58,6 +67,7 @@ services:
       - "5432"
 
   postgraphile-db-init:
+    logging: *x-logging
     restart: "no"
     init: true
     image: ${XIAN_POSTGRES_IMAGE:-postgres:17.10}
@@ -81,6 +91,7 @@ services:
     entrypoint: ["/bin/bash", "/usr/local/bin/init-postgraphile-role.sh"]
 
   postgraphile:
+    logging: *x-logging
     restart: always
     init: true
     stop_grace_period: 30s

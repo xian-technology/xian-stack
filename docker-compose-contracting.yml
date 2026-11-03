@@ -1,5 +1,13 @@
+x-logging: &x-logging
+  driver: local
+  options:
+    max-size: "${XIAN_DOCKER_LOG_MAX_FILE_MB:-50}m"
+    max-file: "${XIAN_DOCKER_LOG_MAX_FILES:-5}"
+    mode: blocking
+
 services:
   contracting:
+    logging: *x-logging
     hostname: contracting-dev-shell
     build: 
       context: .

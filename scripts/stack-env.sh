@@ -112,6 +112,12 @@ validate_stack_security_env() {
   local bds_enabled="${XIAN_BDS_ENABLED:-0}"
   local dashboard_enabled="${XIAN_DASHBOARD_ENABLED:-0}"
   local errors=()
+  local log_limit
+  for log_limit in XIAN_DOCKER_LOG_MAX_FILE_MB XIAN_DOCKER_LOG_MAX_FILES; do
+    if [[ -n "${!log_limit:-}" && ! "${!log_limit}" =~ ^[1-9][0-9]*$ ]]; then
+      errors+=("${log_limit} must be a positive integer")
+    fi
+  done
 
   if [[ -z "${XIAN_BDS_PASSWORD:-}" ]]; then
     errors+=("XIAN_BDS_PASSWORD must be set")

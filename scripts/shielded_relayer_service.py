@@ -14,9 +14,11 @@ import uuid
 from collections import OrderedDict
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
+from http import HTTPStatus
 from typing import Any, Callable, Literal
 
 from aiohttp import web
+from runtime_logging import configure_service_logging
 from xian_py import (
     SubmissionConfig,
     Wallet,
@@ -988,7 +990,7 @@ def _request_metric_path(request: web.Request) -> str:
     canonical = getattr(resource, "canonical", None)
     if isinstance(canonical, str) and canonical:
         return canonical
-    return request.path
+    return "<unmatched>"
 
 
 @web.middleware
@@ -1000,19 +1002,30 @@ async def _error_middleware(
     path = _request_metric_path(request)
     service = request.app.get("service")
     response: web.StreamResponse
+    request_id = uuid.uuid4().hex
+    error_type = None
+    stack = []
     try:
         response = await handler(request)
     except RelayerApiError as exc:
+        error_type = type(exc).__name__
         response = web.json_response({"error": exc.message}, status=exc.status)
     except web.HTTPException as exc:
+        error_type = type(exc).__name__
         response = web.json_response({"error": exc.reason}, status=exc.status)
     except json.JSONDecodeError:
+        error_type = "JSONDecodeError"
         response = web.json_response(
             {"error": "request body must be valid JSON"},
             status=400,
         )
-    except Exception:
-        logging.exception("shielded relayer request failed")
+    except Exception as exc:
+        error_type = type(exc).__name__
+        # Locations only: no exception text, source lines or captured locals.
+        trace = exc.__traceback__
+        while trace is not None and len(stack) < 12:
+            stack.append({"function": trace.tb_frame.f_code.co_name, "line": trace.tb_lineno})
+            trace = trace.tb_next
         response = web.json_response(
             {"error": "internal server error"},
             status=500,
@@ -1026,14 +1039,36 @@ async def _error_middleware(
             status=response.status,
             duration_seconds=duration_seconds,
         )
-        if service.config.log_requests:
-            logging.info(
-                "shielded-relayer method=%s path=%s status=%s duration_ms=%s",
-                request.method,
-                path,
-                response.status,
-                int(duration_seconds * 1000),
-            )
+    response.headers["X-Request-ID"] = request_id
+    failed = response.status >= 400
+    should_log = failed or (
+        isinstance(service, ShieldedRelayerService) and service.config.log_requests
+    )
+    if should_log:
+        context = {
+            "request_id": request_id,
+            "method": request.method[:16],
+            "route": path,
+            "status": response.status,
+            "duration_ms": int((time.monotonic() - started_at) * 1000),
+        }
+        if failed:
+            context["error_type"] = error_type or "HTTPError"
+            status = HTTPStatus._value2member_map_.get(response.status)
+            context["reason"] = status.phrase if status is not None else "HTTP request rejected"
+            if stack:
+                context["stack"] = ";".join(
+                    f"{frame['function']}:{frame['line']}" for frame in stack
+                )
+        logging.log(
+            logging.ERROR
+            if response.status >= 500
+            else logging.WARNING
+            if failed
+            else logging.DEBUG,
+            "Request failed" if failed else "Request completed",
+            extra={"context": context},
+        )
     return response
 
 
@@ -1304,9 +1339,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     parser.parse_args(argv)
 
-    logging.basicConfig(
-        level=os.environ.get("XIAN_SHIELDED_RELAYER_LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)s %(message)s",
+    configure_service_logging(
+        "shielded-relayer", os.environ.get("XIAN_SHIELDED_RELAYER_LOG_LEVEL", "INFO").upper()
     )
 
     config = load_config_from_env()

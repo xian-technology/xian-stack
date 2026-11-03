@@ -1,3 +1,10 @@
+x-logging: &x-logging
+  driver: local
+  options:
+    max-size: "${XIAN_DOCKER_LOG_MAX_FILE_MB:-50}m"
+    max-file: "${XIAN_DOCKER_LOG_MAX_FILES:-5}"
+    mode: blocking
+
 x-node-build: &x-node-build
   context: .
   dockerfile: ./docker/xian-node.Dockerfile
@@ -35,6 +42,7 @@ x-rpc-healthcheck: &x-rpc-healthcheck
 
 services:
   abci:
+    logging: *x-logging
     profiles: ["integrated"]
     image: ${XIAN_NODE_INTEGRATED_IMAGE:-xian-node-integrated:local}
     restart: always
@@ -84,6 +92,7 @@ services:
     healthcheck: *x-rpc-healthcheck
 
   dashboard:
+    logging: *x-logging
     profiles: ["dashboard-integrated"]
     image: ${XIAN_NODE_SPLIT_IMAGE:-xian-node-split:local}
     restart: always
@@ -123,6 +132,7 @@ services:
         protocol: tcp
 
   abci-app:
+    logging: *x-logging
     profiles: ["fidelity"]
     image: ${XIAN_NODE_SPLIT_IMAGE:-xian-node-split:local}
     restart: always
@@ -161,6 +171,7 @@ services:
         protocol: tcp
 
   cometbft:
+    logging: *x-logging
     profiles: ["fidelity"]
     image: ${XIAN_NODE_SPLIT_IMAGE:-xian-node-split:local}
     restart: always
@@ -202,6 +213,7 @@ services:
     healthcheck: *x-rpc-healthcheck
 
   dashboard-fidelity:
+    logging: *x-logging
     profiles: ["dashboard-fidelity"]
     image: ${XIAN_NODE_SPLIT_IMAGE:-xian-node-split:local}
     restart: always

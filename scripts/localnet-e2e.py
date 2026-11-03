@@ -1652,25 +1652,28 @@ def local_log_paths(node: LocalnetNode) -> list[Path]:
     log_dir = STACK_DIR / ".localnet" / node.moniker / ".cometbft" / "xian" / "logs"
     if not log_dir.exists():
         return []
-    return sorted(log_dir.glob("xian-abci-*.log"), key=lambda path: path.stat().st_mtime)
+    paths = [*log_dir.glob("xian-abci-*.log"), *log_dir.glob("xian-abci.log")]
+    return sorted(paths, key=lambda path: path.stat().st_mtime)
 
 
-def log_file_positions(paths: list[Path]) -> dict[Path, int]:
-    positions: dict[Path, int] = {}
+def log_file_positions(paths: list[Path]) -> dict[Path, tuple[int, int]]:
+    positions: dict[Path, tuple[int, int]] = {}
     for path in paths:
         try:
-            positions[path] = path.stat().st_size
+            stat = path.stat()
+            positions[path] = (stat.st_ino, stat.st_size)
         except FileNotFoundError:
             continue
     return positions
 
 
-def read_logs_since(paths: list[Path], positions: dict[Path, int]) -> str:
+def read_logs_since(paths: list[Path], positions: dict[Path, tuple[int, int]]) -> str:
     chunks: list[str] = []
     for path in paths:
         try:
-            size = path.stat().st_size
-            offset = positions.get(path, 0)
+            stat = path.stat()
+            size = stat.st_size
+            offset = next((size for inode, size in positions.values() if inode == stat.st_ino), 0)
             if offset > size:
                 offset = 0
             with path.open("rb") as handle:
@@ -1681,7 +1684,7 @@ def read_logs_since(paths: list[Path], positions: dict[Path, int]) -> str:
     return "\n".join(chunk for chunk in chunks if chunk)
 
 
-def log_positions_by_node(nodes: list[LocalnetNode]) -> dict[str, dict[Path, int]]:
+def log_positions_by_node(nodes: list[LocalnetNode]) -> dict[str, dict[Path, tuple[int, int]]]:
     return {node.moniker: log_file_positions(local_log_paths(node)) for node in nodes}
 
 
@@ -1696,7 +1699,7 @@ def find_matching_log_lines(
 
 def collect_log_matches(
     nodes: list[LocalnetNode],
-    positions_by_node: dict[str, dict[Path, int]],
+    positions_by_node: dict[str, dict[Path, tuple[int, int]]],
     matcher: Callable[[str], bool],
     *,
     limit: int = 3,
@@ -1714,7 +1717,7 @@ def collect_log_matches(
 
 async def wait_for_log_matches(
     nodes: list[LocalnetNode],
-    positions_by_node: dict[str, dict[Path, int]],
+    positions_by_node: dict[str, dict[Path, tuple[int, int]]],
     matcher: Callable[[str], bool],
     *,
     label: str,
@@ -7178,7 +7181,7 @@ class E2ERunner:
         async def trigger_until_all_nodes_log(
             *,
             label: str,
-            positions: dict[str, dict[Path, int]],
+            positions: dict[str, dict[Path, tuple[int, int]]],
             matcher: Callable[[str], bool],
             receipt_prefix: str,
         ) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:

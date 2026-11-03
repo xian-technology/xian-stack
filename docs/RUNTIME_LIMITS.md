@@ -163,3 +163,36 @@ the localnet helpers such as:
 
 Those tools are appropriate because they observe the runtime from the outside.
 They should not decide transaction validity.
+
+## Operational Logs
+
+Every stack Compose service, including generated localnet nodes and inherited
+IntentKit services, selects Docker's `local` driver in blocking mode. Defaults
+are 50 MiB per segment and five segments per container. Set the positive integer
+`XIAN_DOCKER_LOG_MAX_FILE_MB` and `XIAN_DOCKER_LOG_MAX_FILES` to override these
+bounds. Recreate existing containers to apply changed logging settings. Docker
+owns these files: do not truncate them externally. This size/count policy does
+not guarantee a seven-day age limit for Docker stdout/stderr history.
+
+Node application files independently default to seven days, 50 MiB segments and
+a 250 MiB total budget. `node-configure` forwards `XIAN_APP_LOG_RETENTION_DAYS`,
+`XIAN_APP_LOG_MAX_FILE_MB` and `XIAN_APP_LOG_MAX_TOTAL_MB`. Localnet initialization
+uses the corresponding `XIAN_LOCALNET_APP_LOG_*` settings.
+
+The local shielded-relayer and DEX-automation launchers retain bounded stdout and
+stderr under `.artifacts/shielded-relayer/shielded-relayer.log` and
+`.artifacts/dex-automation/dex-automation.log`. Their capture process owns the
+service process group and drains shutdown output. Defaults are seven days,
+50 MiB segments and 250 MiB total, configurable with
+`XIAN_SERVICE_LOG_RETENTION_DAYS`, `XIAN_SERVICE_LOG_MAX_FILE_MB` and
+`XIAN_SERVICE_LOG_MAX_TOTAL_MB`. Limits must be positive and total must cover one
+segment. Capture locks prevent concurrent writers to the same file.
+
+Capture rotates hourly or at the size limit, checks idle cleanup every five
+minutes, and retains at most 512 archived segments. Age is measured from a
+segment's last write, so the retention allowance is up to one segment hour plus
+five minutes beyond seven days. Size pressure can remove entries earlier. Only
+the active file and its numbered archives belong to this policy; configuration,
+wallets, state and incident exports are untouched. The total reserves one active
+segment allowance. Stack-managed services do not impose host-wide journald
+settings; native systemd deployments need their own scoped journal policy.

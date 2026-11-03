@@ -1,3 +1,10 @@
+x-logging: &x-logging
+  driver: local
+  options:
+    max-size: "${XIAN_DOCKER_LOG_MAX_FILE_MB:-50}m"
+    max-file: "${XIAN_DOCKER_LOG_MAX_FILES:-5}"
+    mode: blocking
+
 x-intentkit-xian-source-volumes: &intentkit-xian-source-volumes
   - ${XIAN_PY_DIR}:/xian-py:ro
   - ${XIAN_CONTRACTING_DIR}:/xian-contracting:ro
@@ -13,6 +20,7 @@ networks:
 
 services:
   api:
+    logging: *x-logging
     build:
       context: ${XIAN_INTENTKIT_DIR}
       dockerfile: ${XIAN_INTENTKIT_STACK_DOCKERFILE}
@@ -32,6 +40,7 @@ services:
         protocol: tcp
 
   autonomous:
+    logging: *x-logging
     build:
       context: ${XIAN_INTENTKIT_DIR}
       dockerfile: ${XIAN_INTENTKIT_STACK_DOCKERFILE}
@@ -46,6 +55,7 @@ services:
     networks: *intentkit-xian-networks
 
   scheduler:
+    logging: *x-logging
     build:
       context: ${XIAN_INTENTKIT_DIR}
       dockerfile: ${XIAN_INTENTKIT_STACK_DOCKERFILE}
@@ -60,6 +70,7 @@ services:
     networks: *intentkit-xian-networks
 
   frontend:
+    logging: *x-logging
     build:
       context: ${XIAN_INTENTKIT_DIR}/frontend
       dockerfile: Dockerfile
@@ -73,8 +84,21 @@ services:
         protocol: tcp
 
   rustfs:
+    logging: *x-logging
     ports:
       - target: 9000
         published: "${XIAN_INTENTKIT_S3_PORT}"
         host_ip: "${XIAN_INTENTKIT_HOST}"
         protocol: tcp
+
+  # Retention applies to services inherited from the upstream composition too.
+  db:
+    logging: *x-logging
+  caddy:
+    logging: *x-logging
+  redis:
+    logging: *x-logging
+  telegram:
+    logging: *x-logging
+  wechat:
+    logging: *x-logging

@@ -1,3 +1,10 @@
+x-logging: &x-logging
+  driver: local
+  options:
+    max-size: "${XIAN_DOCKER_LOG_MAX_FILE_MB:-50}m"
+    max-file: "${XIAN_DOCKER_LOG_MAX_FILES:-5}"
+    mode: blocking
+
 networks:
   xian-net:
     external: false
@@ -7,6 +14,7 @@ volumes:
 
 services:
   prometheus:
+    logging: *x-logging
     profiles: ["monitoring"]
     image: ${XIAN_PROMETHEUS_IMAGE}
     restart: always
@@ -34,6 +42,7 @@ services:
       start_period: 30s
 
   grafana:
+    logging: *x-logging
     profiles: ["monitoring"]
     image: ${XIAN_GRAFANA_IMAGE}
     restart: always

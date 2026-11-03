@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 from urllib.error import URLError
@@ -176,10 +177,6 @@ def start_shielded_relayer_runtime(
         return existing
 
     _PROCESS_DIR.mkdir(parents=True, exist_ok=True)
-    log_handle = resolve_shielded_relayer_log_path().open(
-        "a",
-        encoding="utf-8",
-    )
     script_path = STACK_DIR / "scripts" / "shielded_relayer_service.py"
     command = [
         "uv",
@@ -192,11 +189,19 @@ def start_shielded_relayer_runtime(
         str(script_path),
         "serve",
     ]
+    capture_command = [
+        sys.executable,
+        str(Path(__file__).with_name("log_capture.py")),
+        "--log",
+        str(resolve_shielded_relayer_log_path()),
+        "--",
+        *command,
+    ]
     process = subprocess.Popen(
-        command,
+        capture_command,
         cwd=STACK_DIR,
         env=source_env,
-        stdout=log_handle,
+        stdout=subprocess.DEVNULL,
         stderr=subprocess.STDOUT,
         text=True,
         start_new_session=True,
@@ -216,8 +221,6 @@ def start_shielded_relayer_runtime(
             env=source_env,
         )
         raise
-    finally:
-        log_handle.close()
 
     return get_shielded_relayer_status(
         bind_host=bind_host,
