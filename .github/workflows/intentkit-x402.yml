@@ -1,0 +1,107 @@
+name: IntentKit x402 Integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "43 3 * * 2"
+  pull_request:
+    paths:
+      - .github/workflows/intentkit-x402.yml
+      - scripts/intentkit-x402-localnet-smoke.py
+      - scripts/localnet-e2e.py
+      - scripts/localnet_e2e_phases.py
+      - Makefile
+
+permissions:
+  contents: read
+
+jobs:
+  intentkit-x402:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: xian-stack
+      - uses: actions/checkout@v7
+        with:
+          repository: xian-technology/xian-abci
+          ref: a79e27fe188bd9278606eb4d8141d3eea4c99378
+          path: xian-abci
+      - uses: actions/checkout@v7
+        with:
+          repository: xian-technology/xian-contracting
+          ref: e85f131db4e2a962f1ebbd3dbce70374343ae43c
+          path: xian-contracting
+      - uses: actions/checkout@v7
+        with:
+          repository: xian-technology/xian-py
+          ref: 2959aa8a9317151ac3a16562c432053330b183fa
+          path: xian-py
+      - uses: actions/checkout@v7
+        with:
+          repository: xian-technology/xian-configs
+          ref: 59385ce6df63189eda74a3da8b46cee4098fdb7a
+          path: xian-configs
+      - uses: actions/checkout@v7
+        with:
+          repository: xian-technology/xian-cli
+          ref: a70368d79e5ea3cfce389651504ed8c5f745112a
+          path: xian-cli
+      - uses: actions/checkout@v7
+        with:
+          repository: xian-technology/xian-intentkit
+          ref: b7369b9bcc2b65a1431c880be3b2dfda7a6b242b
+          path: xian-intentkit
+      - uses: actions/checkout@v7
+        with:
+          repository: xian-technology/xian-meta
+          ref: ae76b6fe71e14b9445cfdac9fd72734eef33d1c9
+          path: xian-meta
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v7
+      - name: Record source revisions
+        run: |
+          mkdir -p xian-stack/.artifacts/intentkit-x402
+          python xian-meta/scripts/report_workspace_shas.py --workspace-root . > xian-stack/.artifacts/intentkit-x402/source-shas.txt
+          git -C xian-intentkit rev-parse HEAD >> xian-stack/.artifacts/intentkit-x402/source-shas.txt
+          cat xian-stack/.artifacts/intentkit-x402/source-shas.txt
+      - name: Verify pinned IntentKit payment API before building the network
+        env:
+          REDIS_HOST: localhost
+        run: |
+          uv run --frozen --project xian-intentkit --with psycopg-binary python - <<'PY'
+          from importlib.metadata import version
+          from intentkit.models.x402_order import X402Order
+          from intentkit.tools.base import IntentKitTool
+          from intentkit.tools.x402.pay import X402Pay
+          assert callable(X402Pay._arun)
+          assert callable(IntentKitTool.get_context)
+          assert callable(X402Order.create)
+          print("IntentKit payment API available; SDK=" + version("xian-tech-py"))
+          PY
+      - name: Run required payment checks against five validators
+        working-directory: xian-stack
+        run: make localnet-e2e LOCALNET_E2E_SUITE=intentkit-x402 LOCALNET_E2E_INTENTKIT_X402=1
+      - name: Ensure IntentKit sources and lock stayed unchanged
+        run: git -C xian-intentkit diff --exit-code
+      - name: Stop disposable network
+        if: always()
+        working-directory: xian-stack
+        run: |
+          if [ -f docker-compose-localnet.yml ]; then
+            make localnet-down
+          fi
+      - name: Upload public integration evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: intentkit-x402-integration
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            xian-stack/.artifacts/intentkit-x402/source-shas.txt
+            xian-stack/.artifacts/localnet-e2e/*/summary.json
+            xian-stack/.artifacts/localnet-e2e/*/node_report.json

@@ -4,6 +4,8 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
+from localnet_e2e_support import E2EError
+
 PhaseCallable = Callable[[], Coroutine[Any, Any, dict[str, Any]]]
 
 
@@ -54,8 +56,22 @@ PHASE_SPECS: tuple[PhaseSpec, ...] = (
 )
 
 
-def phase_names() -> list[str]:
-    return [phase.name for phase in PHASE_SPECS]
+def suite_phases(suite: str = "full") -> tuple[PhaseSpec, ...]:
+    if suite == "full":
+        return PHASE_SPECS
+    if suite == "intentkit-x402":
+        required = {"00-bootstrap", "01-health", "03-x402-exact", "03-intentkit-x402"}
+        return tuple(phase for phase in PHASE_SPECS if phase.name in required)
+    raise ValueError(f"unknown E2E suite: {suite}")
+
+
+def phase_names(suite: str = "full") -> list[str]:
+    return [phase.name for phase in suite_phases(suite)]
+
+
+def validate_suite(suite: str, *, intentkit_enabled: bool) -> None:
+    if suite == "intentkit-x402" and not intentkit_enabled:
+        raise E2EError("intentkit-x402 suite requires --intentkit-x402")
 
 
 def bind_phase(runner: Any, phase: PhaseSpec, session: Any) -> PhaseCallable:
@@ -68,5 +84,7 @@ def bind_phase(runner: Any, phase: PhaseSpec, session: Any) -> PhaseCallable:
 def bind_phase_sequence(
     runner: Any,
     session: Any,
+    *,
+    suite: str = "full",
 ) -> list[tuple[str, PhaseCallable]]:
-    return [(phase.name, bind_phase(runner, phase, session)) for phase in PHASE_SPECS]
+    return [(phase.name, bind_phase(runner, phase, session)) for phase in suite_phases(suite)]

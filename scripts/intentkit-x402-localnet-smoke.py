@@ -171,7 +171,9 @@ class X402SellerService:
 async def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
     os.environ.setdefault("REDIS_HOST", "localhost")
 
-    from intentkit.skills.x402.pay import X402Pay
+    from intentkit.models.x402_order import X402Order
+    from intentkit.tools.base import IntentKitTool
+    from intentkit.tools.x402.pay import X402Pay
 
     buyer = Wallet(private_key=args.buyer_private_key)
     seller = Wallet(private_key=args.seller_private_key)
@@ -231,13 +233,15 @@ async def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
         )
         service_ref["service"] = service
         with (
-            patch(
-                "intentkit.skills.base.IntentKitSkill.get_context",
+            patch.object(
+                IntentKitTool,
+                "get_context",
                 return_value=context,
             ),
             patch.object(X402Pay, "get_signer", new=AsyncMock(return_value=buyer)),
-            patch(
-                "intentkit.skills.x402.base.X402Order.create",
+            patch.object(
+                X402Order,
+                "create",
                 new=capture_order,
             ),
         ):

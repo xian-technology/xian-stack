@@ -200,6 +200,7 @@ Use the smallest recipe that proves the behavior you care about:
 | Workload smoke on a running localnet | `make localnet-workload` | Basic contract submission and transaction flow |
 | Full 5-validator e2e harness | `make localnet-e2e` | Layered cross-repo behavior, DEX, governance, crash recovery, quorum partitions, fresh-node sync, execution parity, accounting, resource limits, and block replay |
 | IntentKit x402 buyer phase | `LOCALNET_E2E_INTENTKIT_X402=1 make localnet-e2e` | Adds a live IntentKit Xian-native x402 payment through a local seller/facilitator |
+| Focused IntentKit integration | `make localnet-e2e LOCALNET_E2E_SUITE=intentkit-x402 LOCALNET_E2E_INTENTKIT_X402=1` | Five-node bootstrap, health, core x402 and required IntentKit payment checks |
 | Parallel 5-validator harness | `make localnet-parallel-e2e` | The same e2e program with lower parallel-execution batching |
 | Protocol safety harness | `make localnet-protocol-safety` | Validator set, delegation, evidence, governance, and state-patch behavior |
 | Release gate | `make release-safety` | Repo validation plus the release-grade localnet gates |
@@ -208,6 +209,21 @@ The localnet harnesses are intentionally heavier than a clean topology. A
 clean five-node network tells you that the validators can start and peer. The
 e2e harness tells you that the product stack still behaves under realistic
 contract, indexer, governance, recovery, and restart pressure.
+
+The independent `IntentKit x402 Integration` workflow runs on manual dispatch,
+weekly, and on pull requests affecting its harness. Sibling repository revisions,
+including IntentKit, are pinned in `.github/workflows/intentkit-x402.yml`; update
+those pins deliberately when validating a dependency change. The focused suite
+requires the IntentKit flag and rejects skipped phases. IntentKit uses its frozen
+lockfile and the pinned sibling SDK. Its API import is checked before building
+the five-node network, and its source/lockfile must remain unchanged afterward.
+
+The payment path uses the real IntentKit tool and HTTP client with a local HTTP
+seller and real on-chain settlement. Agent context, signer lookup and order
+storage are supplied by the harness; this does not test an LLM agent session or
+IntentKit's database persistence. The workflow uploads source revisions, the
+phase summary and node report for seven days. Private network/config files and
+signed payment payloads are excluded from that artifact.
 
 The E2E run includes 48 seeded accounting operations by default. Set
 `LOCALNET_E2E_INVARIANT_ROUNDS` to increase that workload and

@@ -32,7 +32,7 @@ from governance_vote_helpers import (
 from localnet_abci_queries import check_live_abci
 from localnet_common import compare_app_hash_window, fetch_json
 from localnet_diagnostics import collect_failure_diagnostics
-from localnet_e2e_phases import bind_phase_sequence, phase_names
+from localnet_e2e_phases import bind_phase_sequence, phase_names, validate_suite
 from localnet_e2e_support import (
     E2EError,
     normalize_value,
@@ -1992,6 +1992,8 @@ class E2ERunner:
         print(f"[localnet-e2e] starting {name}", flush=True)
         try:
             details = await fn()
+            if getattr(self.args, "suite", "full") != "full" and details.get("skipped"):
+                raise E2EError(f"required integration phase {name} was skipped")
         except Exception as exc:
             print(f"[localnet-e2e] failed {name}", flush=True)
             details = {"error": f"{type(exc).__name__}: {exc}"}
@@ -5037,6 +5039,7 @@ class E2ERunner:
                 [
                     "uv",
                     "run",
+                    "--frozen",
                     "--project",
                     str(INTENTKIT_DIR),
                     "--python",
@@ -10752,6 +10755,7 @@ class E2ERunner:
 
     async def finalize_summary(self) -> dict[str, Any]:
         summary = {
+            "suite": getattr(self.args, "suite", "full"),
             "ok": all(phase.ok for phase in self.phase_results),
             "run_id": self.run_id,
             "output_dir": str(self.output_dir),
@@ -10775,7 +10779,9 @@ class E2ERunner:
 
     async def run(self) -> int:
         start_phase = self.args.start_phase
-        valid_phase_names = self.phase_names()
+        suite = getattr(self.args, "suite", "full")
+        validate_suite(suite, intentkit_enabled=self.args.intentkit_x402)
+        valid_phase_names = phase_names(suite)
         if start_phase not in valid_phase_names:
             raise E2EError(f"unknown start phase: {start_phase}")
         if start_phase != "00-bootstrap" and self.args.resume_dir is None:
@@ -10789,7 +10795,7 @@ class E2ERunner:
             ),
             connector=aiohttp.TCPConnector(limit=256, ttl_dns_cache=300),
         ) as session:
-            phase_sequence = bind_phase_sequence(self, session)
+            phase_sequence = bind_phase_sequence(self, session, suite=suite)
             if start_phase != "00-bootstrap":
                 self.load_resume_context()
                 await wait_for_localnet_ready(
@@ -10836,6 +10842,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run a layered 5-validator testnet-shaped localnet end-to-end program",
     )
+    parser.add_argument("--suite", choices=("full", "intentkit-x402"), default="full")
     parser.add_argument("--bootstrap", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--build", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--nodes", type=int, default=DEFAULT_LOCALNET_NODES)
