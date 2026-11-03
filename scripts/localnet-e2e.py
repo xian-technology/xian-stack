@@ -36,6 +36,7 @@ from localnet_e2e_phases import (
     bind_phase_sequence,
     phase_names,
     required_phase,
+    validate_resumed_phases,
     validate_shielded_runtime,
     validate_suite,
 )
@@ -10818,6 +10819,12 @@ class E2ERunner:
             phase_sequence = bind_phase_sequence(self, session, suite=suite)
             if start_phase != "00-bootstrap":
                 self.load_resume_context()
+                validate_resumed_phases(
+                    self.phase_results,
+                    suite=suite,
+                    require_shielded=self.args.require_shielded,
+                    start_phase=start_phase,
+                )
                 await wait_for_localnet_ready(
                     session,
                     self.nodes,

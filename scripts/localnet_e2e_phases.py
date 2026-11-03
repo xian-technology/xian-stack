@@ -88,6 +88,19 @@ def required_phase(name: str, *, suite: str, require_shielded: bool) -> bool:
     return suite != "full" or (require_shielded and name == "15-shielded-note-token")
 
 
+def validate_resumed_phases(
+    results: list[Any], *, suite: str, require_shielded: bool, start_phase: str
+) -> None:
+    names = phase_names(suite)
+    prior_results = {result.name: result for result in results}
+    for name in names[: names.index(start_phase)]:
+        if not required_phase(name, suite=suite, require_shielded=require_shielded):
+            continue
+        result = prior_results.get(name)
+        if result is None or not result.ok or result.details.get("skipped"):
+            raise E2EError(f"resume requires successful, non-skipped required phase {name}")
+
+
 def bind_phase(runner: Any, phase: PhaseSpec, session: Any) -> PhaseCallable:
     method = getattr(runner, phase.method_name)
     if phase.uses_session:

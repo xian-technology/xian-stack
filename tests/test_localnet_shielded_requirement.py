@@ -76,6 +76,67 @@ def test_required_shielded_phase_rejects_a_skip_even_with_native_import(tmp_path
     assert target.phase_results[-1].ok is False
 
 
+@pytest.mark.parametrize("history", [[], [False], [True]])
+def test_required_shielded_resume_rejects_missing_failed_or_skipped_history(
+    tmp_path, monkeypatch, history
+):
+    target = runner(
+        tmp_path,
+        monkeypatch,
+        "--require-shielded",
+        "--start-phase",
+        "16-parallel-execution",
+        "--resume-dir",
+        str(tmp_path),
+    )
+    monkeypatch.setattr(e2e, "ShieldedNoteProver", object())
+    phases = [
+        e2e.PhaseResult(
+            name="15-shielded-note-token",
+            ok=ok,
+            details={"skipped": ok},
+            started_at="2026-11-03T00:00:00Z",
+            ended_at="2026-11-03T00:00:01Z",
+        )
+        for ok in history
+    ]
+    monkeypatch.setattr(
+        target, "load_resume_context", lambda: setattr(target, "phase_results", phases)
+    )
+    readiness = AsyncMock()
+    monkeypatch.setattr(e2e, "wait_for_localnet_ready", readiness)
+    monkeypatch.setattr(e2e, "bind_phase_sequence", lambda *args, **kwargs: [])
+    with pytest.raises(e2e.E2EError, match="required.*15-shielded-note-token"):
+        asyncio.run(target.run())
+    readiness.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("required", "skipped", "start_phase"),
+    [
+        (True, False, "16-parallel-execution"),
+        (False, True, "16-parallel-execution"),
+        (True, True, "15-shielded-note-token"),
+    ],
+)
+def test_resume_accepts_completed_required_checks_or_checks_that_will_run(
+    required, skipped, start_phase
+):
+    result = e2e.PhaseResult(
+        name="15-shielded-note-token",
+        ok=True,
+        details={"skipped": skipped},
+        started_at="2026-11-03T00:00:00Z",
+        ended_at="2026-11-03T00:00:01Z",
+    )
+    e2e.validate_resumed_phases(
+        [result],
+        suite="full",
+        require_shielded=required,
+        start_phase=start_phase,
+    )
+
+
 @pytest.mark.parametrize("e2e_exit", [0, 23])
 def test_release_wrapper_requires_shielded_and_preserves_failure(tmp_path, e2e_exit):
     binary_dir = tmp_path / "bin"
