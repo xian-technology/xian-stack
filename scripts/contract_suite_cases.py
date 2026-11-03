@@ -883,7 +883,15 @@ def completed_surface_cases(names):
             [2025, 12, 28],
             "-1 day, 23:59:59",
         ],
-        "formatting": ["alice: 0007 'ok'", "x/3", "b:7", "   x", "'alice':0007"],
+        "formatting": [
+            "alice: 0007 'ok'",
+            "x/3",
+            "b:7",
+            "   x",
+            "'alice':0007",
+            "nested",
+            "{1: 7}",
+        ],
     }
     scenarios = [
         Case(

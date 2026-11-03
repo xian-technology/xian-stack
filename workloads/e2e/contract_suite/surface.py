@@ -152,6 +152,7 @@ def formatting():
     name = "alice"
     amount = 7
     width = 4
+    data = {"key": "nested"}
     return save(
         [
             render(name="alice", amount=7, label="ok"),
@@ -159,6 +160,8 @@ def formatting():
             "{0[1]}:{1.real}".format(["a", "b"], 7),
             "{value:>{width}}".format(value="x", width=4),
             f"{name!r}:{amount:0{width}d}",
+            f"{data['key']}",
+            f"{ {1: amount} }",
         ]
     )
 

@@ -267,6 +267,31 @@ jobs:
           uv run python scripts/localnet_replay_corpus.py \
             --corpus "$XIAN_REPLAY_CORPUS" --image xian-replay:local \
             --output .artifacts/architecture-replay
+      - name: Check published application workflows in the same native image
+        working-directory: xian-stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          compatibility_dir="$GITHUB_WORKSPACE/xian-contracting/tests/compatibility"
+          application_output="$PWD/.artifacts/architecture-applications"
+          mkdir -p "$application_output"
+          replay_image=$(docker image inspect --format '{{.Id}}' xian-replay:local)
+          printf '%s\n' "$replay_image" > "$application_output/image-id.txt"
+          git -C ../xian-contracting rev-parse HEAD > "$application_output/runtime-source-revision.txt"
+          docker run --rm \
+            --network none --read-only \
+            --cpus 2 --memory 1g --pids-limit 128 \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=512m --env HOME=/tmp \
+            --mount "type=bind,src=$compatibility_dir/application_runner.py,dst=/corpus/application_runner.py,readonly" \
+            --mount "type=bind,src=$compatibility_dir/application_expectations.py,dst=/corpus/application_expectations.py,readonly" \
+            --mount "type=bind,src=$compatibility_dir/runner.py,dst=/corpus/runner.py,readonly" \
+            --mount "type=bind,src=$compatibility_dir/applications,dst=/corpus/applications,readonly" \
+            --mount "type=bind,src=$application_output,dst=/output" \
+            --entrypoint /usr/local/bin/python3 "$replay_image" \
+            /corpus/application_runner.py --engine native-metered --check \
+            --output /output/native-metered.json \
+            > "$application_output/native-metered.log" 2>&1
       - name: Upload replay results
         if: always()
         uses: actions/upload-artifact@v7
@@ -275,4 +300,5 @@ jobs:
           path: |
             xian-stack/.artifacts/architecture-replay/result.json
             xian-stack/.artifacts/architecture-replay/container.log
+            xian-stack/.artifacts/architecture-applications
           if-no-files-found: warn

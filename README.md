@@ -221,11 +221,13 @@ verification matrix and compares its results across validators. It also checks
 that genesis contract submission timestamps match the shared genesis time in
 both the generated state and live node queries.
 
-The `03-contract-functionality` phase deploys ten authored contracts and runs
-129 interactions spanning builtin functions, collections, text/bytes, decimal
+The `03-contract-functionality` phase deploys eleven authored contracts and runs
+212 interactions spanning builtin functions, collections, text/bytes, decimal
 ledgers, escrow, batch payments, foreign storage, signatures and time/random
 bridges. It checks explicit outcomes and state on all five validators, including
-rollback and recovery after expected failures. See the
+rollback and recovery after expected failures. Canonical deployment also covers
+f-strings with nested quoted lookups and dictionary-literal interpolation,
+checking their returned values and persisted state. See the
 [contract coverage matrix](workloads/e2e/contract_suite/README.md) for scenarios
 and limits. The same sources run in a fast native test before network execution.
 
@@ -253,6 +255,11 @@ revisions. It excludes application state and validator private keys. The
 harness rebuilds application state by replaying every block and compares the
 application root, transaction outcomes, chi usage, and events for every block. The scheduled
 Localnet Safety workflow repeats this replay on native ARM64 and x86-64 runners.
+Each architecture also runs four published-application workflows (68 observations)
+through the metered native VM in the same built image, with network access disabled.
+Its replay artifact includes application results, logs, image ID and runtime source
+revision. These workflows use historical contract sources with controlled inputs;
+they do not replay historical public-chain transactions.
 To replay a retained corpus with another locally built image:
 
 ```bash

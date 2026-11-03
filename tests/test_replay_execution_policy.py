@@ -11,7 +11,7 @@ import localnet_replay_corpus as replay
 from localnet_e2e_support import E2EError
 
 POLICY = {
-    "execution_revision": "xvm-execution-3",
+    "execution_revision": "xvm-execution-4",
     "gas_schedule": "xvm-gas-2",
     "bytecode_version": "xvm-1",
     "set_codec": "xian-set-1",
@@ -52,9 +52,10 @@ def test_incompatible_corpus_is_rejected_before_extraction_or_output_mutation(tm
     assert source.read_bytes() == before
 
 
-def test_previous_revision_corpus_requires_its_matching_image_policy():
-    previous = POLICY | {"execution_revision": "xvm-execution-2"}
-    # Historical replay stays possible with the pinned execution-2 image.
+@pytest.mark.parametrize("revision", ["xvm-execution-2", "xvm-execution-3"])
+def test_previous_revision_corpus_requires_its_matching_image_policy(revision):
+    previous = POLICY | {"execution_revision": revision}
+    # Historical replay stays possible with the matching pinned image.
     replay.validate_replay_policy({"execution_policy": previous}, {"execution_policy": previous})
     for corpus, image in [(previous, POLICY), (POLICY, previous)]:
         with pytest.raises(E2EError, match="execution policy"):
