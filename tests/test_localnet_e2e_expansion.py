@@ -168,8 +168,9 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                     return_value="healthy",
                 ),
             ):
+                run.return_value.stdout = "127.0.0.1:32123\n"
                 asyncio.run(runner.start_secondary_bds_postgres())
-                command = run.call_args.args[0]
+                command = run.call_args_list[0].args[0]
                 self.assertEqual(command[command.index("--volume") + 1], "/var/lib/postgresql/data")
                 self.assertIn("SELECT 1", command[command.index("--health-cmd") + 1])
                 self.assertIn("-v", remove.call_args.args[0])

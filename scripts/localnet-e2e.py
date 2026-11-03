@@ -108,7 +108,6 @@ SECONDARY_BDS_POSTGRES_IMAGE = "postgres:17.10"
 SECONDARY_BDS_POSTGRES_USER = "xian"
 SECONDARY_BDS_POSTGRES_PASSWORD = "xian"
 SECONDARY_BDS_POSTGRES_DATABASE = "xian"
-SECONDARY_BDS_POSTGRES_PORT_BASE = 55432
 SECONDARY_BDS_QUERY_TIMEOUT_SECONDS = 180.0
 CONTRACT_ORCHESTRATION_TX_CHI = {
     "deploy_contract": 180_000,
@@ -2870,7 +2869,14 @@ class E2ERunner:
         return f"xian-localnet-postgres-secondary-{short_hash(self.run_id)}"
 
     def secondary_bds_host_port(self) -> int:
-        return SECONDARY_BDS_POSTGRES_PORT_BASE + int(self.args.port_offset)
+        result = run_cmd(
+            ["docker", "port", self.secondary_bds_container_name(), "5432/tcp"],
+            cwd=STACK_DIR,
+        )
+        binding = re.fullmatch(r"127\.0\.0\.1:([0-9]{1,5})", result.stdout.strip())
+        if binding is None or not 1 <= int(binding[1]) <= 65535:
+            raise E2EError("secondary BDS requires exactly one valid loopback port binding")
+        return int(binding[1])
 
     def secondary_bds_home_dir(self) -> Path:
         return self.output_dir / "secondary-bds-home"
@@ -2904,7 +2910,6 @@ class E2ERunner:
 
     async def start_secondary_bds_postgres(self) -> dict[str, Any]:
         container_name = self.secondary_bds_container_name()
-        host_port = self.secondary_bds_host_port()
 
         subprocess.run(
             ["docker", "rm", "-f", "-v", container_name],
@@ -2935,7 +2940,7 @@ class E2ERunner:
                 "--health-retries",
                 "45",
                 "--publish",
-                f"{host_port}:5432",
+                "127.0.0.1::5432",
                 "--volume",
                 "/var/lib/postgresql/data",
                 "--env",
@@ -2955,7 +2960,7 @@ class E2ERunner:
         )
         return {
             "container_name": container_name,
-            "host_port": host_port,
+            "host_port": self.secondary_bds_host_port(),
             "state": state,
         }
 
