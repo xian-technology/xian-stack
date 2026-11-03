@@ -2,11 +2,17 @@ name: Localnet Safety
 
 on:
   workflow_dispatch:
+    inputs:
+      replay_run_id:
+        description: 'Optional prior Localnet Safety run ID: replay its exact corpus without creating a new network'
+        required: false
+        type: string
   schedule:
     - cron: "17 2 * * *"
 
 jobs:
   protocol-safety-localnet:
+    if: ${{ !inputs.replay_run_id }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -84,6 +90,7 @@ jobs:
           if-no-files-found: warn
 
   release-safety-localnet:
+    if: ${{ !inputs.replay_run_id }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -189,6 +196,10 @@ jobs:
   replay-architecture:
     name: Replay corpus (${{ matrix.runner }})
     needs: release-safety-localnet
+    if: ${{ always() && !cancelled() && (needs.release-safety-localnet.result == 'success' || inputs.replay_run_id != '') }}
+    permissions:
+      actions: read
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -196,11 +207,21 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
+      - name: Validate the source workflow run
+        env:
+          SOURCE_RUN_ID: ${{ inputs.replay_run_id || github.run_id }}
+        run: |
+          python3 - <<'PYCODE'
+          import os, re
+          assert re.fullmatch(r'[1-9][0-9]*', os.environ['SOURCE_RUN_ID']), 'invalid source run ID'
+          PYCODE
       - name: Download the same source-network corpus
         uses: actions/download-artifact@v8
         with:
           name: xian-stack-replay-corpus
           path: corpus
+          run-id: ${{ inputs.replay_run_id || github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Read exact source revisions
         id: corpus
@@ -270,15 +291,21 @@ jobs:
       - name: Check published application workflows in the same native image
         working-directory: xian-stack
         shell: bash
+        env:
+          SOURCE_RUN_ID: ${{ inputs.replay_run_id || github.run_id }}
+          WORKFLOW_REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
           compatibility_dir="$GITHUB_WORKSPACE/xian-contracting/tests/compatibility"
           application_output="$PWD/.artifacts/architecture-applications"
           mkdir -p "$application_output"
+          printf '%s\n' "$SOURCE_RUN_ID" > "$application_output/source-run-id.txt"
+          printf '%s\n' "$WORKFLOW_REVISION" > "$application_output/workflow-revision.txt"
           replay_image=$(docker image inspect --format '{{.Id}}' xian-replay:local)
           printf '%s\n' "$replay_image" > "$application_output/image-id.txt"
           git -C ../xian-contracting rev-parse HEAD > "$application_output/runtime-source-revision.txt"
           docker run --rm \
+            --user "$(id -u):$(id -g)" \
             --network none --read-only \
             --cpus 2 --memory 1g --pids-limit 128 \
             --cap-drop ALL --security-opt no-new-privileges \

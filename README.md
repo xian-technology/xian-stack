@@ -260,6 +260,14 @@ through the metered native VM in the same built image, with network access disab
 Its replay artifact includes application results, logs, image ID and runtime source
 revision. These workflows use historical contract sources with controlled inputs;
 they do not replay historical public-chain transactions.
+For a CI retry of the same evidence, manually dispatch **Localnet Safety** with
+`replay_run_id` set to the prior run that uploaded `xian-stack-replay-corpus`.
+This skips network generation and runs only the two architecture jobs, checking
+out the exact commits recorded in that corpus. It does not validate later code
+changes; leave the input empty for a fresh full safety run. Application containers
+use the runner's UID/GID so their restricted process can save results without
+loosening directory permissions or restoring Linux capabilities.
+
 To replay a retained corpus with another locally built image:
 
 ```bash
