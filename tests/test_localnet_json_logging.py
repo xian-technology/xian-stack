@@ -10,10 +10,18 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from localnet_json_logging import trace_record
+from localnet_json_logging import execution_hash, trace_record
 from test_localnet_parallel_phase import localnet_e2e as e2e
 
 TX = "a" * 64
+
+
+@pytest.mark.parametrize(
+    "execution", [None, {}, {"hash": None}, {"hash": "a" * 63}, {"hash": "G" * 64}]
+)
+def test_missing_or_invalid_execution_hash_fails_clearly(execution):
+    with pytest.raises(e2e.E2EError, match="receipt execution hash is missing or invalid"):
+        execution_hash(execution)
 
 
 def serialized_record():
@@ -117,12 +125,29 @@ def test_phase_runs_debug_plain_trace_json_then_info_plain(monkeypatch):
     monkeypatch.setattr(e2e, "update_logging_config", lambda **kw: modes.append(kw))
     monkeypatch.setattr(e2e, "log_positions_by_node", lambda nodes: {})
     monkeypatch.setattr(e2e, "derive_wallet", lambda seed, label: SimpleNamespace(public_key=label))
-    monkeypatch.setattr(e2e, "ensure_positive_submission", lambda submission, **kw: {"tx_hash": TX})
     monkeypatch.setattr(e2e, "collect_log_matches", lambda *a, **kw: {"node-0": ["stage=check_tx"]})
 
     @asynccontextmanager
-    async def client(*args):
-        yield SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(accepted=False)))
+    async def client(wallet, *args):
+        if wallet.public_key == "logging-checktx-reject":
+            submission = SimpleNamespace(accepted=False)
+        else:
+            submission = SimpleNamespace(
+                submitted=True,
+                accepted=True,
+                finalized=True,
+                tx_hash="D" * 64,
+                nonce=0,
+                chi_supplied=500,
+                message=None,
+                receipt=SimpleNamespace(
+                    success=True,
+                    message=None,
+                    execution={"hash": TX, "chi_used": 253},
+                    raw={"result": {"height": "17", "index": 0}},
+                ),
+            )
+        yield SimpleNamespace(send=AsyncMock(return_value=submission))
 
     runner.client = client
 
@@ -159,6 +184,8 @@ def test_phase_runs_debug_plain_trace_json_then_info_plain(monkeypatch):
     ]
     assert runner.restart_localnet_and_wait_ready.await_count == 3
     assert len(result["trace_records"]) == 5
+    assert result["trace_receipts"][0]["tx_hash"] == "D" * 64
+    assert result["trace_receipts"][0]["execution_hash"] == TX
 
 
 @pytest.mark.parametrize("restore_fails", [False, True])

@@ -29,6 +29,16 @@ def _require(condition, reason):
         raise E2EError(f"JSON TRACE {reason}")
 
 
+def execution_hash(execution):
+    """Get the application hash from a finalized receipt, not its CometBFT hash."""
+    value = execution.get("hash") if isinstance(execution, dict) else None
+    _require(
+        isinstance(value, str) and re.fullmatch("[0-9a-f]{64}", value),
+        "finalized receipt execution hash is missing or invalid",
+    )
+    return value
+
+
 def _timestamp(envelope, record):
     try:
         timestamp = record["time"]["repr"]

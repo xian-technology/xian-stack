@@ -40,7 +40,7 @@ from localnet_e2e_support import (
     short_hash,
     write_private_json,
 )
-from localnet_json_logging import trace_record
+from localnet_json_logging import execution_hash, trace_record
 from localnet_network import pin_localnet_addresses
 from localnet_node_report import collect_localnet_node_report
 from localnet_set_storage_checks import (
@@ -7197,7 +7197,13 @@ class E2ERunner:
                     chi=DEFAULT_TRANSFER_CHI,
                     wait_for_tx=True,
                 )
-            return ensure_positive_submission(submission, label=label)
+            receipt = ensure_positive_submission(submission, label=label)
+            # Node application logs use the SHA3 execution hash; SDK tx_hash is
+            # the distinct CometBFT SHA256 transaction identifier.
+            receipt["execution_hash"] = execution_hash(
+                submission.receipt.execution if submission.receipt else None
+            )
+            return receipt
 
         async def trigger_until_all_nodes_log(
             *,
@@ -7246,7 +7252,7 @@ class E2ERunner:
             label="TRACE stage=finalize_tx_result",
             positions=trace_log_positions,
             matcher=lambda line, receipts: (
-                trace_record(line, {receipt["tx_hash"] for receipt in receipts}) is not None
+                trace_record(line, {receipt["execution_hash"] for receipt in receipts}) is not None
             ),
             receipt_prefix="trace-log-trigger",
         )
@@ -7259,7 +7265,7 @@ class E2ERunner:
         if not any(checktx_lines.values()):
             raise E2EError("WARNING logs missing stage=check_tx rejection probe")
 
-        trace_hashes = {receipt["tx_hash"] for receipt in trace_receipts}
+        trace_hashes = {receipt["execution_hash"] for receipt in trace_receipts}
         trace_records = {
             node: [trace_record(line, trace_hashes) for line in lines]
             for node, lines in trace_lines.items()
