@@ -50,6 +50,7 @@ def numerics():
             float.fromhex(binary.hex()) == binary,
             [number.real, number.imag, number.numerator, number.denominator],
             [True.bit_length(), True.is_integer()],
+            (float.fromhex("0x1.fffffffffffffp+1023") ** float("0.5")).hex(),
         ]
     )
 

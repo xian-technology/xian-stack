@@ -11,7 +11,7 @@ import localnet_replay_corpus as replay
 from localnet_e2e_support import E2EError
 
 POLICY = {
-    "execution_revision": "xvm-execution-4",
+    "execution_revision": "xvm-execution-5",
     "gas_schedule": "xvm-gas-2",
     "bytecode_version": "xvm-1",
     "set_codec": "xian-set-1",
@@ -52,7 +52,7 @@ def test_incompatible_corpus_is_rejected_before_extraction_or_output_mutation(tm
     assert source.read_bytes() == before
 
 
-@pytest.mark.parametrize("revision", ["xvm-execution-2", "xvm-execution-3"])
+@pytest.mark.parametrize("revision", ["xvm-execution-2", "xvm-execution-3", "xvm-execution-4"])
 def test_previous_revision_corpus_requires_its_matching_image_policy(revision):
     previous = POLICY | {"execution_revision": revision}
     # Historical replay stays possible with the matching pinned image.

@@ -1,9 +1,9 @@
 # Authored contract functionality suite
 
-`03-contract-functionality` deploys eleven source contracts and executes 212 ordered
-interactions (126 successes, 86 expected failures) in the default five-validator
+`03-contract-functionality` deploys eleven source contracts and executes 214 ordered
+interactions (128 successes, 86 expected failures) in the default five-validator
 E2E run. Run `make localnet-e2e` from `xian-stack`; run the fast native equivalent
-with `uv run pytest tests/test_contract_suite.py`.
+with `uv run pytest tests/test_contract_suite.py tests/test_transaction_rng_checks.py`.
 
 | Contract | Level | Exercised behavior |
 | --- | --- | --- |
@@ -15,8 +15,8 @@ with `uv run pytest tests/test_contract_suite.py`.
 | `router.py` | Complex | Dynamic imports, export discovery, strict zip, atomic batch payments, second-call failure undoing the first transfer, private-function denial and recovery |
 | `inspector.py` | Medium | Static/dynamic ForeignHash, ForeignVariable, deterministic scans, snapshot cloning, bulk deletion, metadata reads, dynamic calls and foreign-write denial |
 | `compatibility.py` | Medium | Ordered module bindings, starred calls/unpacking, streaming dictionary methods, in-place reverse, hex decoding, dictionary mutation/compaction, Unicode numbers, raw Decimal quantum/type and all 53 public method names, fractional powers, exact float construction, DecimalTuple, NaN identity, non-finite transport/storage rejection, typed storage, prefix clears, self-cloning, rollback and recovery |
-| `commitments.py` | Medium | Ed25519 key/signature validation, application nonces, tampering/replay rejection, datetime parsing/arithmetic and deterministic random bridge invariants |
-| `surface.py` | Medium/complex | Bound mutators and callbacks, keyword signatures, range and numeric methods, live mapping views/proxies, Unicode transformations, binary mutation/codecs, deterministic time policy, field formatting including nested quoted lookups/dictionary-literal f-strings, and failure recovery |
+| `commitments.py` | Medium | Ed25519 key/signature validation, application nonces, tampering/replay rejection, datetime parsing/arithmetic, deterministic random bridge invariants and exact transaction-context seeding |
+| `surface.py` | Medium/complex | Bound mutators and callbacks, keyword signatures, range and numeric methods, portable maximum-finite float square-root bits, live mapping views/proxies, Unicode transformations, binary mutation/codecs, deterministic time policy, field formatting including nested quoted lookups/dictionary-literal f-strings, and failure recovery |
 | `followups.py` | Medium/complex | Lexical locals and comprehension isolation, hash/crypto byte costs and limits, typed wrapper-set persistence/query/readback, mutable interface descriptor identity/enforcement, callable-bearing builtin view sets and storage boundaries |
 
 Sources are ordinary authored contracts with the ledger import name substituted
@@ -29,6 +29,10 @@ positive chi billing, exact ordered application events, identical complete
 transaction results on all five validators, and every tracked application state
 key on all five validators. Failed calls must retain no authored-contract writes
 or events; fee-accounting writes are allowed. Submission entry nodes rotate.
+Two final RNG transactions derive expected 64-bit draws from the committed block
+header and each transaction signature, using exact nanoseconds. They check the
+node forwards the transaction seed; signatures stay in memory and are not added
+to reports. The other 212 interactions use the shared explicit case manifest.
 Native failures additionally require an empty write set. Constructors are checked
 before calls. Fresh contract names make a phase retry start from clean application
 state; the phase report retains names, actors, transaction hashes and heights.

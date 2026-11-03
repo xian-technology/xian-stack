@@ -6,9 +6,18 @@ import copy
 import json
 from uuid import uuid4
 
-from contract_suite_cases import ROLES, cases, constructors, initial_state, select_state, sources
+from contract_suite_cases import (
+    ROLES,
+    Case,
+    cases,
+    constructors,
+    initial_state,
+    select_state,
+    sources,
+)
 from localnet_chain_checks import agreement, receipt, require, rpc, wallet
 from localnet_e2e_support import normalize_value
+from localnet_rng_checks import transaction_random_value
 from localnet_runtime_safety_checks import failed_execution, successful
 
 
@@ -105,6 +114,44 @@ async def deploy_suite(runner, session, names, accounts):
     return transactions
 
 
+async def transaction_random_checks(runner, session, names, signer, expected):
+    transactions = []
+    for index in range(2):
+        async with runner.client(signer, index, session) as client:
+            submitted = await client.send_tx(
+                names["commitments"], "transaction_random", {}, chi=200_000, wait_for_tx=True
+            )
+        successful(submitted, "transaction-rng")
+        height = await matching_receipts(runner, session, submitted, success=True)
+        block = await rpc(session, runner.nodes[index], "block", height=height)
+        # The SDK exposes the signature in memory; never retain it or signed payloads
+        # in phase evidence. The node seeds from nanos + signature, not the tx hash.
+        signature = submitted.receipt.transaction["metadata"]["signature"]
+        value = transaction_random_value(block, signature)
+        case = Case(
+            f"transaction-rng-{index}",
+            names["commitments"],
+            "transaction_random",
+            result=value,
+            state={f"{names['commitments']}.result": value},
+        )
+        execution = check_execution(case, submitted, names.values())
+        expected.update(case.state)
+        await check_state(runner, session, expected, case.label)
+        transactions.append(
+            {
+                "case": case.label,
+                "actor": "alice",
+                "node_index": index,
+                "tx_hash": submitted.tx_hash,
+                "height": height,
+                "success": True,
+                "chi_used": execution["chi_used"],
+            }
+        )
+    return transactions
+
+
 async def contract_suite_checks(runner, session):
     # A phase retry uses fresh application state, even after a partially committed attempt.
     # Names are persisted in the phase report; replay consumes the actual transactions.
@@ -142,13 +189,16 @@ async def contract_suite_checks(runner, session):
                 "chi_used": execution["chi_used"],
             }
         )
+    transactions.extend(
+        await transaction_random_checks(runner, session, names, wallets["alice"], expected)
+    )
     return {
         "contracts": names,
         "accounts": accounts,
         "funding": funding,
         "deployments": deployments,
-        "scenario_count": len(scenarios),
-        "success_count": sum(case.error is None for case in scenarios),
+        "scenario_count": len(transactions),
+        "success_count": sum(case.error is None for case in scenarios) + 2,
         "expected_failure_count": sum(case.error is not None for case in scenarios),
         "transactions": transactions,
         "final_state": expected,

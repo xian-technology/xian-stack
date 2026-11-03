@@ -222,12 +222,14 @@ that genesis contract submission timestamps match the shared genesis time in
 both the generated state and live node queries.
 
 The `03-contract-functionality` phase deploys eleven authored contracts and runs
-212 interactions spanning builtin functions, collections, text/bytes, decimal
+214 interactions spanning builtin functions, collections, text/bytes, decimal
 ledgers, escrow, batch payments, foreign storage, signatures and time/random
 bridges. It checks explicit outcomes and state on all five validators, including
 rollback and recovery after expected failures. Canonical deployment also covers
 f-strings with nested quoted lookups and dictionary-literal interpolation,
-checking their returned values and persisted state. See the
+checking their returned values and persisted state. Numeric checks pin portable
+float-power bits; two final RNG calls verify exact transaction-context seeding
+and agreement across validators. See the
 [contract coverage matrix](workloads/e2e/contract_suite/README.md) for scenarios
 and limits. The same sources run in a fast native test before network execution.
 

@@ -834,6 +834,7 @@ def completed_surface_cases(names):
             True,
             [257, 0, 257, 1],
             [1, True],
+            "0x1.fffffffffffffp+511",
         ],
         "mappings": [
             ["b", 2],

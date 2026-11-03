@@ -38,3 +38,11 @@ def time_and_random():
     answer = [end.year, end.month, end.day, len(values)]
     result.set(answer)
     return answer
+
+
+@export
+def transaction_random():
+    random.seed()
+    value = random.getrandbits(64)
+    result.set(value)
+    return value
