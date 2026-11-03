@@ -40,6 +40,7 @@ from localnet_e2e_support import (
     short_hash,
     write_private_json,
 )
+from localnet_json_logging import trace_record
 from localnet_network import pin_localnet_addresses
 from localnet_node_report import collect_localnet_node_report
 from localnet_set_storage_checks import (
@@ -7146,6 +7147,26 @@ class E2ERunner:
         }
 
     async def logging_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
+        succeeded = False
+        try:
+            result = await self._logging_phase_checks(session)
+            succeeded = True
+        finally:
+            try:
+                update_logging_config(level="INFO", trace_logging=False, json_logging=False)
+            except Exception as exc:
+                if succeeded:
+                    raise
+                print(
+                    "[localnet-e2e] logging cleanup failed; "
+                    f"error_type={type(exc).__name__}; original phase failure retained",
+                    flush=True,
+                )
+        # Keep failed-run processes/logs intact for the outer diagnostic collector.
+        await self.restart_localnet_and_wait_ready(session)
+        return result
+
+    async def _logging_phase_checks(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         initial_log_positions = log_positions_by_node(self.nodes)
         initial_logs = {
             moniker: [str(path) for path in positions]
@@ -7182,7 +7203,7 @@ class E2ERunner:
             *,
             label: str,
             positions: dict[str, dict[Path, tuple[int, int]]],
-            matcher: Callable[[str], bool],
+            matcher: Callable[[str, list[dict[str, Any]]], bool],
             receipt_prefix: str,
         ) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
             receipts = []
@@ -7193,7 +7214,7 @@ class E2ERunner:
                     matches = await wait_for_log_matches(
                         self.nodes,
                         positions,
-                        matcher,
+                        lambda line: matcher(line, receipts),
                         label=label,
                         timeout_seconds=10.0,
                     )
@@ -7213,18 +7234,20 @@ class E2ERunner:
         debug_receipts, debug_lines = await trigger_until_all_nodes_log(
             label="DEBUG stage=execute_tx",
             positions=debug_log_positions,
-            matcher=lambda line: "DEBUG" in line and "stage=execute_tx" in line,
+            matcher=lambda line, _receipts: "DEBUG" in line and "stage=execute_tx" in line,
             receipt_prefix="debug-log-trigger",
         )
 
-        update_logging_config(level="TRACE", trace_logging=True, json_logging=False)
+        update_logging_config(level="TRACE", trace_logging=True, json_logging=True)
         await self.restart_localnet_and_wait_ready(session)
         trace_log_positions = log_positions_by_node(self.nodes)
 
         trace_receipts, trace_lines = await trigger_until_all_nodes_log(
             label="TRACE stage=finalize_tx_result",
             positions=trace_log_positions,
-            matcher=lambda line: "TRACE" in line and "stage=finalize_tx_result" in line,
+            matcher=lambda line, receipts: (
+                trace_record(line, {receipt["tx_hash"] for receipt in receipts}) is not None
+            ),
             receipt_prefix="trace-log-trigger",
         )
 
@@ -7236,8 +7259,11 @@ class E2ERunner:
         if not any(checktx_lines.values()):
             raise E2EError("WARNING logs missing stage=check_tx rejection probe")
 
-        update_logging_config(level=self.args.log_level, trace_logging=False, json_logging=False)
-        await self.restart_localnet_and_wait_ready(session)
+        trace_hashes = {receipt["tx_hash"] for receipt in trace_receipts}
+        trace_records = {
+            node: [trace_record(line, trace_hashes) for line in lines]
+            for node, lines in trace_lines.items()
+        }
 
         return {
             "initial_logs": initial_logs,
@@ -7247,6 +7273,7 @@ class E2ERunner:
             "checktx_matches": checktx_lines,
             "debug_matches": debug_lines,
             "trace_matches": trace_lines,
+            "trace_records": trace_records,
         }
 
     async def shielded_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
