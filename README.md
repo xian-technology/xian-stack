@@ -93,6 +93,11 @@ python3 ./scripts/backend.py localnet-up    --wait-for-health --rpc-timeout-seco
 python3 ./scripts/backend.py localnet-workload --scenario counter_basic
 ```
 
+The generated `docker-compose-localnet.yml` names its own Compose project,
+`xian-localnet`, so single-node `make node-stop` / `abci-down` cannot remove
+localnet validators as orphans. A compose file generated before this change
+keeps the directory project; regenerate it with `localnet-init --clean`.
+
 Bootstrap DEX contracts on a running local node for stack validation. General
 DEX installs should use the repo-owned bootstrap script in `xian-dex`; this
 make target is a stack validation convenience:

@@ -57,6 +57,7 @@ PORT_STRIDE = 100  # node-0: 266xx, node-1: 267xx, node-2: 268xx, ...
 NODE_IMAGE_INTEGRATED = os.environ.get("XIAN_NODE_INTEGRATED_IMAGE", "xian-node-integrated:local")
 NODE_IMAGE_SPLIT = "xian-node-split:local"
 LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
+LOCALNET_COMPOSE_PROJECT = "xian-localnet"
 COMPOSE_DEFAULTS = {
     "XIAN_ABCI_DIR": "../xian-abci",
     "XIAN_CONFIGS_DIR": "../xian-configs",
@@ -849,6 +850,9 @@ def write_compose_file(
             }
 
     compose = {
+        # A separate project keeps single-node `down --remove-orphans` from
+        # treating localnet validators as orphans of the stack project.
+        "name": LOCALNET_COMPOSE_PROJECT,
         "networks": {
             "localnet": {
                 "driver": "bridge",
