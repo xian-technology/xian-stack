@@ -343,7 +343,8 @@ def test_compare_state_retries_until_sampled_nodes_match() -> None:
     reads = []
 
     class FakeXianAsync:
-        def __init__(self, *, node_url, chain_id, wallet, session):
+        def __init__(self, *, node_url, chain_id, wallet, session, config):
+            assert config.vm_profile == "xian_vm_v2"
             self.node_url = node_url
 
         async def get_state(self, contract, variable, *keys):

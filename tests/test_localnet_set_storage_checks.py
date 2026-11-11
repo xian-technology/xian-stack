@@ -35,10 +35,10 @@ def test_resume_fixture_uses_authored_names_without_mutating_phase_evidence():
     original = copy.deepcopy(phase.details)
     contract, expected = authored_set_fixture([phase])
     assert contract == "con_sets" and phase.details == original
-    assert expected["con_sets.persisted"]["__set__"]["items"][0] == [
+    assert [
         "tuple",
         [["str", "bds-catchup"], ["int", "7"]],
-    ]
+    ] in expected["con_sets.persisted"]["__set__"]["items"]
     with pytest.raises(E2EError, match="successful authored"):
         authored_set_fixture([])
 

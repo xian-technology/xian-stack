@@ -129,6 +129,7 @@ async def check_admission(runner, session):
                 "chi_supplied": 2000,
             },
             runner.founder_wallet,
+            vm_profile="xian_vm_v2",
         )
         scalar = copy.deepcopy(tx)
         scalar["metadata"]["signature"] = noncanonical_scalar(tx["metadata"]["signature"])

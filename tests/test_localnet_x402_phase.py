@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "localnet-e2e.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
@@ -91,6 +92,28 @@ class LocalnetX402PhaseTests(unittest.TestCase):
 
         self.assertEqual(["outer"], list(normalized))
         self.assertEqual(["a", "b"], list(normalized["outer"]))
+
+    def test_indexed_transaction_report_serializes_typed_v2_sdk_values(self) -> None:
+        from xian_runtime_types.encoding import decode_wire_numbers
+
+        wire = {
+            "fee": {"__fixed__": "9007199254740993.000000000000000000000000000001"},
+            "attributes": [{"__time__": [2026, 11, 11, 1, 0, 0, 0]}, {"__bytes__": "ff"}],
+        }
+        normalized = localnet_e2e.normalize_value(decode_wire_numbers(wire))
+        self.assertEqual(
+            json.loads(json.dumps(normalized)),
+            {"fee": wire["fee"]["__fixed__"], "attributes": wire["attributes"]},
+        )
+
+    def test_intentkit_receipt_events_serialize_v2_amounts(self) -> None:
+        from xian_runtime_types.encoding import decode_wire_numbers
+
+        amount = "9007199254740993.000000000000000000000000000001"
+        events = decode_wire_numbers([{"data": {"amount": {"__fixed__": amount}}}])
+        receipt = SimpleNamespace(success=True, execution={"events": events})
+        report = intentkit_x402_smoke.normalize_submission(SimpleNamespace(receipt=receipt))
+        self.assertEqual(json.loads(json.dumps(report))["events"], [{"data": {"amount": amount}}])
 
     def test_write_private_json_uses_owner_only_permissions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -643,6 +643,7 @@ class ProtocolSafetyRunner:
     @functools.lru_cache(maxsize=1)
     def client_config(self) -> XianClientConfig:
         return XianClientConfig(
+            vm_profile="xian_vm_v2",
             retry=RetryPolicy(
                 max_attempts=6,
                 initial_delay_seconds=0.25,

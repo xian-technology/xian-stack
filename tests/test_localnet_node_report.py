@@ -19,7 +19,7 @@ METRICS_TEXT = "\n".join(
         "# HELP xian_node Static Xian node runtime information.",
         "# TYPE xian_node_info gauge",
         (
-            'xian_node_info{chain_id="xian-local",execution_mode="xian_vm_v1",'
+            'xian_node_info{chain_id="xian-local",execution_mode="xian_vm_v2",'
             'bds_enabled="false",parallel_execution_enabled="false",'
             'tx_fees_enabled="true"} 1'
         ),
@@ -33,12 +33,12 @@ class LocalnetNodeReportTests(unittest.TestCase):
         names = {sample["name"] for sample in samples}
         self.assertIn("xian_node_info", names)
         node_sample = next(sample for sample in samples if sample["name"] == "xian_node_info")
-        self.assertEqual(node_sample["labels"]["execution_mode"], "xian_vm_v1")
+        self.assertEqual(node_sample["labels"]["execution_mode"], "xian_vm_v2")
         self.assertEqual(node_sample["value"], 1.0)
 
     def test_collect_localnet_node_report_summarizes_nodes(self) -> None:
         network = {
-            "execution": {"mode": "xian_vm_v1"},
+            "execution": {"mode": "xian_vm_v2"},
             "nodes": [
                 {
                     "moniker": "node-0",
@@ -81,7 +81,7 @@ class LocalnetNodeReportTests(unittest.TestCase):
         self.assertEqual(report["totals"]["node_count"], 2)
         self.assertEqual(
             report["expected_node_capabilities"]["execution_mode"],
-            "xian_vm_v1",
+            "xian_vm_v2",
         )
         self.assertTrue(report["checks"]["uniform_execution_mode"])
         self.assertTrue(report["checks"]["all_nodes_report_xian_vm"])
@@ -91,7 +91,7 @@ class LocalnetNodeReportTests(unittest.TestCase):
 
     def test_collect_localnet_node_report_fails_lagging_nodes(self) -> None:
         network = {
-            "execution": {"mode": "xian_vm_v1"},
+            "execution": {"mode": "xian_vm_v2"},
             "nodes": [
                 {
                     "moniker": "node-0",

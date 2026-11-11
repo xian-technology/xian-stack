@@ -56,6 +56,14 @@ def release_plan() -> orchestrator.ReleasePlan:
 
 
 class ReleaseOrchestratorGithubCheckTests(unittest.TestCase):
+    def test_shared_numeric_changes_select_both_native_distributions(self) -> None:
+        files = ["packages/xian-numeric/src/lib.rs", "packages/xian-accounts/README.md"]
+        with patch.object(orchestrator, "list_changed_files", return_value=files):
+            for key in ("xian-compiler-core", "xian-vm-core"):
+                unit = orchestrator.UNITS[key]
+                self.assertIn(key, orchestrator.RELEASE_ORDER)
+                self.assertEqual(orchestrator.relevant_changed_files(unit, None), files[:1])
+
     def test_xian_intentkit_is_not_a_coordinated_release_unit(self) -> None:
         self.assertNotIn("xian-intentkit", orchestrator.RELEASE_ORDER)
         self.assertNotIn("xian-intentkit", orchestrator.UNITS)

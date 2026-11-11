@@ -91,7 +91,7 @@ def invalid_key():
 @export
 def recover():
     progress.set(progress.get() + 1)
-    return {1: 2}
+    return progress.get()
 @export
 def return_set():
     return set([1, 2])
@@ -245,7 +245,8 @@ async def authority_checks(runner, session):
 async def constructor_budget_checks(runner, session):
     factory = await deploy(runner, session, "runtime-factory", FACTORY_SOURCE)
     prefix = "con_budget_" + short_hash(runner.run_id)
-    budget = 5000
+    # The V2 single constructor costs about 5,260 chi. Two must exceed this budget.
+    budget = 7500
     nested = "import submission\n" + METER_SOURCE.replace(
         "    value = 0",
         f"    submission.submit_contract(name={prefix + '_inner'!r}, code=code)\n    value = 0",

@@ -140,7 +140,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-dex
-          ref: 3acf3414a79cf1558eacdb31e00328073d96020e
+          ref: 7ff8d8eec546a0c924d0e187ff2a7977f4fbfc39
           path: xian-dex
 
       - name: Check out DEX recovery probe

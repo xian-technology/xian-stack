@@ -42,6 +42,7 @@ from localnet_e2e_phases import (
 )
 from localnet_e2e_support import (
     E2EError,
+    decode_state_response,
     normalize_value,
     parse_json_stdout,
     short_hash,
@@ -80,7 +81,7 @@ INTENTKIT_DIR = (
 )
 INTENTKIT_X402_SMOKE_SCRIPT = SCRIPT_DIR / "intentkit-x402-localnet-smoke.py"
 INTENTKIT_UV_EXTRA_PACKAGES = ("psycopg-binary",)
-DEFAULT_EXECUTION_MODE = "xian_vm_v1"
+DEFAULT_EXECUTION_MODE = "xian_vm_v2"
 INVALID_FSTRING_SOURCE = "@export\ndef render(value: int):\n    return f'{value!q}'\n"
 INVALID_FSTRING_DIAGNOSTIC = "f-string: invalid conversion character"
 DEFAULT_LOCALNET_NODES = 5
@@ -381,6 +382,8 @@ async def fetch_abci_query(
     abci_response = payload.get("result", {}).get("response", {})
     if int(abci_response.get("code", 0) or 0) != 0:
         raise E2EError(f"ABCI query failed for {path}: {abci_response.get('log')}")
+    if path.startswith("/get/"):
+        return decode_state_response(abci_response)
     encoded_value = abci_response.get("value")
     if not encoded_value:
         return None
@@ -1860,6 +1863,7 @@ class E2ERunner:
     @functools.lru_cache(maxsize=1)
     def default_client_config(self) -> XianClientConfig:
         return XianClientConfig(
+            vm_profile="xian_vm_v2",
             submission=SubmissionConfig(
                 timeout_seconds=self.args.rpc_timeout_seconds,
                 poll_interval_seconds=0.5,
@@ -1869,6 +1873,7 @@ class E2ERunner:
     @functools.lru_cache(maxsize=1)
     def load_test_client_config(self) -> XianClientConfig:
         return XianClientConfig(
+            vm_profile="xian_vm_v2",
             retry=RetryPolicy(
                 max_attempts=6,
                 initial_delay_seconds=0.25,
@@ -2176,7 +2181,7 @@ class E2ERunner:
             "sender": wallet.public_key,
             "chi_supplied": chi,
         }
-        tx = tr.create_tx(payload, wallet)
+        tx = tr.create_tx(payload, wallet, vm_profile="xian_vm_v2")
         prepared_tx = tr.prepare_transaction(tx)
         tx_hash = prepared_tx.tx_hash
         response: dict[str, Any] = {}
@@ -3768,7 +3773,7 @@ class E2ERunner:
             obsolete_artifacts = {
                 "format": "xian_contract_artifact_v1",
                 "module_name": f"{bad_artifact_name}_tampered",
-                "vm_profile": "xian_vm_v1",
+                "vm_profile": "xian_vm_v2",
                 "source": tampered_source,
                 "vm_ir_json": "{}",
                 "hashes": {},
@@ -4311,7 +4316,7 @@ class E2ERunner:
             "sender": duplicate_sender.public_key,
             "chi_supplied": DEFAULT_TRANSFER_CHI,
         }
-        duplicate_tx = tr.create_tx(duplicate_payload, duplicate_sender)
+        duplicate_tx = tr.create_tx(duplicate_payload, duplicate_sender, vm_profile="xian_vm_v2")
         duplicate_prepared_tx = tr.prepare_transaction(duplicate_tx)
         duplicate_tx_hash = duplicate_prepared_tx.tx_hash
 
@@ -5563,8 +5568,8 @@ class E2ERunner:
                         dex_contract,
                         "swapExactTokenForToken",
                         {
-                            "amountIn": 5.0 + index,
-                            "amountOutMin": 1.0,
+                            "amountIn": 5 + index,
+                            "amountOutMin": 1,
                             "pair": pair_id,
                             "src": token_a,
                             "to": sim_wallet.public_key,
@@ -6306,8 +6311,8 @@ class E2ERunner:
                         dex_router,
                         "swapExactTokenForToken",
                         {
-                            "amountIn": 7.0,
-                            "amountOutMin": 0.0,
+                            "amountIn": 7,
+                            "amountOutMin": 0,
                             "pair": dex_pair_id,
                             "src": token_a,
                             "to": founder.public_key,
@@ -9318,7 +9323,7 @@ class E2ERunner:
                 raise E2EError("shielded relay indexed transaction missing")
             if relay_indexed_tx.sender != relayer.public_key:
                 raise E2EError("shielded relay tx sender drifted from relayer")
-            relay_raw_json = json.dumps(relay_indexed_tx.raw, sort_keys=True)
+            relay_raw_json = json.dumps(normalize_value(relay_indexed_tx.raw), sort_keys=True)
             if alice.public_key in relay_raw_json or bob.public_key in relay_raw_json:
                 raise E2EError("shielded relay tx leaked public account addresses")
             relay_event = next(

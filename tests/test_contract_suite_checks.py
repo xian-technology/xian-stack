@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from xian_runtime_types.decimal import ContractingDecimal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from contract_suite_cases import Case
@@ -15,7 +16,7 @@ from localnet_e2e_support import E2EError
 
 
 def submission(success=True, **overrides):
-    execution = {"result": "7", "chi_used": 5, "events": [], "state": []}
+    execution = {"result": 7, "chi_used": 5, "events": [], "state": []}
     execution.update(overrides)
     return SimpleNamespace(
         accepted=True,
@@ -35,6 +36,22 @@ def test_success_requires_exact_result_and_events():
     ]:
         with pytest.raises(E2EError):
             check_execution(case, submission(**update), ["con_a"])
+
+
+def test_exact_typed_receipt_preserves_decimal_and_integer_distinctions():
+    amount = ContractingDecimal("9007199254740993.000000000000000000000000000001")
+    case = Case("typed", "con_a", "call", result=[amount, 2**60])
+    check_execution(case, submission(result=[amount, 2**60]), ["con_a"])
+    with pytest.raises(E2EError, match="wrong result"):
+        check_execution(case, submission(result=[str(amount), 2**60]), ["con_a"])
+
+
+@pytest.mark.parametrize("amount", [ContractingDecimal("1.25"), {"__fixed__": "1.25"}])
+def test_event_compares_raw_and_sdk_decoded_receipts(amount):
+    expected = {"contract": "con_a", "event": "Paid", "data": {"amount": "1.25"}}
+    case = Case("payment", "con_a", "pay", result=7, events=(expected,))
+    event = {**expected, "data": {"amount": amount}, "data_indexed": {}}
+    check_execution(case, submission(events=[event]), ["con_a"])
 
 
 def test_failure_requires_reason_no_events_and_no_authored_writes():
@@ -134,8 +151,8 @@ def test_phase_is_in_default_sequence():
 @pytest.mark.parametrize(
     ("info", "raw", "expected"),
     [
-        ("decimal", "100", "100"),
-        ("decimal", "0.123456789123456789", "0.123456789123456789"),
+        ("decimal", "100", ContractingDecimal("100")),
+        ("decimal", "0.123456789123456789", ContractingDecimal("0.123456789123456789")),
         ("str", "100", "100"),
         ("str", "true", "true"),
         ("str", "", ""),
@@ -143,6 +160,7 @@ def test_phase_is_in_default_sequence():
         ("bool", "True", True),
         ("bool", "False", False),
         ("list", '["100", 2]', ["100", 2]),
+        ("list", '[{"__fixed__":"0.6"}]', [ContractingDecimal("0.6")]),
         ("dict", '{"status": "open"}', {"status": "open"}),
         ("", "", None),
     ],
@@ -158,4 +176,5 @@ def test_query_preserves_scalar_types(monkeypatch, info, raw, expected):
         }
 
     monkeypatch.setattr(checks, "rpc", rpc)
-    assert asyncio.run(checks.query(None, None, "/get/con_a.value")) == expected
+    actual = asyncio.run(checks.query(None, None, "/get/con_a.value"))
+    assert type(actual) is type(expected) and actual == expected

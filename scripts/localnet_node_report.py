@@ -10,7 +10,7 @@ from urllib.request import urlopen
 
 STACK_DIR = Path(__file__).resolve().parent.parent
 LOCALNET_NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
-EXPECTED_EXECUTION_MODE = "xian_vm_v1"
+EXPECTED_EXECUTION_MODE = "xian_vm_v2"
 MAX_FINAL_HEIGHT_SPREAD = 1
 _PROMETHEUS_LINE_RE = re.compile(
     r"^(?P<name>[a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(?P<labels>.*)\})?\s+"

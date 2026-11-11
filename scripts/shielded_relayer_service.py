@@ -320,7 +320,7 @@ class ShieldedRelayerService:
             xian_client = XianAsync(
                 config.node_url,
                 wallet=wallet,
-                config=XianClientConfig(submission=submission),
+                config=XianClientConfig(vm_profile="xian_vm_v2", submission=submission),
             )
         self._xian = xian_client
         self._policy_version = hashlib.sha256(

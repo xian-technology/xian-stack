@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 from urllib.request import urlopen
 
+from xian_py.config import XianClientConfig
 from xian_py.models import TransactionSubmission
 from xian_py.wallet import Wallet
 from xian_py.xian import Xian
@@ -653,7 +654,12 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     lp_token_source = source_bundle["lp_token_source"]
 
     chain_id = args.chain_id or (None if args.rpc_url else (network or {}).get("chain_id"))
-    with Xian(rpc_url, chain_id=chain_id, wallet=deployer_wallet) as client:
+    with Xian(
+        rpc_url,
+        chain_id=chain_id,
+        wallet=deployer_wallet,
+        config=XianClientConfig(vm_profile="xian_vm_v2"),
+    ) as client:
         client.refresh_nonce()
         resolved_chain_id = client.chain_id
         deployments: list[dict[str, Any]] = []
@@ -748,7 +754,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "chain_id": resolved_chain_id,
         "rpc_url": rpc_url,
         "deployer": deployer_wallet.public_key,
-        "execution_mode": "xian_vm_v1",
+        "execution_mode": "xian_vm_v2",
         "chi_budget_mode": args.chi_budget_mode,
         "dex_source": source_bundle["kind"],
         "dex_bundle": (

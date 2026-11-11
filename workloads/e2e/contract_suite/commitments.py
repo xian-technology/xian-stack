@@ -30,7 +30,6 @@ def time_and_random():
     random.seed("contract-suite")
     numbers = [random.randint(1, 9), random.randrange(5) * 2, random.getrandbits(4)]
     assert 1 <= numbers[0] <= 9 and numbers[1] in [0, 2, 4, 6, 8] and 0 <= numbers[2] < 16
-    assert 0 <= random.random() < 1
     values = [1, 2, 3]
     random.shuffle(values)
     assert sorted(values) == [1, 2, 3]

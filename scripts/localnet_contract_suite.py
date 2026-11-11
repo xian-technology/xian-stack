@@ -1,7 +1,6 @@
 """Execute authored application flows and their failure paths on every validator."""
 
 import asyncio
-import base64
 import copy
 import json
 from uuid import uuid4
@@ -16,27 +15,16 @@ from contract_suite_cases import (
     sources,
 )
 from localnet_chain_checks import agreement, receipt, require, rpc, wallet
-from localnet_e2e_support import normalize_value
+from localnet_e2e_support import decode_state_response, normalize_value
 from localnet_rng_checks import transaction_random_value
 from localnet_runtime_safety_checks import failed_execution, successful
+from xian_runtime_types.encoding import decode_wire_numbers, normalize_wire_numbers
 
 
 async def query(session, node, path):
     response = (await rpc(session, node, "abci_query", path=json.dumps(path)))["response"]
     require(int(response.get("code", 0)) == 0, f"query {path} failed: {response}")
-    raw = base64.b64decode(response.get("value") or "").decode()
-    kind = response.get("info")
-    if kind in {"str", "decimal"}:
-        return raw
-    if kind == "bool":
-        require(raw in {"True", "False"}, f"query {path}: invalid boolean {raw!r}")
-        return raw == "True"
-    if kind == "int":
-        return int(raw)
-    if kind in {"dict", "list"}:
-        return json.loads(raw)
-    require(not raw, f"query {path}: unsupported type {kind!r}")
-    return None
+    return decode_state_response(response)
 
 
 def check_execution(case, submission, contracts):
@@ -52,7 +40,7 @@ def check_execution(case, submission, contracts):
     else:
         execution = successful(submission, case.label)
         require(
-            execution["result"] == repr(case.result),
+            normalize_wire_numbers(execution["result"]) == normalize_wire_numbers(case.result),
             f"{case.label}: wrong result: {execution['result']!r}",
         )
         events = [
@@ -63,8 +51,11 @@ def check_execution(case, submission, contracts):
             )
             for item in execution["events"]
         ]
+        # Resumed runs may carry raw event tags, while the V2 SDK returns typed values.
+        event_values = decode_wire_numbers(normalize_wire_numbers(events))
         require(
-            normalize_value(events) == list(case.events), f"{case.label}: wrong events: {events!r}"
+            normalize_value(event_values) == list(case.events),
+            f"{case.label}: wrong events: {events!r}",
         )
     require(execution["chi_used"] > 0, f"{case.label}: work was not charged")
     return execution

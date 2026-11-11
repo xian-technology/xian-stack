@@ -19,6 +19,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent
 
 from localnet_chain_checks import CURRENCY_TRANSFER_CHI  # noqa: E402
+from xian_py.config import XianClientConfig  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian import Xian  # noqa: E402
 
@@ -73,7 +74,12 @@ def main():
     rpc_url = f"http://127.0.0.1:{nodes[0]['host_rpc_port']}"
 
     wallet = Wallet(private_key=founder_key)
-    xian = Xian(node_url=rpc_url, chain_id=chain_id, wallet=wallet)
+    xian = Xian(
+        node_url=rpc_url,
+        chain_id=chain_id,
+        wallet=wallet,
+        config=XianClientConfig(vm_profile="xian_vm_v2"),
+    )
 
     duration = duration_minutes * 60
     print(f"Memory watch: {duration_minutes} min, sampling every {sample_interval}s")

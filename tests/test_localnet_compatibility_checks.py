@@ -9,7 +9,7 @@ def test_runtime_compatibility_fixture_and_failure_recovery(tmp_path):
     import xian_vm_core
     from contracting.storage.driver import Driver
 
-    driver = Driver(storage_home=tmp_path)
+    driver = Driver(vm_profile="xian_vm_v2", storage_home=tmp_path)
     name = "con_runtime_fixture"
     driver.set_contract_from_source(name, checks.SOURCE, owner="alice")
     driver.set(f"{name}.progress", 0)
@@ -21,6 +21,7 @@ def test_runtime_compatibility_fixture_and_failure_recovery(tmp_path):
         ("probe", 2, None),
     ]:
         result = xian_vm_core.execute_contract(
+            vm_profile="xian_vm_v2",
             driver=driver,
             contract_name=name,
             function_name=function,

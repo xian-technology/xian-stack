@@ -8,15 +8,16 @@ import asyncio
 import json
 import os
 from datetime import UTC, datetime
-from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from aiohttp import web
+from localnet_e2e_support import normalize_value
 from xian_py import (
     XianAsync,
+    XianClientConfig,
     XianX402PaymentPayload,
     XianX402PaymentRequirement,
     encode_json_header,
@@ -41,26 +42,6 @@ REQUIRED_CONFIG_FIELDS = (
 )
 
 
-def normalize(value: Any) -> Any:
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, dict):
-        return {
-            str(key): normalize(value[key]) for key in sorted(value, key=lambda item: str(item))
-        }
-    if isinstance(value, list):
-        return [normalize(item) for item in value]
-    if isinstance(value, tuple):
-        return [normalize(item) for item in value]
-    if hasattr(value, "model_dump"):
-        return normalize(value.model_dump())
-    if hasattr(value, "to_dict"):
-        return normalize(value.to_dict())
-    return value
-
-
 def normalize_submission(submission: Any) -> dict[str, Any] | None:
     if submission is None:
         return None
@@ -69,7 +50,7 @@ def normalize_submission(submission: Any) -> dict[str, Any] | None:
     events = []
     if isinstance(execution, dict):
         events = execution.get("events") or []
-    return normalize(
+    return normalize_value(
         {
             "submitted": getattr(submission, "submitted", None),
             "accepted": getattr(submission, "accepted", None),
@@ -128,6 +109,7 @@ class X402SellerService:
             node_url=self.rpc_url,
             chain_id=self.chain_id,
             wallet=self.facilitator,
+            config=XianClientConfig(vm_profile="xian_vm_v2"),
         ) as client:
             facilitator_api = XianX402Facilitator(
                 client=client,
@@ -264,7 +246,7 @@ async def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError("IntentKit x402 request did not record an order")
 
     order = created_orders[0]
-    return normalize(
+    return normalize_value(
         {
             "ok": True,
             "resource": resource_url,

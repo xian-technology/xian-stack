@@ -14,9 +14,10 @@ def probe():
     values = {True: 1, 1: 2}
     values[1] = 3
     pairs = dict([(True, 1), (1, 2)])
-    exact = {9007199254740993: 1, float('9007199254740992'): 2}
+    exact = {9007199254740993: 1, 9007199254740992: 2}
     items = [[1], [2]]
-    items.remove([True])
+    assert [True] not in items
+    items.remove([1])
     answer = [len(values), values[True], len(pairs), pairs[1], len(exact), items]
     result.set(answer)
     progress.set(progress.get() + 1)
@@ -41,7 +42,7 @@ async def matching_receipts(runner, session, submission, *, success):
 
 async def dictionary_checks(runner, session):
     name = await deploy(runner, session, "dictionary-compatibility", SOURCE)
-    expected = [1, 3, 1, 2, 2, [[2]]]
+    expected = [2, 1, 2, 2, 2, [[2]]]
     transactions = []
     async with runner.client(runner.founder_wallet, 0, session) as client:
         for function, progress in [("probe", 1), ("invalid", 1), ("probe", 2)]:

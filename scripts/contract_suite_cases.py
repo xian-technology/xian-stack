@@ -2,7 +2,6 @@
 
 import hashlib
 from dataclasses import dataclass, field
-from decimal import Decimal as RawDecimal
 from pathlib import Path
 
 from xian_runtime_types.decimal import ContractingDecimal as Decimal
@@ -83,7 +82,7 @@ def simple_cases(n, a):
             actor="bob",
             events=(event(c, "Changed", value=9, caller=a["bob"]),),
         ),
-        Case("counter-typed-argument", c, "add", {"delta": "bad"}, error="argument"),
+        Case("counter-typed-argument", c, "add", {"delta": "bad"}, error="int"),
         Case("counter-invalid-delta", c, "add", {"delta": 0}, error="positive delta"),
         Case("counter-write-event-rollback", c, "fail_after_write", error="counter deliberate"),
         Case("counter-unauthorized-reset", c, "reset", actor="bob", error="admin required"),
@@ -430,24 +429,6 @@ def compatibility_cases(n):
 
     return [
         success("ordered-module-bindings", "bindings", [1, 2, 3]),
-        success(
-            "float-set-order-and-identity",
-            "float_sets",
-            [
-                ["-inf", "-10.0", "-2.0", "2.0", "10.0", "inf"],
-                ["-inf", "-10.0", "-2.0", "2.0", "10.0", "inf"],
-                ["-inf", "-10.0", "-2.0", "2.0", "10.0", "inf"],
-                "0.0",
-                "-0.0",
-                "2.0",
-                ["1.0", "10.0", "nan", "nan"],
-                True,
-                True,
-                True,
-                False,
-                False,
-            ],
-        ),
         success("starred-calls-and-unpacking", "unpacking", [0, [1, 2, 3], 4, 16]),
         success(
             "streaming-methods-and-aliases",
@@ -463,21 +444,7 @@ def compatibility_cases(n):
             error="dictionary keys changed",
         ),
         success("dictionary-compaction", "compaction", ["a", "c", "d", "e", "z"]),
-        success("unicode-numeric-strings", "unicode_numbers", [12, 15, 120.0]),
-        Case(
-            "decimal-quantum-and-boundaries",
-            c,
-            "quantum",
-            result=[
-                RawDecimal("2.00"),
-                RawDecimal("-0.00"),
-                "2.00",
-                "2.000",
-                "4.00",
-                [RawDecimal("2.00"), "2.00", False],
-            ],
-            state={f"{c}.result": "2", f"{c}.fixed": "2", f"{c}.entries:quantum": "-0.00"},
-        ),
+        success("unicode-numeric-strings", "unicode_numbers", [12, 15, 120]),
         Case("typed-variable-rollback", c, "typed_failure", error="type"),
         Case(
             "bulk-prefix-and-self-clone",
@@ -492,7 +459,6 @@ def compatibility_cases(n):
                 f"{c}.copy:a": 9,
                 f"{c}.copy:a:x": 1,
                 f"{c}.copy:b:y": 2,
-                f"{c}.copy:quantum": "-0.00",
             },
         ),
         Case("bulk-clear-rollback", c, "bulk_failure", error="bulk deliberate"),
@@ -504,144 +470,40 @@ def compatibility_cases(n):
 
 
 def decimal_cases(n):
-    """R17 results copied from historical contracting at 3b82001f, Python 3.12.10."""
     c = n["compatibility"]
-    successes = [
-        (
-            "decimal-classification",
-            "decimal_classification",
-            [
-                "True",
-                "True",
-                "False",
-                "False",
-                "True",
-                "False",
-                "False",
-                "False",
-                "False",
-                "False",
-                "+Normal",
-                "2.500",
-                "2.500",
-                "2.500",
-                "-2.500",
-                "-2.500",
-            ],
+    thirds = "0." + "3" * 30
+    amounts = [
+        Decimal("9007199254740993.012345678901234567890123456789"),
+        Decimal("1"),
+        Decimal(thirds),
+        Decimal("-" + thirds),
+    ]
+    settlement = [
+        Decimal("1"),
+        Decimal("-1.02"),
+        Decimal("-1.01"),
+        Decimal("-1.02"),
+        Decimal("1.02"),
+        -3,
+        -2,
+        Decimal("1.414213562373095048801688724209"),
+    ]
+    return [
+        Case(
+            "exact-decimal-literals-and-division",
+            c,
+            "exact_amounts",
+            result=amounts,
+            state={f"{c}.result": amounts},
         ),
-        (
-            "decimal-quantization",
-            "decimal_quantization",
-            ["2.5", "2.50", "False", "2.500", "2", "2", "2"],
-        ),
-        (
-            "decimal-math",
-            "decimal_math",
-            [
-                "0",
-                "12.18249396070347343807017595116796618318276779006316131156039834183818512614331441006025552",
-                "4.20000",
-                "0.9162907318741550651835272117680110714501012199082624677919678819807853657379630490242705511",
-                "0.3979400086720376095725222105510139464636202370757829173791450777457836214511509810261454958",
-                "0",
-                "1.581138830084189665999446772216359266859777569662608413428752426396297219319619110672124054",
-                "10",
-                "0.100",
-            ],
-        ),
-        (
-            "decimal-ordering",
-            "decimal_ordering",
-            [
-                "1",
-                "1",
-                "1",
-                "1",
-                "2.500",
-                "2.500",
-                "1.20",
-                "-1.20",
-                "2.499999999999999999999999999999999999999999999999999999999999999999999999999999999999999999",
-                "2.500000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
-                "2.499999999999999999999999999999999999999999999999999999999999999999999999999999999999999999",
-                "25.000",
-                "250.0",
-                "25.000",
-            ],
-        ),
-        (
-            "decimal-logical",
-            "decimal_logical",
-            [
-                "1",
-                "111",
-                "110",
-                "1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111010",
-            ],
-        ),
-        (
-            "decimal-general-powers",
-            "decimal_powers",
-            [
-                "2.297396709994070013597253893555855178887701778195595011027422236987206412507026113622946226",
-                "0.4352752816480620695681350087398730494895627121740015241209297842533750088762390050941893824",
-            ],
-        ),
-        (
-            "decimal-tuple-exact-construction",
-            "decimal_tuple_exact",
-            [0, [2, 5, 0, 0], -3, "0.1000000000000000055511151231257827021181583404541015625"],
-        ),
-        (
-            "decimal-nonfinite-transport",
-            "decimal_nonfinite",
-            ["Infinity", "-Infinity", "Infinity", True, True, False, "NaN", True, True],
-        ),
-        (
-            "decimal-nan-identity",
-            "decimal_nan_identity",
-            [False, True, True, True, True, True, 2, 2, False],
+        Case(
+            "settlement-and-rounding",
+            c,
+            "settlement",
+            result=settlement,
+            state={f"{c}.result": settlement},
         ),
     ]
-    result = [
-        Case(label, c, function, result=value, state={f"{c}.result": value})
-        for label, function, value in successes
-    ]
-    result.append(
-        Case("decimal-negative-fractional-domain", c, "decimal_negative_power", error="invalid")
-    )
-    for kind, target, nested in [
-        ("infinity", "variable", False),
-        ("nan", "variable", True),
-        ("nan", "hash", False),
-        ("infinity", "hash", True),
-    ]:
-        label = f"decimal-{kind}-{target}-{'nested' if nested else 'direct'}"
-        result.append(
-            Case(
-                label + "-rollback",
-                c,
-                "decimal_nonfinite_storage",
-                {"kind": kind, "target": target, "nested": nested},
-                error="finite",
-            )
-        )
-        marker = label + "-recovered"
-        result.append(
-            Case(
-                label + "-recovery",
-                c,
-                "decimal_recovery",
-                {"marker": marker},
-                marker,
-                {
-                    f"{c}.result": marker,
-                    f"{c}.entries:recovery": marker,
-                    f"{c}.entries:nonfinite": None,
-                },
-            )
-        )
-    return result
 
 
 def surface_cases(names):
@@ -829,12 +691,7 @@ def completed_surface_cases(names):
             "0101",
             257,
             [10, -1, -3, 1, 3],
-            [3, 2],
-            "0x1.8000000000000p+0",
-            True,
             [257, 0, 257, 1],
-            [1, True],
-            "0x1.fffffffffffffp+511",
         ],
         "mappings": [
             ["b", 2],
@@ -942,9 +799,9 @@ def completed_surface_cases(names):
 def followup_cases(names):
     contract = names["followups"]
     members = [
+        ["fixed", "123" + "0" * 28],
         ["tuple", [["str", "tuple"], ["int", "7"]]],
         ["frozenset", [["int", "2"], ["int", "3"]]],
-        ["raw_decimal", 0, "12300", -4],
     ]
     outcomes = {
         "scopes": [41, 9, [1, 2], [[1, 2], [3]], 9],
@@ -954,7 +811,7 @@ def followup_cases(names):
             hashlib.sha256(b"abc").hexdigest(),
         ],
         "store_sets": [3, True, True],
-        "read_sets": [True, True, 3, 4, 3, True, "1.2300", -4],
+        "read_sets": [True, True, 3, 4, 3, True, "1.23", True],
         "descriptors": [
             True,
             True,

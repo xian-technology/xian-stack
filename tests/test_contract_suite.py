@@ -13,7 +13,6 @@ from localnet_e2e_support import normalize_value
 def test_native_contract_suite(tmp_path):
     import xian_vm_core
     from contracting.local import ContractingClient
-    from contracting.storage.driver import Driver
     from xian.utils.encoding import encode_abci_json
     from xian_py.wallet import Wallet
     from xian_runtime_types.time import Datetime
@@ -25,13 +24,16 @@ def test_native_contract_suite(tmp_path):
     accounts = {role: wallet.public_key for role, wallet in wallets.items()}
     names = {role: "con_suite_" + role for role in ROLES}
     scenarios = cases(names, accounts, wallets["alice"].sign_msg("contract-suite authorization"))
-    client = ContractingClient(driver=Driver(storage_home=tmp_path), signer=accounts["alice"])
+    client = ContractingClient(
+        storage_home=tmp_path, vm_profile="xian_vm_v2", signer=accounts["alice"]
+    )
     driver = client.raw_driver
     driver.commit()
 
     def execute(contract, function, kwargs, actor="alice", chi=500_000):
         return xian_vm_core.execute_contract(
             driver=driver,
+            vm_profile="xian_vm_v2",
             contract_name=contract,
             function_name=function,
             kwargs=kwargs,
@@ -118,38 +120,13 @@ def test_contract_suite_has_nominal_builtin_coverage():
         for node in ast.walk(ast.parse(source))
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
-    assert ALLOWED_BUILTINS - {"True", "False", "None", "import"} - calls == set()
-
-
-def test_contract_suite_has_nominal_decimal_method_coverage():
-    # The historical raw Decimal surface; this guards the network suite's API
-    # inventory, while test_native_contract_suite checks the actual outcomes.
-    methods = set(
-        """
-        adjusted as_integer_ratio as_tuple canonical compare compare_signal
-        compare_total compare_total_mag conjugate copy_abs copy_negate copy_sign
-        exp fma from_float is_canonical is_finite is_infinite is_nan is_normal
-        is_qnan is_signed is_snan is_subnormal is_zero ln log10 logb max max_mag
-        min min_mag next_minus next_plus next_toward normalize number_class
-        quantize radix remainder_near rotate same_quantum scaleb shift sqrt
-        to_eng_string to_integral to_integral_exact to_integral_value logical_and
-        logical_or logical_xor logical_invert
-    """.split()
-    )
-    source = sources({role: "con_suite_" + role for role in ROLES})["compatibility"]
-    calls = {
-        node.func.attr
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-    }
-    assert methods - calls == set()
+    assert ALLOWED_BUILTINS - {"True", "False", "None", "import", "float", "round"} - calls == set()
 
 
 def test_followup_set_state_preserves_typed_members():
-    from decimal import Decimal
-
     from contract_suite_cases import followup_cases
     from xian_runtime_types.collections import ContractingFrozenSet, ContractingSet
+    from xian_runtime_types.decimal import ContractingDecimal as Decimal
     from xian_runtime_types.encoding import decode_set_value
 
     stored = ContractingSet([("tuple", 7), ContractingFrozenSet([2, 3]), Decimal("1.2300")])
@@ -165,7 +142,7 @@ def test_followup_set_state_preserves_typed_members():
         assert ("tuple", 7) in decoded
         assert ContractingFrozenSet([3, 2]) in decoded
         raw = next(item for item in decoded if isinstance(item, Decimal))
-        assert str(raw) == "1.2300" and raw.as_tuple().exponent == -4
+        assert str(raw) == "1.23"
 
 
 def test_followup_budget_failure_retries_the_same_work_successfully():

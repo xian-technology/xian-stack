@@ -16,13 +16,14 @@ def test_live_dictionary_contract_executes_and_rolls_back(tmp_path):
     import xian_vm_core
     from contracting.storage.driver import Driver
 
-    driver = Driver(storage_home=tmp_path)
+    driver = Driver(vm_profile="xian_vm_v2", storage_home=tmp_path)
     name = "con_dictionary_fixture"
     driver.set_contract_from_source(name, checks.SOURCE, owner="alice")
     driver.set(f"{name}.progress", 0)
     driver.commit()
     for function, progress in [("probe", 1), ("invalid", 1), ("probe", 2)]:
         output = xian_vm_core.execute_contract(
+            vm_profile="xian_vm_v2",
             driver=driver,
             contract_name=name,
             function_name=function,
@@ -37,7 +38,7 @@ def test_live_dictionary_contract_executes_and_rolls_back(tmp_path):
             assert output.events == []
         else:
             assert output.status_code == 0, output.result
-            assert output.result == [1, 3, 1, 2, 2, [[2]]]
+            assert output.result == [2, 1, 2, 2, 2, [[2]]]
             assert output.writes[f"{name}.progress"] == progress
             for key, value in output.writes.items():
                 driver.set(key, value)

@@ -32,7 +32,7 @@ def test_oracle_rejects_dropped_transaction_seed():
     with pytest.raises(E2EError, match="wrong result"):
         check_execution(
             Case("transaction-rng", "con_rng", "transaction_random", result=expected),
-            submission(result=repr(missing)),
+            submission(result={"__big_int__": str(missing)}),
             ["con_rng"],
         )
     assert expected != transaction_random_value(BLOCK, "signature-two")
@@ -50,7 +50,7 @@ def test_authored_rng_uses_each_explicit_transaction_context(tmp_path):
 
     processor = object.__new__(TxProcessor)
     processor.execution_runtime = VmRuntime()
-    with Driver(storage_home=tmp_path) as driver:
+    with Driver(vm_profile="xian_vm_v2", storage_home=tmp_path) as driver:
         driver.set_contract_from_source("con_rng", (SOURCE_DIR / "commitments.py").read_text())
         driver.commit()
         for signature in ["signature-one", "signature-two"]:
@@ -101,7 +101,7 @@ def test_live_rng_checks_compare_each_transaction_context(monkeypatch, drop_seco
     sent = []
     for index, signature in enumerate(signatures):
         actual = values[0] if drop_second_seed else values[index]
-        item = submission(result=repr(actual))
+        item = submission(result={"__big_int__": str(actual)})
         item.tx_hash = f"public-hash-{index}"
         item.receipt.transaction = {"metadata": {"signature": signature}}
         sent.append(item)

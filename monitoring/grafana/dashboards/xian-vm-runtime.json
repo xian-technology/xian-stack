@@ -42,7 +42,7 @@
       },
       "targets": [
         {
-          "expr": "count(xian_node_info{execution_mode=\"xian_vm_v1\"})",
+          "expr": "count(xian_node_info{execution_mode=~\"xian_vm_v[12]\"})",
           "refId": "A"
         }
       ],
@@ -83,7 +83,7 @@
       },
       "targets": [
         {
-          "expr": "count(xian_node_info{execution_mode=\"xian_vm_v1\"})",
+          "expr": "count(xian_node_info{execution_mode=~\"xian_vm_v[12]\"})",
           "refId": "A"
         }
       ],

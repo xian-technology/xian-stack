@@ -23,14 +23,14 @@ def factorial(value):
 def numbers():
     assert (7 // 3, -7 % 3, divmod(7, 3)) == (2, 2, (2, 1))
     assert abs(-3) + pow(2, 5) == 35
-    assert round(float("2.5")) == 2 and int("0xff", base=0) == 255
+    assert quantize(2.5, 0, "half_even") == 2 and int("0xff", base=0) == 255
     assert (5 & 3, 5 | 2, 5 ^ 3, ~5, 3 << 2, 12 >> 2) == (1, 7, 6, -6, 12, 3)
-    assert bool([]) is False and not False and True + 1 == 2
-    assert isinstance(True, int) and issubclass(bool, int)
+    assert bool([]) is False and not False
+    assert isinstance(True, bool)
     assert min([], default=9) == 9 and max([1, 3, 2]) == 3
     assert decimal("1") / decimal("8") == decimal("0.125")
-    assert decimal("-3") // decimal("2") == -1
-    value = [sum([1, 2], start=4), int(float("12.9")), round(125, -1)]
+    assert -3 // 2 == -2
+    value = [sum([1, 2], start=4), int(12.9), mul_div_floor(125, 1, 10) * 10]
     result.set(value)
     return value
 

@@ -17,12 +17,11 @@ def authored_set_fixture(phases):
     }
     for value in expected.values():
         payload = next(iter(value.values()))
-        if payload["codec"] != "xian-set-1" or payload["items"][0] != [
-            "tuple",
-            [["str", "tuple"], ["int", "7"]],
-        ]:
+        member = ["tuple", [["str", "tuple"], ["int", "7"]]]
+        if payload["codec"] != "xian-set-1" or member not in payload["items"]:
             raise E2EError("authored typed-set fixture does not contain the expected tuple")
-        payload["items"][0] = ["tuple", [["str", "bds-catchup"], ["int", "7"]]]
+        index = payload["items"].index(member)
+        payload["items"][index] = ["tuple", [["str", "bds-catchup"], ["int", "7"]]]
     return contract, expected
 
 

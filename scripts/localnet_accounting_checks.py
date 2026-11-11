@@ -108,7 +108,7 @@ from pathlib import Path
 from contracting.storage.driver import Driver
 from xian.utils.block import get_committed_latest_block
 p=Path('/root/.cometbft/xian')
-d=Driver(storage_home=p)
+d=Driver(vm_profile="xian_vm_v2", storage_home=p)
 s=d._store.items()
 actors=json.loads(sys.argv[1])
 values=[Decimal(str(v)) for k,v in s.items() if k.startswith('currency.balances:')]

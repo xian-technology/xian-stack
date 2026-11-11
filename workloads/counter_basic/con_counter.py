@@ -14,7 +14,7 @@ def increment():
 
 
 @export
-def add(amount: float):
+def add(amount: decimal):
     v.set(v.get() + amount)
     return v.get()
 

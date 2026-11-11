@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -8,9 +9,34 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from xian_runtime_types.encoding import decode, decode_wire_numbers, normalize_wire_numbers
+from xian_runtime_types.set_codec import is_wrapper_set
+from xian_runtime_types.time import Datetime, Timedelta
+
 
 class E2EError(RuntimeError):
     pass
+
+
+def decode_state_response(response: dict[str, Any]) -> Any:
+    """Decode the typed ABCI /get value without guessing its type from text."""
+    kind = response.get("info")
+    raw = base64.b64decode(response.get("value") or "").decode()
+    if not kind and raw in ("", "\x00"):
+        return None
+    if kind == "str":
+        return raw
+    if kind == "bool" and raw in {"True", "False"}:
+        return raw == "True"
+    if kind == "int":
+        integer = int(raw)
+        if str(integer) == raw and integer.bit_length() <= 512:
+            return integer
+    if kind == "decimal":
+        return decode_wire_numbers({"__fixed__": raw})
+    if kind in {"list", "dict"}:
+        return decode(raw, vm_profile="xian_vm_v2")
+    raise E2EError(f"Invalid state response of type {kind!r}: {raw!r}")
 
 
 def normalize_value(value: Any) -> Any:
@@ -20,6 +46,8 @@ def normalize_value(value: Any) -> Any:
         return str(value)
     if isinstance(value, datetime):
         return value.isoformat()
+    if is_wrapper_set(value) or isinstance(value, (bytes, bytearray, Datetime, Timedelta)):
+        return normalize_wire_numbers(value)
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, dict):

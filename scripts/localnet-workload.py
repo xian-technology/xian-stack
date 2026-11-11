@@ -33,6 +33,7 @@ XIAN_CONTRACTING_SRC = ROOT_DIR / "xian-contracting" / "src"
 sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
 
 from xian_py import transaction as tr  # noqa: E402
+from xian_py.config import XianClientConfig  # noqa: E402
 from xian_py.exception import TransportError  # noqa: E402
 from xian_py.models import TransactionSubmission  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
@@ -250,6 +251,7 @@ class WorkloadContext:
     def client(self, wallet: Wallet, rpc_index: int) -> XianAsync:
         node = self.nodes[rpc_index % len(self.nodes)]
         return XianAsync(
+            config=XianClientConfig(vm_profile="xian_vm_v2"),
             node_url=node.rpc_url,
             chain_id=self.chain_id,
             wallet=wallet,
@@ -436,7 +438,7 @@ class WorkloadContext:
             "sender": wallet.public_key,
             "chi_supplied": chi,
         }
-        tx = tr.create_tx(payload, wallet)
+        tx = tr.create_tx(payload, wallet, vm_profile="xian_vm_v2")
         prepared_tx = tr.prepare_transaction(tx)
         local_tx_hash = prepared_tx.tx_hash
         response: TransactionSubmission | None = None
@@ -552,6 +554,7 @@ class WorkloadContext:
         ]
         clients = [
             XianAsync(
+                config=XianClientConfig(vm_profile="xian_vm_v2"),
                 node_url=node.rpc_url,
                 chain_id=self.chain_id,
                 wallet=self.founder_wallet,
@@ -679,6 +682,7 @@ class WorkloadContext:
 
             async def fetch_node_state(node: LocalnetNode) -> tuple[str, Any]:
                 client = XianAsync(
+                    config=XianClientConfig(vm_profile="xian_vm_v2"),
                     node_url=node.rpc_url,
                     chain_id=self.chain_id,
                     wallet=founder,
@@ -1188,6 +1192,7 @@ async def wait_for_query_predicate(
 
     poll_node = await context.healthy_read_node()
     poll_client = XianAsync(
+        config=XianClientConfig(vm_profile="xian_vm_v2"),
         node_url=poll_node.rpc_url,
         chain_id=context.chain_id,
         wallet=context.founder_wallet,
@@ -1231,6 +1236,7 @@ async def wait_for_contract_visibility(
     sample_nodes, skipped_nodes = await context.healthy_state_sample_nodes()
     clients = [
         XianAsync(
+            config=XianClientConfig(vm_profile="xian_vm_v2"),
             node_url=node.rpc_url,
             chain_id=context.chain_id,
             wallet=context.founder_wallet,

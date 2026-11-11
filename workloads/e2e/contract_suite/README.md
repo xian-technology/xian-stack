@@ -14,9 +14,9 @@ with `uv run pytest tests/test_contract_suite.py tests/test_transaction_rng_chec
 | `escrow.py` | Complex | Static imports, delegated funding, deadlines, buyer authorization, settlement/refund/replay prevention, rollback after nested transfer and emitted events |
 | `router.py` | Complex | Dynamic imports, export discovery, strict zip, atomic batch payments, second-call failure undoing the first transfer, private-function denial and recovery |
 | `inspector.py` | Medium | Static/dynamic ForeignHash, ForeignVariable, deterministic scans, snapshot cloning, bulk deletion, metadata reads, dynamic calls and foreign-write denial |
-| `compatibility.py` | Medium | Ordered module bindings, starred calls/unpacking, streaming dictionary methods, in-place reverse, hex decoding, dictionary mutation/compaction, Unicode numbers, raw Decimal quantum/type and all 53 public method names, fractional powers, exact float construction, DecimalTuple, NaN identity, non-finite transport/storage rejection, typed storage, prefix clears, self-cloning, rollback and recovery |
+| `compatibility.py` | Medium | Ordered module bindings, starred calls/unpacking, streaming dictionary methods, in-place reverse, hex decoding, dictionary mutation/compaction, Unicode numbers, exact decimal literals, integer ratios, fixed square root and explicit financial rounding, typed storage, prefix clears, self-cloning, rollback and recovery |
 | `commitments.py` | Medium | Ed25519 key/signature validation, application nonces, tampering/replay rejection, datetime parsing/arithmetic, deterministic random bridge invariants and exact transaction-context seeding |
-| `surface.py` | Medium/complex | Bound mutators and callbacks, keyword signatures, range and numeric methods, portable maximum-finite float square-root bits, live mapping views/proxies, Unicode transformations, binary mutation/codecs, deterministic time policy, field formatting including nested quoted lookups/dictionary-literal f-strings, and failure recovery |
+| `surface.py` | Medium/complex | Bound mutators and callbacks, keyword signatures, range and numeric methods, live mapping views/proxies, Unicode transformations, binary mutation/codecs, deterministic time policy, field formatting including nested quoted lookups/dictionary-literal f-strings, and failure recovery |
 | `followups.py` | Medium/complex | Lexical locals and comprehension isolation, hash/crypto byte costs and limits, typed wrapper-set persistence/query/readback, mutable interface descriptor identity/enforcement, callable-bearing builtin view sets and storage boundaries |
 
 Sources are ordinary authored contracts with the ledger import name substituted
@@ -52,25 +52,11 @@ shielded proofs, signature adversaries, governance, DEX recovery, dictionary
 identity/equality, lazy/live iterator behavior, and node/indexer failure recovery.
 The runtime's native and pinned historical compatibility suites remain necessary.
 
-All seven R10–R16 compatibility items have explicit network scenarios. The suite
-also checks foreign-source cloning in the inspector and common method calls in
-the collection/codec fixtures. The pinned historical and native suites add
-argument-error, boundary, allocation and metering cases beyond these network
-flows. R17 interactions cover general fractional powers, all 53 publicly reachable
-Decimal method names, exact `from_float`, DecimalTuple fields and sequence behavior,
-NaN identity versus numeric equality, and non-finite values passed through a
-nested contract call. Results use strings and booleans to preserve special-value
-semantics across receipt transport. Four direct/nested Variable/Hash failures
-verify non-finite persistence rejection and rollback, each followed immediately
-by a successful write from the same wallet on the next entry node. Method and
-power expectations come from historical contracting revision `3b82001f` under
-Python 3.12.10. This is nominal method coverage, not every argument or resource
-boundary; the historical/native suites provide those deeper cases.
-
-The float-set interaction checks numeric ordering, infinities, first-inserted
-signed zero, tuple/frozen-set keys, mutation, and NaN ordering and identity. It
-persists strings and booleans so receipt and state checks preserve the observed
-behavior without trying to persist non-finite float values.
+Fresh-genesis numeric cases deploy exact decimal literals, exercise ratios of
+large integers and check fixed square root, half-even ties, floor and ceiling.
+The same signed calls must produce identical receipts and persisted state on
+every validator. Decimal and large integer results have explicit wire tags.
+The pinned historical compiler/runtime tests retain V1 behavior for replay.
 
 The allowed-surface boundary flow checks pinned Unicode predicates/casing,
 exception strings, ordered type checks, frozen-set copy identity, time parsing
@@ -127,7 +113,7 @@ runtime suite; these network calls exercise representative compositions.
 
 
 The followup flows persist both mutable and frozen wrapper sets containing a
-nested tuple, frozen set and raw Decimal. All validators must return the exact
+nested tuple, frozen set and fixed decimal. All validators must return the exact
 versioned typed encoding from storage queries; a later transaction checks the
 reconstructed kinds, decimal quantum and detached read mutation. These checks
 complement the codec's exhaustive boundary fixtures.

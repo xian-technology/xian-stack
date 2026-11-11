@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from localnet_common import compare_app_hash_window, fetch_json
-from localnet_e2e_support import E2EError
+from localnet_e2e_support import E2EError, decode_state_response
 from xian_py import transaction as tr
 from xian_py.wallet import Wallet
 
@@ -91,6 +91,8 @@ async def height(session, node):
 async def query(session, node, path):
     response = (await rpc(session, node, "abci_query", path=json.dumps(path)))["response"]
     require(int(response.get("code", 0)) == 0, f"query {path} failed: {response}")
+    if path.startswith("/get/"):
+        return decode_state_response(response)
     raw = base64.b64decode(response.get("value") or "")
     if not raw:
         return None
@@ -168,6 +170,7 @@ def prepared(runner, signer, nonce, contract, function, kwargs, chi=15000):
                 "chi_supplied": chi,
             },
             signer,
+            vm_profile="xian_vm_v2",
         )
     )
 

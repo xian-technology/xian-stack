@@ -37,7 +37,6 @@ def numerics():
     number = 257
     encoded = number.to_bytes(length=2, byteorder="big", signed=False)
     interval = range(10, -1, -3)
-    binary = float("1.5")
     return save(
         [
             number.bit_length(),
@@ -45,12 +44,8 @@ def numerics():
             encoded.hex(),
             int.from_bytes(encoded, byteorder="big", signed=False),
             [interval.start, interval.stop, interval.step, interval.count(4), interval.index(1)],
-            list(binary.as_integer_ratio()),
-            binary.hex(),
-            float.fromhex(binary.hex()) == binary,
             [number.real, number.imag, number.numerator, number.denominator],
-            [True.bit_length(), True.is_integer()],
-            (float.fromhex("0x1.fffffffffffffp+1023") ** float("0.5")).hex(),
+
         ]
     )
 

@@ -145,7 +145,7 @@ def test_nonce_fixture_budget_covers_native_currency_and_failed_followup(tmp_pat
 
     source = Path(__file__).resolve().parents[2] / "xian-configs/contracts/currency.s.py"
     sender, recipient = "a" * 64, "b" * 64
-    with Driver(storage_home=tmp_path) as driver:
+    with Driver(vm_profile="xian_vm_v2", storage_home=tmp_path) as driver:
         driver.set_contract_from_source("currency", source.read_text())
         driver.set(f"currency.balances:{sender}", NONCE_INITIAL_BALANCE)
         driver.set(f"currency.balances:{recipient}", 0)

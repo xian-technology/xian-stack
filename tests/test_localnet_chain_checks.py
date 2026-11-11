@@ -229,24 +229,30 @@ def test_replay_readiness_does_not_read_container_owned_signing_state(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("wire_value", "expected"),
+    ("info", "wire_value", "expected"),
     [
-        (b"con_factory", "con_factory"),
-        (b"unchanged", "unchanged"),
-        (b"0", 0),
-        (b'{"value": 1}', {"value": 1}),
-        (b"null", None),
-        (b"", None),
+        ("str", b"con_factory", "con_factory"),
+        ("str", b"unchanged", "unchanged"),
+        ("int", b"0", 0),
+        ("dict", b'{"value": 1}', {"value": 1}),
+        ("str", b"null", "null"),
+        (None, b"", None),
     ],
 )
-def test_live_state_query_accepts_text_and_json_values(wire_value, expected):
+def test_live_state_query_accepts_text_and_json_values(info, wire_value, expected):
     import base64
 
     with patch.object(
         checks,
         "rpc",
         AsyncMock(
-            return_value={"response": {"code": 0, "value": base64.b64encode(wire_value).decode()}}
+            return_value={
+                "response": {
+                    "code": 0,
+                    "info": info,
+                    "value": base64.b64encode(wire_value).decode(),
+                }
+            }
         ),
     ):
         assert asyncio.run(checks.query(object(), object(), "/get/con_child.__owner__")) == expected

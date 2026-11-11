@@ -26,27 +26,27 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-abci
-          ref: a79e27fe188bd9278606eb4d8141d3eea4c99378
+          ref: 1cb40be8169a11ebf42831b6ca84febf47cb75aa
           path: xian-abci
       - uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-contracting
-          ref: e85f131db4e2a962f1ebbd3dbce70374343ae43c
+          ref: 12b1c31f98d535a278b0c00e40dd90584f6b52f4
           path: xian-contracting
       - uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-py
-          ref: 2959aa8a9317151ac3a16562c432053330b183fa
+          ref: 2a3cd927f3f18e4e7f3d0aefdbf11457d83acd8e
           path: xian-py
       - uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-configs
-          ref: 59385ce6df63189eda74a3da8b46cee4098fdb7a
+          ref: eb5b028950877839e4b3615b0dd9f06bc2196f2a
           path: xian-configs
       - uses: actions/checkout@v7
         with:
           repository: xian-technology/xian-cli
-          ref: a70368d79e5ea3cfce389651504ed8c5f745112a
+          ref: 15bfea8c6efa2b971fed052b694b95c9b17d09d6
           path: xian-cli
       - uses: actions/checkout@v7
         with:

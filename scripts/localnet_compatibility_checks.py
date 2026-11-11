@@ -58,13 +58,13 @@ def probe():
     assert sorted([1, 3, 2], key=negative, reverse=True) == [1, 2, 3]
     assert min([], default=9) == 9 and max([1, 2], key=negative) == 1
     assert sum([1, 2], start=4) == 7
-    assert int('0x_ff', 0) == 255 and True + 2 == 3
-    assert round(float('2.5')) == 2 and round(float('2.675'), 2) == float('2.67')
-    assert round(123, -(10**50)) == 0
+    assert int('0x_ff', 0) == 255
+    assert quantize(decimal('2.5'), 0, 'half_even') == 2
+    assert quantize(decimal('2.675'), 2, 'half_even') == decimal('2.68')
     for first in range(10**20):
         break
     assert first == 0
-    assert 9007199254740993 > float('9007199254740992')
+    assert 9007199254740993 > decimal('9007199254740992')
     assert 'abc'.find('', 4) == -1 and 'abc'.count('', 4) == 0
     assert [1, 2, 3][-(10**50):10**50] == [1, 2, 3]
     assert hashlib.sha256('ff') == hashlib.sha256_hex('ff')

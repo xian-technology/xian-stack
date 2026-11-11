@@ -123,7 +123,16 @@ UNITS = {
             display_name="xian-tech-compiler-core",
             tag_glob="compiler-core-v*",
             tag_prefix="compiler-core-v",
-            include_prefixes=("packages/xian-compiler-core/",),
+            include_prefixes=("packages/xian-compiler-core/", "packages/xian-numeric/"),
+            stack_component="xian-contracting",
+        ),
+        ReleaseUnit(
+            key="xian-vm-core",
+            repo="xian-contracting",
+            display_name="xian-tech-vm-core",
+            tag_glob="vm-core-v*",
+            tag_prefix="vm-core-v",
+            include_prefixes=("packages/xian-vm-core/", "packages/xian-numeric/"),
             stack_component="xian-contracting",
         ),
         ReleaseUnit(
@@ -215,6 +224,7 @@ RELEASE_ORDER = (
     "xian-accounts",
     "xian-runtime-types",
     "xian-compiler-core",
+    "xian-vm-core",
     "xian-zk",
     "xian-contracting",
     "xian-py",
@@ -567,10 +577,11 @@ def read_source_version(unit: ReleaseUnit) -> str | None:
                 )["version"],
             },
         )
-    if unit.key in {"xian-accounts", "xian-runtime-types", "xian-zk"}:
+    if unit.key in {"xian-accounts", "xian-runtime-types", "xian-vm-core", "xian-zk"}:
         package_dir = {
             "xian-accounts": "packages/xian-accounts",
             "xian-runtime-types": "packages/xian-runtime-types",
+            "xian-vm-core": "packages/xian-vm-core",
             "xian-zk": "packages/xian-zk",
         }[unit.key]
         return read_pyproject_version(repo_path / package_dir / "pyproject.toml")
@@ -806,6 +817,7 @@ def build_stack_manifest_updates(plans_by_key: dict[str, ReleasePlan]) -> dict[s
                 "xian-accounts",
                 "xian-runtime-types",
                 "xian-compiler-core",
+                "xian-vm-core",
                 "xian-zk",
                 "xian-contracting",
             }
@@ -1134,10 +1146,11 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
                 lock_path,
                 update_uv_lock_version(lock_path, "xian-tech-compiler-core", version),
             )
-    elif plan.unit.key in {"xian-accounts", "xian-runtime-types", "xian-zk"}:
+    elif plan.unit.key in {"xian-accounts", "xian-runtime-types", "xian-vm-core", "xian-zk"}:
         package_dir = {
             "xian-accounts": "packages/xian-accounts",
             "xian-runtime-types": "packages/xian-runtime-types",
+            "xian-vm-core": "packages/xian-vm-core",
             "xian-zk": "packages/xian-zk",
         }[plan.unit.key]
         target_path = repo_path / package_dir / "pyproject.toml"
@@ -1157,6 +1170,7 @@ def commit_message(plan: ReleasePlan) -> str:
         "xian-accounts": "accounts",
         "xian-runtime-types": "runtime-types",
         "xian-compiler-core": "compiler-core",
+        "xian-vm-core": "vm-core",
         "xian-zk": "zk",
         "xian-contracting": "contracting",
         "xian-py": "xian-py",

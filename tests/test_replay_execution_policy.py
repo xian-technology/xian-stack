@@ -11,9 +11,9 @@ import localnet_replay_corpus as replay
 from localnet_e2e_support import E2EError
 
 POLICY = {
-    "execution_revision": "xvm-execution-5",
-    "gas_schedule": "xvm-gas-2",
-    "bytecode_version": "xvm-1",
+    "execution_revision": "xvm-execution-6",
+    "gas_schedule": "xvm-gas-3",
+    "bytecode_version": "xvm-2",
     "set_codec": "xian-set-1",
 }
 

@@ -46,7 +46,7 @@ def hash_callbacks():
 
 @export
 def store_sets(label: str = "tuple"):
-    value = set([(label, 7), frozenset([2, 3]), round(decimal("1.2300"), 4)])
+    value = set([(label, 7), frozenset([2, 3]), 1.23])
     persisted.set(value)
     frozen.set(frozenset(value))
     return save([len(value), (label, 7) in value, frozenset([3, 2]) in value])
@@ -68,7 +68,7 @@ def read_sets():
             len(persisted.get()),
             ("tuple", 7) in immutable,
             str(raw),
-            raw.as_tuple().exponent,
+            isinstance(raw, decimal),
         ]
     )
 
@@ -468,7 +468,10 @@ def fail_metadata_callback(mode: str):
 @export
 def check_self_subject(subject: Any):
     result.set(
-        [subject.kind, subject.name, list(subject.args), ctx.this, ctx.caller, ctx.owner, ctx.signer]
+        [
+            subject.kind, subject.name, list(subject.args),
+            ctx.this, ctx.caller, ctx.owner, ctx.signer,
+        ]
     )
     return importlib.Func("recover", args=("label",)).is_of(subject)
 

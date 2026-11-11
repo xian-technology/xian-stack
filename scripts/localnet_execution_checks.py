@@ -75,8 +75,7 @@ async def mixed_phase(runner, session):
             }
         for recipient in recipients:
             amount = await query(session, serial, f"/get/currency.balances:{recipient.public_key}")
-            value = amount.get("__fixed__", amount) if isinstance(amount, dict) else amount
-            require(float(value) == 1, "Mixed execution transfer total is wrong")
+            require(amount == 1, "Mixed execution transfer total is wrong")
         return {
             "metadata": metadata,
             "transaction_count": len(txs),
@@ -147,8 +146,7 @@ async def nonce_phase(runner, session):
         )
         balance = await query(session, node, f"/get/currency.balances:{recipient.public_key}")
         require(
-            float(balance.get("__fixed__", balance) if isinstance(balance, dict) else balance)
-            == 71,
+            balance == 71,
             "Pending restart lost or duplicated a payment",
         )
     checks["committed_replay_rejected"] = await broadcast(
