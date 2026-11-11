@@ -1,0 +1,66 @@
+name: Check out localnet dependencies
+description: Match the host tools and node build contexts to the release being exercised
+inputs:
+  products:
+    description: Include the contract catalog, DEX and recovery worker for the full suite
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Read node source revisions
+      id: manifest
+      shell: bash
+      working-directory: xian-stack
+      run: python3 scripts/release_manifest.py github-output --github-output "$GITHUB_OUTPUT"
+    - name: Check out xian-abci
+      uses: actions/checkout@v7
+      with:
+        repository: ${{ steps.manifest.outputs.xian_abci_repository }}
+        ref: ${{ steps.manifest.outputs.xian_abci_ref }}
+        path: xian-abci
+    - name: Check out xian-contracting
+      uses: actions/checkout@v7
+      with:
+        repository: ${{ steps.manifest.outputs.xian_contracting_repository }}
+        ref: ${{ steps.manifest.outputs.xian_contracting_ref }}
+        path: xian-contracting
+    - name: Check out xian-py
+      uses: actions/checkout@v7
+      with:
+        repository: ${{ steps.manifest.outputs.xian_py_repository }}
+        ref: ${{ steps.manifest.outputs.xian_py_ref }}
+        path: xian-py
+    - name: Check out xian-configs
+      uses: actions/checkout@v7
+      with:
+        repository: ${{ steps.manifest.outputs.xian_configs_repository }}
+        ref: ${{ steps.manifest.outputs.xian_configs_ref }}
+        path: xian-configs
+    - name: Check out xian-cli
+      uses: actions/checkout@v7
+      with:
+        repository: xian-technology/xian-cli
+        ref: a8fbeeb26881059352f14f2ca975e63c91d63c7a
+        path: xian-cli
+    - name: Check out xian-contracts
+      if: inputs.products == 'true'
+      uses: actions/checkout@v7
+      with:
+        repository: xian-technology/xian-contracts
+        ref: ac8bd779374501ddd7f89a7346d93d0744e7d1ff
+        path: xian-contracts
+    - name: Check out xian-dex
+      if: inputs.products == 'true'
+      uses: actions/checkout@v7
+      with:
+        repository: xian-technology/xian-dex
+        ref: a47121fcb561f5f786f65f877ae72ccbca87b703
+        path: xian-dex
+    - name: Check out xian-dex-automation
+      if: inputs.products == 'true'
+      uses: actions/checkout@v7
+      with:
+        repository: xian-technology/xian-dex-automation
+        ref: 6a04a6eae4b2254048c63bfc1ce4ac84a7454158
+        path: xian-dex-automation

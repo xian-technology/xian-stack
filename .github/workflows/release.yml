@@ -70,61 +70,10 @@ jobs:
         with:
           path: xian-stack
 
-      - name: Check out xian-abci
-        uses: actions/checkout@v7
+      - name: Check out pinned localnet dependencies
+        uses: ./xian-stack/.github/actions/checkout-localnet
         with:
-          repository: ${{ needs.release-manifest.outputs.xian_abci_repository }}
-          ref: ${{ needs.release-manifest.outputs.xian_abci_ref }}
-          path: xian-abci
-
-      - name: Check out xian-configs
-        uses: actions/checkout@v7
-        with:
-          repository: ${{ needs.release-manifest.outputs.xian_configs_repository }}
-          ref: ${{ needs.release-manifest.outputs.xian_configs_ref }}
-          path: xian-configs
-
-      - name: Check out xian-contracting
-        uses: actions/checkout@v7
-        with:
-          repository: ${{ needs.release-manifest.outputs.xian_contracting_repository }}
-          ref: ${{ needs.release-manifest.outputs.xian_contracting_ref }}
-          path: xian-contracting
-
-      - name: Check out xian-py
-        uses: actions/checkout@v7
-        with:
-          repository: ${{ needs.release-manifest.outputs.xian_py_repository }}
-          ref: ${{ needs.release-manifest.outputs.xian_py_ref }}
-          path: xian-py
-
-      - name: Check out xian-cli
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-cli
-          ref: 4b7013bc1c13ea7db49d45318c71fc31d393c624
-          path: xian-cli
-
-      - name: Check out xian-contracts
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-contracts
-          ref: ec018123e1f98052113d81d7306da2114a4ae5e2
-          path: xian-contracts
-
-      - name: Check out canonical DEX bundle
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-dex
-          ref: 7ff8d8eec546a0c924d0e187ff2a7977f4fbfc39
-          path: xian-dex
-
-      - name: Check out DEX recovery probe
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-dex-automation
-          ref: 861364cd206c67afaa085d5427e5c4ad4fe28780
-          path: xian-dex-automation
+          products: 'true'
 
       - name: Set up Python
         uses: actions/setup-python@v6

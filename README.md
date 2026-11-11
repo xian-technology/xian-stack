@@ -117,6 +117,11 @@ make localnet-vm-tps-bench           # tuned VM throughput sweep
 make release-safety                  # full release-grade safety gate
 ```
 
+For a local run, the harness builds from the sibling checkouts in your workspace.
+The hosted Localnet Safety and release gates use the node revisions in
+`release-manifest.json` and the CLI, contract catalog, DEX and recovery worker
+revisions in `.github/actions/checkout-localnet/action.yml`.
+
 The mandatory `07-dex-automation-recovery` E2E phase requires the `xian-dex` and
 `xian-dex-automation` siblings. It deploys the hash-pinned canonical DEX bundle
 and a dedicated pool, then checks concurrent evaluation, a killed automation

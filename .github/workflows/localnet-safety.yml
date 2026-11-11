@@ -22,48 +22,8 @@ jobs:
         with:
           path: xian-stack
 
-      - name: Check out xian-abci
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-abci
-          path: xian-abci
-
-      - name: Check out xian-contracting
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-contracting
-          path: xian-contracting
-
-      - name: Check out xian-py
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-py
-          path: xian-py
-
-      - name: Check out xian-configs
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-configs
-          path: xian-configs
-
-      - name: Check out xian-cli
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-cli
-          path: xian-cli
-
-      - name: Use matching dependency branches when available
-        shell: bash
-        run: |
-          set -euo pipefail
-          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          for repo in xian-abci xian-contracting xian-py xian-configs xian-cli; do
-            REMOTE="https://github.com/xian-technology/${repo}"
-            if git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
-              git -C "$repo" fetch --depth=1 origin "$BRANCH"
-              git -C "$repo" checkout -B "$BRANCH" FETCH_HEAD
-            fi
-          done
+      - name: Check out pinned localnet dependencies
+        uses: ./xian-stack/.github/actions/checkout-localnet
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v6
@@ -100,68 +60,10 @@ jobs:
         with:
           path: xian-stack
 
-      - name: Check out xian-abci
-        uses: actions/checkout@v7
+      - name: Check out pinned localnet dependencies
+        uses: ./xian-stack/.github/actions/checkout-localnet
         with:
-          repository: xian-technology/xian-abci
-          path: xian-abci
-
-      - name: Check out xian-contracting
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-contracting
-          path: xian-contracting
-
-      - name: Check out xian-py
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-py
-          path: xian-py
-
-      - name: Check out xian-configs
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-configs
-          path: xian-configs
-
-      - name: Check out xian-cli
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-cli
-          path: xian-cli
-
-      - name: Check out xian-contracts
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-contracts
-          path: xian-contracts
-
-      - name: Check out canonical DEX bundle
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-dex
-          ref: 7ff8d8eec546a0c924d0e187ff2a7977f4fbfc39
-          path: xian-dex
-
-      - name: Check out DEX recovery probe
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-dex-automation
-          ref: 861364cd206c67afaa085d5427e5c4ad4fe28780
-          path: xian-dex-automation
-
-      - name: Use matching dependency branches when available
-        shell: bash
-        run: |
-          set -euo pipefail
-          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          for repo in xian-abci xian-contracting xian-py xian-configs xian-cli xian-contracts; do
-            REMOTE="https://github.com/xian-technology/${repo}"
-            if git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
-              git -C "$repo" fetch --depth=1 origin "$BRANCH"
-              git -C "$repo" checkout -B "$BRANCH" FETCH_HEAD
-            fi
-          done
+          products: 'true'
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v6
