@@ -5,6 +5,11 @@ retry_delay_seconds="${POSTGRAPHILE_RETRY_DELAY_SECONDS:-2}"
 export POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS="${POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS-60}"
 export POSTGRAPHILE_REQUIRED_TABLES="${POSTGRAPHILE_REQUIRED_TABLES-addresses,bds_meta,blocks,contracts,events,rewards,shielded_output_tags,shielded_outputs,state,state_changes,state_patches,transactions}"
 
+if [ -z "${POSTGRAPHILE_CONNECTION:-}" ]; then
+  POSTGRAPHILE_CONNECTION="$(node /usr/src/app/connection-string.mjs)" || exit 1
+  export POSTGRAPHILE_CONNECTION
+fi
+
 if [ "${POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS}" != "0" ] && [ -n "${POSTGRAPHILE_REQUIRED_TABLES}" ]; then
   node /usr/src/app/wait-for-bds-schema.mjs
 fi

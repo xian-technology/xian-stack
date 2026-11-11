@@ -1,11 +1,18 @@
 DOCKER_COMPOSE ?= docker compose
 STACK_DIR := $(abspath .)
 
-XIAN_STACK_SECRETS_ENV ?= $(STACK_DIR)/.stack-secrets.env
+ifeq ($(origin XIAN_STACK_SECRETS_ENV), undefined)
+XIAN_STACK_SECRETS_ENV := $(STACK_DIR)/.stack-secrets.env
+endif
+override XIAN_STACK_SECRETS_ENV := $(value XIAN_STACK_SECRETS_ENV)
 
-define stack_secret
-$(strip $(shell XIAN_STACK_SECRETS_ENV='$(abspath $(XIAN_STACK_SECRETS_ENV))' bash -lc 'source ./scripts/stack-env.sh >/dev/null 2>&1; ensure_stack_secrets_env >/dev/null; printf "%s" "$${$(1)}"'))
-endef
+# Preserve credential and operator-argument data without Make expansion.
+override XIAN_BDS_PASSWORD := $(value XIAN_BDS_PASSWORD)
+override XIAN_POSTGRAPHILE_PASSWORD := $(value XIAN_POSTGRAPHILE_PASSWORD)
+override XIAN_BDS_DSN := $(value XIAN_BDS_DSN)
+override CONFIGURE_ARGS := $(value CONFIGURE_ARGS)
+export CONFIGURE_ARGS
+export DOCKER_COMPOSE
 
 XIAN_CLI_DIR ?= ../xian-cli
 XIAN_ABCI_DIR ?= ../xian-abci
@@ -28,7 +35,6 @@ XIAN_APP_LOG_RETENTION_DAYS ?= 7
 XIAN_APP_LOG_MAX_FILE_MB ?= 50
 XIAN_APP_LOG_MAX_TOTAL_MB ?= 250
 XIAN_BDS_ENABLED ?= 0
-XIAN_BDS_ENABLED_FLAG = $(if $(filter $(FALSE_VALUES),$(XIAN_BDS_ENABLED)),--no-bds-enabled,--bds-enabled)
 XIAN_COMETBFT_HOME ?= ./.cometbft
 XIAN_BLOCK_POLICY_MODE ?= periodic
 XIAN_BLOCK_POLICY_INTERVAL ?= 5s
@@ -41,7 +47,6 @@ XIAN_BDS_HOST ?= postgres
 XIAN_BDS_PORT ?= 5432
 XIAN_BDS_DATABASE ?= xian
 XIAN_BDS_USER ?= xian
-XIAN_BDS_PASSWORD ?= $(call stack_secret,XIAN_BDS_PASSWORD)
 XIAN_BDS_POOL_MIN_SIZE ?= 1
 XIAN_BDS_POOL_MAX_SIZE ?= 10
 XIAN_BDS_STATEMENT_TIMEOUT_MS ?= 0
@@ -49,7 +54,6 @@ XIAN_BDS_ACQUIRE_TIMEOUT_MS ?= 10000
 XIAN_BDS_APPLICATION_NAME ?= xian-bds
 XIAN_BDS_QUEUE_MAX_SIZE ?= 128
 XIAN_BDS_CATCHUP_ENABLED ?= 1
-XIAN_BDS_CATCHUP_ENABLED_FLAG = $(if $(filter $(FALSE_VALUES),$(XIAN_BDS_CATCHUP_ENABLED)),--no-bds-catchup-enabled,--bds-catchup-enabled)
 XIAN_BDS_CATCHUP_POLL_SECONDS ?= 1.0
 XIAN_BDS_RPC_URL ?= http://127.0.0.1:26657
 XIAN_BDS_SPOOL_DIR ?=
@@ -80,7 +84,6 @@ XIAN_COMETBFT_P2P_PORT ?= 26656
 XIAN_COMETBFT_METRICS_HOST ?= 127.0.0.1
 XIAN_COMETBFT_METRICS_PORT ?= 26660
 XIAN_APP_METRICS_ENABLED ?= 1
-XIAN_APP_METRICS_ENABLED_FLAG = $(if $(filter $(FALSE_VALUES),$(XIAN_APP_METRICS_ENABLED)),--no-metrics-enabled,--metrics-enabled)
 XIAN_APP_METRICS_LISTEN_HOST ?= 0.0.0.0
 XIAN_APP_METRICS_HOST ?= 127.0.0.1
 XIAN_APP_METRICS_PORT ?= 9108
@@ -136,7 +139,6 @@ XIAN_DOCKER_POSTGRAPHILE_PIDS_LIMIT ?= 256
 XIAN_DOCKER_POSTGRAPHILE_NOFILE_SOFT ?= 65536
 XIAN_DOCKER_POSTGRAPHILE_NOFILE_HARD ?= 65536
 XIAN_POSTGRAPHILE_USER ?= xian_graphql
-XIAN_POSTGRAPHILE_PASSWORD ?= $(call stack_secret,XIAN_POSTGRAPHILE_PASSWORD)
 XIAN_POSTGRAPHILE_HOST ?= 127.0.0.1
 XIAN_POSTGRAPHILE_PORT ?= 5000
 XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS ?= 10000
@@ -195,7 +197,7 @@ export XIAN_DEX_BUNDLE := $(abspath $(XIAN_DEX_BUNDLE))
 export XIAN_DEX_CONTRACTS_DIR := $(if $(XIAN_DEX_CONTRACTS_DIR),$(abspath $(XIAN_DEX_CONTRACTS_DIR)),)
 export XIAN_DEX_DEPLOYER_PRIVATE_KEY := $(XIAN_DEX_DEPLOYER_PRIVATE_KEY)
 export XIAN_DEX_VALIDATOR_KEY_PATH := $(abspath $(XIAN_DEX_VALIDATOR_KEY_PATH))
-export XIAN_STACK_SECRETS_ENV := $(abspath $(XIAN_STACK_SECRETS_ENV))
+export XIAN_STACK_SECRETS_ENV
 export XIAN_DOCKER_LOG_MAX_FILE_MB := $(XIAN_DOCKER_LOG_MAX_FILE_MB)
 export XIAN_DOCKER_LOG_MAX_FILES := $(XIAN_DOCKER_LOG_MAX_FILES)
 export XIAN_BDS_ENABLED := $(XIAN_BDS_ENABLED)
@@ -204,12 +206,12 @@ export XIAN_TX_FEE_MODE := $(XIAN_TX_FEE_MODE)
 export XIAN_FREE_TX_MAX_CHI := $(XIAN_FREE_TX_MAX_CHI)
 export XIAN_FREE_BLOCK_MAX_CHI := $(XIAN_FREE_BLOCK_MAX_CHI)
 export XIAN_BDS_DATA_DIR := $(abspath $(XIAN_BDS_DATA_DIR))
-export XIAN_BDS_DSN := $(XIAN_BDS_DSN)
+export XIAN_BDS_DSN
 export XIAN_BDS_HOST := $(XIAN_BDS_HOST)
 export XIAN_BDS_PORT := $(XIAN_BDS_PORT)
 export XIAN_BDS_DATABASE := $(XIAN_BDS_DATABASE)
 export XIAN_BDS_USER := $(XIAN_BDS_USER)
-export XIAN_BDS_PASSWORD := $(XIAN_BDS_PASSWORD)
+export XIAN_BDS_PASSWORD
 export XIAN_BDS_POOL_MIN_SIZE := $(XIAN_BDS_POOL_MIN_SIZE)
 export XIAN_BDS_POOL_MAX_SIZE := $(XIAN_BDS_POOL_MAX_SIZE)
 export XIAN_BDS_STATEMENT_TIMEOUT_MS := $(XIAN_BDS_STATEMENT_TIMEOUT_MS)
@@ -302,7 +304,7 @@ export XIAN_DOCKER_POSTGRAPHILE_PIDS_LIMIT := $(XIAN_DOCKER_POSTGRAPHILE_PIDS_LI
 export XIAN_DOCKER_POSTGRAPHILE_NOFILE_SOFT := $(XIAN_DOCKER_POSTGRAPHILE_NOFILE_SOFT)
 export XIAN_DOCKER_POSTGRAPHILE_NOFILE_HARD := $(XIAN_DOCKER_POSTGRAPHILE_NOFILE_HARD)
 export XIAN_POSTGRAPHILE_USER := $(XIAN_POSTGRAPHILE_USER)
-export XIAN_POSTGRAPHILE_PASSWORD := $(XIAN_POSTGRAPHILE_PASSWORD)
+export XIAN_POSTGRAPHILE_PASSWORD
 export XIAN_POSTGRAPHILE_HOST := $(XIAN_POSTGRAPHILE_HOST)
 export XIAN_POSTGRAPHILE_PORT := $(XIAN_POSTGRAPHILE_PORT)
 export XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS := $(XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS)
@@ -349,13 +351,16 @@ export XIAN_LOCALNET_COMETBFT_MEMORY_SWAP := $(XIAN_LOCALNET_COMETBFT_MEMORY_SWA
 export XIAN_LOCALNET_COMETBFT_PIDS_LIMIT := $(XIAN_LOCALNET_COMETBFT_PIDS_LIMIT)
 export XIAN_LOCALNET_COMETBFT_NOFILE_SOFT := $(XIAN_LOCALNET_COMETBFT_NOFILE_SOFT)
 export XIAN_LOCALNET_COMETBFT_NOFILE_HARD := $(XIAN_LOCALNET_COMETBFT_NOFILE_HARD)
+export XIAN_APP_LOG_RETENTION_DAYS XIAN_APP_LOG_MAX_FILE_MB XIAN_APP_LOG_MAX_TOTAL_MB
+export XIAN_BLOCK_POLICY_MODE XIAN_BLOCK_POLICY_INTERVAL
 
-ABCI_COMPOSE = XIAN_BDS_ENABLED=0 $(DOCKER_COMPOSE) --profile integrated -f docker-compose-abci.yml
-ABCI_BDS_COMPOSE = XIAN_BDS_ENABLED=1 $(DOCKER_COMPOSE) --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml
-ABCI_FIDELITY_COMPOSE = XIAN_BDS_ENABLED=0 $(DOCKER_COMPOSE) --profile fidelity -f docker-compose-abci.yml
-ABCI_DEV_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-abci-dev.yml -f docker-compose-abci-bds.yml
-CONTRACTING_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-contracting.yml
-LOCALNET_COMPOSE = $(DOCKER_COMPOSE) -f docker-compose-localnet.yml
+STACK_COMPOSE = python3 ./scripts/stack_credentials.py -- $(DOCKER_COMPOSE)
+ABCI_COMPOSE = XIAN_BDS_ENABLED=0 $(STACK_COMPOSE) --profile integrated -f docker-compose-abci.yml
+ABCI_BDS_COMPOSE = XIAN_BDS_ENABLED=1 $(STACK_COMPOSE) --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml
+ABCI_FIDELITY_COMPOSE = XIAN_BDS_ENABLED=0 $(STACK_COMPOSE) --profile fidelity -f docker-compose-abci.yml
+ABCI_DEV_COMPOSE = $(STACK_COMPOSE) -f docker-compose-abci-dev.yml -f docker-compose-abci-bds.yml
+CONTRACTING_COMPOSE = $(STACK_COMPOSE) -f docker-compose-contracting.yml
+LOCALNET_COMPOSE = $(STACK_COMPOSE) -f docker-compose-localnet.yml
 NODE_UP_BUILD_FLAG = $(if $(filter registry,$(XIAN_NODE_IMAGE_MODE)),--no-build,)
 DASHBOARD_UP_BUILD_FLAG = $(if $(filter registry,$(XIAN_NODE_IMAGE_MODE)),--no-build,--build)
 
@@ -551,7 +556,7 @@ print-env:
 	@printf "XIAN_CONFIGS_DIR=%s\n" "$(XIAN_CONFIGS_DIR)"
 	@printf "XIAN_CONTRACTING_DIR=%s\n" "$(XIAN_CONTRACTING_DIR)"
 	@printf "XIAN_PY_DIR=%s\n" "$(XIAN_PY_DIR)"
-	@printf "XIAN_STACK_SECRETS_ENV=%s\n" "$(XIAN_STACK_SECRETS_ENV)"
+	@printf "XIAN_STACK_SECRETS_ENV=%s\n" "$${XIAN_STACK_SECRETS_ENV}"
 	@printf "XIAN_BDS_ENABLED=%s\n" "$(XIAN_BDS_ENABLED)"
 	@printf "XIAN_COMETBFT_HOME=%s\n" "$(XIAN_COMETBFT_HOME)"
 	@printf "XIAN_BLOCK_POLICY_MODE=%s\n" "$(XIAN_BLOCK_POLICY_MODE)"
@@ -752,52 +757,52 @@ abci-fidelity-down:
 dashboard-build dashboard-up dashboard-bds-up dashboard-fidelity-build dashboard-fidelity-up: XIAN_DASHBOARD_ENABLED := 1
 
 dashboard-build: prepare-dirs
-	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml build --no-cache dashboard
+	$(STACK_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml build --no-cache dashboard
 
 dashboard-up: prepare-dirs
-	$(call maybe_pull_integrated,$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml,abci dashboard)
-	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml up -d $(DASHBOARD_UP_BUILD_FLAG) abci dashboard
+	$(call maybe_pull_integrated,$(STACK_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml,abci dashboard)
+	$(STACK_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml up -d $(DASHBOARD_UP_BUILD_FLAG) abci dashboard
 
 dashboard-down:
-	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml rm -sf dashboard
+	$(STACK_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml rm -sf dashboard
 
 dashboard-bds-up: prepare-dirs
-	$(call maybe_pull_integrated,$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml,abci dashboard)
-	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml up -d $(DASHBOARD_UP_BUILD_FLAG) abci postgres postgraphile dashboard
+	$(call maybe_pull_integrated,$(STACK_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml,abci dashboard)
+	$(STACK_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml up -d $(DASHBOARD_UP_BUILD_FLAG) abci postgres postgraphile dashboard
 
 dashboard-bds-down:
-	$(DOCKER_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml rm -sf dashboard
+	$(STACK_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml rm -sf dashboard
 
 dashboard-fidelity-build: prepare-dirs
-	$(DOCKER_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml build --no-cache dashboard-fidelity
+	$(STACK_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml build --no-cache dashboard-fidelity
 
 dashboard-fidelity-up: prepare-dirs
-	$(call maybe_pull_fidelity,$(DOCKER_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml,abci-app cometbft dashboard-fidelity)
-	$(DOCKER_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml up -d $(DASHBOARD_UP_BUILD_FLAG) abci-app cometbft dashboard-fidelity
+	$(call maybe_pull_fidelity,$(STACK_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml,abci-app cometbft dashboard-fidelity)
+	$(STACK_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml up -d $(DASHBOARD_UP_BUILD_FLAG) abci-app cometbft dashboard-fidelity
 
 dashboard-fidelity-down:
-	$(DOCKER_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml rm -sf dashboard-fidelity
+	$(STACK_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml rm -sf dashboard-fidelity
 
 monitoring-up: prepare-dirs
-	$(call maybe_pull_integrated,XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml,abci)
-	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci prometheus grafana
+	$(call maybe_pull_integrated,XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml,abci)
+	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci prometheus grafana
 
 monitoring-down:
-	$(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
+	$(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
 
 monitoring-bds-up: prepare-dirs
-	$(call maybe_pull_integrated,XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml,abci)
-	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci postgres postgraphile prometheus grafana
+	$(call maybe_pull_integrated,XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml,abci)
+	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci postgres postgraphile prometheus grafana
 
 monitoring-bds-down:
-	$(DOCKER_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
+	$(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
 
 monitoring-fidelity-up: prepare-dirs
-	$(call maybe_pull_fidelity,XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/fidelity.yml $(DOCKER_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml,abci-app cometbft)
-	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/fidelity.yml $(DOCKER_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci-app cometbft prometheus grafana
+	$(call maybe_pull_fidelity,XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/fidelity.yml $(STACK_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml,abci-app cometbft)
+	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/fidelity.yml $(STACK_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci-app cometbft prometheus grafana
 
 monitoring-fidelity-down:
-	$(DOCKER_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
+	$(STACK_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
 
 dev-base-abci-shell:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci
@@ -848,7 +853,7 @@ node-init:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci init
 
 node-configure: guard-stack-security
-	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci -lc "xian-configure-node $(XIAN_BDS_ENABLED_FLAG) $(XIAN_APP_METRICS_ENABLED_FLAG) --app-log-retention-days $(XIAN_APP_LOG_RETENTION_DAYS) --app-log-max-file-mb $(XIAN_APP_LOG_MAX_FILE_MB) --app-log-max-total-mb $(XIAN_APP_LOG_MAX_TOTAL_MB) --block-policy-mode $(XIAN_BLOCK_POLICY_MODE) --block-policy-interval $(XIAN_BLOCK_POLICY_INTERVAL) --tx-fee-mode $(XIAN_TX_FEE_MODE) --free-tx-max-chi $(XIAN_FREE_TX_MAX_CHI) --free-block-max-chi $(XIAN_FREE_BLOCK_MAX_CHI) --metrics-host $(XIAN_APP_METRICS_LISTEN_HOST) --metrics-port $(XIAN_APP_METRICS_PORT) --metrics-bds-refresh-seconds $(XIAN_APP_METRICS_BDS_REFRESH_SECONDS) $(if $(XIAN_BDS_DSN),--bds-dsn $(XIAN_BDS_DSN),) --bds-host $(XIAN_BDS_HOST) --bds-port $(XIAN_BDS_PORT) --bds-database $(XIAN_BDS_DATABASE) --bds-user $(XIAN_BDS_USER) --bds-password $(XIAN_BDS_PASSWORD) --bds-pool-min-size $(XIAN_BDS_POOL_MIN_SIZE) --bds-pool-max-size $(XIAN_BDS_POOL_MAX_SIZE) --bds-statement-timeout-ms $(XIAN_BDS_STATEMENT_TIMEOUT_MS) --bds-acquire-timeout-ms $(XIAN_BDS_ACQUIRE_TIMEOUT_MS) --bds-application-name $(XIAN_BDS_APPLICATION_NAME) --bds-queue-max-size $(XIAN_BDS_QUEUE_MAX_SIZE) $(XIAN_BDS_CATCHUP_ENABLED_FLAG) --bds-catchup-poll-seconds $(XIAN_BDS_CATCHUP_POLL_SECONDS) $(if $(XIAN_BDS_RPC_URL),--bds-rpc-url $(XIAN_BDS_RPC_URL),) $(if $(XIAN_BDS_SPOOL_DIR),--bds-spool-dir $(XIAN_BDS_SPOOL_DIR),) --bds-spool-warn-entries $(XIAN_BDS_SPOOL_WARN_ENTRIES) --bds-spool-warn-bytes $(XIAN_BDS_SPOOL_WARN_BYTES) --bds-disk-free-warn-bytes $(XIAN_BDS_DISK_FREE_WARN_BYTES) ${CONFIGURE_ARGS}"
+	@python3 ./scripts/configure_node.py
 
 node-id:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint cometbft abci show-node-id

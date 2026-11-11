@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT_DIR = Path(__file__).resolve().parents[2]
 WORKSPACE_IMPORT_PATHS = (
     ROOT_DIR / "xian-py" / "src",
@@ -18,3 +20,9 @@ WORKSPACE_IMPORT_PATHS = (
 for path in reversed(WORKSPACE_IMPORT_PATHS):
     if path.exists():
         sys.path.insert(0, str(path))
+
+
+@pytest.fixture(autouse=True)
+def isolate_stack_credentials(tmp_path, monkeypatch):
+    """Backend and Make tests must never load the operator's real credentials."""
+    monkeypatch.setenv("XIAN_STACK_SECRETS_ENV", str(tmp_path / "stack-secrets.env"))

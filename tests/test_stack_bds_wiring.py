@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import subprocess
 import unittest
 from pathlib import Path
 
@@ -46,118 +45,30 @@ POSTGRAPHILE_HARDENING_ENV_KEYS = {
 class StackBdsWiringTests(unittest.TestCase):
     def test_makefile_wires_bds_runtime_options(self) -> None:
         makefile = (STACK_ROOT / "Makefile").read_text(encoding="utf-8")
+        configure = (STACK_ROOT / "scripts" / "configure_node.py").read_text(encoding="utf-8")
 
         for env_key, cli_flag in BDS_RUNTIME_ENV_KEYS.items():
             with self.subTest(env_key=env_key):
-                self.assertIn(f"{env_key} ?", makefile)
+                declaration = "override " if env_key == "XIAN_BDS_PASSWORD" else ""
+                self.assertIn(f"{declaration}{env_key}", makefile)
                 self.assertIn(f"export {env_key}", makefile)
-                self.assertIn(cli_flag, makefile)
+                self.assertIn(cli_flag, configure)
                 if env_key not in SENSITIVE_ENV_KEYS:
                     self.assertIn(f'printf "{env_key}=', makefile)
 
-        self.assertIn("XIAN_BDS_ENABLED_FLAG", makefile)
-        self.assertIn("XIAN_APP_METRICS_ENABLED_FLAG", makefile)
-        self.assertIn("XIAN_BDS_CATCHUP_ENABLED_FLAG", makefile)
         self.assertIn("XIAN_BLOCK_POLICY_MODE ?= periodic", makefile)
         self.assertIn("XIAN_BLOCK_POLICY_INTERVAL ?= 5s", makefile)
-        self.assertIn("--block-policy-mode $(XIAN_BLOCK_POLICY_MODE)", makefile)
-        self.assertIn("--block-policy-interval $(XIAN_BLOCK_POLICY_INTERVAL)", makefile)
+        self.assertIn('XIAN_BLOCK_POLICY_MODE", "--block-policy-mode', configure)
+        self.assertIn('XIAN_BLOCK_POLICY_INTERVAL", "--block-policy-interval', configure)
         self.assertIn("XIAN_TX_FEE_MODE ?= paid_metered", makefile)
         self.assertIn("XIAN_FREE_TX_MAX_CHI ?= 1000000", makefile)
         self.assertIn("XIAN_FREE_BLOCK_MAX_CHI ?= 20000000", makefile)
-        self.assertIn("--tx-fee-mode $(XIAN_TX_FEE_MODE)", makefile)
-        self.assertIn("--free-tx-max-chi $(XIAN_FREE_TX_MAX_CHI)", makefile)
-        self.assertIn("--free-block-max-chi $(XIAN_FREE_BLOCK_MAX_CHI)", makefile)
+        self.assertIn('XIAN_TX_FEE_MODE", "--tx-fee-mode', configure)
+        self.assertIn('XIAN_FREE_TX_MAX_CHI", "--free-tx-max-chi', configure)
+        self.assertIn('XIAN_FREE_BLOCK_MAX_CHI", "--free-block-max-chi', configure)
 
-    def test_node_configure_renders_enabled_flags(self) -> None:
-        rendered = subprocess.run(
-            [
-                "make",
-                "-n",
-                "node-configure",
-                "XIAN_BDS_ENABLED=1",
-                "XIAN_BDS_PASSWORD=test",
-                "CONFIGURE_ARGS=--moniker test",
-            ],
-            cwd=STACK_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-
-        self.assertIn("xian-configure-node --bds-enabled --metrics-enabled", rendered)
-        self.assertIn("--block-policy-mode periodic --block-policy-interval 5s", rendered)
-        self.assertIn(
-            "--tx-fee-mode paid_metered --free-tx-max-chi 1000000 --free-block-max-chi 20000000",
-            rendered,
-        )
-        self.assertIn("--bds-catchup-enabled", rendered)
-        self.assertNotIn("$bds_flag", rendered)
-        self.assertNotIn("$metrics_flag", rendered)
-        self.assertNotIn("$bds_catchup_flag", rendered)
-
-    def test_node_configure_allows_block_policy_override(self) -> None:
-        rendered = subprocess.run(
-            [
-                "make",
-                "-n",
-                "node-configure",
-                "XIAN_BDS_PASSWORD=test",
-                "XIAN_BLOCK_POLICY_MODE=on_demand",
-                "XIAN_BLOCK_POLICY_INTERVAL=0s",
-                "CONFIGURE_ARGS=--moniker test",
-            ],
-            cwd=STACK_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-
-        self.assertIn("--block-policy-mode on_demand --block-policy-interval 0s", rendered)
-
-    def test_node_configure_allows_fee_policy_override(self) -> None:
-        rendered = subprocess.run(
-            [
-                "make",
-                "-n",
-                "node-configure",
-                "XIAN_BDS_PASSWORD=test",
-                "XIAN_TX_FEE_MODE=free_metered",
-                "XIAN_FREE_TX_MAX_CHI=250000",
-                "XIAN_FREE_BLOCK_MAX_CHI=1000000",
-                "CONFIGURE_ARGS=--moniker test",
-            ],
-            cwd=STACK_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-
-        self.assertIn(
-            "--tx-fee-mode free_metered --free-tx-max-chi 250000 --free-block-max-chi 1000000",
-            rendered,
-        )
-
-    def test_node_configure_renders_disabled_flags(self) -> None:
-        rendered = subprocess.run(
-            [
-                "make",
-                "-n",
-                "node-configure",
-                "XIAN_BDS_ENABLED=0",
-                "XIAN_APP_METRICS_ENABLED=0",
-                "XIAN_BDS_CATCHUP_ENABLED=0",
-                "XIAN_BDS_PASSWORD=test",
-                "CONFIGURE_ARGS=--moniker test",
-            ],
-            cwd=STACK_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-
-        self.assertIn("xian-configure-node --no-bds-enabled --no-metrics-enabled", rendered)
-        self.assertIn("--no-bds-catchup-enabled", rendered)
+    # Runtime flag/override behavior is exercised with the real Make target and
+    # a recording Compose executable in test_node_configure_literal_arguments.
 
     def test_stack_env_exports_bds_runtime_options(self) -> None:
         stack_env = (STACK_ROOT / "scripts" / "stack-env.sh").read_text(encoding="utf-8")

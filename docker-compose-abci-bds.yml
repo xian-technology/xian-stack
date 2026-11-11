@@ -111,7 +111,10 @@ services:
         condition: service_completed_successfully
     environment:
       GRAPHILE_ENV: "production"
-      POSTGRAPHILE_CONNECTION: "postgres://${XIAN_POSTGRAPHILE_USER}:${XIAN_POSTGRAPHILE_PASSWORD}@postgres:${XIAN_BDS_PORT}/${XIAN_BDS_DATABASE}"
+      PGUSER: ${XIAN_POSTGRAPHILE_USER}
+      PGPASSWORD: ${XIAN_POSTGRAPHILE_PASSWORD}
+      PGPORT: ${XIAN_BDS_PORT}
+      PGDATABASE: ${XIAN_BDS_DATABASE}
       POSTGRAPHILE_HOST: "0.0.0.0"
       POSTGRAPHILE_PORT: "5000"
       POSTGRAPHILE_SCHEMA: "public"

@@ -72,7 +72,9 @@ The stack defaults to fail-closed host bindings:
 - `endpoints`, `status`, and `health` report the GraphiQL URL, and health marks
   the BDS surface degraded when the browser UI is not reachable.
 - Local credentials are generated once into `.stack-secrets.env`, which is
-  ignored by git.
+  private and ignored by git. Python, shell, and Make workflows share a literal
+  reader; nonempty environment overrides take precedence. See
+  [scripts/README.md](scripts/README.md) for the file format.
 - BDS uses a dedicated read-only PostgreSQL role for PostGraphile rather than
   the BDS owner account.
 - Local stack defaults may use third-party image tags for Postgres,

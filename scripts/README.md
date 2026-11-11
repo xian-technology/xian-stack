@@ -8,6 +8,10 @@ tooling behind `xian-stack`.
 ## Key Files
 
 - `backend.py`: the main machine-facing backend command surface
+- `stack_credentials.py`: literal credential parsing, private atomic storage,
+  and decoded environment handoff shared by Python, shell, and Make
+- `configure_node.py`: builds node configuration arguments directly from the
+  Make environment and parses `CONFIGURE_ARGS` as argument data
 - `dex_automation_backend.py`: stack adapter for the optional
   `xian-dex-automation` Python sidecar, including generated config, service
   wallet key file, process lifecycle, and health probing
@@ -63,6 +67,25 @@ tooling behind `xian-stack`.
   the full Xian workspace
 
 ## Notes
+
+Credential files contain only `XIAN_BDS_PASSWORD` and
+`XIAN_POSTGRAPHILE_PASSWORD`. New writes use JSON strings after an explicit
+version marker, preserving quotes, backslashes, dollar text, and newlines:
+
+```text
+# xian-stack-credentials-v1
+XIAN_BDS_PASSWORD="operator-selected value"
+XIAN_POSTGRAPHILE_PASSWORD="different operator-selected value"
+```
+
+The shared reader also accepts unmarked legacy assignments, removing enclosing
+quotes literally while preserving backslashes. Shell expressions are literal
+values. Malformed or duplicate entries fail before commands run. Complete legacy
+files retain their original bytes; nonempty environment values override the
+stored values. Credentials are created with mode `0600`, and a private sibling
+lock serializes first use. Compose receives decoded environment values rather
+than reading this file as dotenv syntax. `CONFIGURE_ARGS` uses shell-style
+quoting to group arguments, with no command or variable expansion.
 
 - Prefer stable script entrypoints over ad hoc shell fragments in CI or
   operator docs.
