@@ -10,13 +10,13 @@ WORKSPACE_IMPORT_PATHS = (
     ROOT_DIR / "xian-py" / "src",
     ROOT_DIR / "xian-contracting" / "src",
     ROOT_DIR / "xian-contracting" / "packages" / "xian-accounts" / "src",
-    ROOT_DIR / "xian-contracting" / "packages" / "xian-compiler-core" / "python",
     ROOT_DIR / "xian-contracting" / "packages" / "xian-runtime-types" / "src",
-    ROOT_DIR / "xian-contracting" / "packages" / "xian-vm-core" / "python",
     ROOT_DIR / "xian-contracting" / "packages" / "xian-zk" / "python",
     ROOT_DIR / "xian-abci" / "src",
 )
 
+# Native compiler and VM bindings use the non-editable builds declared in
+# pyproject.toml; source paths could shadow them with stale development binaries.
 for path in reversed(WORKSPACE_IMPORT_PATHS):
     if path.exists():
         sys.path.insert(0, str(path))
