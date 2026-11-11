@@ -4,7 +4,7 @@ Transfer = LogEvent(
     params={
         "from": {"type": str, "idx": True},
         "to": {"type": str, "idx": True},
-        "amount": {"type": (int, float, decimal)},
+        "amount": {"type": (int, decimal)},
     },
 )
 
@@ -13,7 +13,7 @@ Approve = LogEvent(
     params={
         "from": {"type": str, "idx": True},
         "to": {"type": str, "idx": True},
-        "amount": {"type": (int, float, decimal)},
+        "amount": {"type": (int, decimal)},
     },
 )
 
@@ -23,7 +23,7 @@ metadata = Hash(default_value="")
 
 
 @construct
-def seed(owner: str, supply: float, name: str, symbol: str):
+def seed(owner: str, supply: decimal, name: str, symbol: str):
     assert supply > 0, "Supply must be positive"
     balances[owner] = supply
     metadata["name"] = name
@@ -31,7 +31,7 @@ def seed(owner: str, supply: float, name: str, symbol: str):
 
 
 @export
-def transfer(amount: float, to: str):
+def transfer(amount: decimal, to: str):
     assert amount > 0, "Amount must be positive"
     assert balances[ctx.caller] >= amount, "Insufficient balance"
 
@@ -41,14 +41,14 @@ def transfer(amount: float, to: str):
 
 
 @export
-def approve(amount: float, to: str):
+def approve(amount: decimal, to: str):
     assert amount >= 0, "Amount must be non-negative"
     approvals[ctx.caller, to] = amount
     Approve({"from": ctx.caller, "to": to, "amount": amount})
 
 
 @export
-def transfer_from(amount: float, to: str, main_account: str):
+def transfer_from(amount: decimal, to: str, main_account: str):
     assert amount > 0, "Amount must be positive"
     assert approvals[main_account, ctx.caller] >= amount, "Not enough coins approved to send!"
     assert balances[main_account] >= amount, "Insufficient balance"

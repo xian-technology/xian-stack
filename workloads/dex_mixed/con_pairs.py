@@ -15,8 +15,8 @@ Mint = LogEvent(
     event="Mint",
     params={
         "pair": {"type": int, "idx": True},
-        "amount0": {"type": (int, float, decimal)},
-        "amount1": {"type": (int, float, decimal)},
+        "amount0": {"type": (int, decimal)},
+        "amount1": {"type": (int, decimal)},
         "to": {"type": str, "idx": True},
     },
 )
@@ -25,8 +25,8 @@ Burn = LogEvent(
     event="Burn",
     params={
         "pair": {"type": int, "idx": True},
-        "amount0": {"type": (int, float, decimal)},
-        "amount1": {"type": (int, float, decimal)},
+        "amount0": {"type": (int, decimal)},
+        "amount1": {"type": (int, decimal)},
         "to": {"type": str, "idx": True},
     },
 )
@@ -35,10 +35,10 @@ Swap = LogEvent(
     event="Swap",
     params={
         "pair": {"type": int, "idx": True},
-        "amount0In": {"type": (int, float, decimal)},
-        "amount1In": {"type": (int, float, decimal)},
-        "amount0Out": {"type": (int, float, decimal)},
-        "amount1Out": {"type": (int, float, decimal)},
+        "amount0In": {"type": (int, decimal)},
+        "amount1In": {"type": (int, decimal)},
+        "amount0Out": {"type": (int, decimal)},
+        "amount1Out": {"type": (int, decimal)},
         "to": {"type": (str, int), "idx": True},
     },
 )
@@ -47,8 +47,8 @@ Sync = LogEvent(
     event="Sync",
     params={
         "pair": {"type": int, "idx": True},
-        "reserve0": {"type": (int, float, decimal)},
-        "reserve1": {"type": (int, float, decimal)},
+        "reserve0": {"type": (int, decimal)},
+        "reserve1": {"type": (int, decimal)},
     },
 )
 
@@ -58,7 +58,7 @@ TransferLiq = LogEvent(
         "pair": {"type": int, "idx": True},
         "from": {"type": str, "idx": True},
         "to": {"type": str, "idx": True},
-        "amount": {"type": (int, float, decimal)},
+        "amount": {"type": (int, decimal)},
     },
 )
 
@@ -68,7 +68,7 @@ ApproveLiq = LogEvent(
         "pair": {"type": int, "idx": True},
         "from": {"type": str, "idx": True},
         "to": {"type": str, "idx": True},
-        "amount": {"type": (int, float, decimal)},
+        "amount": {"type": (int, decimal)},
     },
 )
 
@@ -151,7 +151,7 @@ def pairFor(tokenA: str, tokenB: str):
 
 
 @export
-def liqTransfer(pair: int, amount: float, to: str):
+def liqTransfer(pair: int, amount: decimal, to: str):
     assert amount > 0, "Cannot send negative balances!"
     assert pairs[pair, "balances", ctx.caller] >= amount, "Not enough coins to send!"
 
@@ -162,7 +162,7 @@ def liqTransfer(pair: int, amount: float, to: str):
 
 
 @export
-def liqApprove(pair: int, amount: float, to: str):
+def liqApprove(pair: int, amount: decimal, to: str):
     assert amount > 0, "Cannot send negative balances!"
     pairs[pair, "balances", ctx.caller, to] = amount
 
@@ -170,7 +170,7 @@ def liqApprove(pair: int, amount: float, to: str):
 
 
 @export
-def liqTransfer_from(pair: int, amount: float, to: str, main_account: str):
+def liqTransfer_from(pair: int, amount: decimal, to: str, main_account: str):
     assert amount > 0, "Cannot send negative balances!"
     assert pairs[pair, "balances", main_account, ctx.caller] >= amount, (
         "Not enough coins approved to send! You have {} and are trying to spend {}".format(
@@ -186,7 +186,7 @@ def liqTransfer_from(pair: int, amount: float, to: str, main_account: str):
     TransferLiq({"pair": pair, "from": main_account, "to": to, "amount": amount})
 
 
-def safeTransferFromPair(pair: int, token: str, to: str, value: float):
+def safeTransferFromPair(pair: int, token: str, to: str, value: decimal):
     assert value >= 0 and value <= MAXIMUM_BALANCE, "p2a Invalid value!"
     t = importlib.import_module(token)
     assert importlib.enforce_interface(t, token_interface)
@@ -221,7 +221,7 @@ def safeTransferFromPair(pair: int, token: str, to: str, value: float):
     return False
 
 
-def safeTransferFromPairToPair(pair: int, token: str, to: int, value: float):
+def safeTransferFromPairToPair(pair: int, token: str, to: int, value: decimal):
     assert value >= 0 and value <= MAXIMUM_BALANCE, "p2p Invalid value!"
 
     if token == pairs[pair, "token0"]:
@@ -349,8 +349,8 @@ def getSurplus(pair: int):
     ]
 
 
-# def internal_update(pair: int, balance0: float, balance1: float, UNS_reserve0: float, UNS_reserve1: float):
-def internal_update(pair: int, balance0: float, balance1: float):
+# def internal_update(pair: int, balance0: decimal, balance1: decimal, UNS_reserve0: decimal, UNS_reserve1: decimal):
+def internal_update(pair: int, balance0: decimal, balance1: decimal):
     assert balance0 <= MAXIMUM_BALANCE and balance1 <= MAXIMUM_BALANCE, "SNAKX: BALANCE OVERFLOW"
     pairs[pair, "reserve0"] = balance0
     pairs[pair, "reserve1"] = balance1
@@ -361,13 +361,13 @@ def internal_update(pair: int, balance0: float, balance1: float):
 # emit
 
 
-def internal_mintFee(pair: int, reserve0: float, reserve1: float):
+def internal_mintFee(pair: int, reserve0: decimal, reserve1: decimal):
     feeOn = feeTo.get() != False
     kLast = pairs[pair, "kLast"]
     if feeOn:
         if kLast != 0:
-            rootK = (reserve0 * reserve1) ** 0.5
-            rootKLast = kLast**0.5
+            rootK = sqrt(reserve0 * reserve1)
+            rootKLast = sqrt(kLast)
             if rootK > rootKLast:
                 numerator = pairs[pair, "totalSupply"] * (rootK - rootKLast)
                 denominator = rootK * 5 + rootKLast
@@ -379,7 +379,7 @@ def internal_mintFee(pair: int, reserve0: float, reserve1: float):
     return feeOn
 
 
-def internal_burn(pair: int, src: str, value: float):
+def internal_burn(pair: int, src: str, value: decimal):
     pairs[pair, "totalSupply"] -= value
     assert pairs[pair, "totalSupply"] >= 0, "Negative supply!"
     pairs[pair, "balances", src] -= value
@@ -424,7 +424,7 @@ def burn(pair: int, to: str):
     return amount0, amount1
 
 
-def internal_mint(pair: int, to: str, value: float):
+def internal_mint(pair: int, to: str, value: decimal):
     pairs[pair, "totalSupply"] += value
     pairs[pair, "balances", to] += value
 
@@ -447,7 +447,7 @@ def mint(pair: int, to: str):
 
     liquidity = 0
     if totalSupply == 0:
-        liquidity = ((amount0 * amount1) ** 0.5) - MINIMUM_LIQUIDITY
+        liquidity = sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY
         internal_mint(
             pair, "DEAD", MINIMUM_LIQUIDITY
         )  # permanently lock the first MINIMUM_LIQUIDITY tokens
@@ -470,7 +470,7 @@ def mint(pair: int, to: str):
 
 # noreentry
 @export
-def swap(pair: int, amount0Out: float, amount1Out: float, to: str):
+def swap(pair: int, amount0Out: decimal, amount1Out: decimal, to: str):
     assert not LOCK.get(), "SNAKX: LOCKED"
     LOCK.set(True)
 
@@ -520,7 +520,7 @@ def swap(pair: int, amount0Out: float, amount1Out: float, to: str):
 
 # noreentry
 @export
-def swapToPair(pair: int, amount0Out: float, amount1Out: float, to: int):
+def swapToPair(pair: int, amount0Out: decimal, amount1Out: decimal, to: int):
     assert not LOCK.get(), "SNAKX: LOCKED"
     LOCK.set(True)
 

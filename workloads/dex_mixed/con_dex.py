@@ -16,13 +16,13 @@ def PAIRS():
     return importlib.import_module(DEX_PAIRS)
 
 
-def safeTransferFrom(token: str, src: str, to: str, value: float):
+def safeTransferFrom(token: str, src: str, to: str, value: decimal):
     t = importlib.import_module(token)
     assert importlib.enforce_interface(t, token_interface)
     t.transfer_from(value, to, src)
 
 
-def quote(amountA: float, reserveA: float, reserveB: float):
+def quote(amountA: decimal, reserveA: decimal, reserveB: decimal):
     assert amountA > 0, "SNAKX: INSUFFICIENT_AMOUNT"
     assert reserveA > 0 and reserveB > 0, "SNAKX: INSUFFICIENT_LIQUIDITY"
     return (amountA * reserveB) / reserveA
@@ -31,10 +31,10 @@ def quote(amountA: float, reserveA: float, reserveB: float):
 def internal_addLiquidity(
     tokenA: str,
     tokenB: str,
-    amountADesired: float,
-    amountBDesired: float,
-    amountAMin: float,
-    amountBMin: float,
+    amountADesired: decimal,
+    amountBDesired: decimal,
+    amountAMin: decimal,
+    amountBMin: decimal,
 ):
     pairs = PAIRS()
 
@@ -62,10 +62,10 @@ def internal_addLiquidity(
 def addLiquidity(
     tokenA: str,
     tokenB: str,
-    amountADesired: float,
-    amountBDesired: float,
-    amountAMin: float,
-    amountBMin: float,
+    amountADesired: decimal,
+    amountBDesired: decimal,
+    amountAMin: decimal,
+    amountBMin: decimal,
     to: str,
     deadline: datetime.datetime,
 ):
@@ -93,9 +93,9 @@ def addLiquidity(
 def removeLiquidity(
     tokenA: str,
     tokenB: str,
-    liquidity: float,
-    amountAMin: float,
-    amountBMin: float,
+    liquidity: decimal,
+    amountAMin: decimal,
+    amountBMin: decimal,
     to: str,
     deadline: datetime.datetime,
 ):
@@ -115,7 +115,7 @@ def removeLiquidity(
 
 
 @export
-def getAmountOut(amountIn: float, reserveIn: float, reserveOut: float):
+def getAmountOut(amountIn: decimal, reserveIn: decimal, reserveOut: decimal):
     assert amountIn > 0, "SNAKX: INSUFFICIENT_INPUT_AMOUNT"
     assert reserveIn > 0 and reserveOut > 0, "SNAKX: INSUFFICIENT_LIQUIDITY"
     amountInWithFee = amountIn * 0.997
@@ -128,7 +128,7 @@ def getAmountOut(amountIn: float, reserveIn: float, reserveOut: float):
 
 
 @export
-def getAmountsOut(amountIn: float, src: str, path: list):
+def getAmountsOut(amountIn: decimal, src: str, path: list):
     assert len(path) >= 1, "SNAKX: INVALID_PATH"
     pairs = PAIRS()
     amounts = [amountIn]
@@ -154,7 +154,7 @@ def getAmountsOut(amountIn: float, src: str, path: list):
 
 @export
 def swapExactTokenForToken(
-    amountIn: float, amountOutMin: float, pair: int, src: str, to: str, deadline: datetime.datetime
+    amountIn: decimal, amountOutMin: decimal, pair: int, src: str, to: str, deadline: datetime.datetime
 ):
     assert now < deadline, "SNAKX: EXPIRED"
     pairs = PAIRS()
@@ -178,7 +178,7 @@ def swapExactTokenForToken(
 
 @export
 def swapExactTokenForTokenSupportingFeeOnTransferTokens(
-    amountIn: float, amountOutMin: float, pair: int, src: str, to: str, deadline: datetime.datetime
+    amountIn: decimal, amountOutMin: decimal, pair: int, src: str, to: str, deadline: datetime.datetime
 ):
     assert now < deadline, "SNAKX: EXPIRED"
     pairs = PAIRS()
@@ -221,7 +221,7 @@ def swapExactTokenForTokenSupportingFeeOnTransferTokens(
     return rv
 
 
-def internal_swap(amounts: list[float], src: str, path: list[int], to: str):
+def internal_swap(amounts: list[decimal], src: str, path: list[int], to: str):
     assert len(amounts) == len(path) + 1, "SNAKX: INVALID_LENGTHS"
     pairs = PAIRS()
 
@@ -256,7 +256,7 @@ def internal_swap(amounts: list[float], src: str, path: list[int], to: str):
 
 
 def internal_swap_fee(
-    amounts: list[float], amountOutMin: float, src: str, path: list[int], to: str
+    amounts: list[decimal], amountOutMin: decimal, src: str, path: list[int], to: str
 ):
     assert len(amounts) == len(path) + 1, "SNAKX: INVALID_LENGTHS"
     pairs = PAIRS()
@@ -305,7 +305,7 @@ def internal_swap_fee(
 
 @export
 def swapExactTokensForTokensSupportingFeeOnTransferTokens(
-    amountIn: float, amountOutMin: float, path: list, src: str, to: str, deadline: datetime.datetime
+    amountIn: decimal, amountOutMin: decimal, path: list, src: str, to: str, deadline: datetime.datetime
 ):
     if len(path) == 1:
         swapExactTokenForTokenSupportingFeeOnTransferTokens(
@@ -337,7 +337,7 @@ def swapExactTokensForTokensSupportingFeeOnTransferTokens(
 
 @export
 def swapExactTokensForTokens(
-    amountIn: float, amountOutMin: float, path: list, src: str, to: str, deadline: datetime.datetime
+    amountIn: decimal, amountOutMin: decimal, path: list, src: str, to: str, deadline: datetime.datetime
 ):
     assert now < deadline, "SNAKX: EXPIRED"
     pairs = PAIRS()
