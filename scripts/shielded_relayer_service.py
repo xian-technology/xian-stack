@@ -7,6 +7,7 @@ import hashlib
 import ipaddress
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -64,7 +65,10 @@ def _env_float(name: str, default: float) -> float:
     value = os.environ.get(name)
     if value is None or not value.strip():
         return default
-    return float(value)
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be a finite number")
+    return number
 
 
 def _env_csv(name: str) -> tuple[str, ...]:

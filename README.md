@@ -146,7 +146,8 @@ python3 ./scripts/backend.py start --no-bds-enabled --shielded-relayer
 
 Defaults to `127.0.0.1`. Binding to a non-loopback host requires
 `XIAN_SHIELDED_RELAYER_AUTH_TOKEN`. When enabled, exposes Prometheus metrics
-at `/metrics`. See `docs/` and the relayer environment variables in this
+at `/metrics`. Relayer timeout, polling interval, and chi-margin environment
+values must be finite numbers. See `docs/` and the relayer environment variables in this
 repo's history for the full policy surface
 (`XIAN_SHIELDED_RELAYER_*`).
 
