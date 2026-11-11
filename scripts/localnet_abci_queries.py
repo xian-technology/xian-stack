@@ -4,14 +4,37 @@ from __future__ import annotations
 
 import base64
 import json
+import tempfile
+from pathlib import Path
 
+import xian_compiler_core
+from contracting.local import ContractingClient
 from localnet_common import fetch_json
 from localnet_e2e_support import E2EError
+from xian_runtime_types.decimal import ContractingDecimal
+from xian_runtime_types.encoding import normalize_wire_numbers
+
+QUOTE_INCREMENT = ContractingDecimal("0.000000000000000000000000000001")
+EXPECTED_QUOTE = {"__fixed__": "9007199254740993.125000000000000000000000000001"}
 
 
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise E2EError(message)
+
+
+def local_numeric_ir(name: str, code: str) -> str:
+    """Compile and execute through both ordinary authoring entry points."""
+    artifact = xian_compiler_core.compile_contract_artifact(name, code)
+    require(artifact["vm_profile"] == "xian_vm_v2", "default compiler did not select V2")
+    with tempfile.TemporaryDirectory() as home, ContractingClient(storage_home=Path(home)) as local:
+        local.submit(code, name=name)
+        require(
+            local.get_contract_ir(name) == artifact["vm_ir_json"], "local VM and compiler IR differ"
+        )
+        quote = local.get_contract_proxy(name).quote(amount=QUOTE_INCREMENT)
+        require(normalize_wire_numbers(quote) == EXPECTED_QUOTE, "local VM lost exact quote")
+    return artifact["vm_ir_json"]
 
 
 async def check_live_abci(session, node, *, expected_version, state_path, invalid_txs):

@@ -200,7 +200,7 @@ Use the smallest recipe that proves the behavior you care about:
 | Workload smoke on a running localnet | `make localnet-workload` | Basic contract submission and transaction flow |
 | Full 5-validator e2e harness | `make localnet-e2e` | Layered cross-repo behavior, DEX, governance, crash recovery, quorum partitions, fresh-node sync, execution parity, accounting, resource limits, and block replay |
 | IntentKit x402 buyer phase | `LOCALNET_E2E_INTENTKIT_X402=1 make localnet-e2e` | Adds a live IntentKit Xian-native x402 payment through a local seller/facilitator |
-| Focused IntentKit integration | `make localnet-e2e LOCALNET_E2E_SUITE=intentkit-x402 LOCALNET_E2E_INTENTKIT_X402=1` | Five-node bootstrap, health, core x402 and required IntentKit payment checks |
+| Focused IntentKit integration | `make localnet-e2e LOCALNET_E2E_SUITE=intentkit-x402 LOCALNET_E2E_INTENTKIT_X402=1` | Five-node bootstrap, health, compiler and local VM parity, core x402 and required IntentKit payment checks |
 | Parallel 5-validator harness | `make localnet-parallel-e2e` | The same e2e program with lower parallel-execution batching |
 | Protocol safety harness | `make localnet-protocol-safety` | Validator set, delegation, evidence, governance, and state-patch behavior |
 | Release gate | `make release-safety` | Repo validation plus the release-grade localnet gates |

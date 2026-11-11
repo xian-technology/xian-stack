@@ -29,7 +29,7 @@ from governance_vote_helpers import (
     wait_for_readable_status,
     wait_for_status,
 )
-from localnet_abci_queries import check_live_abci
+from localnet_abci_queries import EXPECTED_QUOTE, QUOTE_INCREMENT, check_live_abci, local_numeric_ir
 from localnet_common import compare_app_hash_window, fetch_json
 from localnet_diagnostics import collect_failure_diagnostics
 from localnet_e2e_phases import (
@@ -153,6 +153,7 @@ from xian_py.x402 import (  # noqa: E402
 )
 from xian_py.xian_async import XianAsync  # noqa: E402
 from xian_runtime_types.decimal import ContractingDecimal  # noqa: E402
+from xian_runtime_types.encoding import normalize_wire_numbers  # noqa: E402
 from xian_runtime_types.time import Datetime as RuntimeDatetime  # noqa: E402
 
 try:  # noqa: SIM105
@@ -1863,7 +1864,6 @@ class E2ERunner:
     @functools.lru_cache(maxsize=1)
     def default_client_config(self) -> XianClientConfig:
         return XianClientConfig(
-            vm_profile="xian_vm_v2",
             submission=SubmissionConfig(
                 timeout_seconds=self.args.rpc_timeout_seconds,
                 poll_interval_seconds=0.5,
@@ -3228,6 +3228,8 @@ class E2ERunner:
         code = (
             "number = Variable()\n\n@construct\ndef seed():\n    number.set(7)\n"
             "\n@export\ndef value():\n    return number.get()"
+            "\n\n@export\ndef quote(amount: decimal) -> decimal:\n"
+            "    return 9_007_199_254_740_993.125_000 + amount"
         )
         async with self.client(self.founder_wallet, 0, session) as client:
             deployment = await client.deploy_contract(
@@ -3261,8 +3263,20 @@ class E2ERunner:
         )
         if not app_hash["ok"]:
             raise E2EError("app hashes diverged after ABCI consistency checks")
+        ir = local_numeric_ir(name, code)
+        for node, probe in zip(self.nodes, probes, strict=True):
+            async with self.client(self.founder_wallet, node.index, session) as client:
+                if await client.get_contract_ir(name) != ir:
+                    raise E2EError(f"{node.moniker}: deployed IR differs from the default compiler")
+                quote = normalize_wire_numbers(
+                    await client.call(name, "quote", {"amount": QUOTE_INCREMENT})
+                )
+                if quote != EXPECTED_QUOTE:
+                    raise E2EError(f"{node.moniker}: simulated quote differs from the local VM")
+                probe["quote"] = quote
         return {
             "nodes": probes,
+            "default_ir_sha256": hashlib.sha256(ir.encode()).hexdigest(),
             "boundary_contract": name,
             "deployment": receipt,
             "app_hash": app_hash,

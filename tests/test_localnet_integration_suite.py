@@ -11,13 +11,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from localnet_e2e_phases import bind_phase_sequence, phase_names
 from test_localnet_parallel_phase import localnet_e2e as e2e
 
-EXPECTED = ["00-bootstrap", "01-health", "03-x402-exact", "03-intentkit-x402"]
+EXPECTED = [
+    "00-bootstrap",
+    "01-health",
+    "02-abci-consistency",
+    "03-x402-exact",
+    "03-intentkit-x402",
+]
 
 
 def test_integration_suite_runs_only_prerequisites_and_payment_checks():
     runner = SimpleNamespace(
         bootstrap=AsyncMock(return_value={}),
         health_phase=AsyncMock(return_value={}),
+        abci_consistency_phase=AsyncMock(return_value={}),
         x402_exact_phase=AsyncMock(return_value={}),
         intentkit_x402_phase=AsyncMock(return_value={}),
     )
@@ -64,7 +71,13 @@ def test_focused_runner_executes_required_checks_and_records_suite(tmp_path, mon
     runner = e2e.E2ERunner(
         e2e.build_parser().parse_args(["--suite", "intentkit-x402", "--intentkit-x402"])
     )
-    for method in ["bootstrap", "health_phase", "x402_exact_phase", "intentkit_x402_phase"]:
+    for method in [
+        "bootstrap",
+        "health_phase",
+        "abci_consistency_phase",
+        "x402_exact_phase",
+        "intentkit_x402_phase",
+    ]:
         setattr(runner, method, AsyncMock(return_value={"checked": True}))
     assert asyncio.run(runner.run()) == 0
     assert [phase.name for phase in runner.phase_results] == EXPECTED

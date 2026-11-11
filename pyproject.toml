@@ -13,10 +13,10 @@ dependencies = [
 [tool.uv.sources]
 xian-tech-abci = { path = "../xian-abci", editable = true }
 xian-tech-accounts = { path = "../xian-contracting/packages/xian-accounts", editable = true }
-xian-tech-compiler-core = { path = "../xian-contracting/packages/xian-compiler-core", editable = true }
+xian-tech-compiler-core = { path = "../xian-contracting/packages/xian-compiler-core" }
 xian-tech-contracting = { path = "../xian-contracting", editable = true }
 xian-tech-runtime-types = { path = "../xian-contracting/packages/xian-runtime-types", editable = true }
-xian-tech-vm-core = { path = "../xian-contracting/packages/xian-vm-core", editable = true }
+xian-tech-vm-core = { path = "../xian-contracting/packages/xian-vm-core" }
 xian-tech-zk = { path = "../xian-contracting/packages/xian-zk", editable = true }
 xian-tech-py = { path = "../xian-py", editable = true }
 

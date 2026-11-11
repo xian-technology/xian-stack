@@ -60,7 +60,13 @@ def suite_phases(suite: str = "full") -> tuple[PhaseSpec, ...]:
     if suite == "full":
         return PHASE_SPECS
     if suite == "intentkit-x402":
-        required = {"00-bootstrap", "01-health", "03-x402-exact", "03-intentkit-x402"}
+        required = {
+            "00-bootstrap",
+            "01-health",
+            "02-abci-consistency",
+            "03-x402-exact",
+            "03-intentkit-x402",
+        }
         return tuple(phase for phase in PHASE_SPECS if phase.name in required)
     raise ValueError(f"unknown E2E suite: {suite}")
 
