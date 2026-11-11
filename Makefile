@@ -40,9 +40,11 @@ XIAN_BDS_ENABLED ?= 0
 XIAN_COMETBFT_HOME := $(or $(XIAN_COMETBFT_HOME),./.cometbft)
 XIAN_BLOCK_POLICY_MODE ?= periodic
 XIAN_BLOCK_POLICY_INTERVAL ?= 5s
-XIAN_TX_FEE_MODE ?= paid_metered
-XIAN_FREE_TX_MAX_CHI ?= 1000000
-XIAN_FREE_BLOCK_MAX_CHI ?= 20000000
+# Genesis fee policy inputs (bundle genesis via node-configure, or localnet-init).
+# Empty means the paid_metered genesis default; they never reach xian.toml.
+XIAN_TX_FEE_MODE ?=
+XIAN_FREE_TX_MAX_CHI ?=
+XIAN_FREE_BLOCK_MAX_CHI ?=
 XIAN_BDS_DATA_DIR := $(or $(XIAN_BDS_DATA_DIR),./.bds.db)
 XIAN_BDS_DSN ?=
 XIAN_BDS_HOST ?= postgres

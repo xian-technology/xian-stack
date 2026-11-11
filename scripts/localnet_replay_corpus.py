@@ -52,6 +52,13 @@ async def inspect_replay_image(image):
     return {"image_id": image_id.strip(), "execution_policy": json.loads(policy)}
 
 
+# Every revision persists these; xvm-execution-10 adds compiler and transaction
+# admission revisions, which must then match the replay image as well.
+CORE_EXECUTION_POLICY_KEYS = frozenset(
+    {"execution_revision", "gas_schedule", "bytecode_version", "set_codec"}
+)
+
+
 def validate_replay_policy(manifest, image, *, legacy_image_id=None):
     policy = manifest.get("execution_policy")
     if policy is None:
@@ -64,7 +71,7 @@ def validate_replay_policy(manifest, image, *, legacy_image_id=None):
         return
     require(
         isinstance(policy, dict)
-        and set(policy) == {"execution_revision", "gas_schedule", "bytecode_version", "set_codec"}
+        and CORE_EXECUTION_POLICY_KEYS <= set(policy)
         and all(isinstance(value, str) and value for value in policy.values())
         and policy == image.get("execution_policy"),
         "replay image execution policy does not match the corpus",

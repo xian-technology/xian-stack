@@ -106,6 +106,10 @@ if [[ -n "${smoke_genesis_source}" && -n "${smoke_genesis_bundle}" ]]; then
   printf 'set either XIAN_SMOKE_GENESIS_SOURCE or XIAN_SMOKE_GENESIS_BUNDLE, not both\n' >&2
   exit 1
 fi
+if [[ -n "${smoke_genesis_bundle}" && -z "${smoke_genesis_time}" ]]; then
+  printf 'a bundle genesis needs a pinned time; set XIAN_SMOKE_GENESIS_TIME\n' >&2
+  exit 1
+fi
 
 wait_for_endpoint() {
   local url="$1"
@@ -167,9 +171,7 @@ configure_args=(
 if [[ -n "${smoke_genesis_bundle}" ]]; then
   configure_args+=(--genesis-bundle "${smoke_genesis_bundle}")
   configure_args+=(--chain-id "${smoke_chain_id}")
-  if [[ -n "${smoke_genesis_time}" ]]; then
-    configure_args+=(--genesis-time "${smoke_genesis_time}")
-  fi
+  configure_args+=(--genesis-time "${smoke_genesis_time}")
 elif [[ -n "${smoke_genesis_source}" ]]; then
   configure_args+=(--genesis-source "${smoke_genesis_source}")
 fi

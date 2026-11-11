@@ -240,9 +240,10 @@ export_stack_env() {
   export XIAN_COMETBFT_HOME="${XIAN_COMETBFT_HOME:-${stack_root}/.cometbft}"
   export XIAN_BLOCK_POLICY_MODE="${XIAN_BLOCK_POLICY_MODE:-periodic}"
   export XIAN_BLOCK_POLICY_INTERVAL="${XIAN_BLOCK_POLICY_INTERVAL:-5s}"
-  export XIAN_TX_FEE_MODE="${XIAN_TX_FEE_MODE:-paid_metered}"
-  export XIAN_FREE_TX_MAX_CHI="${XIAN_FREE_TX_MAX_CHI:-1000000}"
-  export XIAN_FREE_BLOCK_MAX_CHI="${XIAN_FREE_BLOCK_MAX_CHI:-20000000}"
+  # Genesis fee policy inputs; empty means the paid_metered genesis default.
+  export XIAN_TX_FEE_MODE="${XIAN_TX_FEE_MODE:-}"
+  export XIAN_FREE_TX_MAX_CHI="${XIAN_FREE_TX_MAX_CHI:-}"
+  export XIAN_FREE_BLOCK_MAX_CHI="${XIAN_FREE_BLOCK_MAX_CHI:-}"
   export XIAN_BDS_DATA_DIR="${XIAN_BDS_DATA_DIR:-${stack_root}/.bds.db}"
   ensure_stack_secrets_env || return 1
   export XIAN_BDS_DSN="${XIAN_BDS_DSN:-}"

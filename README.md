@@ -60,6 +60,13 @@ Set `XIAN_BLOCK_POLICY_MODE=on_demand` and `XIAN_BLOCK_POLICY_INTERVAL=0s`
 before `make node-configure` only when stale time during idle periods is
 acceptable.
 
+The transaction fee policy is chain state written at genesis, never node
+configuration. `XIAN_TX_FEE_MODE`, `XIAN_FREE_TX_MAX_CHI` and
+`XIAN_FREE_BLOCK_MAX_CHI` are genesis inputs: `make node-configure` forwards
+them only together with `--genesis-bundle` in `CONFIGURE_ARGS` (and refuses them
+otherwise), and `localnet-init` builds them into the localnet genesis. Unset
+means the `paid_metered` genesis default.
+
 The stack defaults to fail-closed host bindings:
 
 - CometBFT RPC binds to `127.0.0.1` unless `--public-rpc` is set.

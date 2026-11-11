@@ -10,6 +10,7 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
+from genesis_fee_policy import genesis_fee_policy_arguments
 from stack_credentials import ensure_credentials
 
 BOOLEAN_OPTIONS = (
@@ -24,9 +25,6 @@ VALUE_OPTIONS = (
     ("XIAN_APP_LOG_MAX_TOTAL_MB", "--app-log-max-total-mb"),
     ("XIAN_BLOCK_POLICY_MODE", "--block-policy-mode"),
     ("XIAN_BLOCK_POLICY_INTERVAL", "--block-policy-interval"),
-    ("XIAN_TX_FEE_MODE", "--tx-fee-mode"),
-    ("XIAN_FREE_TX_MAX_CHI", "--free-tx-max-chi"),
-    ("XIAN_FREE_BLOCK_MAX_CHI", "--free-block-max-chi"),
     ("XIAN_APP_METRICS_LISTEN_HOST", "--metrics-host"),
     ("XIAN_APP_METRICS_PORT", "--metrics-port"),
     ("XIAN_APP_METRICS_BDS_REFRESH_SECONDS", "--metrics-bds-refresh-seconds"),
@@ -67,6 +65,13 @@ def configuration_arguments(environment: Mapping[str, str]) -> list[str]:
     return arguments
 
 
+def _builds_bundle_genesis(arguments: list[str]) -> bool:
+    return any(
+        argument == "--genesis-bundle" or argument.startswith("--genesis-bundle=")
+        for argument in arguments
+    )
+
+
 def main() -> int:
     try:
         compose = shlex.split(os.environ.get("DOCKER_COMPOSE", "docker compose"))
@@ -75,6 +80,12 @@ def main() -> int:
             raise ValueError("DOCKER_COMPOSE must name a command")
         path = Path(os.environ["XIAN_STACK_SECRETS_ENV"]).expanduser().absolute()
         environment = {**os.environ, **ensure_credentials(path, os.environ)}
+        fee_arguments = genesis_fee_policy_arguments(environment)
+        if fee_arguments and not _builds_bundle_genesis(extra):
+            raise ValueError(
+                "XIAN_TX_FEE_MODE, XIAN_FREE_TX_MAX_CHI and XIAN_FREE_BLOCK_MAX_CHI set the "
+                "genesis fee policy; pass --genesis-bundle in CONFIGURE_ARGS or unset them"
+            )
         command = [
             *compose,
             "--profile",
@@ -88,6 +99,7 @@ def main() -> int:
             "xian-configure-node",
             "abci",
             *configuration_arguments(environment),
+            *fee_arguments,
             *extra,
         ]
         return subprocess.run(command, env=environment, check=False).returncode

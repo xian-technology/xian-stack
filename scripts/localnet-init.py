@@ -20,7 +20,10 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
+from genesis_fee_policy import genesis_fee_policy  # noqa: E402
 from xian.execution_policy import VM_EXECUTION_MODE  # noqa: E402
 from xian.genesis_builder import (  # noqa: E402
     build_local_network_genesis,
@@ -325,6 +328,35 @@ def write_node_config(
     )
 
 
+def build_localnet_genesis(
+    nodes: list[dict],
+    *,
+    chain_id: str,
+    genesis_network: str,
+    runtime_feature_zk: bool,
+    fee_policy: dict,
+) -> dict:
+    """Genesis for the localnet; the first node's key is the founder."""
+    validators = [
+        {
+            "account_public_key": n["account_public_key"],
+            "name": n["moniker"],
+            "power": 10,
+            "priv_validator_key": n["validator_material"]["priv_validator_key"],
+        }
+        for n in nodes
+    ]
+    return build_local_network_genesis(
+        chain_id=chain_id,
+        founder_private_key=nodes[0]["validator_material"]["validator_private_key_hex"],
+        validators=validators,
+        network=genesis_network,
+        contracts_dir=CONFIGS_DIR / "contracts",
+        runtime_features={"zk": runtime_feature_zk},
+        fee_policy=fee_policy,
+    )
+
+
 def main():
     global BASE_P2P_PORT, BASE_RPC_PORT, BASE_METRICS_PORT, BASE_XIAN_METRICS_PORT
     parser = argparse.ArgumentParser(description="Initialize a local N-node network")
@@ -360,6 +392,9 @@ def main():
         help="Runtime topology for the generated localnet compose file",
     )
     args = parser.parse_args()
+    # Chain fee policy is genesis state; empty settings mean paid_metered.
+    # Validate it before --clean removes an existing localnet.
+    fee_policy = genesis_fee_policy(os.environ)
 
     if args.nodes < 4:
         print("ERROR: Minimum 4 nodes required for BFT consensus", file=sys.stderr)
@@ -493,24 +528,13 @@ def main():
 
     # 2. Build genesis using the first node's key as founder
     founder_key = nodes[0]["validator_material"]["validator_private_key_hex"]
-    validators = [
-        {
-            "account_public_key": n["account_public_key"],
-            "name": n["moniker"],
-            "power": 10,
-            "priv_validator_key": n["validator_material"]["priv_validator_key"],
-        }
-        for n in nodes
-    ]
-
     print(f"Building genesis block (submitting {args.genesis_network} system contracts)...")
-    genesis = build_local_network_genesis(
+    genesis = build_localnet_genesis(
+        nodes,
         chain_id=args.chain_id,
-        founder_private_key=founder_key,
-        validators=validators,
-        network=args.genesis_network,
-        contracts_dir=CONFIGS_DIR / "contracts",
-        runtime_features={"zk": runtime_feature_zk},
+        genesis_network=args.genesis_network,
+        runtime_feature_zk=runtime_feature_zk,
+        fee_policy=fee_policy,
     )
     print(f"  Genesis has {len(genesis.get('validators', []))} validators")
 

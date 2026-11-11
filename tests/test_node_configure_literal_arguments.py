@@ -140,12 +140,14 @@ def test_make_node_configure_keeps_credentials_and_options_literal(
                 "XIAN_TX_FEE_MODE": "free_metered",
                 "XIAN_FREE_TX_MAX_CHI": "250000",
                 "XIAN_FREE_BLOCK_MAX_CHI": "1000000",
+                "CONFIGURE_ARGS": "--moniker m --genesis-bundle local --chain-id local-1",
             },
             [],
             {
                 "--tx-fee-mode": "free_metered",
                 "--free-tx-max-chi": "250000",
                 "--free-block-max-chi": "1000000",
+                "--genesis-bundle": "local",
             },
         ),
         (
@@ -163,3 +165,42 @@ def test_make_node_configure_preserves_runtime_flags_and_overrides(
     assert set(enabled) <= set(observed["args"])
     for option, expected in options.items():
         assert option_value(observed["args"], option) == expected
+
+
+FEE_POLICY_ENVIRONMENT = {
+    "XIAN_TX_FEE_MODE": "free_metered",
+    "XIAN_FREE_TX_MAX_CHI": "250000",
+    "XIAN_FREE_BLOCK_MAX_CHI": "1000000",
+}
+FEE_POLICY_OPTIONS = {"--tx-fee-mode", "--free-tx-max-chi", "--free-block-max-chi"}
+
+
+def test_fee_policy_without_a_bundle_genesis_is_refused_before_configuration(
+    configuration_probe,
+):
+    # The fee policy is genesis state; it cannot change an existing node's config.
+    result, observed = configuration_probe(overrides=FEE_POLICY_ENVIRONMENT)
+
+    assert result.returncode != 0
+    assert "--genesis-bundle" in result.stderr
+    assert observed is None
+
+
+def test_unset_fee_policy_passes_no_fee_options(configuration_probe):
+    result, observed = configuration_probe(overrides={name: "" for name in FEE_POLICY_ENVIRONMENT})
+
+    assert result.returncode == 0, result.stderr
+    assert not FEE_POLICY_OPTIONS & set(observed["args"])
+
+
+def test_make_defaults_leave_the_fee_policy_to_genesis_defaults():
+    printed = subprocess.run(
+        ["make", "--no-print-directory", "print-env"],
+        cwd=ROOT,
+        env={key: value for key, value in os.environ.items() if key not in FEE_POLICY_ENVIRONMENT},
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    for name in FEE_POLICY_ENVIRONMENT:
+        assert f"{name}=" in printed

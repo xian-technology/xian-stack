@@ -60,12 +60,10 @@ class StackBdsWiringTests(unittest.TestCase):
         self.assertIn("XIAN_BLOCK_POLICY_INTERVAL ?= 5s", makefile)
         self.assertIn('XIAN_BLOCK_POLICY_MODE", "--block-policy-mode', configure)
         self.assertIn('XIAN_BLOCK_POLICY_INTERVAL", "--block-policy-interval', configure)
-        self.assertIn("XIAN_TX_FEE_MODE ?= paid_metered", makefile)
-        self.assertIn("XIAN_FREE_TX_MAX_CHI ?= 1000000", makefile)
-        self.assertIn("XIAN_FREE_BLOCK_MAX_CHI ?= 20000000", makefile)
-        self.assertIn('XIAN_TX_FEE_MODE", "--tx-fee-mode', configure)
-        self.assertIn('XIAN_FREE_TX_MAX_CHI", "--free-tx-max-chi', configure)
-        self.assertIn('XIAN_FREE_BLOCK_MAX_CHI", "--free-block-max-chi', configure)
+        # Fee policy variables are genesis inputs; their behavior is covered by
+        # test_node_configure_literal_arguments and test_localnet_genesis_fee_policy.
+        self.assertIn("XIAN_TX_FEE_MODE ?=\n", makefile)
+        self.assertIn("genesis_fee_policy_arguments(environment)", configure)
 
     # Runtime flag/override behavior is exercised with the real Make target and
     # a recording Compose executable in test_node_configure_literal_arguments.

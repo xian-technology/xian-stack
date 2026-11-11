@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from abci import __version__
 from cometbft.abci.v1beta3.types_pb2 import RequestPrepareProposal, RequestProcessProposal
 from nacl.signing import SigningKey
-from xian.fee_policy import TxFeePolicy
+from xian.fee_policy import TxFeePolicy, resolve_chain_fee_policy
 from xian.methods.prepare_proposal import prepare_proposal
 from xian.methods.process_proposal import process_proposal
 from xian.utils.encoding import encode_transaction_bytes
@@ -28,13 +28,20 @@ def require(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
+def chain_fee_policy(home: Path) -> TxFeePolicy:
+    """The chain fee policy is genesis state; node config cannot override it."""
+    genesis = json.loads((home / "config/genesis.json").read_text())
+    return resolve_chain_fee_policy(committed_value=None, genesis=genesis)
+
+
 async def probe(chain_id: str, expected_version: str) -> dict:
     require(__version__ == expected_version, "unexpected installed application version")
-    config = tomllib.loads((Path.home() / ".cometbft/config/xian.toml").read_text())
+    home = Path.home() / ".cometbft"
+    config = tomllib.loads((home / "config/xian.toml").read_text())
     app = SimpleNamespace(
         chain_id=chain_id,
         max_tx_bytes=config.get("max_tx_bytes", 4 * 1024 * 1024),
-        tx_fee_policy=TxFeePolicy.from_runtime_config(config),
+        tx_fee_policy=chain_fee_policy(home),
         nonce_storage=SimpleNamespace(get_nonce=lambda _sender: None),
     )
     key = SigningKey.generate()
