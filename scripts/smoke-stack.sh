@@ -144,8 +144,10 @@ cleanup() {
   cd "${stack_root}" || return
   make node-stop >/dev/null 2>&1 || true
   make abci-down >/dev/null 2>&1 || true
+  rm -f "${smoke_status_file}"
 }
 
+smoke_status_file="$(mktemp)"
 trap cleanup EXIT
 
 cd "${stack_root}"
@@ -178,14 +180,15 @@ make node-configure CONFIGURE_ARGS="${configure_args_quoted% }"
 make node-start
 wait_for_abci_runtime
 
-make --no-print-directory node-status >/tmp/xian-stack-node-status.json
+make --no-print-directory node-status >"${smoke_status_file}"
 wait_for_endpoint "${smoke_status_url}" "CometBFT RPC status"
 wait_for_endpoint "${smoke_abci_info_url}" "ABCI info"
 
-python3 - <<'PY'
+python3 - "${smoke_status_file}" <<'PY'
 import json
+import sys
 
-with open("/tmp/xian-stack-node-status.json", "r", encoding="utf-8") as handle:
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
     payload = json.load(handle)
 
 assert payload["runtime_services_running"] is True
@@ -202,5 +205,6 @@ if [[ -n "$(docker compose --profile integrated -f docker-compose-abci.yml ps -q
   exit 1
 fi
 
+rm -f "${smoke_status_file}"
 trap - EXIT
 printf 'xian-stack smoke test passed\n'
