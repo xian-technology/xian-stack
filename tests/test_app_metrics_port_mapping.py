@@ -36,6 +36,25 @@ def test_published_metrics_port_is_not_the_listen_port() -> None:
     assert "39108" not in arguments
 
 
+def test_node_listens_on_every_container_interface() -> None:
+    arguments = configure_node.configuration_arguments(
+        _environment(XIAN_APP_METRICS_LISTEN_HOST="127.0.0.1", XIAN_APP_METRICS_HOST="10.0.0.5")
+    )
+
+    assert arguments.count("--metrics-host") == 1
+    assert _option(arguments, "--metrics-host") == configure_node.APP_METRICS_CONTAINER_HOST
+    assert configure_node.APP_METRICS_CONTAINER_HOST == "0.0.0.0"
+
+
+def test_compose_binds_the_published_port_to_the_host_address() -> None:
+    compose = (STACK_ROOT / "docker-compose-abci.yml").read_text(encoding="utf-8")
+    published = re.findall(
+        r"published: \"\$\{XIAN_APP_METRICS_PORT\}\"\n\s+host_ip: \"([^\"]+)\"", compose
+    )
+
+    assert published and set(published) == {"${XIAN_APP_METRICS_HOST}"}
+
+
 def test_compose_publishes_the_port_the_node_listens_on() -> None:
     compose = (STACK_ROOT / "docker-compose-abci.yml").read_text(encoding="utf-8")
     targets = PUBLISHED_APP_METRICS.findall(compose)

@@ -18,8 +18,10 @@ BOOLEAN_OPTIONS = (
     ("XIAN_APP_METRICS_ENABLED", "--metrics-enabled", "--no-metrics-enabled"),
     ("XIAN_BDS_CATCHUP_ENABLED", "--bds-catchup-enabled", "--no-bds-catchup-enabled"),
 )
-# docker-compose-abci.yml publishes XIAN_APP_METRICS_PORT on the host to this
-# container port, so the node always listens here; only the host side is configurable.
+# docker-compose-abci.yml publishes XIAN_APP_METRICS_HOST:XIAN_APP_METRICS_PORT on the
+# host to this container address, so the node always listens here; only the host side
+# is configurable.
+APP_METRICS_CONTAINER_HOST = "0.0.0.0"
 APP_METRICS_CONTAINER_PORT = "9108"
 FALSE_VALUES = {"0", "false", "FALSE", "False", "no", "NO", "No", "off", "OFF", "Off"}
 VALUE_OPTIONS = (
@@ -28,7 +30,6 @@ VALUE_OPTIONS = (
     ("XIAN_APP_LOG_MAX_TOTAL_MB", "--app-log-max-total-mb"),
     ("XIAN_BLOCK_POLICY_MODE", "--block-policy-mode"),
     ("XIAN_BLOCK_POLICY_INTERVAL", "--block-policy-interval"),
-    ("XIAN_APP_METRICS_LISTEN_HOST", "--metrics-host"),
     ("XIAN_APP_METRICS_BDS_REFRESH_SECONDS", "--metrics-bds-refresh-seconds"),
     ("XIAN_BDS_HOST", "--bds-host"),
     ("XIAN_BDS_PORT", "--bds-port"),
@@ -59,7 +60,9 @@ def configuration_arguments(environment: Mapping[str, str]) -> list[str]:
     ]
     for key, option in VALUE_OPTIONS:
         arguments.extend((option, environment[key]))
-    arguments.extend(("--metrics-port", APP_METRICS_CONTAINER_PORT))
+    arguments.extend(
+        ("--metrics-host", APP_METRICS_CONTAINER_HOST, "--metrics-port", APP_METRICS_CONTAINER_PORT)
+    )
     # A valid password may itself begin with '-' and must remain one value.
     arguments.append("--bds-password=" + environment["XIAN_BDS_PASSWORD"])
     for key, option in OPTIONAL_OPTIONS:
