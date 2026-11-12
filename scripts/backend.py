@@ -93,114 +93,136 @@ def stack_secrets_env_path(env: dict[str, str]) -> Path:
     return candidate.parent.resolve() / candidate.name
 
 
-def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
-    env.setdefault("XIAN_BDS_USER", "xian")
-    env.setdefault("XIAN_PUBLIC_RPC_ENABLED", "0")
-    env.setdefault("XIAN_PUBLIC_QUERY_ENABLED", "0")
-    env.setdefault("XIAN_PUBLIC_METRICS_ENABLED", "0")
-    env.setdefault("XIAN_PUBLIC_MONITORING_ENABLED", "0")
-    env.setdefault("XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED", "0")
-    env.setdefault("XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES", "0")
-    env.setdefault("XIAN_COMETBFT_RPC_HOST", "127.0.0.1")
-    env.setdefault("XIAN_COMETBFT_RPC_PORT", "26657")
-    env.setdefault("XIAN_COMETBFT_METRICS_HOST", "127.0.0.1")
-    env.setdefault("XIAN_COMETBFT_METRICS_PORT", "26660")
-    env.setdefault("XIAN_APP_METRICS_HOST", "127.0.0.1")
-    env.setdefault("XIAN_APP_METRICS_PORT", "9108")
-    env.setdefault("XIAN_POSTGRAPHILE_USER", "xian_graphql")
-    env.setdefault("XIAN_POSTGRAPHILE_HOST", "127.0.0.1")
-    env.setdefault("XIAN_POSTGRAPHILE_PORT", "5000")
-    env.setdefault("XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS", "10000")
-    env.setdefault("XIAN_POSTGRAPHILE_BODY_SIZE_LIMIT_BYTES", "1048576")
-    env.setdefault("XIAN_POSTGRAPHILE_DISABLE_DEFAULT_MUTATIONS", "1")
-    env.setdefault("XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS", "omit")
-    env.setdefault("XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS", "60")
-    env.setdefault(
-        "XIAN_POSTGRAPHILE_REQUIRED_TABLES",
+STACK_SECURITY_DEFAULTS = {
+    "XIAN_BDS_USER": "xian",
+    "XIAN_PUBLIC_RPC_ENABLED": "0",
+    "XIAN_PUBLIC_QUERY_ENABLED": "0",
+    "XIAN_PUBLIC_METRICS_ENABLED": "0",
+    "XIAN_PUBLIC_MONITORING_ENABLED": "0",
+    "XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED": "0",
+    "XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES": "0",
+    "XIAN_COMETBFT_RPC_HOST": "127.0.0.1",
+    "XIAN_COMETBFT_RPC_PORT": "26657",
+    "XIAN_COMETBFT_METRICS_HOST": "127.0.0.1",
+    "XIAN_COMETBFT_METRICS_PORT": "26660",
+    "XIAN_APP_METRICS_HOST": "127.0.0.1",
+    "XIAN_APP_METRICS_PORT": "9108",
+    "XIAN_POSTGRAPHILE_USER": "xian_graphql",
+    "XIAN_POSTGRAPHILE_HOST": "127.0.0.1",
+    "XIAN_POSTGRAPHILE_PORT": "5000",
+    "XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS": "10000",
+    "XIAN_POSTGRAPHILE_BODY_SIZE_LIMIT_BYTES": "1048576",
+    "XIAN_POSTGRAPHILE_DISABLE_DEFAULT_MUTATIONS": "1",
+    "XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS": "omit",
+    "XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS": "60",
+    "XIAN_POSTGRAPHILE_REQUIRED_TABLES": (
         "addresses,bds_meta,blocks,contracts,events,rewards,shielded_output_tags,"
-        "shielded_outputs,state,state_changes,state_patches,transactions",
+        "shielded_outputs,state,state_changes,state_patches,transactions"
+    ),
+    "XIAN_DASHBOARD_HOST": "127.0.0.1",
+    "XIAN_DASHBOARD_PORT": "8080",
+    "XIAN_DEX_AUTOMATION_ENABLED": "0",
+    "XIAN_DEX_AUTOMATION_HOST": DEFAULT_DEX_AUTOMATION_HOST,
+    "XIAN_DEX_AUTOMATION_PORT": str(DEFAULT_DEX_AUTOMATION_PORT),
+    "XIAN_BDS_ENABLED": "0",
+    "XIAN_POSTGRES_IMAGE": "postgres:17.10",
+    "XIAN_PROMETHEUS_IMAGE": "prom/prometheus:v3.12.0",
+    "XIAN_GRAFANA_IMAGE": "grafana/grafana:12.4.5",
+}
+THIRD_PARTY_IMAGE_KEYS = ("XIAN_POSTGRES_IMAGE", "XIAN_PROMETHEUS_IMAGE", "XIAN_GRAFANA_IMAGE")
+
+
+def is_public_host(value: str | None) -> bool:
+    return not is_loopback_host(value)
+
+
+def credential_errors(env: dict[str, str]) -> list[str]:
+    """Passwords are always present: ensure_credentials fills any that are missing."""
+    errors: list[str] = []
+    if env["XIAN_BDS_PASSWORD"] == "xian":
+        errors.append("XIAN_BDS_PASSWORD cannot use the weak default value 'xian'")
+    if env["XIAN_POSTGRAPHILE_PASSWORD"] == env["XIAN_BDS_PASSWORD"]:
+        errors.append("XIAN_POSTGRAPHILE_PASSWORD must differ from XIAN_BDS_PASSWORD")
+    if env.get("XIAN_POSTGRAPHILE_USER") == env.get("XIAN_BDS_USER"):
+        errors.append("XIAN_POSTGRAPHILE_USER must differ from XIAN_BDS_USER")
+    return errors
+
+
+def node_exposure_errors(env: dict[str, str]) -> list[str]:
+    errors: list[str] = []
+    if is_public_host(env.get("XIAN_COMETBFT_RPC_HOST")) and not env_truthy(
+        env.get("XIAN_PUBLIC_RPC_ENABLED")
+    ):
+        errors.append("Public RPC exposure requires XIAN_PUBLIC_RPC_ENABLED=1")
+    metrics_public = is_public_host(env.get("XIAN_COMETBFT_METRICS_HOST")) or is_public_host(
+        env.get("XIAN_APP_METRICS_HOST")
     )
-    env.setdefault("XIAN_DASHBOARD_HOST", "127.0.0.1")
-    env.setdefault("XIAN_DASHBOARD_PORT", "8080")
-    env.setdefault("XIAN_DEX_AUTOMATION_ENABLED", "0")
-    env.setdefault("XIAN_DEX_AUTOMATION_HOST", DEFAULT_DEX_AUTOMATION_HOST)
-    env.setdefault("XIAN_DEX_AUTOMATION_PORT", str(DEFAULT_DEX_AUTOMATION_PORT))
-    env.setdefault("XIAN_BDS_ENABLED", "0")
-    env.setdefault("XIAN_POSTGRES_IMAGE", "postgres:17.10")
-    env.setdefault("XIAN_PROMETHEUS_IMAGE", "prom/prometheus:v3.12.0")
-    env.setdefault("XIAN_GRAFANA_IMAGE", "grafana/grafana:12.4.5")
+    if metrics_public and not env_truthy(env.get("XIAN_PUBLIC_METRICS_ENABLED")):
+        errors.append("Public metrics exposure requires XIAN_PUBLIC_METRICS_ENABLED=1")
+    return errors
+
+
+def query_exposure_errors(env: dict[str, str]) -> list[str]:
+    errors: list[str] = []
+    public_query = env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED"))
+    if is_public_host(env.get("XIAN_POSTGRAPHILE_HOST")):
+        if not env_truthy(env.get("XIAN_BDS_ENABLED")):
+            errors.append("Public PostGraphile exposure requires XIAN_BDS_ENABLED=1")
+        elif not public_query:
+            errors.append("Public query exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
+    if public_service_without_query(env, "XIAN_DASHBOARD_ENABLED", "XIAN_DASHBOARD_HOST"):
+        errors.append("Public dashboard exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
+    return errors
+
+
+def public_service_without_query(env: dict[str, str], enabled_key: str, host_key: str) -> bool:
+    return (
+        env_truthy(env.get(enabled_key))
+        and is_public_host(env.get(host_key))
+        and not env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED"))
+    )
+
+
+def monitoring_exposure_errors(env: dict[str, str]) -> list[str]:
+    if not (
+        is_public_host(env.get("XIAN_PROMETHEUS_HOST"))
+        or is_public_host(env.get("XIAN_GRAFANA_HOST"))
+    ):
+        return []
+    return [
+        f"Public monitoring exposure requires {key}=1"
+        for key in ("XIAN_PUBLIC_MONITORING_ENABLED", "XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED")
+        if not env_truthy(env.get(key))
+    ]
+
+
+def image_pin_errors(env: dict[str, str]) -> list[str]:
+    if not env_truthy(env.get("XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES")):
+        return []
+    return [
+        f"{key} must be digest-pinned when XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1"
+        for key in THIRD_PARTY_IMAGE_KEYS
+        if not is_digest_pinned_image_ref(env.get(key))
+    ]
+
+
+def ensure_stack_security_env(env: dict[str, str]) -> dict[str, str]:
+    for key, value in STACK_SECURITY_DEFAULTS.items():
+        env.setdefault(key, value)
 
     secrets_path = stack_secrets_env_path(env)
     env.update(ensure_credentials(secrets_path, env))
     env["XIAN_STACK_SECRETS_ENV"] = str(secrets_path)
 
-    errors: list[str] = []
-    if not env.get("XIAN_BDS_PASSWORD"):
-        errors.append("XIAN_BDS_PASSWORD must be set")
-    elif env["XIAN_BDS_PASSWORD"] == "xian":
-        errors.append("XIAN_BDS_PASSWORD cannot use the weak default value 'xian'")
-
-    if not env.get("XIAN_POSTGRAPHILE_PASSWORD"):
-        errors.append("XIAN_POSTGRAPHILE_PASSWORD must be set")
-    elif env["XIAN_POSTGRAPHILE_PASSWORD"] == env.get("XIAN_BDS_PASSWORD"):
-        errors.append("XIAN_POSTGRAPHILE_PASSWORD must differ from XIAN_BDS_PASSWORD")
-
-    if env.get("XIAN_POSTGRAPHILE_USER") == env.get("XIAN_BDS_USER"):
-        errors.append("XIAN_POSTGRAPHILE_USER must differ from XIAN_BDS_USER")
-
-    if not is_loopback_host(env.get("XIAN_COMETBFT_RPC_HOST")) and not env_truthy(
-        env.get("XIAN_PUBLIC_RPC_ENABLED")
-    ):
-        errors.append("Public RPC exposure requires XIAN_PUBLIC_RPC_ENABLED=1")
-
-    if (
-        not is_loopback_host(env.get("XIAN_COMETBFT_METRICS_HOST"))
-        or not is_loopback_host(env.get("XIAN_APP_METRICS_HOST"))
-    ) and not env_truthy(env.get("XIAN_PUBLIC_METRICS_ENABLED")):
-        errors.append("Public metrics exposure requires XIAN_PUBLIC_METRICS_ENABLED=1")
-
-    if not is_loopback_host(env.get("XIAN_POSTGRAPHILE_HOST")):
-        if not env_truthy(env.get("XIAN_BDS_ENABLED")):
-            errors.append("Public PostGraphile exposure requires XIAN_BDS_ENABLED=1")
-        elif not env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED")):
-            errors.append("Public query exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
-
-    if (
-        env_truthy(env.get("XIAN_DASHBOARD_ENABLED"))
-        and not is_loopback_host(env.get("XIAN_DASHBOARD_HOST"))
-        and not env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED"))
-    ):
-        errors.append("Public dashboard exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
-
-    if not is_loopback_host(env.get("XIAN_PROMETHEUS_HOST")) or not is_loopback_host(
-        env.get("XIAN_GRAFANA_HOST")
-    ):
-        if not env_truthy(env.get("XIAN_PUBLIC_MONITORING_ENABLED")):
-            errors.append("Public monitoring exposure requires XIAN_PUBLIC_MONITORING_ENABLED=1")
-        if not env_truthy(env.get("XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED")):
-            errors.append(
-                "Public monitoring exposure requires XIAN_MONITORING_PUBLIC_AUTH_CONFIRMED=1"
-            )
-
-    if (
-        env_truthy(env.get("XIAN_DEX_AUTOMATION_ENABLED"))
-        and not is_loopback_host(env.get("XIAN_DEX_AUTOMATION_HOST"))
-        and not env_truthy(env.get("XIAN_PUBLIC_QUERY_ENABLED"))
-    ):
+    errors = [
+        *credential_errors(env),
+        *node_exposure_errors(env),
+        *query_exposure_errors(env),
+        *monitoring_exposure_errors(env),
+    ]
+    if public_service_without_query(env, "XIAN_DEX_AUTOMATION_ENABLED", "XIAN_DEX_AUTOMATION_HOST"):
         errors.append("Public DEX automation exposure requires XIAN_PUBLIC_QUERY_ENABLED=1")
-
-    if env_truthy(env.get("XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES")):
-        for key in (
-            "XIAN_POSTGRES_IMAGE",
-            "XIAN_PROMETHEUS_IMAGE",
-            "XIAN_GRAFANA_IMAGE",
-        ):
-            if not is_digest_pinned_image_ref(env.get(key)):
-                errors.append(
-                    f"{key} must be digest-pinned when "
-                    "XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1"
-                )
-
+    errors.extend(image_pin_errors(env))
     if errors:
         detail = "\n".join(f"  - {message}" for message in errors)
         raise ValueError(f"xian-stack security configuration error:\n{detail}")
