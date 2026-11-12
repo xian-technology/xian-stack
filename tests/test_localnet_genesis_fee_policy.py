@@ -14,8 +14,8 @@ SPEC.loader.exec_module(localnet)
 
 FREE = {
     "XIAN_TX_FEE_MODE": "free_metered",
-    "XIAN_FREE_TX_MAX_CHI": "250000",
-    "XIAN_FREE_BLOCK_MAX_CHI": "5000000",
+    "XIAN_MAX_TX_CHI": "150000",
+    "XIAN_MAX_BLOCK_CHI": "400000",
 }
 
 
@@ -35,8 +35,28 @@ def test_environment_fee_policy_reaches_the_localnet_genesis():
     )
 
     assert fee_policy_entry(genesis) == [
-        {"tx_fee_mode": "free_metered", "free_tx_max_chi": 250000, "free_block_max_chi": 5000000}
+        {"tx_fee_mode": "free_metered", "max_tx_chi": 150000, "max_block_chi": 400000}
     ]
+
+
+def test_chi_caps_apply_to_paid_localnets_and_defaults_fill_the_rest():
+    nodes = [localnet.generate_node_material(index) for index in range(1)]
+    genesis = localnet.build_localnet_genesis(
+        nodes,
+        chain_id="xian-localnet-fee-2",
+        genesis_network="local",
+        runtime_feature_zk=False,
+        fee_policy=localnet.genesis_fee_policy({"XIAN_MAX_TX_CHI": "100000"}),
+    )
+
+    assert fee_policy_entry(genesis) == [
+        {"tx_fee_mode": "paid_metered", "max_tx_chi": 100000, "max_block_chi": 500000}
+    ]
+
+
+def test_smallest_positive_caps_are_accepted():
+    environment = {"XIAN_MAX_TX_CHI": "1", "XIAN_MAX_BLOCK_CHI": "1"}
+    assert localnet.genesis_fee_policy(environment) == {"max_tx_chi": 1, "max_block_chi": 1}
 
 
 def test_unset_environment_means_the_paid_genesis_default():
@@ -48,9 +68,9 @@ def test_unset_environment_means_the_paid_genesis_default():
     "environment",
     [
         {"XIAN_TX_FEE_MODE": "gratis"},
-        {"XIAN_TX_FEE_MODE": "free_metered", "XIAN_FREE_TX_MAX_CHI": "lots"},
-        {"XIAN_TX_FEE_MODE": "free_metered", "XIAN_FREE_TX_MAX_CHI": "0"},
-        {"XIAN_FREE_TX_MAX_CHI": "250000"},
+        {"XIAN_TX_FEE_MODE": "free_metered", "XIAN_MAX_TX_CHI": "lots"},
+        {"XIAN_TX_FEE_MODE": "free_metered", "XIAN_MAX_TX_CHI": "0"},
+        {"XIAN_MAX_BLOCK_CHI": "-1"},
     ],
 )
 def test_invalid_fee_policy_environment_is_rejected_before_genesis(environment):

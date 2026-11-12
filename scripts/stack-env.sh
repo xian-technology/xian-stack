@@ -242,8 +242,8 @@ export_stack_env() {
   export XIAN_BLOCK_POLICY_INTERVAL="${XIAN_BLOCK_POLICY_INTERVAL:-5s}"
   # Genesis fee policy inputs; empty means the paid_metered genesis default.
   export XIAN_TX_FEE_MODE="${XIAN_TX_FEE_MODE:-}"
-  export XIAN_FREE_TX_MAX_CHI="${XIAN_FREE_TX_MAX_CHI:-}"
-  export XIAN_FREE_BLOCK_MAX_CHI="${XIAN_FREE_BLOCK_MAX_CHI:-}"
+  export XIAN_MAX_TX_CHI="${XIAN_MAX_TX_CHI:-}"
+  export XIAN_MAX_BLOCK_CHI="${XIAN_MAX_BLOCK_CHI:-}"
   export XIAN_BDS_DATA_DIR="${XIAN_BDS_DATA_DIR:-${stack_root}/.bds.db}"
   ensure_stack_secrets_env || return 1
   export XIAN_BDS_DSN="${XIAN_BDS_DSN:-}"

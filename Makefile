@@ -43,8 +43,8 @@ XIAN_BLOCK_POLICY_INTERVAL ?= 5s
 # Genesis fee policy inputs (bundle genesis via node-configure, or localnet-init).
 # Empty means the paid_metered genesis default; they never reach xian.toml.
 XIAN_TX_FEE_MODE ?=
-XIAN_FREE_TX_MAX_CHI ?=
-XIAN_FREE_BLOCK_MAX_CHI ?=
+XIAN_MAX_TX_CHI ?=
+XIAN_MAX_BLOCK_CHI ?=
 XIAN_BDS_DATA_DIR := $(or $(XIAN_BDS_DATA_DIR),./.bds.db)
 XIAN_BDS_DSN ?=
 XIAN_BDS_HOST ?= postgres
@@ -207,8 +207,8 @@ export XIAN_DOCKER_LOG_MAX_FILES := $(XIAN_DOCKER_LOG_MAX_FILES)
 export XIAN_BDS_ENABLED := $(XIAN_BDS_ENABLED)
 export XIAN_COMETBFT_HOME := $(abspath $(XIAN_COMETBFT_HOME))
 export XIAN_TX_FEE_MODE := $(XIAN_TX_FEE_MODE)
-export XIAN_FREE_TX_MAX_CHI := $(XIAN_FREE_TX_MAX_CHI)
-export XIAN_FREE_BLOCK_MAX_CHI := $(XIAN_FREE_BLOCK_MAX_CHI)
+export XIAN_MAX_TX_CHI := $(XIAN_MAX_TX_CHI)
+export XIAN_MAX_BLOCK_CHI := $(XIAN_MAX_BLOCK_CHI)
 export XIAN_BDS_DATA_DIR := $(abspath $(XIAN_BDS_DATA_DIR))
 export XIAN_BDS_DSN
 export XIAN_BDS_HOST := $(XIAN_BDS_HOST)
@@ -566,8 +566,8 @@ print-env:
 	@printf "XIAN_BLOCK_POLICY_MODE=%s\n" "$(XIAN_BLOCK_POLICY_MODE)"
 	@printf "XIAN_BLOCK_POLICY_INTERVAL=%s\n" "$(XIAN_BLOCK_POLICY_INTERVAL)"
 	@printf "XIAN_TX_FEE_MODE=%s\n" "$(XIAN_TX_FEE_MODE)"
-	@printf "XIAN_FREE_TX_MAX_CHI=%s\n" "$(XIAN_FREE_TX_MAX_CHI)"
-	@printf "XIAN_FREE_BLOCK_MAX_CHI=%s\n" "$(XIAN_FREE_BLOCK_MAX_CHI)"
+	@printf "XIAN_MAX_TX_CHI=%s\n" "$(XIAN_MAX_TX_CHI)"
+	@printf "XIAN_MAX_BLOCK_CHI=%s\n" "$(XIAN_MAX_BLOCK_CHI)"
 	@printf "XIAN_BDS_DATA_DIR=%s\n" "$(XIAN_BDS_DATA_DIR)"
 	@printf "XIAN_BDS_HOST=%s\n" "$(XIAN_BDS_HOST)"
 	@printf "XIAN_BDS_PORT=%s\n" "$(XIAN_BDS_PORT)"

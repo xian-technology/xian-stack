@@ -12,8 +12,8 @@ from collections.abc import Mapping
 SUPPORTED_TX_FEE_MODES = ("free_metered", "paid_metered")
 FEE_POLICY_ENVIRONMENT = (
     ("XIAN_TX_FEE_MODE", "tx_fee_mode", "--tx-fee-mode"),
-    ("XIAN_FREE_TX_MAX_CHI", "free_tx_max_chi", "--free-tx-max-chi"),
-    ("XIAN_FREE_BLOCK_MAX_CHI", "free_block_max_chi", "--free-block-max-chi"),
+    ("XIAN_MAX_TX_CHI", "max_tx_chi", "--max-tx-chi"),
+    ("XIAN_MAX_BLOCK_CHI", "max_block_chi", "--max-block-chi"),
 )
 
 
@@ -28,7 +28,7 @@ def _positive_int(name: str, value: str) -> int:
 
 
 def genesis_fee_policy(environment: Mapping[str, str]) -> dict[str, object]:
-    """Explicitly set fee policy fields; empty means the paid_metered genesis default."""
+    """Explicitly set fee policy fields; an unset field takes the node's genesis default."""
     policy: dict[str, object] = {}
     for variable, field, _ in FEE_POLICY_ENVIRONMENT:
         value = environment.get(variable, "").strip()
@@ -40,10 +40,6 @@ def genesis_fee_policy(environment: Mapping[str, str]) -> dict[str, object]:
             policy[field] = value
         else:
             policy[field] = _positive_int(variable, value)
-    if set(policy) - {"tx_fee_mode"} and policy.get("tx_fee_mode") != "free_metered":
-        raise ValueError(
-            "XIAN_FREE_TX_MAX_CHI and XIAN_FREE_BLOCK_MAX_CHI require XIAN_TX_FEE_MODE=free_metered"
-        )
     return policy
 
 

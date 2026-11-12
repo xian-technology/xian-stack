@@ -61,11 +61,12 @@ before `make node-configure` only when stale time during idle periods is
 acceptable.
 
 The transaction fee policy is chain state written at genesis, never node
-configuration. `XIAN_TX_FEE_MODE`, `XIAN_FREE_TX_MAX_CHI` and
-`XIAN_FREE_BLOCK_MAX_CHI` are genesis inputs: `make node-configure` forwards
-them only together with `--genesis-bundle` in `CONFIGURE_ARGS` (and refuses them
-otherwise), and `localnet-init` builds them into the localnet genesis. Unset
-means the `paid_metered` genesis default.
+configuration. `XIAN_TX_FEE_MODE`, `XIAN_MAX_TX_CHI` and `XIAN_MAX_BLOCK_CHI`
+are genesis inputs: `make node-configure` forwards them only together with
+`--genesis-bundle` in `CONFIGURE_ARGS` (and refuses them otherwise), and
+`localnet-init` builds them into the localnet genesis. The chi caps apply in
+every fee mode; an unset variable takes the node's genesis default
+(`paid_metered`, 200,000 chi per transaction, 500,000 chi per block).
 
 The stack defaults to fail-closed host bindings:
 

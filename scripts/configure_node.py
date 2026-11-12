@@ -86,7 +86,7 @@ def main() -> int:
         fee_arguments = genesis_fee_policy_arguments(environment)
         if fee_arguments and not _builds_bundle_genesis(extra):
             raise ValueError(
-                "XIAN_TX_FEE_MODE, XIAN_FREE_TX_MAX_CHI and XIAN_FREE_BLOCK_MAX_CHI set the "
+                "XIAN_TX_FEE_MODE, XIAN_MAX_TX_CHI and XIAN_MAX_BLOCK_CHI set the "
                 "genesis fee policy; pass --genesis-bundle in CONFIGURE_ARGS or unset them"
             )
         command = [

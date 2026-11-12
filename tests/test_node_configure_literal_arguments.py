@@ -138,15 +138,15 @@ def test_make_node_configure_keeps_credentials_and_options_literal(
         (
             {
                 "XIAN_TX_FEE_MODE": "free_metered",
-                "XIAN_FREE_TX_MAX_CHI": "250000",
-                "XIAN_FREE_BLOCK_MAX_CHI": "1000000",
+                "XIAN_MAX_TX_CHI": "150000",
+                "XIAN_MAX_BLOCK_CHI": "1000000",
                 "CONFIGURE_ARGS": "--moniker m --genesis-bundle local --chain-id local-1",
             },
             [],
             {
                 "--tx-fee-mode": "free_metered",
-                "--free-tx-max-chi": "250000",
-                "--free-block-max-chi": "1000000",
+                "--max-tx-chi": "150000",
+                "--max-block-chi": "1000000",
                 "--genesis-bundle": "local",
             },
         ),
@@ -169,10 +169,10 @@ def test_make_node_configure_preserves_runtime_flags_and_overrides(
 
 FEE_POLICY_ENVIRONMENT = {
     "XIAN_TX_FEE_MODE": "free_metered",
-    "XIAN_FREE_TX_MAX_CHI": "250000",
-    "XIAN_FREE_BLOCK_MAX_CHI": "1000000",
+    "XIAN_MAX_TX_CHI": "150000",
+    "XIAN_MAX_BLOCK_CHI": "1000000",
 }
-FEE_POLICY_OPTIONS = {"--tx-fee-mode", "--free-tx-max-chi", "--free-block-max-chi"}
+FEE_POLICY_OPTIONS = {"--tx-fee-mode", "--max-tx-chi", "--max-block-chi"}
 
 
 def test_fee_policy_without_a_bundle_genesis_is_refused_before_configuration(

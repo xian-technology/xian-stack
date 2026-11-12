@@ -77,8 +77,8 @@ class StackBdsWiringTests(unittest.TestCase):
         self.assertIn("export XIAN_BLOCK_POLICY_MODE=", stack_env)
         self.assertIn("export XIAN_BLOCK_POLICY_INTERVAL=", stack_env)
         self.assertIn("export XIAN_TX_FEE_MODE=", stack_env)
-        self.assertIn("export XIAN_FREE_TX_MAX_CHI=", stack_env)
-        self.assertIn("export XIAN_FREE_BLOCK_MAX_CHI=", stack_env)
+        self.assertIn("export XIAN_MAX_TX_CHI=", stack_env)
+        self.assertIn("export XIAN_MAX_BLOCK_CHI=", stack_env)
 
     def test_compose_overlay_passes_bds_runtime_environment(self) -> None:
         compose = (STACK_ROOT / "docker-compose-abci-bds.yml").read_text(encoding="utf-8")

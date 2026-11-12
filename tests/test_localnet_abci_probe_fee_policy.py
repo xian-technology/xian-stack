@@ -25,8 +25,8 @@ def test_probe_reads_the_fee_policy_from_genesis(tmp_path):
                             "key": "__fee_policy",
                             "value": {
                                 "tx_fee_mode": "free_metered",
-                                "free_tx_max_chi": 250000,
-                                "free_block_max_chi": 5000000,
+                                "max_tx_chi": 150000,
+                                "max_block_chi": 400000,
                             },
                         }
                     ]
@@ -40,6 +40,6 @@ def test_probe_reads_the_fee_policy_from_genesis(tmp_path):
 
     assert policy.to_state() == {
         "tx_fee_mode": "free_metered",
-        "free_tx_max_chi": 250000,
-        "free_block_max_chi": 5000000,
+        "max_tx_chi": 150000,
+        "max_block_chi": 400000,
     }
