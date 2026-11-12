@@ -14,3 +14,6 @@ __pycache__
 docker-compose-localnet.yml
 /contracts/*
 graphify-out/
+
+# ub-mode quality-tool output (crapper, dryer, mutator)
+.metrics/
