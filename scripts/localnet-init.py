@@ -357,8 +357,26 @@ def build_localnet_genesis(
     )
 
 
-def main():
-    global BASE_P2P_PORT, BASE_RPC_PORT, BASE_METRICS_PORT, BASE_XIAN_METRICS_PORT
+PROFILE_CONSENSUS_DEFAULTS = {
+    "default": {"block_policy_mode": "periodic", "block_policy_interval": "5s"},
+    "throughput": {
+        "block_policy_mode": "on_demand",
+        "block_policy_interval": "0s",
+        "consensus_timeout_propose": "500ms",
+        "consensus_timeout_propose_delta": "100ms",
+        "consensus_timeout_prevote": "200ms",
+        "consensus_timeout_prevote_delta": "50ms",
+        "consensus_timeout_precommit": "200ms",
+        "consensus_timeout_precommit_delta": "50ms",
+        "consensus_timeout_commit": "200ms",
+        "consensus_skip_timeout_commit": True,
+        "mempool_size": 50_000,
+        "mempool_cache_size": 100_000,
+    },
+}
+
+
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Initialize a local N-node network")
     parser.add_argument(
         "--nodes",
@@ -391,83 +409,181 @@ def main():
         default="integrated",
         help="Runtime topology for the generated localnet compose file",
     )
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def fail(message: str) -> None:
+    print(f"ERROR: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def prepare_localnet_dir(*, clean: bool) -> None:
+    if clean and LOCALNET_DIR.exists():
+        print(f"Cleaning {LOCALNET_DIR}")
+        shutil.rmtree(LOCALNET_DIR)
+    if LOCALNET_DIR.exists():
+        fail(f"{LOCALNET_DIR} already exists. Use --clean to overwrite.")
+
+
+def apply_port_offset(port_offset: int) -> None:
+    global BASE_P2P_PORT, BASE_RPC_PORT, BASE_METRICS_PORT, BASE_XIAN_METRICS_PORT
+    BASE_P2P_PORT = 26656 + port_offset
+    BASE_RPC_PORT = 26657 + port_offset
+    BASE_METRICS_PORT = 26660 + port_offset
+    BASE_XIAN_METRICS_PORT = 9108 + port_offset
+
+
+def parallel_execution_settings() -> dict:
+    """write_node_config keyword arguments, in summary order."""
+    return {
+        "parallel_execution_enabled": env_bool(
+            "XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED",
+            DEFAULT_PARALLEL_EXECUTION_ENABLED,
+        ),
+        "parallel_execution_workers": env_int(
+            "XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS",
+            DEFAULT_PARALLEL_EXECUTION_WORKERS,
+        ),
+        "parallel_execution_min_transactions": env_int(
+            "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS",
+            DEFAULT_PARALLEL_EXECUTION_MIN_TRANSACTIONS,
+        ),
+        "parallel_execution_max_speculative_waves": env_int(
+            "XIAN_LOCALNET_PARALLEL_EXECUTION_MAX_SPECULATIVE_WAVES",
+            DEFAULT_PARALLEL_EXECUTION_MAX_SPECULATIVE_WAVES,
+        ),
+        "parallel_execution_min_wave_acceptance_ratio": env_float(
+            "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_WAVE_ACCEPTANCE_RATIO",
+            DEFAULT_PARALLEL_EXECUTION_MIN_WAVE_ACCEPTANCE_RATIO,
+        ),
+        "parallel_execution_low_acceptance_min_wave_size": env_int(
+            "XIAN_LOCALNET_PARALLEL_EXECUTION_LOW_ACCEPTANCE_MIN_WAVE_SIZE",
+            DEFAULT_PARALLEL_EXECUTION_LOW_ACCEPTANCE_MIN_WAVE_SIZE,
+        ),
+        "parallel_execution_warm_workers": env_bool(
+            "XIAN_LOCALNET_PARALLEL_EXECUTION_WARM_WORKERS",
+            DEFAULT_PARALLEL_EXECUTION_WARM_WORKERS,
+        ),
+        "parallel_execution_access_estimates_enabled": env_bool(
+            "XIAN_LOCALNET_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED",
+            DEFAULT_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED,
+        ),
+    }
+
+
+def logging_settings() -> dict:
+    """write_node_config keyword arguments, in summary order."""
+    return {
+        "transaction_trace_logging": env_bool("XIAN_LOCALNET_TRANSACTION_TRACE_LOGGING", False),
+        "app_log_level": env_str("XIAN_LOCALNET_APP_LOG_LEVEL", "INFO"),
+        "app_log_json": env_bool("XIAN_LOCALNET_APP_LOG_JSON", False),
+        "app_log_rotation_hours": env_int("XIAN_LOCALNET_APP_LOG_ROTATION_HOURS", 1),
+        "app_log_retention_days": env_int("XIAN_LOCALNET_APP_LOG_RETENTION_DAYS", 7),
+        "app_log_max_file_mb": env_int("XIAN_LOCALNET_APP_LOG_MAX_FILE_MB", 50),
+        "app_log_max_total_mb": env_int("XIAN_LOCALNET_APP_LOG_MAX_TOTAL_MB", 250),
+    }
+
+
+def localnet_profile_name() -> str:
+    localnet_profile = env_str("XIAN_LOCALNET_PROFILE", "default")
+    if localnet_profile not in PROFILE_CONSENSUS_DEFAULTS:
+        fail("XIAN_LOCALNET_PROFILE must be one of: default, throughput")
+    return localnet_profile
+
+
+def consensus_settings(localnet_profile: str) -> dict:
+    """write_node_config keyword arguments; the profile fills settings left unset."""
+    settings = {
+        "block_policy_mode": env_optional_str("XIAN_LOCALNET_BLOCK_POLICY_MODE"),
+        "block_policy_interval": env_optional_str("XIAN_LOCALNET_BLOCK_POLICY_INTERVAL"),
+        "consensus_timeout_propose": env_optional_str("XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE"),
+        "consensus_timeout_propose_delta": env_optional_str(
+            "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE_DELTA"
+        ),
+        "consensus_timeout_prevote": env_optional_str("XIAN_LOCALNET_CONSENSUS_TIMEOUT_PREVOTE"),
+        "consensus_timeout_prevote_delta": env_optional_str(
+            "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PREVOTE_DELTA"
+        ),
+        "consensus_timeout_precommit": env_optional_str(
+            "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PRECOMMIT"
+        ),
+        "consensus_timeout_precommit_delta": env_optional_str(
+            "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PRECOMMIT_DELTA"
+        ),
+        "consensus_timeout_commit": env_optional_str("XIAN_LOCALNET_CONSENSUS_TIMEOUT_COMMIT"),
+        "consensus_skip_timeout_commit": env_optional_bool("XIAN_LOCALNET_SKIP_TIMEOUT_COMMIT"),
+        "mempool_size": env_optional_int("XIAN_LOCALNET_MEMPOOL_SIZE"),
+        "mempool_cache_size": env_optional_int("XIAN_LOCALNET_MEMPOOL_CACHE_SIZE"),
+    }
+    for key, default in PROFILE_CONSENSUS_DEFAULTS[localnet_profile].items():
+        if settings[key] is None:
+            settings[key] = default
+    return settings
+
+
+def strip_prefix(settings: dict, prefix: str) -> dict:
+    return {key.removeprefix(prefix): value for key, value in settings.items()}
+
+
+def node_summary(node: dict, *, topology: str, bds_enabled: bool) -> dict:
+    index = node["index"]
+    return {
+        "moniker": node["moniker"],
+        "node_id": node["node_key"]["node_id"],
+        "host_rpc_port": BASE_RPC_PORT + index * PORT_STRIDE,
+        "host_p2p_port": BASE_P2P_PORT + index * PORT_STRIDE,
+        "host_metrics_port": BASE_METRICS_PORT + index * PORT_STRIDE,
+        "host_xian_metrics_port": (BASE_XIAN_METRICS_PORT + index * PORT_STRIDE),
+        "abci_container": (
+            f"xian-{node['moniker']}"
+            if topology == "integrated"
+            else f"xian-{node['moniker']}-abci"
+        ),
+        "cometbft_container": f"xian-{node['moniker']}",
+        "account_public_key": node["account_public_key"],
+        "account_private_key": node["validator_material"]["validator_private_key_hex"],
+        "bds_enabled": bds_enabled,
+    }
+
+
+def bds_summary(*, bds_enabled: bool, bds_node_index: int) -> dict:
+    return {
+        "enabled": bds_enabled,
+        "bds_node_index": bds_node_index if bds_enabled else None,
+        "bds_rpc_url": (
+            f"http://127.0.0.1:{BASE_RPC_PORT + bds_node_index * PORT_STRIDE}"
+            if bds_enabled
+            else None
+        ),
+    }
+
+
+def main():
+    args = parse_args()
     # Chain fee policy is genesis state; empty settings mean paid_metered.
     # Validate it before --clean removes an existing localnet.
     fee_policy = genesis_fee_policy(os.environ)
 
     if args.nodes < 4:
-        print("ERROR: Minimum 4 nodes required for BFT consensus", file=sys.stderr)
-        sys.exit(1)
-
-    if args.clean and LOCALNET_DIR.exists():
-        print(f"Cleaning {LOCALNET_DIR}")
-        shutil.rmtree(LOCALNET_DIR)
-
-    if LOCALNET_DIR.exists():
-        print(f"ERROR: {LOCALNET_DIR} already exists. Use --clean to overwrite.", file=sys.stderr)
-        sys.exit(1)
+        fail("Minimum 4 nodes required for BFT consensus")
+    prepare_localnet_dir(clean=args.clean)
 
     print(
         "Generating "
         f"{args.nodes}-node localnet "
         f"(chain_id={args.chain_id}, genesis_network={args.genesis_network})"
     )
-    parallel_execution_enabled = env_bool(
-        "XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED",
-        DEFAULT_PARALLEL_EXECUTION_ENABLED,
-    )
     port_offset = env_int("XIAN_LOCALNET_PORT_OFFSET", 0)
-    BASE_P2P_PORT = 26656 + port_offset
-    BASE_RPC_PORT = 26657 + port_offset
-    BASE_METRICS_PORT = 26660 + port_offset
-    BASE_XIAN_METRICS_PORT = 9108 + port_offset
+    apply_port_offset(port_offset)
     bds_enabled = env_bool("XIAN_LOCALNET_ENABLE_BDS", False)
     bds_node_index = env_int("XIAN_LOCALNET_BDS_NODE_INDEX", 0)
     if bds_enabled and not 0 <= bds_node_index < args.nodes:
-        print(
-            "ERROR: XIAN_LOCALNET_BDS_NODE_INDEX must point to an existing node",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    parallel_execution_workers = env_int(
-        "XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS",
-        DEFAULT_PARALLEL_EXECUTION_WORKERS,
-    )
-    parallel_execution_min_transactions = env_int(
-        "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS",
-        DEFAULT_PARALLEL_EXECUTION_MIN_TRANSACTIONS,
-    )
-    parallel_execution_max_speculative_waves = env_int(
-        "XIAN_LOCALNET_PARALLEL_EXECUTION_MAX_SPECULATIVE_WAVES",
-        DEFAULT_PARALLEL_EXECUTION_MAX_SPECULATIVE_WAVES,
-    )
-    parallel_execution_min_wave_acceptance_ratio = env_float(
-        "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_WAVE_ACCEPTANCE_RATIO",
-        DEFAULT_PARALLEL_EXECUTION_MIN_WAVE_ACCEPTANCE_RATIO,
-    )
-    parallel_execution_low_acceptance_min_wave_size = env_int(
-        "XIAN_LOCALNET_PARALLEL_EXECUTION_LOW_ACCEPTANCE_MIN_WAVE_SIZE",
-        DEFAULT_PARALLEL_EXECUTION_LOW_ACCEPTANCE_MIN_WAVE_SIZE,
-    )
-    parallel_execution_warm_workers = env_bool(
-        "XIAN_LOCALNET_PARALLEL_EXECUTION_WARM_WORKERS",
-        DEFAULT_PARALLEL_EXECUTION_WARM_WORKERS,
-    )
-    parallel_execution_access_estimates_enabled = env_bool(
-        "XIAN_LOCALNET_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED",
-        DEFAULT_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED,
-    )
-    transaction_trace_logging = env_bool("XIAN_LOCALNET_TRANSACTION_TRACE_LOGGING", False)
+        fail("XIAN_LOCALNET_BDS_NODE_INDEX must point to an existing node")
+    parallel = parallel_execution_settings()
+    log_settings = logging_settings()
     # Localnet matches the in-process dev client (zk on); real-network genesis
     # stays explicit opt-in via configure_node --runtime-feature-zk.
     runtime_feature_zk = env_bool("XIAN_LOCALNET_RUNTIME_FEATURE_ZK", True)
-    app_log_level = env_str("XIAN_LOCALNET_APP_LOG_LEVEL", "INFO")
-    app_log_json = env_bool("XIAN_LOCALNET_APP_LOG_JSON", False)
-    app_log_rotation_hours = env_int("XIAN_LOCALNET_APP_LOG_ROTATION_HOURS", 1)
-    app_log_retention_days = env_int("XIAN_LOCALNET_APP_LOG_RETENTION_DAYS", 7)
-    app_log_max_file_mb = env_int("XIAN_LOCALNET_APP_LOG_MAX_FILE_MB", 50)
-    app_log_max_total_mb = env_int("XIAN_LOCALNET_APP_LOG_MAX_TOTAL_MB", 250)
     profiling_enabled = env_bool(
         "XIAN_LOCALNET_PROFILE_ENABLED",
         env_bool("XIAN_PERF_ENABLED", False),
@@ -476,58 +592,13 @@ def main():
         "XIAN_LOCALNET_PROFILE_RECENT_BLOCKS",
         env_int("XIAN_PERF_RECENT_BLOCKS", 32),
     )
-    localnet_profile = env_str("XIAN_LOCALNET_PROFILE", "default")
-    if localnet_profile not in {"default", "throughput"}:
-        print(
-            "ERROR: XIAN_LOCALNET_PROFILE must be one of: default, throughput",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    block_policy_mode = env_optional_str("XIAN_LOCALNET_BLOCK_POLICY_MODE")
-    block_policy_interval = env_optional_str("XIAN_LOCALNET_BLOCK_POLICY_INTERVAL")
-    consensus_timeout_propose = env_optional_str("XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE")
-    consensus_timeout_propose_delta = env_optional_str(
-        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE_DELTA"
-    )
-    consensus_timeout_prevote = env_optional_str("XIAN_LOCALNET_CONSENSUS_TIMEOUT_PREVOTE")
-    consensus_timeout_prevote_delta = env_optional_str(
-        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PREVOTE_DELTA"
-    )
-    consensus_timeout_precommit = env_optional_str("XIAN_LOCALNET_CONSENSUS_TIMEOUT_PRECOMMIT")
-    consensus_timeout_precommit_delta = env_optional_str(
-        "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PRECOMMIT_DELTA"
-    )
-    consensus_timeout_commit = env_optional_str("XIAN_LOCALNET_CONSENSUS_TIMEOUT_COMMIT")
-    consensus_skip_timeout_commit = env_optional_bool("XIAN_LOCALNET_SKIP_TIMEOUT_COMMIT")
-    mempool_size = env_optional_int("XIAN_LOCALNET_MEMPOOL_SIZE")
-    mempool_cache_size = env_optional_int("XIAN_LOCALNET_MEMPOOL_CACHE_SIZE")
-
-    if localnet_profile == "throughput":
-        block_policy_mode = block_policy_mode or "on_demand"
-        block_policy_interval = block_policy_interval or "0s"
-        consensus_timeout_propose = consensus_timeout_propose or "500ms"
-        consensus_timeout_propose_delta = consensus_timeout_propose_delta or "100ms"
-        consensus_timeout_prevote = consensus_timeout_prevote or "200ms"
-        consensus_timeout_prevote_delta = consensus_timeout_prevote_delta or "50ms"
-        consensus_timeout_precommit = consensus_timeout_precommit or "200ms"
-        consensus_timeout_precommit_delta = consensus_timeout_precommit_delta or "50ms"
-        consensus_timeout_commit = consensus_timeout_commit or "200ms"
-        if consensus_skip_timeout_commit is None:
-            consensus_skip_timeout_commit = True
-        if mempool_size is None:
-            mempool_size = 50_000
-        if mempool_cache_size is None:
-            mempool_cache_size = 100_000
-    else:
-        block_policy_mode = block_policy_mode or "periodic"
-        block_policy_interval = block_policy_interval or "5s"
+    localnet_profile = localnet_profile_name()
+    consensus = consensus_settings(localnet_profile)
 
     # 1. Generate key material for all nodes
     nodes = [generate_node_material(i) for i in range(args.nodes)]
 
     # 2. Build genesis using the first node's key as founder
-    founder_key = nodes[0]["validator_material"]["validator_private_key_hex"]
     print(f"Building genesis block (submitting {args.genesis_network} system contracts)...")
     genesis = build_localnet_genesis(
         nodes,
@@ -545,41 +616,11 @@ def main():
             nodes,
             args.chain_id,
             genesis,
-            block_policy_mode=block_policy_mode,
-            block_policy_interval=block_policy_interval,
-            consensus_timeout_propose=consensus_timeout_propose,
-            consensus_timeout_propose_delta=consensus_timeout_propose_delta,
-            consensus_timeout_prevote=consensus_timeout_prevote,
-            consensus_timeout_prevote_delta=consensus_timeout_prevote_delta,
-            consensus_timeout_precommit=consensus_timeout_precommit,
-            consensus_timeout_precommit_delta=(consensus_timeout_precommit_delta),
-            consensus_timeout_commit=consensus_timeout_commit,
-            consensus_skip_timeout_commit=consensus_skip_timeout_commit,
-            mempool_size=mempool_size,
-            mempool_cache_size=mempool_cache_size,
+            **consensus,
             bds_enabled=bds_enabled and node["index"] == bds_node_index,
             topology=args.topology,
-            parallel_execution_enabled=parallel_execution_enabled,
-            parallel_execution_workers=parallel_execution_workers,
-            parallel_execution_min_transactions=(parallel_execution_min_transactions),
-            parallel_execution_max_speculative_waves=(parallel_execution_max_speculative_waves),
-            parallel_execution_min_wave_acceptance_ratio=(
-                parallel_execution_min_wave_acceptance_ratio
-            ),
-            parallel_execution_low_acceptance_min_wave_size=(
-                parallel_execution_low_acceptance_min_wave_size
-            ),
-            parallel_execution_warm_workers=parallel_execution_warm_workers,
-            parallel_execution_access_estimates_enabled=(
-                parallel_execution_access_estimates_enabled
-            ),
-            transaction_trace_logging=transaction_trace_logging,
-            app_log_level=app_log_level,
-            app_log_json=app_log_json,
-            app_log_rotation_hours=app_log_rotation_hours,
-            app_log_retention_days=app_log_retention_days,
-            app_log_max_file_mb=app_log_max_file_mb,
-            app_log_max_total_mb=app_log_max_total_mb,
+            **parallel,
+            **log_settings,
         )
         (LOCALNET_DIR / node["moniker"] / "tmp").mkdir(parents=True, exist_ok=True)
         idx = node["index"]
@@ -599,6 +640,10 @@ def main():
     )
 
     # 5. Write node summary for scripts
+    consensus_summary = {
+        key: value for key, value in consensus.items() if not key.startswith("mempool_")
+    }
+    mempool_summary = {key: value for key, value in consensus.items() if key.startswith("mempool_")}
     summary = {
         "chain_id": args.chain_id,
         "genesis_network": args.genesis_network,
@@ -610,76 +655,25 @@ def main():
             "zk": runtime_feature_zk,
         },
         "nodes": [
-            {
-                "moniker": n["moniker"],
-                "node_id": n["node_key"]["node_id"],
-                "host_rpc_port": BASE_RPC_PORT + n["index"] * PORT_STRIDE,
-                "host_p2p_port": BASE_P2P_PORT + n["index"] * PORT_STRIDE,
-                "host_metrics_port": BASE_METRICS_PORT + n["index"] * PORT_STRIDE,
-                "host_xian_metrics_port": (BASE_XIAN_METRICS_PORT + n["index"] * PORT_STRIDE),
-                "abci_container": (
-                    f"xian-{n['moniker']}"
-                    if args.topology == "integrated"
-                    else f"xian-{n['moniker']}-abci"
-                ),
-                "cometbft_container": f"xian-{n['moniker']}",
-                "account_public_key": n["account_public_key"],
-                "account_private_key": n["validator_material"]["validator_private_key_hex"],
-                "bds_enabled": bds_enabled and n["index"] == bds_node_index,
-            }
+            node_summary(
+                n,
+                topology=args.topology,
+                bds_enabled=bds_enabled and n["index"] == bds_node_index,
+            )
             for n in nodes
         ],
-        "founder_key": founder_key,
-        "parallel_execution": {
-            "enabled": parallel_execution_enabled,
-            "workers": parallel_execution_workers,
-            "min_transactions": parallel_execution_min_transactions,
-            "max_speculative_waves": parallel_execution_max_speculative_waves,
-            "min_wave_acceptance_ratio": (parallel_execution_min_wave_acceptance_ratio),
-            "low_acceptance_min_wave_size": (parallel_execution_low_acceptance_min_wave_size),
-            "warm_workers": parallel_execution_warm_workers,
-            "access_estimates_enabled": (parallel_execution_access_estimates_enabled),
-        },
+        "founder_key": nodes[0]["validator_material"]["validator_private_key_hex"],
+        "parallel_execution": strip_prefix(parallel, "parallel_execution_"),
         "profiling": {
             "enabled": profiling_enabled,
             "recent_blocks": profiling_recent_blocks,
         },
         "localnet_profile": localnet_profile,
-        "consensus": {
-            "block_policy_mode": block_policy_mode,
-            "block_policy_interval": block_policy_interval,
-            "timeout_propose": consensus_timeout_propose,
-            "timeout_propose_delta": consensus_timeout_propose_delta,
-            "timeout_prevote": consensus_timeout_prevote,
-            "timeout_prevote_delta": consensus_timeout_prevote_delta,
-            "timeout_precommit": consensus_timeout_precommit,
-            "timeout_precommit_delta": consensus_timeout_precommit_delta,
-            "timeout_commit": consensus_timeout_commit,
-            "skip_timeout_commit": consensus_skip_timeout_commit,
-        },
-        "mempool": {
-            "size": mempool_size,
-            "cache_size": mempool_cache_size,
-        },
+        "consensus": strip_prefix(consensus_summary, "consensus_"),
+        "mempool": strip_prefix(mempool_summary, "mempool_"),
         "port_offset": port_offset,
-        "bds": {
-            "enabled": bds_enabled,
-            "bds_node_index": bds_node_index if bds_enabled else None,
-            "bds_rpc_url": (
-                f"http://127.0.0.1:{BASE_RPC_PORT + bds_node_index * PORT_STRIDE}"
-                if bds_enabled
-                else None
-            ),
-        },
-        "logging": {
-            "transaction_trace_logging": transaction_trace_logging,
-            "app_log_level": app_log_level,
-            "app_log_json": app_log_json,
-            "app_log_rotation_hours": app_log_rotation_hours,
-            "app_log_retention_days": app_log_retention_days,
-            "app_log_max_file_mb": app_log_max_file_mb,
-            "app_log_max_total_mb": app_log_max_total_mb,
-        },
+        "bds": bds_summary(bds_enabled=bds_enabled, bds_node_index=bds_node_index),
+        "logging": log_settings,
     }
     (LOCALNET_DIR / "network.json").write_text(
         json.dumps(summary, indent=2) + "\n",
@@ -688,6 +682,132 @@ def main():
 
     print(f"\nLocalnet initialized in {LOCALNET_DIR}")
     print("Start with: make localnet-up")
+
+
+def postgres_dependency() -> dict:
+    return {LOCALNET_POSTGRES_SERVICE: {"condition": "service_healthy"}}
+
+
+def node_host_ports(idx: int) -> tuple[int, int, int, int]:
+    return (
+        BASE_P2P_PORT + idx * PORT_STRIDE,
+        BASE_RPC_PORT + idx * PORT_STRIDE,
+        BASE_METRICS_PORT + idx * PORT_STRIDE,
+        BASE_XIAN_METRICS_PORT + idx * PORT_STRIDE,
+    )
+
+
+def integrated_node_services(
+    node: dict, *, integrated_service_base: dict, depends_on_postgres: bool
+) -> dict:
+    """One container runs CometBFT and the ABCI app for this node."""
+    idx = node["index"]
+    moniker = node["moniker"]
+    host_p2p, host_rpc, host_metrics, host_xian_metrics = node_host_ports(idx)
+    service = {
+        **integrated_service_base,
+        "hostname": moniker,
+        "container_name": f"xian-{moniker}",
+        "volumes": [
+            f"./.localnet/{moniker}/.cometbft:/root/.cometbft",
+        ],
+        "environment": {
+            **integrated_service_base["environment"],
+            "NODE_INDEX": str(idx),
+        },
+        "ports": [
+            f"{host_p2p}:26656",
+            f"{host_rpc}:26657",
+            f"{host_metrics}:26660",
+            f"{host_xian_metrics}:9108",
+        ],
+    }
+    if depends_on_postgres:
+        service["depends_on"] = postgres_dependency()
+    return {moniker: service}
+
+
+def split_node_services(
+    node: dict,
+    *,
+    split_build: dict,
+    profiling_enabled: bool,
+    profiling_recent_blocks: int,
+    depends_on_postgres: bool,
+) -> dict:
+    """Separate ABCI and CometBFT containers for this node (fidelity topology)."""
+    idx = node["index"]
+    moniker = node["moniker"]
+    host_p2p, host_rpc, host_metrics, host_xian_metrics = node_host_ports(idx)
+    shared_tmp = f"./.localnet/{moniker}/tmp:/tmp"
+    home_mount = f"./.localnet/{moniker}/.cometbft:/root/.cometbft"
+    abci_service = {
+        "image": NODE_IMAGE_SPLIT,
+        "restart": "always",
+        "init": True,
+        "stop_grace_period": "45s",
+        "hostname": f"{moniker}-abci",
+        "container_name": f"xian-{moniker}-abci",
+        "build": split_build,
+        "mem_limit": compose_var("XIAN_LOCALNET_ABCI_MEMORY_LIMIT"),
+        "mem_reservation": compose_var("XIAN_LOCALNET_ABCI_MEMORY_RESERVATION"),
+        "memswap_limit": compose_var("XIAN_LOCALNET_ABCI_MEMORY_SWAP"),
+        "pids_limit": compose_var("XIAN_LOCALNET_ABCI_PIDS_LIMIT"),
+        "ulimits": {
+            "nofile": {
+                "soft": compose_var("XIAN_LOCALNET_ABCI_NOFILE_SOFT"),
+                "hard": compose_var("XIAN_LOCALNET_ABCI_NOFILE_HARD"),
+            }
+        },
+        "volumes": [home_mount, shared_tmp],
+        "environment": {
+            "XIAN_CONFIGS_DIR": "/opt/xian-configs",
+            "NODE_INDEX": str(idx),
+            "XIAN_PERF_ENABLED": "1" if profiling_enabled else "0",
+            "XIAN_PERF_OUTPUT_PATH": "/root/.cometbft/xian-perf.json",
+            "XIAN_PERF_RECENT_BLOCKS": str(profiling_recent_blocks),
+        },
+        "command": ["xian-abci"],
+        "ports": [
+            f"{host_xian_metrics}:9108",
+        ],
+        "networks": ["localnet"],
+    }
+    if depends_on_postgres:
+        abci_service["depends_on"] = postgres_dependency()
+    cometbft_service = {
+        "image": NODE_IMAGE_SPLIT,
+        "restart": "always",
+        "init": True,
+        "stop_grace_period": "45s",
+        "hostname": moniker,
+        "container_name": f"xian-{moniker}",
+        "build": split_build,
+        "mem_limit": compose_var("XIAN_LOCALNET_COMETBFT_MEMORY_LIMIT"),
+        "mem_reservation": compose_var("XIAN_LOCALNET_COMETBFT_MEMORY_RESERVATION"),
+        "memswap_limit": compose_var("XIAN_LOCALNET_COMETBFT_MEMORY_SWAP"),
+        "pids_limit": compose_var("XIAN_LOCALNET_COMETBFT_PIDS_LIMIT"),
+        "ulimits": {
+            "nofile": {
+                "soft": compose_var("XIAN_LOCALNET_COMETBFT_NOFILE_SOFT"),
+                "hard": compose_var("XIAN_LOCALNET_COMETBFT_NOFILE_HARD"),
+            }
+        },
+        "volumes": [home_mount, shared_tmp],
+        "command": [
+            "cometbft",
+            "node",
+            "--rpc.laddr",
+            "tcp://0.0.0.0:26657",
+        ],
+        "ports": [
+            f"{host_p2p}:26656",
+            f"{host_rpc}:26657",
+            f"{host_metrics}:26660",
+        ],
+        "networks": ["localnet"],
+    }
+    return {f"{moniker}-abci": abci_service, moniker: cometbft_service}
 
 
 def write_compose_file(
@@ -767,111 +887,25 @@ def write_compose_file(
             "networks": ["localnet"],
         }
     for node in nodes:
-        idx = node["index"]
-        moniker = node["moniker"]
-        host_p2p = BASE_P2P_PORT + idx * PORT_STRIDE
-        host_rpc = BASE_RPC_PORT + idx * PORT_STRIDE
-        host_metrics = BASE_METRICS_PORT + idx * PORT_STRIDE
-        host_xian_metrics = BASE_XIAN_METRICS_PORT + idx * PORT_STRIDE
+        depends_on_postgres = bds_enabled and node["index"] == bds_node_index
         if topology == "integrated":
-            service = {
-                **integrated_service_base,
-                "hostname": moniker,
-                "container_name": f"xian-{moniker}",
-                "volumes": [
-                    f"./.localnet/{moniker}/.cometbft:/root/.cometbft",
-                ],
-                "environment": {
-                    **integrated_service_base["environment"],
-                    "NODE_INDEX": str(idx),
-                },
-                "ports": [
-                    f"{host_p2p}:26656",
-                    f"{host_rpc}:26657",
-                    f"{host_metrics}:26660",
-                    f"{host_xian_metrics}:9108",
-                ],
-            }
-            services[moniker] = {key: value for key, value in service.items()}
-            if bds_enabled and idx == bds_node_index:
-                services[moniker]["depends_on"] = {
-                    LOCALNET_POSTGRES_SERVICE: {
-                        "condition": "service_healthy",
-                    }
-                }
+            services.update(
+                integrated_node_services(
+                    node,
+                    integrated_service_base=integrated_service_base,
+                    depends_on_postgres=depends_on_postgres,
+                )
+            )
         else:
-            shared_tmp = f"./.localnet/{moniker}/tmp:/tmp"
-            home_mount = f"./.localnet/{moniker}/.cometbft:/root/.cometbft"
-            services[f"{moniker}-abci"] = {
-                "image": NODE_IMAGE_SPLIT,
-                "restart": "always",
-                "init": True,
-                "stop_grace_period": "45s",
-                "hostname": f"{moniker}-abci",
-                "container_name": f"xian-{moniker}-abci",
-                "build": split_build,
-                "mem_limit": compose_var("XIAN_LOCALNET_ABCI_MEMORY_LIMIT"),
-                "mem_reservation": compose_var("XIAN_LOCALNET_ABCI_MEMORY_RESERVATION"),
-                "memswap_limit": compose_var("XIAN_LOCALNET_ABCI_MEMORY_SWAP"),
-                "pids_limit": compose_var("XIAN_LOCALNET_ABCI_PIDS_LIMIT"),
-                "ulimits": {
-                    "nofile": {
-                        "soft": compose_var("XIAN_LOCALNET_ABCI_NOFILE_SOFT"),
-                        "hard": compose_var("XIAN_LOCALNET_ABCI_NOFILE_HARD"),
-                    }
-                },
-                "volumes": [home_mount, shared_tmp],
-                "environment": {
-                    "XIAN_CONFIGS_DIR": "/opt/xian-configs",
-                    "NODE_INDEX": str(idx),
-                    "XIAN_PERF_ENABLED": "1" if profiling_enabled else "0",
-                    "XIAN_PERF_OUTPUT_PATH": "/root/.cometbft/xian-perf.json",
-                    "XIAN_PERF_RECENT_BLOCKS": str(profiling_recent_blocks),
-                },
-                "command": ["xian-abci"],
-                "ports": [
-                    f"{host_xian_metrics}:9108",
-                ],
-                "networks": ["localnet"],
-            }
-            if bds_enabled and idx == bds_node_index:
-                services[f"{moniker}-abci"]["depends_on"] = {
-                    LOCALNET_POSTGRES_SERVICE: {
-                        "condition": "service_healthy",
-                    }
-                }
-            services[moniker] = {
-                "image": NODE_IMAGE_SPLIT,
-                "restart": "always",
-                "init": True,
-                "stop_grace_period": "45s",
-                "hostname": moniker,
-                "container_name": f"xian-{moniker}",
-                "build": split_build,
-                "mem_limit": compose_var("XIAN_LOCALNET_COMETBFT_MEMORY_LIMIT"),
-                "mem_reservation": compose_var("XIAN_LOCALNET_COMETBFT_MEMORY_RESERVATION"),
-                "memswap_limit": compose_var("XIAN_LOCALNET_COMETBFT_MEMORY_SWAP"),
-                "pids_limit": compose_var("XIAN_LOCALNET_COMETBFT_PIDS_LIMIT"),
-                "ulimits": {
-                    "nofile": {
-                        "soft": compose_var("XIAN_LOCALNET_COMETBFT_NOFILE_SOFT"),
-                        "hard": compose_var("XIAN_LOCALNET_COMETBFT_NOFILE_HARD"),
-                    }
-                },
-                "volumes": [home_mount, shared_tmp],
-                "command": [
-                    "cometbft",
-                    "node",
-                    "--rpc.laddr",
-                    "tcp://0.0.0.0:26657",
-                ],
-                "ports": [
-                    f"{host_p2p}:26656",
-                    f"{host_rpc}:26657",
-                    f"{host_metrics}:26660",
-                ],
-                "networks": ["localnet"],
-            }
+            services.update(
+                split_node_services(
+                    node,
+                    split_build=split_build,
+                    profiling_enabled=profiling_enabled,
+                    profiling_recent_blocks=profiling_recent_blocks,
+                    depends_on_postgres=depends_on_postgres,
+                )
+            )
 
     compose = {
         # A separate project keeps single-node `down --remove-orphans` from
