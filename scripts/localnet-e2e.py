@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import contextlib
 import functools
 import hashlib
 import json
@@ -6791,7 +6792,20 @@ class E2ERunner:
             "restored_active_validators": normalize_value(restored_active),
         }
 
-    async def state_patch_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
+    async def arm_state_patch(
+        self,
+        session: aiohttp.ClientSession,
+        *,
+        patch_id: str,
+        summary: str,
+        changes: list[dict[str, Any]],
+        label_prefix: str,
+    ) -> dict[str, Any]:
+        """Write a governed state patch bundle to every node, load it, and approve it.
+
+        A resumed run finds the patch already proposed and adopts its activation
+        height; the bundle must still hash to the governed bundle hash.
+        """
         service = self.bds_node
         founder = self.founder_wallet
         current_height = int(
@@ -6814,27 +6828,15 @@ class E2ERunner:
             int(governance_min_patch_delay) + STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS,
             STATE_PATCH_DELAY_BLOCKS,
         )
-        patch_id = f"localnet-e2e-{short_hash(self.run_id)}"
         bundle_payload = {
             "version": 1,
             "patch_id": patch_id,
             "activation_height": activation_height,
             "governance_contract": "governance",
-            "summary": "Localnet E2E patch exercise",
+            "summary": summary,
             "uri": "local://localnet-e2e",
             "chain_id": self.network["chain_id"],
-            "changes": [
-                {
-                    "key": f"{self.contracts['patch_target']}.mode",
-                    "value": "patched",
-                    "comment": "switch into patched mode",
-                },
-                {
-                    "key": f"{self.contracts['patch_target']}.patch_count",
-                    "value": 1,
-                    "comment": "record that a patch applied",
-                },
-            ],
+            "changes": changes,
         }
         bundle_payload["bundle_hash"] = compute_patch_bundle_hash(bundle_payload)
 
@@ -6869,33 +6871,19 @@ class E2ERunner:
             )
         await self.restart_localnet_and_wait_ready(session)
 
-        (
-            node0_wallet,
-            node1_wallet,
-            node2_wallet,
-            node3_wallet,
-            node4_wallet,
-        ) = self.validator_wallets
-        node4 = self.nodes[4]
-        proposal_receipt: dict[str, Any] | None = None
+        proposal_vote: dict[str, Any] | None = None
         if existing_patch is None:
-            async with (
-                self.client(node0_wallet, 0, session) as node0,
-                self.client(node1_wallet, 1, session) as node1,
-                self.client(node2_wallet, 2, session) as node2,
-                self.client(node3_wallet, 3, session) as node3,
-                self.client(node4_wallet, 4, session) as node4_client,
-            ):
-                for client in (node0, node1, node2, node3, node4_client):
+            wallets = self.validator_wallets
+            async with contextlib.AsyncExitStack() as stack:
+                clients = [
+                    await stack.enter_async_context(self.client(wallet, index, session))
+                    for index, wallet in enumerate(wallets)
+                ]
+                for client in clients:
                     await client.refresh_nonce()
                 proposal_vote = await self.approve_governance_proposal(
-                    node0,
-                    [
-                        ("node1", node1),
-                        ("node2", node2),
-                        ("node3", node3),
-                        ("node4", node4_client),
-                    ],
+                    clients[0],
+                    [(f"node{index}", client) for index, client in enumerate(clients)][1:],
                     proposal_function="propose_state_patch",
                     proposal_kwargs={
                         "patch_id": patch_id,
@@ -6906,19 +6894,23 @@ class E2ERunner:
                         "emergency": False,
                     },
                     expected_final_status="approved",
-                    label_prefix="state-patch",
+                    label_prefix=label_prefix,
                 )
-                proposal_receipt = proposal_vote["proposal_receipt"]
-        else:
-            proposal_vote = None
+        return {
+            "bundle": bundle_payload,
+            "activation_height": activation_height,
+            "existing_patch": existing_patch,
+            "governance_min_patch_delay": governance_min_patch_delay,
+            "proposal_receipt": (
+                None if proposal_vote is None else proposal_vote["proposal_receipt"]
+            ),
+            "proposal_vote": proposal_vote,
+        }
 
-        print(
-            "[localnet-e2e] 13-state-patch intentionally stopping node-4 "
-            "through activation to verify patch catch-up",
-            flush=True,
-        )
-        node4_stop = await self.stop_node_runtime(node4)
-
+    async def wait_past_patch_activation(
+        self, session: aiohttp.ClientSession, activation_height: int
+    ) -> float:
+        """Wait until node 0 commits the block after a patch's activation block."""
         current_height = int(
             (
                 await fetch_json(
@@ -6938,6 +6930,46 @@ class E2ERunner:
             activation_height + 1,
             timeout_seconds=activation_wait_timeout,
         )
+        return activation_wait_timeout
+
+    async def state_patch_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
+        service = self.bds_node
+        founder = self.founder_wallet
+        armed = await self.arm_state_patch(
+            session,
+            patch_id=f"localnet-e2e-{short_hash(self.run_id)}",
+            summary="Localnet E2E patch exercise",
+            changes=[
+                {
+                    "key": f"{self.contracts['patch_target']}.mode",
+                    "value": "patched",
+                    "comment": "switch into patched mode",
+                },
+                {
+                    "key": f"{self.contracts['patch_target']}.patch_count",
+                    "value": 1,
+                    "comment": "record that a patch applied",
+                },
+            ],
+            label_prefix="state-patch",
+        )
+        bundle_payload = armed["bundle"]
+        patch_id = bundle_payload["patch_id"]
+        activation_height = armed["activation_height"]
+        existing_patch = armed["existing_patch"]
+        governance_min_patch_delay = armed["governance_min_patch_delay"]
+        proposal_receipt = armed["proposal_receipt"]
+        proposal_vote = armed["proposal_vote"]
+        node4_wallet = self.validator_wallets[4]
+        node4 = self.nodes[4]
+
+        print(
+            "[localnet-e2e] 13-state-patch intentionally stopping node-4 "
+            "through activation to verify patch catch-up",
+            flush=True,
+        )
+        node4_stop = await self.stop_node_runtime(node4)
+        activation_wait_timeout = await self.wait_past_patch_activation(session, activation_height)
         async with self.client(founder, service.index, session) as client:
             indexed_status = await wait_for_bds_indexed(
                 client,
@@ -7007,7 +7039,8 @@ class E2ERunner:
             "governance_min_patch_delay": governance_min_patch_delay,
             "activation_wait_timeout_seconds": activation_wait_timeout,
             "proposal_receipt": proposal_receipt,
-            "proposal_vote": normalize_value(proposal_vote) if existing_patch is None else None,
+            # None when a resumed run adopted an already-approved patch.
+            "proposal_vote": normalize_value(proposal_vote),
             "governance_patch": normalize_value(patch_status),
             "patch_target_status": normalize_value(contract_status),
             "local_bundle_inventory": normalize_value(local_bundles),
