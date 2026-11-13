@@ -22,9 +22,6 @@ while (($#)); do
     --skip-protocol-safety)
       protocol_safety=0
       ;;
-    --skip-validator-governance)
-      protocol_safety=0
-      ;;
     --skip-vm-report)
       vm_report=0
       ;;

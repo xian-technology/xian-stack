@@ -137,8 +137,7 @@ def test_resume_accepts_completed_required_checks_or_checks_that_will_run(
     )
 
 
-@pytest.mark.parametrize("e2e_exit", [0, 23])
-def test_release_wrapper_requires_shielded_and_preserves_failure(tmp_path, e2e_exit):
+def _run_release_safety(tmp_path, *arguments, e2e_exit=0):
     binary_dir = tmp_path / "bin"
     binary_dir.mkdir()
     for name in ("make", "docker", "uv"):
@@ -169,20 +168,35 @@ def test_release_wrapper_requires_shielded_and_preserves_failure(tmp_path, e2e_e
     )
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
-        [
-            "bash",
-            str(root / "scripts/release-safety.sh"),
-            "--skip-repo-validation",
-            "--skip-protocol-safety",
-            "--skip-vm-report",
-        ],
+        ["bash", str(root / "scripts/release-safety.sh"), *arguments],
         env=env,
         capture_output=True,
         text=True,
         check=False,
     )
+    recorded = calls.read_text().splitlines() if calls.exists() else []
+    return result, [json.loads(line) for line in recorded]
+
+
+@pytest.mark.parametrize("e2e_exit", [0, 23])
+def test_release_wrapper_requires_shielded_and_preserves_failure(tmp_path, e2e_exit):
+    result, calls = _run_release_safety(
+        tmp_path,
+        "--skip-repo-validation",
+        "--skip-protocol-safety",
+        "--skip-vm-report",
+        e2e_exit=e2e_exit,
+    )
     assert result.returncode == e2e_exit, result.stderr
-    assert [json.loads(line) for line in calls.read_text().splitlines()] == [
+    assert calls == [
         ["localnet-e2e", "LOCALNET_E2E_REQUIRE_SHIELDED=1"],
         ["localnet-down"],
     ]
+
+
+def test_release_wrapper_rejects_the_removed_validator_governance_alias(tmp_path):
+    # --skip-protocol-safety is the one spelling; the old alias is refused.
+    result, calls = _run_release_safety(tmp_path, "--skip-validator-governance")
+    assert result.returncode == 1
+    assert "unknown argument: --skip-validator-governance" in result.stderr
+    assert calls == []
