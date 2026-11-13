@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import shielded_relayer_backend
 from shielded_relayer_backend import shielded_relayer_endpoints
 from shielded_relayer_service import (
+    OUT_OF_CHI_JOB_ERROR,
     RelayerApiError,
     ShieldedRelayerAccessPolicy,
     ShieldedRelayerPolicy,
@@ -161,13 +162,11 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job["job_id"], replay["job_id"])
         self.assertEqual(1, len(client.calls))
 
-    async def test_submit_job_forwards_conservative_chi_budgeting(self) -> None:
+    async def test_submit_job_supplies_exactly_the_simulated_chi(self) -> None:
         client = FakeXianClient()
         service = ShieldedRelayerService(
             ShieldedRelayerServiceConfig(
                 relayer_private_key="1" * 64,
-                chi_margin=1.0,
-                min_chi_headroom=1500,
                 policy=ShieldedRelayerPolicy(
                     min_note_relayer_fee=1,
                     allowed_note_contracts=("con_shielded_note_token",),
@@ -195,8 +194,46 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("con_shielded_note_token", contract)
         self.assertEqual("relay_transfer_shielded", function_name)
         self.assertEqual(["0xnullifier"], kwargs["input_nullifiers"])
-        self.assertEqual(1.0, extra["chi_margin"])
-        self.assertEqual(5000, extra["min_chi_headroom"])
+        # No explicit chi and no headroom: the SDK supplies the simulated chi.
+        self.assertEqual(
+            {"mode", "wait_for_tx", "timeout_seconds", "poll_interval_seconds"}, set(extra)
+        )
+
+    async def test_out_of_chi_job_error_explains_the_state_change(self) -> None:
+        class OutOfChiClient(FakeXianClient):
+            async def send_tx(self, contract, function_name, kwargs, **extra):
+                self.calls.append((contract, function_name, kwargs, extra))
+                return FakeSubmission(
+                    finalized=True,
+                    receipt=SimpleNamespace(success=False, message="Out of chi."),
+                )
+
+        service = ShieldedRelayerService(
+            ShieldedRelayerServiceConfig(
+                relayer_private_key="1" * 64,
+                policy=ShieldedRelayerPolicy(
+                    min_note_relayer_fee=1,
+                    allowed_note_contracts=("con_shielded_note_token",),
+                ),
+            ),
+            xian_client=OutOfChiClient(),
+            now_fn=lambda: datetime(2026, 4, 10, 12, 0, 0),
+        )
+
+        job = await service.submit_shielded_note_transfer(
+            {
+                "contract": "con_shielded_note_token",
+                "old_root": "0xold",
+                "input_nullifiers": ["0xnullifier"],
+                "output_commitments": ["0xcommitment"],
+                "output_payloads": ["0xpayload"],
+                "proof_hex": "0xproof",
+                "relayer_fee": 1,
+            }
+        )
+
+        self.assertEqual("failed", job["status"])
+        self.assertEqual(OUT_OF_CHI_JOB_ERROR, job["error"])
 
     async def test_info_surfaces_auth_and_operations_policy(self) -> None:
         service = ShieldedRelayerService(
@@ -449,7 +486,7 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
-    def test_load_config_from_env_uses_conservative_default_chi_budgeting(self) -> None:
+    def test_load_config_from_env_has_no_chi_headroom_settings(self) -> None:
         with patch.dict(
             os.environ,
             {
@@ -460,8 +497,8 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
         ):
             config = load_config_from_env()
 
-        self.assertEqual(1.0, config.chi_margin)
-        self.assertEqual(1500, config.min_chi_headroom)
+        self.assertFalse(hasattr(config, "chi_margin"))
+        self.assertFalse(hasattr(config, "min_chi_headroom"))
 
 
 if __name__ == "__main__":

@@ -181,17 +181,23 @@ def _job_status(submission: Any) -> str:
     return "submitted"
 
 
+# Relays supply exactly their simulated chi; a relay whose chain state
+# changed after the estimate (another relay moved the note tree) runs out of
+# chi. Nothing was spent, so the client can request the relay again.
+OUT_OF_CHI_JOB_ERROR = (
+    "Out of chi: the chain state changed since the estimate. Submit the relay again."
+)
+
+
 def _submission_error(submission: Any) -> str | None:
     message = getattr(submission, "message", None)
-    if message not in {None, ""}:
-        return str(message)
-    receipt = getattr(submission, "receipt", None)
-    if receipt is not None and getattr(receipt, "message", None) not in {
-        None,
-        "",
-    }:
-        return str(receipt.message)
-    return None
+    if message in {None, ""}:
+        receipt = getattr(submission, "receipt", None)
+        message = getattr(receipt, "message", None)
+    if message in {None, ""}:
+        return None
+    text = str(message)
+    return OUT_OF_CHI_JOB_ERROR if "out of chi" in text.lower() else text
 
 
 def _request_fingerprint(payload: dict[str, Any]) -> str:
@@ -278,8 +284,6 @@ class ShieldedRelayerServiceConfig:
     wait_for_tx: bool = True
     timeout_seconds: float = 30.0
     poll_interval_seconds: float = 0.25
-    chi_margin: float = 1.0
-    min_chi_headroom: int = 1500
     metrics_enabled: bool = True
     log_requests: bool = True
     rate_limit_requests_per_minute: int = 120
@@ -318,8 +322,6 @@ class ShieldedRelayerService:
                 wait_for_tx=config.wait_for_tx,
                 timeout_seconds=config.timeout_seconds,
                 poll_interval_seconds=config.poll_interval_seconds,
-                chi_margin=config.chi_margin,
-                min_chi_headroom=config.min_chi_headroom,
             )
             xian_client = XianAsync(
                 config.node_url,
@@ -807,18 +809,6 @@ class ShieldedRelayerService:
         if job["status"] != "pending":
             return job
 
-        chi_margin = self.config.chi_margin
-        min_chi_headroom = self.config.min_chi_headroom
-        if kind == "shielded_note_relay_transfer":
-            # Shielded note relay calls are consistently more expensive than
-            # the raw simulation estimate. Keep a deterministic safety floor so
-            # the relayer favors delivery reliability over tight chi sizing.
-            chi_margin = max(chi_margin, 1.0)
-            min_chi_headroom = max(min_chi_headroom, 5000)
-        elif kind == "shielded_command":
-            chi_margin = max(chi_margin, 1.0)
-            min_chi_headroom = max(min_chi_headroom, 3000)
-
         try:
             chain_id = await self.ensure_chain_id()
             submission = await self._xian.send_tx(
@@ -829,8 +819,6 @@ class ShieldedRelayerService:
                 wait_for_tx=self.config.wait_for_tx,
                 timeout_seconds=self.config.timeout_seconds,
                 poll_interval_seconds=self.config.poll_interval_seconds,
-                chi_margin=chi_margin,
-                min_chi_headroom=min_chi_headroom,
             )
             job["chain_id"] = chain_id
             job["submission"] = asdict(submission)
@@ -1269,14 +1257,6 @@ def load_config_from_env() -> ShieldedRelayerServiceConfig:
         poll_interval_seconds=_env_float(
             "XIAN_SHIELDED_RELAYER_POLL_INTERVAL_SECONDS",
             0.25,
-        ),
-        chi_margin=_env_float(
-            "XIAN_SHIELDED_RELAYER_CHI_MARGIN",
-            1.0,
-        ),
-        min_chi_headroom=_env_int(
-            "XIAN_SHIELDED_RELAYER_MIN_CHI_HEADROOM",
-            1500,
         ),
         rate_limit_requests_per_minute=_env_int(
             "XIAN_SHIELDED_RELAYER_RATE_LIMIT_REQUESTS_PER_MINUTE",
