@@ -45,7 +45,6 @@ def numerics():
             int.from_bytes(encoded, byteorder="big", signed=False),
             [interval.start, interval.stop, interval.step, interval.count(4), interval.index(1)],
             [number.real, number.imag, number.numerator, number.denominator],
-
         ]
     )
 

@@ -154,7 +154,12 @@ def getAmountsOut(amountIn: decimal, src: str, path: list):
 
 @export
 def swapExactTokenForToken(
-    amountIn: decimal, amountOutMin: decimal, pair: int, src: str, to: str, deadline: datetime.datetime
+    amountIn: decimal,
+    amountOutMin: decimal,
+    pair: int,
+    src: str,
+    to: str,
+    deadline: datetime.datetime,
 ):
     assert now < deadline, "SNAKX: EXPIRED"
     pairs = PAIRS()
@@ -178,7 +183,12 @@ def swapExactTokenForToken(
 
 @export
 def swapExactTokenForTokenSupportingFeeOnTransferTokens(
-    amountIn: decimal, amountOutMin: decimal, pair: int, src: str, to: str, deadline: datetime.datetime
+    amountIn: decimal,
+    amountOutMin: decimal,
+    pair: int,
+    src: str,
+    to: str,
+    deadline: datetime.datetime,
 ):
     assert now < deadline, "SNAKX: EXPIRED"
     pairs = PAIRS()
@@ -305,7 +315,12 @@ def internal_swap_fee(
 
 @export
 def swapExactTokensForTokensSupportingFeeOnTransferTokens(
-    amountIn: decimal, amountOutMin: decimal, path: list, src: str, to: str, deadline: datetime.datetime
+    amountIn: decimal,
+    amountOutMin: decimal,
+    path: list,
+    src: str,
+    to: str,
+    deadline: datetime.datetime,
 ):
     if len(path) == 1:
         swapExactTokenForTokenSupportingFeeOnTransferTokens(
@@ -337,7 +352,12 @@ def swapExactTokensForTokensSupportingFeeOnTransferTokens(
 
 @export
 def swapExactTokensForTokens(
-    amountIn: decimal, amountOutMin: decimal, path: list, src: str, to: str, deadline: datetime.datetime
+    amountIn: decimal,
+    amountOutMin: decimal,
+    path: list,
+    src: str,
+    to: str,
+    deadline: datetime.datetime,
 ):
     assert now < deadline, "SNAKX: EXPIRED"
     pairs = PAIRS()

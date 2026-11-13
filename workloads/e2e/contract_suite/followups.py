@@ -469,8 +469,13 @@ def fail_metadata_callback(mode: str):
 def check_self_subject(subject: Any):
     result.set(
         [
-            subject.kind, subject.name, list(subject.args),
-            ctx.this, ctx.caller, ctx.owner, ctx.signer,
+            subject.kind,
+            subject.name,
+            list(subject.args),
+            ctx.this,
+            ctx.caller,
+            ctx.owner,
+            ctx.signer,
         ]
     )
     return importlib.Func("recover", args=("label",)).is_of(subject)

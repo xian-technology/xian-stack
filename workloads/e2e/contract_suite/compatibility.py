@@ -140,10 +140,16 @@ def exact_amounts():
 
 @export
 def settlement():
-    values = [quantize(1.005, 2, "half_even"), quantize(-1.015, 2, "half_even"),
-              quantize(-1.011, 2, "toward_zero"), quantize(-1.011, 2, "floor"),
-              quantize(1.011, 2, "ceil"), mul_div_floor(-5, 1, 2),
-              mul_div_ceil(-5, 1, 2), sqrt(2)]
+    values = [
+        quantize(1.005, 2, "half_even"),
+        quantize(-1.015, 2, "half_even"),
+        quantize(-1.011, 2, "toward_zero"),
+        quantize(-1.011, 2, "floor"),
+        quantize(1.011, 2, "ceil"),
+        mul_div_floor(-5, 1, 2),
+        mul_div_ceil(-5, 1, 2),
+        sqrt(2),
+    ]
     result.set(values)
     return values
 
