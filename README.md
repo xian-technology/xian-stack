@@ -43,7 +43,21 @@ python -m pytest -q
 ```
 
 Run a stack-managed local development node with indexed reads and the local
-observability UIs:
+observability UIs. `start` runs an existing node home (`.cometbft`, with BDS
+data in `.bds.db`); it does not create one. Create a fresh single-node chain
+with `xian-cli`, which generates a genesis whose only validator and founder is
+the node's own key, then start it from this repo:
+
+```bash
+# in the sibling xian-cli checkout; the profile home defaults to ../xian-stack/.cometbft
+uv run xian network create local-dev --chain-id xian-local-1 \
+  --template single-node-dev --generate-validator-key --init-node
+```
+
+`make node-configure` builds genesis only from a bundle in `xian-configs`,
+whose validator keys are fixed, so it cannot create a chain this node can sign
+alone. To start over, stop the node and move `.cometbft` and `.bds.db` aside
+before creating the new chain.
 
 ```bash
 python3 ./scripts/backend.py start  --bds-enabled --dashboard --monitoring
