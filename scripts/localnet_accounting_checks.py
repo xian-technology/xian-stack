@@ -181,8 +181,9 @@ async def accounting_phase(runner, session):
         execution = result.receipt.execution
         fee = Decimal(str(execution["chi_used"])) / Decimal(before["chi_cost"])
         after = await native_balances(runner, [*accounts, runner.founder_wallet.public_key])
-        # Failed calls pay execution fees but produce no fee-reward payouts.
-        expected_burn = fee * Decimal(before["burn_ratio"]) if expected_success else fee
+        # Every paid call's fee, failed or not, is paid out through the reward
+        # split, so only the governed burn share leaves the native supply.
+        expected_burn = fee * Decimal(before["burn_ratio"])
         tolerance = Decimal("0.00000001") * (before["balance_count"] + 1)
         actual_burn = Decimal(before["total"]) - Decimal(after["total"])
         require(
