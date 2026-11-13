@@ -16,7 +16,7 @@ from xian.services.state_sync import StateSnapshotManager
 commit_module = importlib.import_module("xian.methods.commit")
 arm_path = Path("/root/.cometbft/e2e-fault.json")
 hit_path = arm_path.with_suffix(".hit.json")
-original_apply = Driver.hard_apply
+original_commit = Driver.commit
 original_mirror = commit_module.try_write_latest_block
 candidate = None
 
@@ -31,16 +31,16 @@ def crash(plan):
     os.kill(os.getpid(), signal.SIGKILL)
 
 
-def hard_apply(self, nanos):
+def commit(self):
     global candidate
     candidate = None
     if arm_path.exists():
         plan = json.loads(arm_path.read_text())
-        if self.pending_writes.get(plan["key"]) == plan["value"]:
-            candidate = {**plan, "nanos": str(nanos)}
+        if dict(self.pending_items()).get(plan["key"]) == plan["value"]:
+            candidate = dict(plan)
             if plan["stage"] == "before_persist":
                 crash(candidate)
-    result = original_apply(self, nanos)
+    result = original_commit(self)
     if candidate is not None and candidate["stage"] == "after_persist":
         crash(candidate)
     return result
@@ -53,7 +53,7 @@ def write_mirror(*args, **kwargs):
     return result
 
 
-Driver.hard_apply = hard_apply
+Driver.commit = commit
 commit_module.try_write_latest_block = write_mirror
 
 # A separate observer test interrupts transfer after one accepted chunk.
