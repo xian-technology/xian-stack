@@ -74,6 +74,7 @@ def test_authored_rng_uses_each_explicit_transaction_context(tmp_path):
                 kwargs={},
                 environment=environment,
                 chi_budget=100_000,
+                transaction_size_bytes=0,
                 chi_cost=20,
                 meter=True,
                 apply_metering_writes=False,
