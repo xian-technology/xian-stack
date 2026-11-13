@@ -11,7 +11,7 @@ import localnet_replay_corpus as replay
 from localnet_e2e_support import E2EError
 
 POLICY = {
-    "execution_revision": "xvm-execution-13",
+    "execution_revision": "xvm-execution-14",
     "gas_schedule": "xvm-gas-6",
     "bytecode_version": "xvm-2",
     "set_codec": "xian-set-1",
@@ -64,13 +64,15 @@ def test_incompatible_corpus_is_rejected_before_extraction_or_output_mutation(tm
         ("xvm-execution-10", "xvm-gas-4"),
         ("xvm-execution-11", "xvm-gas-5"),
         ("xvm-execution-12", "xvm-gas-6"),
+        ("xvm-execution-13", "xvm-gas-6"),
     ],
 )
 def test_previous_revision_corpus_requires_its_matching_image_policy(revision, gas_schedule):
     # Revision 10 and later also persist the admission revisions.
     keys = (
         POLICY
-        if revision in {"xvm-execution-10", "xvm-execution-11", "xvm-execution-12"}
+        if revision
+        in {"xvm-execution-10", "xvm-execution-11", "xvm-execution-12", "xvm-execution-13"}
         else CORE_POLICY_KEYS
     )
     previous = {key: POLICY[key] for key in keys} | {
@@ -86,7 +88,10 @@ def test_previous_revision_corpus_requires_its_matching_image_policy(revision, g
 
 def test_previous_admission_revision_corpus_requires_its_matching_image_policy():
     # Execution revision 13 first shipped with compiler admission revision 2.
-    previous = POLICY | {"compiler_admission_revision": "xian-admission-2"}
+    previous = POLICY | {
+        "execution_revision": "xvm-execution-13",
+        "compiler_admission_revision": "xian-admission-2",
+    }
     replay.validate_replay_policy({"execution_policy": previous}, {"execution_policy": previous})
     for corpus, image in [(previous, POLICY), (POLICY, previous)]:
         with pytest.raises(E2EError, match="execution policy"):

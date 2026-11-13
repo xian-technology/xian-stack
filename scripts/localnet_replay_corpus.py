@@ -53,7 +53,7 @@ async def inspect_replay_image(image):
 
 
 # Every revision persists these; xvm-execution-10 and later (the current
-# xvm-execution-13) add compiler and transaction admission revisions, which must
+# xvm-execution-14) add compiler and transaction admission revisions, which must
 # then match the replay image as well.
 CORE_EXECUTION_POLICY_KEYS = frozenset(
     {"execution_revision", "gas_schedule", "bytecode_version", "set_codec"}
