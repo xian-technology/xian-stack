@@ -15,7 +15,7 @@ POLICY = {
     "gas_schedule": "xvm-gas-6",
     "bytecode_version": "xvm-2",
     "set_codec": "xian-set-1",
-    "compiler_admission_revision": "xian-admission-2",
+    "compiler_admission_revision": "xian-admission-3",
     "tx_admission_revision": "xian-fastpath-admission-2",
 }
 # Revisions before xvm-execution-10 persisted no admission revisions.
@@ -78,6 +78,15 @@ def test_previous_revision_corpus_requires_its_matching_image_policy(revision, g
         "gas_schedule": gas_schedule,
     }
     # Historical replay stays possible with the matching pinned image.
+    replay.validate_replay_policy({"execution_policy": previous}, {"execution_policy": previous})
+    for corpus, image in [(previous, POLICY), (POLICY, previous)]:
+        with pytest.raises(E2EError, match="execution policy"):
+            replay.validate_replay_policy({"execution_policy": corpus}, {"execution_policy": image})
+
+
+def test_previous_admission_revision_corpus_requires_its_matching_image_policy():
+    # Execution revision 13 first shipped with compiler admission revision 2.
+    previous = POLICY | {"compiler_admission_revision": "xian-admission-2"}
     replay.validate_replay_policy({"execution_policy": previous}, {"execution_policy": previous})
     for corpus, image in [(previous, POLICY), (POLICY, previous)]:
         with pytest.raises(E2EError, match="execution policy"):
