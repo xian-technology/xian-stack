@@ -45,7 +45,12 @@ def test_probe_reads_the_fee_policy_from_genesis(tmp_path):
     }
 
 
-PAID_POLICY = [{"key": "__fee_policy", "value": {"tx_fee_mode": "paid_metered"}}]
+PAID_POLICY = [
+    {
+        "key": "__fee_policy",
+        "value": {"tx_fee_mode": "paid_metered", "max_tx_chi": 200000, "max_block_chi": 500000},
+    }
+]
 
 
 def write_node_home(home: Path, genesis_entries: list[dict]) -> None:
