@@ -31,11 +31,8 @@ else:
 
 class LocalnetE2EExpansionTests(unittest.TestCase):
     def test_signed_admission_fixture_reaches_native_depth_rejection(self):
-        native_source = (
-            MODULE_PATH.parents[2] / "xian-contracting/packages/xian-fastpath-core/python"
-        )
-        with patch.object(sys, "path", [str(native_source), *sys.path]):
-            from xian_fastpath_core import decode_and_validate_transaction_static
+        # The node's native transaction admission, from the locked environment.
+        from xian_fastpath_core import decode_and_validate_transaction_static
 
         wallet = localnet_e2e.Wallet(private_key="42" * 32)
         payload = {

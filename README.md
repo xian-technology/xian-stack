@@ -35,11 +35,17 @@ python3 ./scripts/backend.py validate
 make release-safety
 ```
 
-Run the Python test suite:
+Lint and run the Python test suite as CI does. The locked environment builds the
+sibling `xian-abci`, `xian-contracting` and `xian-py` checkouts; the DEX
+automation backend tests also need `xian-dex-automation` with its own synced
+environment:
 
 ```bash
-python -m pip install -r requirements-test.txt
-python -m pytest -q
+uv sync --locked --group dev
+(cd ../xian-dex-automation && uv sync --locked)
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+uv run --locked pytest -q
 ```
 
 Run a stack-managed local development node with indexed reads and the local

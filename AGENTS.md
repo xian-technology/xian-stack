@@ -40,6 +40,10 @@
 
 ## Validation
 - Preflight: `make validate`
+- Lint and tests (CI runs them): `uv sync --locked --group dev`, then
+  `uv run --locked ruff check .`, `uv run --locked ruff format --check .` and
+  `uv run --locked pytest -q`. The DEX automation backend tests need the
+  `xian-dex-automation` sibling with its own `uv sync --locked` environment.
 - Runtime smoke: `make smoke`
 - Inspect resolved paths: `make print-env`
 - Validate the smallest affected runtime flow after preflight.
