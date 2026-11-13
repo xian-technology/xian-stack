@@ -59,8 +59,6 @@ STACK_UV_PYTHON = "3.14"
 DEFAULT_RPC_TIMEOUT_SECONDS = 90.0
 DEFAULT_RPC_BASE_URL = "http://127.0.0.1:26657"
 DEFAULT_RPC_STATUS_URL = f"{DEFAULT_RPC_BASE_URL}/status"
-DEFAULT_COMETBFT_METRICS_URL = "http://127.0.0.1:26660/metrics"
-DEFAULT_XIAN_METRICS_URL = "http://127.0.0.1:9108/metrics"
 DEFAULT_PROMETHEUS_URL = "http://127.0.0.1:9090"
 DEFAULT_GRAFANA_URL = "http://127.0.0.1:3000"
 DEFAULT_GRAPHQL_URL = "http://127.0.0.1:5000/graphql"
@@ -123,7 +121,6 @@ STACK_SECURITY_DEFAULTS = {
     "XIAN_DASHBOARD_PORT": "8080",
     "XIAN_DEX_AUTOMATION_ENABLED": "0",
     "XIAN_DEX_AUTOMATION_HOST": DEFAULT_DEX_AUTOMATION_HOST,
-    "XIAN_DEX_AUTOMATION_PORT": str(DEFAULT_DEX_AUTOMATION_PORT),
     "XIAN_BDS_ENABLED": "0",
     "XIAN_POSTGRES_IMAGE": "postgres:17.10",
     "XIAN_PROMETHEUS_IMAGE": "prom/prometheus:v3.12.0",
@@ -623,9 +620,7 @@ def runtime_env(
     intentkit_api_port: int,
     dex_automation_enabled: bool,
     dex_automation_host: str,
-    dex_automation_port: int,
     dex_automation_config: str | None,
-    shielded_relayer_enabled: bool,
     shielded_relayer_host: str,
     shielded_relayer_port: int,
 ) -> dict[str, str]:
@@ -701,10 +696,8 @@ def runtime_env(
     env["XIAN_DEX_AUTOMATION_PUBLIC_HOST"] = url_host(
         env.get("XIAN_DEX_AUTOMATION_PUBLIC_HOST") or dex_automation_host
     )
-    env["XIAN_DEX_AUTOMATION_PORT"] = str(dex_automation_port)
     if dex_automation_config is not None:
         env["XIAN_DEX_AUTOMATION_CONFIG"] = dex_automation_config
-    env["XIAN_SHIELDED_RELAYER_ENABLED"] = "1" if shielded_relayer_enabled else "0"
     env["XIAN_SHIELDED_RELAYER_HOST"] = shielded_relayer_host
     env["XIAN_SHIELDED_RELAYER_PUBLIC_HOST"] = url_host(
         env.get("XIAN_SHIELDED_RELAYER_PUBLIC_HOST") or shielded_relayer_host
@@ -876,9 +869,7 @@ def backend_start(
         intentkit_api_port=intentkit_api_port,
         dex_automation_enabled=dex_automation_enabled,
         dex_automation_host=dex_automation_host,
-        dex_automation_port=dex_automation_port,
         dex_automation_config=dex_automation_config,
-        shielded_relayer_enabled=shielded_relayer_enabled,
         shielded_relayer_host=shielded_relayer_host,
         shielded_relayer_port=shielded_relayer_port,
     )
@@ -1026,9 +1017,7 @@ def backend_stop(
         intentkit_api_port=intentkit_api_port,
         dex_automation_enabled=dex_automation_enabled,
         dex_automation_host=dex_automation_host,
-        dex_automation_port=dex_automation_port,
         dex_automation_config=dex_automation_config,
-        shielded_relayer_enabled=shielded_relayer_enabled,
         shielded_relayer_host=shielded_relayer_host,
         shielded_relayer_port=shielded_relayer_port,
     )
@@ -1121,9 +1110,7 @@ def backend_status(
         intentkit_api_port=intentkit_api_port,
         dex_automation_enabled=dex_automation_enabled,
         dex_automation_host=dex_automation_host,
-        dex_automation_port=dex_automation_port,
         dex_automation_config=dex_automation_config,
-        shielded_relayer_enabled=shielded_relayer_enabled,
         shielded_relayer_host=shielded_relayer_host,
         shielded_relayer_port=shielded_relayer_port,
     )
@@ -1381,9 +1368,7 @@ def backend_endpoints(
         intentkit_api_port=intentkit_api_port,
         dex_automation_enabled=dex_automation_enabled,
         dex_automation_host=dex_automation_host,
-        dex_automation_port=dex_automation_port,
         dex_automation_config=dex_automation_config,
-        shielded_relayer_enabled=shielded_relayer_enabled,
         shielded_relayer_host=shielded_relayer_host,
         shielded_relayer_port=shielded_relayer_port,
     )

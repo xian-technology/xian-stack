@@ -28,7 +28,6 @@ XIAN_DEX_DEPLOYER_PRIVATE_KEY ?=
 XIAN_DEX_VALIDATOR_KEY_PATH ?= ./.cometbft/config/priv_validator_key.json
 XIAN_DEX_CHI_BUDGET_MODE ?= auto
 XIAN_STACK_PYTHON ?= 3.14
-FALSE_VALUES := 0 false FALSE False no NO No off OFF Off
 XIAN_DOCKER_LOG_MAX_FILE_MB ?= 50
 XIAN_DOCKER_LOG_MAX_FILES ?= 5
 XIAN_APP_LOG_RETENTION_DAYS ?= 7
@@ -341,9 +340,9 @@ export XIAN_APP_LOG_RETENTION_DAYS XIAN_APP_LOG_MAX_FILE_MB XIAN_APP_LOG_MAX_TOT
 export XIAN_BLOCK_POLICY_MODE XIAN_BLOCK_POLICY_INTERVAL
 
 STACK_COMPOSE = python3 ./scripts/stack_credentials.py -- $(DOCKER_COMPOSE)
-ABCI_COMPOSE = XIAN_BDS_ENABLED=0 $(STACK_COMPOSE) --profile integrated -f docker-compose-abci.yml
-ABCI_BDS_COMPOSE = XIAN_BDS_ENABLED=1 $(STACK_COMPOSE) --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml
-ABCI_FIDELITY_COMPOSE = XIAN_BDS_ENABLED=0 $(STACK_COMPOSE) --profile fidelity -f docker-compose-abci.yml
+ABCI_COMPOSE = $(STACK_COMPOSE) --profile integrated -f docker-compose-abci.yml
+ABCI_BDS_COMPOSE = $(STACK_COMPOSE) --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml
+ABCI_FIDELITY_COMPOSE = $(STACK_COMPOSE) --profile fidelity -f docker-compose-abci.yml
 ABCI_DEV_COMPOSE = $(STACK_COMPOSE) -f docker-compose-abci-dev.yml -f docker-compose-abci-bds.yml
 CONTRACTING_COMPOSE = $(STACK_COMPOSE) -f docker-compose-contracting.yml
 LOCALNET_COMPOSE = $(STACK_COMPOSE) -f docker-compose-localnet.yml

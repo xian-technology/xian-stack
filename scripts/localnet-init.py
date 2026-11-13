@@ -259,7 +259,6 @@ def write_node_config(
     xian_config = configs["xian"]
     # Override peers and listen addresses (inside container, always same ports)
     config["p2p"]["persistent_peers"] = peers
-    config["p2p"]["laddr"] = "tcp://0.0.0.0:26656"
     config["p2p"]["addr_book_strict"] = False
     config["p2p"]["allow_duplicate_ip"] = True
     config["rpc"]["laddr"] = "tcp://0.0.0.0:26657"
@@ -511,14 +510,8 @@ def main():
     # Localnet matches the in-process dev client (zk on); real-network genesis
     # stays explicit opt-in via configure_node --runtime-feature-zk.
     runtime_feature_zk = env_bool("XIAN_LOCALNET_RUNTIME_FEATURE_ZK", True)
-    profiling_enabled = env_bool(
-        "XIAN_LOCALNET_PROFILE_ENABLED",
-        env_bool("XIAN_PERF_ENABLED", False),
-    )
-    profiling_recent_blocks = env_int(
-        "XIAN_LOCALNET_PROFILE_RECENT_BLOCKS",
-        env_int("XIAN_PERF_RECENT_BLOCKS", 32),
-    )
+    profiling_enabled = env_bool("XIAN_PERF_ENABLED", False)
+    profiling_recent_blocks = env_int("XIAN_PERF_RECENT_BLOCKS", 32)
     localnet_profile = localnet_profile_name()
     consensus = consensus_settings(localnet_profile)
 
@@ -638,7 +631,6 @@ def integrated_node_services(
         ],
         "environment": {
             **integrated_service_base["environment"],
-            "NODE_INDEX": str(idx),
         },
         "ports": [
             f"{host_p2p}:26656",
@@ -687,7 +679,6 @@ def split_node_services(
         "volumes": [home_mount, shared_tmp],
         "environment": {
             "XIAN_CONFIGS_DIR": "/opt/xian-configs",
-            "NODE_INDEX": str(idx),
             "XIAN_PERF_ENABLED": "1" if profiling_enabled else "0",
             "XIAN_PERF_OUTPUT_PATH": "/root/.cometbft/xian-perf.json",
             "XIAN_PERF_RECENT_BLOCKS": str(profiling_recent_blocks),
