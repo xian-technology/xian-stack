@@ -40,10 +40,11 @@ commits exist on `main`.
 ## Release Orchestrator
 
 Use the local orchestrator in `xian-stack` when you want one command to release
-every repo whose `origin/main` changed since its latest relevant tag:
+every repo whose `origin/main` changed since its latest relevant tag
+(`<workspace>` is the directory that holds the sibling repos):
 
 ```bash
-cd /Users/endogen/Projekte/xian/xian-stack
+cd <workspace>/xian-stack
 python3 ./scripts/release_orchestrator.py plan
 python3 ./scripts/release_orchestrator.py apply
 ```
