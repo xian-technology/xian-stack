@@ -72,6 +72,10 @@ The stack defaults to fail-closed host bindings:
 
 - CometBFT RPC binds to `127.0.0.1` unless `--public-rpc` is set.
 - CometBFT and app metrics bind to `127.0.0.1` unless `--public-metrics` is set.
+  The node listens for app metrics on `0.0.0.0:9108` inside the container;
+  `XIAN_APP_METRICS_HOST` and `XIAN_APP_METRICS_PORT` (default
+  `127.0.0.1:9108`) only choose the host address and port it is published on,
+  and a non-loopback host needs `XIAN_PUBLIC_METRICS_ENABLED=1`.
 - PostGraphile binds to `127.0.0.1` unless you run a BDS node and pass
   `--public-query` (read-only BDS surface; does not expose live RPC, mempool,
   or raw ABCI traffic).
@@ -237,7 +241,8 @@ requires this binding before starting the network and fails if the shielded
 phase is skipped. To enforce the same requirement in a standalone run, use
 `make localnet-e2e LOCALNET_E2E_REQUIRE_SHIELDED=1`. Direct developer runs default
 to optional shielded coverage; check the phase summary for skips. Building the
-native dependencies on a fresh host requires the Rust toolchain and a C compiler.
+native dependencies on a fresh host requires Rust 1.98 or newer and a C compiler;
+the node image builds with Rust 1.100.0.
 
 The independent `IntentKit x402 Integration` workflow runs on manual dispatch,
 weekly, and on pull requests affecting its harness. Sibling repository revisions,
