@@ -34,7 +34,8 @@ XIAN_ABCI_SRC = ROOT_DIR / "xian-abci" / "src"
 
 DEFAULT_TRANSFER_CHI = 2_000
 DEFAULT_TX_CHI = 200_000
-GOVERNANCE_TX_CHI = 2_000_000
+# Rev-11 governance/validator txs use at most ~4,600 chi (a finalizing policy vote).
+GOVERNANCE_TX_CHI = 20_000
 DEFAULT_LOCALNET_NODES = 5
 DEFAULT_GENESIS_NETWORK = "testnet"
 ABCI_HEALTH_QUERY_PATH = "/get/currency.balances:__xian_localnet_governance_health_probe__"

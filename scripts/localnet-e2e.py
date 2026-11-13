@@ -127,10 +127,12 @@ X402_CONTRACT_SOURCE = (
 )
 X402_PAYMENT_AMOUNT = Decimal("0.001")
 X402_SETTLEMENT_TX_CHI = 15_000
+# Rev-11 shielded note token proofs use at most ~8,100 chi (deposit 7,780, transfer 8,074,
+# withdraw 7,845); the chain caps a transaction at 200,000 chi by default.
 SHIELDED_TX_CHI = {
-    "deposit": 8_000_000,
-    "transfer": 10_000_000,
-    "withdraw": 8_000_000,
+    "deposit": 50_000,
+    "transfer": 50_000,
+    "withdraw": 50_000,
 }
 CURRENT_UV_PYTHON = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
@@ -7449,12 +7451,16 @@ class E2ERunner:
         vk_bindings: dict[str, dict[str, Any]] = {}
         scheduler_auth_summary: dict[str, Any] | None = None
         command_pool_summary: dict[str, Any] | None = None
-        scheduler_control_chi = 2_000_000
-        scheduler_proof_chi = 10_000_000
-        scheduler_deploy_chi = 25_000_000
-        command_control_chi = 2_000_000
-        command_proof_chi = 10_000_000
-        command_deploy_chi = 25_000_000
+        # Measured on the rev-11 VM (the largest of each kind, with 2.5x-10x headroom):
+        # control txs <= 3,967 chi, scheduler adapter proofs 3,424, command proofs 20,098,
+        # scheduler/adapter deploys 6,998, command pool deploy 20,131. The chain caps a
+        # transaction at 200,000 chi by default.
+        scheduler_control_chi = 20_000
+        scheduler_proof_chi = 50_000
+        scheduler_deploy_chi = 50_000
+        command_control_chi = 20_000
+        command_proof_chi = 100_000
+        command_deploy_chi = 100_000
 
         def runtime_datetime_from_utc(value: datetime) -> RuntimeDatetime:
             utc_value = value.astimezone(UTC).replace(tzinfo=None, microsecond=0)
@@ -7622,7 +7628,7 @@ class E2ERunner:
                     },
                     preferred_index=shielded_submission_index,
                     excluded_indices=shielded_excluded_indices,
-                    chi=25_000_000,
+                    chi=100_000,  # measured deploy: 17,570 chi
                     label="deploy-shielded-token",
                 )
                 ensure_positive_submission(
@@ -7912,7 +7918,7 @@ class E2ERunner:
                     {"amount": mint_amount, "to": alice.public_key},
                     preferred_index=shielded_submission_index,
                     excluded_indices=shielded_excluded_indices,
-                    chi=500_000,
+                    chi=20_000,
                     label="shielded-mint-public",
                 )
                 ensure_positive_submission(
@@ -8137,7 +8143,7 @@ class E2ERunner:
                         token_name,
                         "configure_vk",
                         {"action": action, "vk_id": vk_id},
-                        chi=500_000,
+                        chi=20_000,
                         mode="async",
                         wait_for_tx=True,
                     )

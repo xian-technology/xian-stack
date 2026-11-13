@@ -47,10 +47,11 @@ except ImportError:  # pragma: no cover - only used outside the workspace layout
     validate_contract_bundle = None
 
 
+# Fallbacks matching the xian-dex bundle budgets (rev-11 deploys: 11,118 / 10,128 / 1,727 chi).
 CORE_DEPLOY_CHI = {
-    "con_pairs": 300_000,
-    "con_dex": 200_000,
-    "con_dex_helper": 160_000,
+    "con_pairs": 50_000,
+    "con_dex": 50_000,
+    "con_dex_helper": 10_000,
 }
 TOKEN_DEPLOY_CHI = 160_000
 LP_TOKEN_DEPLOY_CHI = 160_000

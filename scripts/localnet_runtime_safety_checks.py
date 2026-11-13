@@ -13,6 +13,9 @@ from localnet_chain_checks import (
 )
 from localnet_e2e_support import short_hash
 
+# The probe calls and failed deploys below use at most ~1,500 chi on the rev-11 VM.
+SAFETY_TX_CHI = 10_000
+
 CHILD_SOURCE = """value = Variable()
 @construct
 def seed():
@@ -141,7 +144,7 @@ async def metadata_checks(runner, session, client, factory, child, probe):
             probe,
             field,
             {"target": child, "replacement": runner.founder_wallet.public_key},
-            chi=500_000,
+            chi=SAFETY_TX_CHI,
             wait_for_tx=True,
         )
         results[field] = failed_execution(
@@ -153,7 +156,7 @@ async def metadata_checks(runner, session, client, factory, child, probe):
             "@export\ndef ready():\n    return True\n"
         )
         attempt = await client.deploy_contract(
-            name=name, source=code, chi=500_000, wait_for_tx=True
+            name=name, source=code, chi=SAFETY_TX_CHI, wait_for_tx=True
         )
         results[f"constructor_{field}"] = failed_execution(
             attempt, f"constructor {field}", fragment="restricted to submission"
@@ -166,7 +169,7 @@ async def metadata_checks(runner, session, client, factory, child, probe):
         probe,
         "deploy_direct",
         {"name": direct_name, "code": CHILD_SOURCE},
-        chi=500_000,
+        chi=SAFETY_TX_CHI,
         wait_for_tx=True,
     )
     results["direct_deployment"] = failed_execution(
@@ -191,7 +194,7 @@ async def authority_checks(runner, session):
                 factory,
                 "spawn",
                 {"name": child, "code": CHILD_SOURCE},
-                chi=500_000,
+                chi=SAFETY_TX_CHI,
                 wait_for_tx=True,
             ),
             "owned child deployment",
@@ -411,7 +414,7 @@ async def invalid_registration_check(runner, session):
         before = {key: await query(session, runner.nodes[0], f"/get/{key}") for key in keys}
         validators_before = (await rpc(session, runner.nodes[0], "validators"))["validators"]
         submission = await client.send_tx(
-            name, "register", {"amount": fee}, chi=500_000, wait_for_tx=True
+            name, "register", {"amount": fee}, chi=SAFETY_TX_CHI, wait_for_tx=True
         )
         failure = failed_execution(
             submission,

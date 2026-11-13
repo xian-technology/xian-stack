@@ -87,6 +87,10 @@ async def check_state(runner, session, expected, label):
     )
 
 
+# The suite's largest contract deploys for ~8,400 chi on the rev-11 VM.
+SUITE_DEPLOY_CHI = 50_000
+
+
 async def deploy_suite(runner, session, names, accounts):
     transactions = {}
     arguments = constructors(accounts)
@@ -96,7 +100,7 @@ async def deploy_suite(runner, session, names, accounts):
                 name=names[role],
                 source=source,
                 args=arguments.get(role, {}),
-                chi=500_000,
+                chi=SUITE_DEPLOY_CHI,
                 wait_for_tx=True,
             )
             successful(submission, f"deploy-{role}")
