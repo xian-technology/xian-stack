@@ -19,6 +19,8 @@ hit_path = arm_path.with_suffix(".hit.json")
 original_commit = Driver.commit
 original_mirror = commit_module.try_write_latest_block
 candidate = None
+# Block-commit crash points; their arm names the block by one key and value.
+COMMIT_STAGES = {"before_persist", "after_persist", "before_response"}
 
 
 def crash(plan):
@@ -36,7 +38,11 @@ def commit(self):
     candidate = None
     if arm_path.exists():
         plan = json.loads(arm_path.read_text())
-        if dict(self.pending_items()).get(plan["key"]) == plan["value"]:
+        # A state-sync arm must not fire on (or break) the commits a node
+        # makes at startup, before any snapshot chunk arrives.
+        if plan["stage"] in COMMIT_STAGES and (
+            dict(self.pending_items()).get(plan["key"]) == plan["value"]
+        ):
             candidate = dict(plan)
             if plan["stage"] == "before_persist":
                 crash(candidate)
