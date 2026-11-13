@@ -13,6 +13,27 @@ import pytest
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/log_capture.py"
 
 
+# Generous bound for slow process start-up and teardown on a loaded host. Each
+# wait returns as soon as its condition holds, so only a real hang reaches it.
+WAIT_SECONDS = 30
+
+
+def wait_until(condition, timeout=WAIT_SECONDS):
+    deadline = time.monotonic() + timeout
+    while not condition():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
+    return True
+
+
+def process_gone(pid):
+    # A killed process lingers until the kernel finishes tearing it down, then as
+    # a zombie until launchd/init reaps it; either way it can no longer run.
+    result = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+    return not result.stdout.strip() or result.stdout.strip().startswith("Z")
+
+
 def load_capture():
     spec = importlib.util.spec_from_file_location("capture_test", SCRIPT)
     module = importlib.util.module_from_spec(spec)
@@ -61,7 +82,7 @@ def test_wrapper_preserves_child_status_and_stderr(tmp_path):
             "import sys; print('out'); print('err', file=sys.stderr); sys.exit(7)",
         ],
         start_new_session=True,
-        timeout=5,
+        timeout=WAIT_SECONDS,
     )
     assert result.returncode == 7
     assert "out" in path.read_text() and "err" in path.read_text()
@@ -80,14 +101,9 @@ def test_direct_term_stops_child_and_drains_shutdown(tmp_path):
         start_new_session=True,
     )
     try:
-        deadline = time.monotonic() + 4
-        while time.monotonic() < deadline:
-            if path.exists() and "ready" in path.read_text():
-                break
-            time.sleep(0.02)
-        assert "ready" in path.read_text()
+        assert wait_until(lambda: path.exists() and "ready" in path.read_text())
         process.send_signal(signal.SIGTERM)
-        assert process.wait(timeout=5) == -signal.SIGKILL
+        assert process.wait(timeout=WAIT_SECONDS) == -signal.SIGKILL
         assert "stopped" in path.read_text()
     finally:
         if process.poll() is None:
@@ -100,7 +116,7 @@ def test_missing_child_fails_without_leaking_arguments(tmp_path):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--log", str(path), "--", "/missing-program", "secret"],
         start_new_session=True,
-        timeout=5,
+        timeout=WAIT_SECONDS,
     )
     assert result.returncode != 0
     assert "FileNotFoundError" in path.read_text()
@@ -121,7 +137,7 @@ def test_idle_capture_expires_logs_without_another_write(tmp_path):
         [sys.executable, "-c", source, str(SCRIPT.parent), str(path)],
         start_new_session=True,
         check=True,
-        timeout=5,
+        timeout=WAIT_SECONDS,
     )
     assert path.read_bytes() == b""
     assert not load_capture().CaptureSink(path).archives()
@@ -137,7 +153,9 @@ def test_capture_failure_and_forced_stop_kill_stubborn_descendants(tmp_path, fai
         "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
         "grand=subprocess.Popen([sys.executable,'-c', "
         "'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)']); "
-        f"open({str(pids)!r},'w').write(json.dumps([os.getpid(),grand.pid])); "
+        # Publish both pids atomically: the test reads the file once it exists.
+        f"open({str(pids) + '.tmp'!r},'w').write(json.dumps([os.getpid(),grand.pid])); "
+        f"os.replace({str(pids) + '.tmp'!r},{str(pids)!r}); "
         "print('ready',flush=True); time.sleep(60)"
     )
     runner = tmp_path / "runner.py"
@@ -154,19 +172,13 @@ def test_capture_failure_and_forced_stop_kill_stubborn_descendants(tmp_path, fai
     )
     process = subprocess.Popen([sys.executable, str(runner)], start_new_session=True)
     try:
-        deadline = time.monotonic() + 4
-        while not pids.exists() and time.monotonic() < deadline:
-            time.sleep(0.02)
-        assert pids.exists()
+        assert wait_until(pids.exists)
         children = json.loads(pids.read_text())
         if failure == "forced_kill":
             os.killpg(process.pid, signal.SIGKILL)
-        assert process.wait(timeout=5) == -signal.SIGKILL
+        assert process.wait(timeout=WAIT_SECONDS) == -signal.SIGKILL
         for pid in children:
-            result = subprocess.run(
-                ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True
-            )
-            assert not result.stdout.strip() or result.stdout.strip().startswith("Z")
+            assert wait_until(lambda pid=pid: process_gone(pid))
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
@@ -186,14 +198,11 @@ def test_direct_term_after_pipe_eof_remains_bounded(tmp_path):
         start_new_session=True,
     )
     try:
-        deadline = time.monotonic() + 4
-        while not ready.exists() and time.monotonic() < deadline:
-            time.sleep(0.02)
-        assert ready.exists()
+        assert wait_until(ready.exists)
         # Let the wrapper observe EOF before signalling it.
         time.sleep(0.1)
         process.send_signal(signal.SIGTERM)
-        assert process.wait(timeout=9) == -signal.SIGKILL
+        assert process.wait(timeout=WAIT_SECONDS) == -signal.SIGKILL
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
