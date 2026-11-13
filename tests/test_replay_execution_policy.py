@@ -11,8 +11,8 @@ import localnet_replay_corpus as replay
 from localnet_e2e_support import E2EError
 
 POLICY = {
-    "execution_revision": "xvm-execution-10",
-    "gas_schedule": "xvm-gas-4",
+    "execution_revision": "xvm-execution-11",
+    "gas_schedule": "xvm-gas-5",
     "bytecode_version": "xvm-2",
     "set_codec": "xian-set-1",
     "compiler_admission_revision": "xian-admission-2",
@@ -58,10 +58,16 @@ def test_incompatible_corpus_is_rejected_before_extraction_or_output_mutation(tm
 
 @pytest.mark.parametrize(
     "revision, gas_schedule",
-    [("xvm-execution-7", "xvm-gas-3"), ("xvm-execution-9", "xvm-gas-3")],
+    [
+        ("xvm-execution-7", "xvm-gas-3"),
+        ("xvm-execution-9", "xvm-gas-3"),
+        ("xvm-execution-10", "xvm-gas-4"),
+    ],
 )
 def test_previous_revision_corpus_requires_its_matching_image_policy(revision, gas_schedule):
-    previous = {key: POLICY[key] for key in CORE_POLICY_KEYS} | {
+    # Revision 10 and later also persist the admission revisions.
+    keys = POLICY if revision == "xvm-execution-10" else CORE_POLICY_KEYS
+    previous = {key: POLICY[key] for key in keys} | {
         "execution_revision": revision,
         "gas_schedule": gas_schedule,
     }

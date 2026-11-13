@@ -52,8 +52,9 @@ async def inspect_replay_image(image):
     return {"image_id": image_id.strip(), "execution_policy": json.loads(policy)}
 
 
-# Every revision persists these; xvm-execution-10 adds compiler and transaction
-# admission revisions, which must then match the replay image as well.
+# Every revision persists these; xvm-execution-10 and later (the current
+# xvm-execution-11) add compiler and transaction admission revisions, which must
+# then match the replay image as well.
 CORE_EXECUTION_POLICY_KEYS = frozenset(
     {"execution_revision", "gas_schedule", "bytecode_version", "set_codec"}
 )
