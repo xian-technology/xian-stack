@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -29,6 +30,19 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertRegex(build["s6_overlay_noarch_sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(build["s6_overlay_x86_64_sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(build["s6_overlay_aarch64_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_dockerfile_rust_image_matches_the_manifest_and_minimum_toolchain(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        manifest = load_manifest(root / "release-manifest.json")
+        dockerfile = (root / "docker" / "xian-node.Dockerfile").read_text()
+        default = re.search(r"^ARG RUST_IMAGE=(\S+)$", dockerfile, re.MULTILINE)
+        self.assertIsNotNone(default)
+        self.assertEqual(default.group(1), manifest["build"]["rust_image"])
+        # xian-contracting's native crates declare rust-version 1.98: older
+        # toolchains strip macOS libraries that macOS 27 refuses to load.
+        version = re.match(r"rust:(\d+)\.(\d+)\.\d+-", manifest["build"]["rust_image"])
+        self.assertIsNotNone(version)
+        self.assertGreaterEqual((int(version.group(1)), int(version.group(2))), (1, 98))
 
     def test_flatten_outputs_exports_new_build_fields(self) -> None:
         manifest = load_manifest(Path(__file__).resolve().parents[1] / "release-manifest.json")
