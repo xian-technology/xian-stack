@@ -151,7 +151,6 @@ Higher-level harnesses:
 ```bash
 make localnet-protocol-safety        # 5-validator protocol safety harness
 make localnet-e2e                    # layered 5-validator e2e harness
-make localnet-parallel-e2e                 # same harness with lower parallel-execution batching
 make localnet-vm-tps-bench           # tuned VM throughput sweep
 make release-safety                  # full release-grade safety gate
 ```
@@ -243,10 +242,9 @@ Use the smallest recipe that proves the behavior you care about:
 | Single local node with optional services | `python3 ./scripts/backend.py start ...` | Compose wiring, node health, dashboard / monitoring / BDS sidecars |
 | Clean multi-node topology | `LOCALNET_NODES=5 make localnet-init && make localnet-up` | Validator topology, genesis distribution, peer connectivity |
 | Workload smoke on a running localnet | `make localnet-workload` | Basic contract submission and transaction flow |
-| Full 5-validator e2e harness | `make localnet-e2e` | Layered cross-repo behavior, DEX, governance, crash recovery, quorum partitions, fresh-node sync, execution parity, accounting, resource limits, and block replay |
+| Full 5-validator e2e harness | `make localnet-e2e` | Layered cross-repo behavior, DEX, governance, crash recovery, quorum partitions, fresh-node sync, accounting, resource limits, and block replay |
 | IntentKit x402 buyer phase | `LOCALNET_E2E_INTENTKIT_X402=1 make localnet-e2e` | Adds a live IntentKit Xian-native x402 payment through a local seller/facilitator |
 | Focused IntentKit integration | `make localnet-e2e LOCALNET_E2E_SUITE=intentkit-x402 LOCALNET_E2E_INTENTKIT_X402=1` | Five-node bootstrap, health, compiler and local VM parity, core x402 and required IntentKit payment checks |
-| Parallel 5-validator harness | `make localnet-parallel-e2e` | The same e2e program with lower parallel-execution batching |
 | Protocol safety harness | `make localnet-protocol-safety` | Validator set, delegation, evidence, governance, and state-patch behavior |
 | Release gate | `make release-safety` | Repo validation plus the release-grade localnet gates |
 

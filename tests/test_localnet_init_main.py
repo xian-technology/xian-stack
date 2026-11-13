@@ -70,16 +70,7 @@ def test_default_profile_summary(run_init, tmp_path):
         "app_log_max_file_mb": 50,
         "app_log_max_total_mb": 250,
     }
-    assert set(summary["parallel_execution"]) == {
-        "enabled",
-        "workers",
-        "min_transactions",
-        "max_speculative_waves",
-        "min_wave_acceptance_ratio",
-        "low_acceptance_min_wave_size",
-        "warm_workers",
-        "access_estimates_enabled",
-    }
+    assert "parallel_execution" not in summary
     nodes = summary["nodes"]
     assert [n["moniker"] for n in nodes] == ["node-0", "node-1", "node-2", "node-3"]
     assert [n["host_rpc_port"] for n in nodes] == [26657, 26757, 26857, 26957]

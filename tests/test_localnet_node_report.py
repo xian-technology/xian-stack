@@ -20,7 +20,7 @@ METRICS_TEXT = "\n".join(
         "# TYPE xian_node_info gauge",
         (
             'xian_node_info{chain_id="xian-local",execution_mode="xian_vm_v2",'
-            'bds_enabled="false",parallel_execution_enabled="false",'
+            'bds_enabled="false",'
             'tx_fees_enabled="true"} 1'
         ),
     ]

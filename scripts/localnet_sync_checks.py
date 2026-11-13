@@ -129,12 +129,6 @@ print(json.dumps(m.export_snapshot()))
         runtime = home / "config/xian.toml"
         text = runtime.read_text()
         text = re.sub(r"^bds_enabled\s*=.*$", "bds_enabled = false", text, flags=re.MULTILINE)
-        text = re.sub(
-            r"^parallel_execution_enabled\s*=.*$",
-            "parallel_execution_enabled = false",
-            text,
-            flags=re.MULTILINE,
-        )
         write_config(runtime, text)
         container = f"xian-e2e-{runner.run_id.lower()}-" + mode.replace("_", "-")
         try:

@@ -29,19 +29,10 @@ from xian.genesis_builder import (  # noqa: E402
     build_local_network_genesis,
 )
 from xian.node_setup import (  # noqa: E402
-    DEFAULT_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED,
-    DEFAULT_PARALLEL_EXECUTION_ENABLED,
-    DEFAULT_PARALLEL_EXECUTION_LOW_ACCEPTANCE_MIN_WAVE_SIZE,
-    DEFAULT_PARALLEL_EXECUTION_MAX_SPECULATIVE_WAVES,
-    DEFAULT_PARALLEL_EXECUTION_MIN_TRANSACTIONS,
-    DEFAULT_PARALLEL_EXECUTION_MIN_WAVE_ACCEPTANCE_RATIO,
-    DEFAULT_PARALLEL_EXECUTION_WARM_WORKERS,
-    DEFAULT_PARALLEL_EXECUTION_WORKERS,
     AppLoggingOptions,
     BdsOptions,
     MetricsOptions,
     NodeConfigOptions,
-    ParallelExecutionOptions,
     build_node_key,
     generate_validator_material,
     materialize_cometbft_home,
@@ -112,13 +103,6 @@ def env_int(name: str, default: int) -> int:
     if raw is None:
         return default
     return int(raw)
-
-
-def env_float(name: str, default: float) -> float:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return float(raw)
 
 
 def env_str(name: str, default: str) -> str:
@@ -224,14 +208,6 @@ def write_node_config(
     mempool_cache_size: int | None,
     bds_enabled: bool,
     topology: str,
-    parallel_execution_enabled: bool,
-    parallel_execution_workers: int,
-    parallel_execution_min_transactions: int,
-    parallel_execution_max_speculative_waves: int,
-    parallel_execution_min_wave_acceptance_ratio: float,
-    parallel_execution_low_acceptance_min_wave_size: int,
-    parallel_execution_warm_workers: bool,
-    parallel_execution_access_estimates_enabled: bool,
     transaction_trace_logging: bool,
     app_log_level: str,
     app_log_json: bool,
@@ -268,16 +244,6 @@ def write_node_config(
                 retention_days=app_log_retention_days,
                 max_file_mb=app_log_max_file_mb,
                 max_total_mb=app_log_max_total_mb,
-            ),
-            parallel_execution=ParallelExecutionOptions(
-                enabled=parallel_execution_enabled,
-                workers=parallel_execution_workers,
-                min_transactions=parallel_execution_min_transactions,
-                max_speculative_waves=parallel_execution_max_speculative_waves,
-                min_wave_acceptance_ratio=(parallel_execution_min_wave_acceptance_ratio),
-                low_acceptance_min_wave_size=(parallel_execution_low_acceptance_min_wave_size),
-                warm_workers=parallel_execution_warm_workers,
-                access_estimates_enabled=(parallel_execution_access_estimates_enabled),
             ),
             bds=BdsOptions(
                 host=LOCALNET_POSTGRES_SERVICE if bds_enabled else "",
@@ -433,44 +399,6 @@ def apply_port_offset(port_offset: int) -> None:
     BASE_XIAN_METRICS_PORT = 9108 + port_offset
 
 
-def parallel_execution_settings() -> dict:
-    """write_node_config keyword arguments, in summary order."""
-    return {
-        "parallel_execution_enabled": env_bool(
-            "XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED",
-            DEFAULT_PARALLEL_EXECUTION_ENABLED,
-        ),
-        "parallel_execution_workers": env_int(
-            "XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS",
-            DEFAULT_PARALLEL_EXECUTION_WORKERS,
-        ),
-        "parallel_execution_min_transactions": env_int(
-            "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS",
-            DEFAULT_PARALLEL_EXECUTION_MIN_TRANSACTIONS,
-        ),
-        "parallel_execution_max_speculative_waves": env_int(
-            "XIAN_LOCALNET_PARALLEL_EXECUTION_MAX_SPECULATIVE_WAVES",
-            DEFAULT_PARALLEL_EXECUTION_MAX_SPECULATIVE_WAVES,
-        ),
-        "parallel_execution_min_wave_acceptance_ratio": env_float(
-            "XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_WAVE_ACCEPTANCE_RATIO",
-            DEFAULT_PARALLEL_EXECUTION_MIN_WAVE_ACCEPTANCE_RATIO,
-        ),
-        "parallel_execution_low_acceptance_min_wave_size": env_int(
-            "XIAN_LOCALNET_PARALLEL_EXECUTION_LOW_ACCEPTANCE_MIN_WAVE_SIZE",
-            DEFAULT_PARALLEL_EXECUTION_LOW_ACCEPTANCE_MIN_WAVE_SIZE,
-        ),
-        "parallel_execution_warm_workers": env_bool(
-            "XIAN_LOCALNET_PARALLEL_EXECUTION_WARM_WORKERS",
-            DEFAULT_PARALLEL_EXECUTION_WARM_WORKERS,
-        ),
-        "parallel_execution_access_estimates_enabled": env_bool(
-            "XIAN_LOCALNET_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED",
-            DEFAULT_PARALLEL_EXECUTION_ACCESS_ESTIMATES_ENABLED,
-        ),
-    }
-
-
 def logging_settings() -> dict:
     """write_node_config keyword arguments, in summary order."""
     return {
@@ -579,7 +507,6 @@ def main():
     bds_node_index = env_int("XIAN_LOCALNET_BDS_NODE_INDEX", 0)
     if bds_enabled and not 0 <= bds_node_index < args.nodes:
         fail("XIAN_LOCALNET_BDS_NODE_INDEX must point to an existing node")
-    parallel = parallel_execution_settings()
     log_settings = logging_settings()
     # Localnet matches the in-process dev client (zk on); real-network genesis
     # stays explicit opt-in via configure_node --runtime-feature-zk.
@@ -619,7 +546,6 @@ def main():
             **consensus,
             bds_enabled=bds_enabled and node["index"] == bds_node_index,
             topology=args.topology,
-            **parallel,
             **log_settings,
         )
         (LOCALNET_DIR / node["moniker"] / "tmp").mkdir(parents=True, exist_ok=True)
@@ -663,7 +589,6 @@ def main():
             for n in nodes
         ],
         "founder_key": nodes[0]["validator_material"]["validator_private_key_hex"],
-        "parallel_execution": strip_prefix(parallel, "parallel_execution_"),
         "profiling": {
             "enabled": profiling_enabled,
             "recent_blocks": profiling_recent_blocks,

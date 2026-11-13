@@ -7,7 +7,6 @@ import base64
 import hashlib
 import json
 import os
-import re
 import subprocess
 import tempfile
 import time
@@ -279,19 +278,6 @@ def write_config(path, text):
 
 def config_path(node):
     return STACK / ".localnet" / node.moniker / ".cometbft" / "config" / "xian.toml"
-
-
-def edit_toml(path, **values):
-    original = path.read_text()
-    updated = original
-    for key, value in values.items():
-        encoded = json.dumps(value)
-        updated, count = re.subn(
-            rf"^{re.escape(key)}\s*=.*$", f"{key} = {encoded}", updated, flags=re.MULTILINE
-        )
-        require(count == 1, f"Expected exactly one {key} setting in {path}")
-    write_config(path, updated)
-    return original
 
 
 PROBE_SOURCE = """counts = Hash(default_value=0)

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-from test_localnet_parallel_phase import localnet_e2e as e2e
+from test_localnet_block_ordering_phase import localnet_e2e as e2e
 
 
 def runner(tmp_path, monkeypatch, *options):
@@ -85,7 +85,7 @@ def test_required_shielded_resume_rejects_missing_failed_or_skipped_history(
         monkeypatch,
         "--require-shielded",
         "--start-phase",
-        "16-parallel-execution",
+        "16-block-ordering",
         "--resume-dir",
         str(tmp_path),
     )
@@ -114,8 +114,8 @@ def test_required_shielded_resume_rejects_missing_failed_or_skipped_history(
 @pytest.mark.parametrize(
     ("required", "skipped", "start_phase"),
     [
-        (True, False, "16-parallel-execution"),
-        (False, True, "16-parallel-execution"),
+        (True, False, "16-block-ordering"),
+        (False, True, "16-block-ordering"),
         (True, True, "15-shielded-note-token"),
     ],
 )
@@ -150,7 +150,7 @@ def test_release_wrapper_requires_shielded_and_preserves_failure(tmp_path, e2e_e
             "if Path(sys.argv[0]).name == 'make':\n"
             "    with open(os.environ['RELEASE_TEST_CALLS'], 'a') as output:\n"
             "        output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
-            "    if 'localnet-parallel-e2e' in sys.argv:\n"
+            "    if 'localnet-e2e' in sys.argv:\n"
             "        sys.exit(int(os.environ['RELEASE_TEST_EXIT']))\n"
         )
         binary.chmod(0o755)
@@ -183,6 +183,6 @@ def test_release_wrapper_requires_shielded_and_preserves_failure(tmp_path, e2e_e
     )
     assert result.returncode == e2e_exit, result.stderr
     assert [json.loads(line) for line in calls.read_text().splitlines()] == [
-        ["localnet-parallel-e2e", "LOCALNET_E2E_REQUIRE_SHIELDED=1"],
+        ["localnet-e2e", "LOCALNET_E2E_REQUIRE_SHIELDED=1"],
         ["localnet-down"],
     ]

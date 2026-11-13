@@ -1414,112 +1414,6 @@ async def query_state_from_all_nodes(
     return {node.moniker: value for node, value in zip(nodes, values, strict=True)}
 
 
-async def perf_status_from_all_nodes(
-    session: aiohttp.ClientSession,
-    nodes: list[LocalnetNode],
-) -> dict[str, dict[str, Any]]:
-    payloads = await asyncio.gather(
-        *(fetch_abci_query(session, node.rpc_url, "/perf_status") for node in nodes)
-    )
-    return {node.moniker: payload for node, payload in zip(nodes, payloads, strict=True)}
-
-
-def recent_blocks_in_window(
-    perf_status: dict[str, Any],
-    *,
-    min_height: int | None,
-    max_height: int | None,
-) -> list[dict[str, Any]]:
-    recent_blocks = perf_status.get("recent_blocks") or []
-    blocks = []
-    for block in recent_blocks:
-        try:
-            height = int(block["height"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if min_height is not None and height < min_height:
-            continue
-        if max_height is not None and height > max_height:
-            continue
-        blocks.append(block)
-    return blocks
-
-
-def metadata_int(metadata: dict[str, Any], key: str) -> int:
-    try:
-        return int(metadata.get(key, 0) or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def parallel_metadata_has_known_speculation(metadata: dict[str, Any]) -> bool:
-    return (
-        bool(metadata.get("parallel_enabled"))
-        and metadata_int(metadata, "parallel_estimated_known_transactions") > 0
-        and metadata_int(metadata, "parallel_estimated_unknown_transactions") == 0
-        and metadata_int(metadata, "parallel_estimated_parallelizable_transactions") > 0
-        and metadata_int(metadata, "parallel_planned_parallelizable_transactions") > 0
-        and metadata_int(metadata, "parallel_speculative_wave_count") > 0
-        and metadata_int(metadata, "parallel_speculative_accepted") > 0
-    )
-
-
-def parallel_metadata_has_unknown_prefilter(metadata: dict[str, Any]) -> bool:
-    return (
-        bool(metadata.get("parallel_enabled"))
-        and metadata_int(metadata, "parallel_estimated_unknown_transactions") > 0
-        and metadata_int(metadata, "parallel_serial_prefiltered") > 0
-        and metadata_int(metadata, "parallel_speculative_wave_count") == 0
-        and metadata_int(metadata, "parallel_speculative_accepted") == 0
-    )
-
-
-def parallel_metadata_has_legacy_speculation(metadata: dict[str, Any]) -> bool:
-    return (
-        bool(metadata.get("parallel_enabled"))
-        and metadata_int(metadata, "parallel_speculative_accepted") > 0
-        and metadata_int(metadata, "parallel_planned_parallelizable_transactions") > 0
-    )
-
-
-def parallel_custom_probe_batch_expectations(
-    *,
-    access_estimates_enabled: bool,
-) -> list[tuple[str, Any]]:
-    if access_estimates_enabled:
-        return [
-            ("non_conflicting", parallel_metadata_has_unknown_prefilter),
-            ("same_sender", parallel_metadata_has_unknown_prefilter),
-            ("read_after_write", parallel_metadata_has_unknown_prefilter),
-            ("prefix_scan", parallel_metadata_has_unknown_prefilter),
-        ]
-
-    return [
-        ("non_conflicting", parallel_metadata_has_legacy_speculation),
-        (
-            "same_sender",
-            lambda metadata: (
-                bool(metadata.get("parallel_enabled"))
-                and metadata_int(metadata, "parallel_serial_prefiltered") > 0
-            ),
-        ),
-        (
-            "read_after_write",
-            lambda metadata: (
-                bool(metadata.get("parallel_enabled"))
-                and metadata_int(metadata, "parallel_speculative_wave_count") > 1
-            ),
-        ),
-        (
-            "prefix_scan",
-            lambda metadata: (
-                bool(metadata.get("parallel_enabled"))
-                and metadata_int(metadata, "parallel_speculative_wave_count") > 1
-            ),
-        ),
-    ]
-
-
 async def wait_for_uniform_node_state(
     session: aiohttp.ClientSession,
     nodes: list[LocalnetNode],
@@ -5308,63 +5202,6 @@ class E2ERunner:
         if payload is None:
             raise E2EError(f"could not parse workload output for {scenario}")
         return payload
-
-    async def wait_for_parallel_metadata_match(
-        self,
-        session: aiohttp.ClientSession,
-        *,
-        label: str,
-        min_height: int | None,
-        max_height: int | None,
-        predicate,
-        timeout_seconds: float = 30.0,
-    ) -> dict[str, Any]:
-        deadline = time.monotonic() + timeout_seconds
-        last_window: dict[str, list[dict[str, Any]]] = {}
-
-        while time.monotonic() < deadline:
-            statuses = await perf_status_from_all_nodes(session, self.nodes)
-            matches: dict[str, dict[str, Any]] = {}
-            last_window = {}
-
-            for node in self.nodes:
-                node_status = statuses[node.moniker]
-                window = recent_blocks_in_window(
-                    node_status,
-                    min_height=min_height,
-                    max_height=max_height,
-                )
-                last_window[node.moniker] = [
-                    {
-                        "height": block.get("height"),
-                        "metadata": normalize_value(block.get("metadata", {})),
-                    }
-                    for block in window
-                ]
-                matched_block = next(
-                    (block for block in window if predicate(block.get("metadata") or {})),
-                    None,
-                )
-                if matched_block is not None:
-                    matches[node.moniker] = {
-                        "height": int(matched_block["height"]),
-                        "metadata": normalize_value(matched_block.get("metadata", {})),
-                    }
-
-            if len(matches) == len(self.nodes):
-                return {
-                    "label": label,
-                    "min_height": min_height,
-                    "max_height": max_height,
-                    "matches": matches,
-                }
-
-            await asyncio.sleep(0.5)
-
-        raise E2EError(
-            f"{label}: did not observe expected parallel metadata in perf window; "
-            f"last={normalize_value(last_window)}"
-        )
 
     async def burst_phase(self) -> dict[str, Any]:
         payload = await self.run_localnet_workload(
@@ -10099,22 +9936,18 @@ class E2ERunner:
             "alice_public_after_exact_withdraw": alice_public_after_exact,
         }
 
-    async def parallel_execution_phase(
+    async def block_ordering_phase(
         self,
         session: aiohttp.ClientSession,
     ) -> dict[str, Any]:
-        custom_payload = await self.run_localnet_workload(
+        """Same-block ordering probe: non-conflicting writers, one sender's
+        nonce sequence, read-after-write and prefix scans in one block."""
+        payload = await self.run_localnet_workload(
             scenario="parallel_probe",
             seed_label=f"{self.run_id}:parallel",
         )
-        custom_summary = custom_payload["scenario_summary"]
-        parallel_config = normalize_value(self.network.get("parallel_execution", {}))
-        expected_enabled = bool(parallel_config.get("enabled"))
-        expected_workers = int(parallel_config.get("workers", 0) or 0)
-        expected_min_transactions = int(parallel_config.get("min_transactions", 8) or 8)
-        effective_parallel_enabled = expected_enabled and expected_workers > 0
-        overall_window = custom_summary.get("overall_height_window", {})
-        max_height = overall_window.get("max_height")
+        summary = payload["scenario_summary"]
+        max_height = summary.get("overall_height_window", {}).get("max_height")
         if max_height is not None:
             await asyncio.gather(
                 *(
@@ -10130,193 +9963,7 @@ class E2ERunner:
                     for node in self.nodes
                 )
             )
-
-        perf_statuses = await perf_status_from_all_nodes(session, self.nodes)
-        perf_config = {}
-        observed_access_estimates_enabled: set[bool] = set()
-        expected_perf_config: dict[str, Any] = {
-            "parallel_execution_enabled": expected_enabled,
-            "parallel_execution_workers": expected_workers,
-            "parallel_execution_min_transactions": expected_min_transactions,
-        }
-        optional_expected_fields = {
-            "max_speculative_waves": (
-                "parallel_execution_max_speculative_waves",
-                int,
-            ),
-            "min_wave_acceptance_ratio": (
-                "parallel_execution_min_wave_acceptance_ratio",
-                float,
-            ),
-            "low_acceptance_min_wave_size": (
-                "parallel_execution_low_acceptance_min_wave_size",
-                int,
-            ),
-            "access_estimates_enabled": (
-                "parallel_execution_access_estimates_enabled",
-                bool,
-            ),
-        }
-        for config_key, (perf_key, coerce) in optional_expected_fields.items():
-            if config_key in parallel_config:
-                expected_perf_config[perf_key] = coerce(parallel_config[config_key])
-
-        for node in self.nodes:
-            status = perf_statuses[node.moniker]
-            access_estimates_enabled = status.get("parallel_execution_access_estimates_enabled")
-            node_config = {
-                "parallel_execution_enabled": bool(status.get("parallel_execution_enabled")),
-                "parallel_execution_workers": int(status.get("parallel_execution_workers", 0) or 0),
-                "parallel_execution_min_transactions": int(
-                    status.get("parallel_execution_min_transactions", 0) or 0
-                ),
-                "parallel_execution_max_speculative_waves": int(
-                    status.get("parallel_execution_max_speculative_waves", 0) or 0
-                ),
-                "parallel_execution_min_wave_acceptance_ratio": float(
-                    status.get("parallel_execution_min_wave_acceptance_ratio", 0.0) or 0.0
-                ),
-                "parallel_execution_low_acceptance_min_wave_size": int(
-                    status.get("parallel_execution_low_acceptance_min_wave_size", 0) or 0
-                ),
-                "parallel_execution_access_estimates_enabled": (
-                    None if access_estimates_enabled is None else bool(access_estimates_enabled)
-                ),
-            }
-            perf_config[node.moniker] = node_config
-            if access_estimates_enabled is not None:
-                observed_access_estimates_enabled.add(bool(access_estimates_enabled))
-            for perf_key, expected in expected_perf_config.items():
-                actual = node_config.get(perf_key)
-                if actual is None:
-                    continue
-                drifted = (
-                    abs(actual - expected) > 0.000001
-                    if isinstance(expected, float)
-                    else actual != expected
-                )
-                if drifted:
-                    raise E2EError(
-                        "parallel execution config drift detected on "
-                        f"{node.moniker}: {node_config} != {parallel_config}"
-                    )
-
-        if len(observed_access_estimates_enabled) > 1:
-            raise E2EError(
-                f"parallel execution access-estimate config differs across nodes: {perf_config}"
-            )
-        access_estimates_enabled = (
-            next(iter(observed_access_estimates_enabled))
-            if observed_access_estimates_enabled
-            else bool(parallel_config.get("access_estimates_enabled", True))
-        )
-
-        if not effective_parallel_enabled:
-            unexpected = {}
-            min_height = overall_window.get("min_height")
-            for node in self.nodes:
-                window = recent_blocks_in_window(
-                    perf_statuses[node.moniker],
-                    min_height=min_height,
-                    max_height=max_height,
-                )
-                matched = [
-                    {
-                        "height": int(block["height"]),
-                        "metadata": normalize_value(block.get("metadata", {})),
-                    }
-                    for block in window
-                    if bool((block.get("metadata") or {}).get("parallel_enabled"))
-                ]
-                if matched:
-                    unexpected[node.moniker] = matched
-            if unexpected:
-                raise E2EError(f"parallel execution metadata appeared while disabled: {unexpected}")
-            return {
-                "parallel_config": parallel_config,
-                "perf_config": perf_config,
-                "scenario_summary": custom_summary,
-                "custom_probe_summary": custom_summary,
-                "parallel_metadata": {
-                    "disabled": True,
-                    "reason": "parallel execution not effectively enabled",
-                },
-            }
-
-        batch_expectations = parallel_custom_probe_batch_expectations(
-            access_estimates_enabled=access_estimates_enabled,
-        )
-        custom_metadata_matches = {}
-        for batch_name, predicate in batch_expectations:
-            batch = custom_summary["batches"][batch_name]
-            custom_metadata_matches[batch_name] = await self.wait_for_parallel_metadata_match(
-                session,
-                label=f"parallel batch {batch_name}",
-                min_height=batch.get("min_height"),
-                max_height=batch.get("max_height"),
-                predicate=predicate,
-                timeout_seconds=min(self.args.rpc_timeout_seconds, 45.0),
-            )
-
-        known_transfer_payload = None
-        known_transfer_metadata = None
-        if access_estimates_enabled:
-            known_transfer_operations = max(expected_min_transactions * 8, 64)
-            known_transfer_payload = await self.run_localnet_workload(
-                scenario="transfer_fanout",
-                seed_label=f"{self.run_id}:parallel-known",
-                throughput_ops=known_transfer_operations,
-                wallet_count=known_transfer_operations,
-                submit_workers=min(known_transfer_operations, 128),
-                broadcast_mode="checktx",
-            )
-            known_transfer_summary = known_transfer_payload["scenario_summary"]
-            known_transfer_window = known_transfer_summary.get("committed_window") or {}
-            if (
-                known_transfer_window.get("min_height") is None
-                or known_transfer_window.get("max_height") is None
-            ):
-                raise E2EError("parallel transfer_fanout did not report a committed height window")
-            known_transfer_max_height = known_transfer_window.get("max_height")
-            if known_transfer_max_height is not None:
-                await asyncio.gather(
-                    *(
-                        wait_for_height(
-                            session,
-                            node.rpc_url,
-                            int(known_transfer_max_height),
-                            timeout_seconds=min(
-                                self.args.rpc_timeout_seconds,
-                                45.0,
-                            ),
-                        )
-                        for node in self.nodes
-                    )
-                )
-            known_transfer_metadata = await self.wait_for_parallel_metadata_match(
-                session,
-                label="parallel known transfer fanout",
-                min_height=known_transfer_window.get("min_height"),
-                max_height=known_transfer_window.get("max_height"),
-                predicate=parallel_metadata_has_known_speculation,
-                timeout_seconds=min(self.args.rpc_timeout_seconds, 45.0),
-            )
-
-        return {
-            "parallel_config": parallel_config,
-            "perf_config": perf_config,
-            "scenario_summary": custom_summary,
-            "custom_probe_summary": custom_summary,
-            "known_transfer_summary": (
-                None
-                if known_transfer_payload is None
-                else known_transfer_payload["scenario_summary"]
-            ),
-            "parallel_metadata": {
-                "custom_probe": custom_metadata_matches,
-                "known_transfer_fanout": known_transfer_metadata,
-            },
-        }
+        return {"scenario_summary": summary}
 
     async def collect_node_report_snapshot(
         self,
@@ -10766,11 +10413,6 @@ class E2ERunner:
         from localnet_signature_checks import signature_phase
 
         return await signature_phase(self, session)
-
-    async def mixed_execution_phase(self, session):
-        from localnet_execution_checks import mixed_phase
-
-        return await mixed_phase(self, session)
 
     async def nonce_recovery_phase(self, session):
         from localnet_execution_checks import nonce_phase

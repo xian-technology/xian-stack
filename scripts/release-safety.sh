@@ -81,7 +81,7 @@ if [[ "${repo_validation}" == "1" ]]; then
   run_step "Validate xian-stack repo" ./scripts/validate-stack.sh
 fi
 
-run_step "Run localnet parallel e2e" make localnet-parallel-e2e LOCALNET_E2E_REQUIRE_SHIELDED=1
+run_step "Run localnet e2e" make localnet-e2e LOCALNET_E2E_REQUIRE_SHIELDED=1
 
 if [[ "${vm_report}" == "1" ]]; then
   run_step "Collect localnet node report" make localnet-node-report

@@ -12,7 +12,6 @@ DEFAULT_METRICS = (
     "process_proposal",
     "finalize_block",
     "finalize_decode",
-    "finalize_parallel",
     "finalize_execute",
     "finalize_result_assembly",
     "finalize_commit_prepare",
@@ -94,7 +93,6 @@ def summarize_recent_blocks(
                 "tx_execute_ms": metrics.get("tx_execute", {}).get("total_ms"),
                 "tx_process_output_ms": metrics.get("tx_process_output", {}).get("total_ms"),
                 "finalize_decode_ms": metrics.get("finalize_decode", {}).get("total_ms"),
-                "finalize_parallel_ms": metrics.get("finalize_parallel", {}).get("total_ms"),
                 "finalize_execute_ms": metrics.get("finalize_execute", {}).get("total_ms"),
                 "finalize_result_assembly_ms": metrics.get("finalize_result_assembly", {}).get(
                     "total_ms"
@@ -104,8 +102,6 @@ def summarize_recent_blocks(
                 ),
                 "finalize_bds_enqueue_ms": metrics.get("finalize_bds_enqueue", {}).get("total_ms"),
                 "finalize_fingerprint_ms": metrics.get("finalize_fingerprint", {}).get("total_ms"),
-                "parallel_enabled": block.get("metadata", {}).get("parallel_enabled"),
-                "parallel_worker_count": block.get("metadata", {}).get("parallel_worker_count"),
             }
         )
     return summary

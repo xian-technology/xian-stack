@@ -256,9 +256,6 @@ def make_localnet_env(args: argparse.Namespace) -> dict[str, str]:
     env["XIAN_LOCALNET_TRANSACTION_TRACE_LOGGING"] = "0"
     env["LOCALNET_NODES"] = str(args.nodes)
     env["XIAN_LOCALNET_TOPOLOGY"] = args.topology
-    env["XIAN_LOCALNET_PARALLEL_EXECUTION_ENABLED"] = "0"
-    env["XIAN_LOCALNET_PARALLEL_EXECUTION_WORKERS"] = "0"
-    env["XIAN_LOCALNET_PARALLEL_EXECUTION_MIN_TRANSACTIONS"] = "8"
     return env
 
 

@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from localnet_e2e_phases import bind_phase_sequence, phase_names
-from test_localnet_parallel_phase import localnet_e2e as e2e
+from test_localnet_block_ordering_phase import localnet_e2e as e2e
 
 EXPECTED = [
     "00-bootstrap",
@@ -35,7 +35,7 @@ def test_integration_suite_runs_only_prerequisites_and_payment_checks():
         asyncio.run(operation())
     for method in vars(runner).values():
         method.assert_awaited_once_with(session)
-    assert len(phase_names()) == 36
+    assert len(phase_names()) == 35
 
 
 @pytest.mark.parametrize("suite", ["unknown", ""])

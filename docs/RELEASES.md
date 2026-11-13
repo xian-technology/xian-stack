@@ -225,7 +225,7 @@ The image workflow:
    - `xian-contracting/scripts/validate-release.sh`
    - `xian-abci/scripts/validate-release.sh`
    - `xian-stack/scripts/validate-stack.sh`
-   - `make localnet-parallel-e2e`
+   - `make localnet-e2e LOCALNET_E2E_REQUIRE_SHIELDED=1`
    - `make localnet-node-report`
    - `make localnet-protocol-safety`
 3. checks out the exact pinned component refs

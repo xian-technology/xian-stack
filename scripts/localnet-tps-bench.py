@@ -21,7 +21,6 @@ ARTIFACTS_DIR = STACK_DIR / ".artifacts" / "tps-bench"
 WORKLOAD_PYTHON = os.environ.get("XIAN_STACK_PYTHON", "3.14")
 PERF_GLOBAL_METRICS = (
     "finalize_block",
-    "finalize_parallel",
     "finalize_execute",
     "finalize_result_assembly",
     "finalize_commit_prepare",
@@ -32,7 +31,6 @@ PERF_GLOBAL_METRICS = (
 )
 PERF_BLOCK_METRICS = (
     "finalize_decode",
-    "finalize_parallel",
     "finalize_execute",
     "finalize_result_assembly",
     "finalize_evidence",

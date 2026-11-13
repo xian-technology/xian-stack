@@ -93,11 +93,10 @@ def test_live_agreement_rejects_result_divergence_even_when_app_hashes_match():
 def test_all_lifecycle_phases_are_in_the_regular_e2e_registry():
     from localnet_e2e_phases import phase_names
 
-    assert phase_names()[-8:] == [
+    assert phase_names()[-7:] == [
         "19-crash-recovery",
         "20-quorum-recovery",
         "21-fresh-node-sync",
-        "22-mixed-execution",
         "23-nonce-recovery",
         "24-accounting-invariants",
         "25-block-limits",

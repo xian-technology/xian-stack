@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from localnet_json_logging import execution_hash, trace_record
-from test_localnet_parallel_phase import localnet_e2e as e2e
+from test_localnet_block_ordering_phase import localnet_e2e as e2e
 
 TX = "a" * 64
 

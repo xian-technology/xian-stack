@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from test_localnet_parallel_phase import localnet_e2e as e2e
+from test_localnet_block_ordering_phase import localnet_e2e as e2e
 
 
 @pytest.fixture

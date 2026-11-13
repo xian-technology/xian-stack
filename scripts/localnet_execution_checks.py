@@ -1,4 +1,4 @@
-"""Live execution parity, nonce lifecycle, and block/transaction boundary checks."""
+"""Live nonce lifecycle and block/transaction boundary checks."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from localnet_chain_checks import (
     broadcast,
     config_path,
     deploy,
-    edit_toml,
     execution,
     prepared,
     query,
@@ -27,65 +26,6 @@ from localnet_chain_checks import (
 )
 from localnet_recovery_checks import partition
 from localnet_sync_checks import set_config
-
-
-async def mixed_phase(runner, session):
-    serial = runner.nodes[4]
-    originals = {}
-    for node in runner.nodes:
-        path = config_path(node)
-        originals[path] = edit_toml(
-            path,
-            parallel_execution_enabled=node != serial,
-            parallel_execution_min_transactions=4,
-        )
-    signers = [wallet(runner, f"mixed-{i}") for i in range(24)]
-    recipients = [wallet(runner, f"mixed-recipient-{i}") for i in range(24)]
-    try:
-        await runner.restart_localnet_and_wait_ready(session)
-        await runner.fund_wallets(session, signers, amount=1000)
-        txs = [
-            prepared(
-                runner, w, 0, "currency", "transfer", {"amount": 1, "to": recipient.public_key}
-            )
-            for w, recipient in zip(signers, recipients, strict=True)
-        ]
-        async with partition(runner, runner.nodes[3:]):
-            await asyncio.sleep(3)
-            for tx in txs:
-                await broadcast(session, runner.nodes[0], tx)
-        receipts = [await receipt(session, runner.nodes[0], tx) for tx in txs]
-        heights = {int(r["height"]) for r in receipts}
-        await agreement(session, runner.nodes, window=max(heights) - min(heights) + 2)
-        metadata = {}
-        for node in runner.nodes:
-            status = await query(session, node, "/perf_status")
-            blocks = [b for b in status["recent_blocks"] if int(b["height"]) in heights]
-            require(
-                len(blocks) == len(heights), f"Missing mixed-execution profile on {node.moniker}"
-            )
-            accepted = sum(b["metadata"].get("parallel_speculative_accepted", 0) for b in blocks)
-            require(
-                accepted == 0 if node == serial else accepted > 0,
-                f"Expected execution path was not exercised on {node.moniker}: {accepted}",
-            )
-            metadata[node.moniker] = {
-                "speculative_accepted": accepted,
-                "configured_parallel": node != serial,
-            }
-        for recipient in recipients:
-            amount = await query(session, serial, f"/get/currency.balances:{recipient.public_key}")
-            require(amount == 1, "Mixed execution transfer total is wrong")
-        return {
-            "metadata": metadata,
-            "transaction_count": len(txs),
-            "consensus": await agreement(session, runner.nodes),
-        }
-    finally:
-        for path, original in originals.items():
-            write_config(path, original)
-        await runner.restart_localnet_and_wait_ready(session)
-
 
 # Leave enough for a 25-native admission reserve after paying both execution
 # fees, while the second 70-native transfer still exceeds the remaining balance.

@@ -49,6 +49,8 @@ TOKEN_TX_CHI = 7_500
 DEX_TX_CHI = 60_000
 PARALLEL_PROBE_DEPLOY_CHI = 90_000
 PARALLEL_PROBE_TX_CHI = 2_000
+# Transactions per probe batch, so each batch fills blocks with several txs.
+PARALLEL_PROBE_MIN_BATCH_SIZE = 10
 THROUGHPUT_TRANSFER_TX_CHI = 1_500
 THROUGHPUT_CONTRACT_DEPLOY_CHI = 120_000
 THROUGHPUT_CONTRACT_TX_CHI = 6_000
@@ -2260,9 +2262,7 @@ async def run_parallel_probe(
     receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
     founder = context.founder_wallet
-    parallel_config = context.network.get("parallel_execution", {})
-    configured_min_transactions = int(parallel_config.get("min_transactions", 8) or 8)
-    parallel_batch_size = max(configured_min_transactions + 2, len(context.nodes) * 2)
+    parallel_batch_size = max(PARALLEL_PROBE_MIN_BATCH_SIZE, len(context.nodes) * 2)
 
     suffix = hashlib.sha256(f"parallel:{seed}:{time.time_ns()}".encode("utf-8")).hexdigest()[:8]
     contract_name = f"con_parallel_probe_{suffix}"
@@ -2635,12 +2635,6 @@ async def run_parallel_probe(
         "scenario": "parallel_probe",
         "contract_name": contract_name,
         "parallel_batch_size": parallel_batch_size,
-        "parallel_config": {
-            "enabled": bool(parallel_config.get("enabled")),
-            "workers": int(parallel_config.get("workers", 0) or 0),
-            "min_transactions": configured_min_transactions,
-            "access_estimates_enabled": bool(parallel_config.get("access_estimates_enabled", True)),
-        },
         "funding_transactions": len(funding_records),
         "batches": {
             "non_conflicting": summarize_records(non_conflicting_records),
