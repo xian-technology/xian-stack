@@ -24,7 +24,7 @@ class LocalnetBlockOrderingPhaseTests(unittest.TestCase):
         phase_names = localnet_e2e.E2ERunner.phase_names()
         index = phase_names.index("16-block-ordering")
 
-        self.assertEqual("15-shielded-note-token", phase_names[index - 1])
+        self.assertEqual("15-zk-feature-toggle", phase_names[index - 1])
         self.assertEqual("17-chaos-convergence", phase_names[index + 1])
         self.assertTrue(hasattr(localnet_e2e.E2ERunner, "block_ordering_phase"))
 

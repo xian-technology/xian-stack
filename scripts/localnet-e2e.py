@@ -10422,6 +10422,11 @@ class E2ERunner:
             "final_node_report": await self.collect_node_report_snapshot(),
         }
 
+    async def zk_feature_toggle_phase(self, session):
+        from localnet_runtime_feature_checks import zk_toggle_phase
+
+        return await zk_toggle_phase(self, session)
+
     async def crash_recovery_phase(self, session):
         from localnet_recovery_checks import crash_phase
 

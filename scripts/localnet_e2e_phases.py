@@ -42,6 +42,7 @@ PHASE_SPECS: tuple[PhaseSpec, ...] = (
     PhaseSpec("13-state-patch", "state_patch_phase"),
     PhaseSpec("14-logging", "logging_phase"),
     PhaseSpec("15-shielded-note-token", "shielded_phase"),
+    PhaseSpec("15-zk-feature-toggle", "zk_feature_toggle_phase"),
     PhaseSpec("16-block-ordering", "block_ordering_phase"),
     PhaseSpec("17-chaos-convergence", "chaos_convergence_phase"),
     PhaseSpec("18-soak-abuse", "soak_abuse_phase"),

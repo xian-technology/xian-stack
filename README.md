@@ -301,6 +301,16 @@ and agreement across validators. See the
 [contract coverage matrix](workloads/e2e/contract_suite/README.md) for scenarios
 and limits. The same sources run in a fast native test before network execution.
 
+The `15-zk-feature-toggle` phase switches the chain's zk runtime feature with
+governed state patches. With zk on (the localnet genesis default) it deploys and
+calls a contract using zk host syscalls, then a patch turns zk off: the probe
+call, a zk deploy and a call to the run's shielded note token (when the shielded
+phase ran) fail with ordinary receipts that charge chi, simulation reports the
+same reason, and a plain call in the same window succeeds. A second patch turns
+zk on again and the same calls succeed. Node-4 is stopped through each
+activation and restarted afterwards; every node must commit the patched value
+and the app hashes and block results must agree.
+
 Runtime regressions run inside the existing contract orchestration, storage,
 validator governance, and nonce phases. They check owned-contract access and
 metadata permissions, a shared chi budget across serial and nested constructors,
