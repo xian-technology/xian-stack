@@ -20,7 +20,7 @@ from xian.fee_policy import TxFeePolicy, resolve_chain_fee_policy
 from xian.methods.prepare_proposal import prepare_proposal
 from xian.methods.process_proposal import process_proposal
 from xian.utils.encoding import encode_transaction_bytes
-from xian.utils.tx import _native_decode_and_validate_transaction_static, canonical_json
+from xian.utils.tx import canonical_json
 
 
 def require(condition: bool, message: str) -> None:
@@ -114,7 +114,6 @@ async def probe(chain_id: str, expected_version: str) -> dict:
         "proposal_budgets": proposals,
         "skipped_nonce_preserved": True,
         "submission_names": names,
-        "native_admission": _native_decode_and_validate_transaction_static is not None,
         "invalid_txs": invalid_txs,
     }
 

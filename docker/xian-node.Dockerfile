@@ -98,7 +98,6 @@ RUN python -m pip install --upgrade \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-accounts \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-compiler-core \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-runtime-types \
-    && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-fastpath-core \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-vm-core \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-contracting/packages/xian-zk \
     && python -m pip wheel --no-deps --wheel-dir /tmp/wheels /tmp/build/xian-py \
@@ -164,7 +163,6 @@ RUN uv pip install --system --no-cache --no-index --find-links /tmp/wheels --req
     /tmp/wheels/xian_tech_accounts-*.whl \
     /tmp/wheels/xian_tech_compiler_core-*.whl \
     /tmp/wheels/xian_tech_runtime_types-*.whl \
-    /tmp/wheels/xian_tech_fastpath_core-*.whl \
     /tmp/wheels/xian_tech_vm_core-*.whl \
     /tmp/wheels/xian_tech_zk-*.whl \
     /tmp/wheels/xian_tech_py-*.whl \

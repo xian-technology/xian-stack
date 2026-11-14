@@ -75,10 +75,6 @@ def test_probe_passes_against_the_installed_runtime(tmp_path, monkeypatch):
     assert report["skipped_nonce_preserved"] is True
     assert [item["accepted"] for item in report["submission_names"]] == [False, False, True, True]
     assert [item["name"] for item in report["invalid_txs"]] == ["con_Uppercase", "con_" + "a" * 61]
-    # The node image ships the native fast path; this test venv may not.
-    assert report["native_admission"] is (
-        probe._native_decode_and_validate_transaction_static is not None
-    )
 
 
 def test_probe_refuses_an_unexpected_application_version(tmp_path, monkeypatch):

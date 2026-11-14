@@ -32,7 +32,7 @@ else:
 class LocalnetE2EExpansionTests(unittest.TestCase):
     def test_signed_admission_fixture_reaches_native_depth_rejection(self):
         # The node's native transaction admission, from the locked environment.
-        from xian_fastpath_core import decode_and_validate_transaction_static
+        from xian_vm_core import decode_and_validate_transaction
 
         wallet = localnet_e2e.Wallet(private_key="42" * 32)
         payload = {
@@ -49,7 +49,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             localnet_e2e.signed_admission_fixture(payload, wallet)
         )
         self.assertEqual(fixture.json_bytes, ordinary.json_bytes)
-        decode_and_validate_transaction_static(fixture.submitted_bytes, payload["chain_id"])
+        decode_and_validate_transaction(fixture.submitted_bytes, payload["chain_id"])
 
         payload["kwargs"]["nested"] = localnet_e2e.nested_json_value(
             localnet_e2e.MAX_CANONICAL_JSON_DEPTH + 1
@@ -60,7 +60,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             localnet_e2e.signed_admission_fixture(payload, wallet)
         )
         with self.assertRaisesRegex(ValueError, "recursion limit exceeded"):
-            decode_and_validate_transaction_static(prepared.submitted_bytes, payload["chain_id"])
+            decode_and_validate_transaction(prepared.submitted_bytes, payload["chain_id"])
 
     def test_invalid_fstring_fixture_is_rejected_by_the_compiler(self) -> None:
         import xian_compiler_core
