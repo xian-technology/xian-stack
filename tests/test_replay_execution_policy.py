@@ -16,7 +16,7 @@ POLICY = {
     "bytecode_version": "xvm-2",
     "set_codec": "xian-set-1",
     "compiler_admission_revision": "xian-admission-3",
-    "tx_admission_revision": "xian-fastpath-admission-2",
+    "tx_admission_revision": "xian-fastpath-admission-3",
 }
 # Revisions before xvm-execution-10 persisted no admission revisions.
 CORE_POLICY_KEYS = ("execution_revision", "gas_schedule", "bytecode_version", "set_codec")
