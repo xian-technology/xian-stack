@@ -5,7 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "localnet-e2e.py"
+MODULE_PATH = Path(__file__).absolute().parents[1] / "scripts" / "localnet-e2e.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
 
 if "localnet_e2e" in sys.modules:

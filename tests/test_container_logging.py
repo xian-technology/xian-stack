@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).absolute().parents[1]
 SPEC = importlib.util.spec_from_file_location("logging_localnet", ROOT / "scripts/localnet-init.py")
 localnet = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(localnet)

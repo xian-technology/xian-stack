@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).absolute().parents[1]
 SPEC = importlib.util.spec_from_file_location("main_localnet", ROOT / "scripts/localnet-init.py")
 localnet = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(localnet)
@@ -165,3 +165,87 @@ def test_existing_localnet_needs_clean_and_bad_fee_policy_keeps_it(run_init, tmp
     summary = run_init("--clean", XIAN_TX_FEE_MODE="paid_metered")
     assert not (existing / "keep").exists()
     assert summary["chain_id"] == "xian-localnet-1"
+
+
+@pytest.mark.parametrize(
+    ("topology", "bds_service"), [("integrated", "node-1"), ("fidelity", "node-1-abci")]
+)
+def test_bds_node_and_postgres_share_one_generated_password_secret(
+    run_init, tmp_path, topology, bds_service
+):
+    import stat
+    import tomllib
+
+    run_init("--topology", topology, XIAN_LOCALNET_ENABLE_BDS="1", XIAN_LOCALNET_BDS_NODE_INDEX="1")
+
+    password_file = tmp_path / ".localnet" / "bds-password"
+    assert stat.S_IMODE(password_file.stat().st_mode) == 0o600
+    password = password_file.read_text(encoding="utf-8")
+    assert len(password) >= 32
+    compose = json.loads((tmp_path / "docker-compose-localnet.yml").read_text())
+    assert compose["secrets"] == {"xian_bds_password": {"file": "./.localnet/bds-password"}}
+    postgres = compose["services"]["localnet-postgres"]
+    assert postgres["secrets"] == ["xian_bds_password"]
+    assert postgres["environment"]["POSTGRES_PASSWORD_FILE"] == "/run/secrets/xian_bds_password"
+    assert "POSTGRES_PASSWORD" not in postgres["environment"]
+    assert compose["services"][bds_service]["secrets"] == ["xian_bds_password"]
+    assert password not in json.dumps(compose)
+    bds = tomllib.loads(
+        (tmp_path / ".localnet" / "node-1" / ".cometbft" / "config" / "xian.toml").read_text()
+    )["bds"]
+    assert bds["password_file"] == "/run/secrets/xian_bds_password"
+    assert "password" not in bds
+    assert password not in json.dumps(bds)
+
+
+def test_localnet_without_bds_has_no_password_secret(run_init, tmp_path):
+    run_init()
+
+    assert not (tmp_path / ".localnet" / "bds-password").exists()
+    assert "secrets" not in json.loads((tmp_path / "docker-compose-localnet.yml").read_text())
+
+
+def test_consensus_and_mempool_overrides_reach_every_node_config(run_init, tmp_path):
+    import tomllib
+
+    run_init(
+        XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE="500ms",
+        XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE_DELTA="100ms",
+        XIAN_LOCALNET_CONSENSUS_TIMEOUT_PREVOTE="200ms",
+        XIAN_LOCALNET_CONSENSUS_TIMEOUT_PREVOTE_DELTA="50ms",
+        XIAN_LOCALNET_CONSENSUS_TIMEOUT_PRECOMMIT="210ms",
+        XIAN_LOCALNET_CONSENSUS_TIMEOUT_PRECOMMIT_DELTA="60ms",
+        XIAN_LOCALNET_CONSENSUS_TIMEOUT_COMMIT="900ms",
+        XIAN_LOCALNET_SKIP_TIMEOUT_COMMIT="yes",
+        XIAN_LOCALNET_MEMPOOL_SIZE="7",
+        XIAN_LOCALNET_MEMPOOL_CACHE_SIZE="11",
+    )
+    config = tomllib.loads(
+        (tmp_path / ".localnet" / "node-3" / ".cometbft" / "config" / "config.toml").read_text()
+    )
+
+    assert {
+        key: config["consensus"][key]
+        for key in (
+            "timeout_propose",
+            "timeout_propose_delta",
+            "timeout_prevote",
+            "timeout_prevote_delta",
+            "timeout_precommit",
+            "timeout_precommit_delta",
+            "timeout_commit",
+            "skip_timeout_commit",
+        )
+    } == {
+        "timeout_propose": "500ms",
+        "timeout_propose_delta": "100ms",
+        "timeout_prevote": "200ms",
+        "timeout_prevote_delta": "50ms",
+        "timeout_precommit": "210ms",
+        "timeout_precommit_delta": "60ms",
+        "timeout_commit": "900ms",
+        "skip_timeout_commit": True,
+    }
+    assert (config["mempool"]["size"], config["mempool"]["cache_size"]) == (7, 11)
+    assert config["p2p"]["allow_duplicate_ip"] is True
+    assert config["rpc"]["laddr"] == "tcp://0.0.0.0:26657"

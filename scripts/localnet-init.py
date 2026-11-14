@@ -24,6 +24,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from genesis_fee_policy import genesis_fee_policy  # noqa: E402
+from stack_credentials import write_bds_password_file  # noqa: E402
 from xian.execution_policy import VM_EXECUTION_MODE  # noqa: E402
 from xian.genesis_builder import (  # noqa: E402
     build_local_network_genesis,
@@ -51,6 +52,11 @@ PORT_STRIDE = 100  # node-0: 266xx, node-1: 267xx, node-2: 268xx, ...
 NODE_IMAGE_INTEGRATED = os.environ.get("XIAN_NODE_INTEGRATED_IMAGE", "xian-node-integrated:local")
 NODE_IMAGE_SPLIT = "xian-node-split:local"
 LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
+# One fresh owner-only file per generated localnet holds the BDS password; the
+# compose secret mounts it into Postgres and the BDS node.
+BDS_PASSWORD_SECRET = "xian_bds_password"
+BDS_PASSWORD_SECRET_PATH = f"/run/secrets/{BDS_PASSWORD_SECRET}"
+BDS_PASSWORD_FILE_NAME = "bds-password"
 LOCALNET_COMPOSE_PROJECT = "xian-localnet"
 COMPOSE_DEFAULTS = {
     "XIAN_ABCI_DIR": "../xian-abci",
@@ -188,6 +194,13 @@ def bds_runtime_rpc_url(node: dict, topology: str) -> str:
     return "http://127.0.0.1:26657"
 
 
+def apply_overrides(config: dict, overrides: dict[tuple[str, str], object]) -> None:
+    """Set each (section, key) whose override is not None."""
+    for (section, key), value in overrides.items():
+        if value is not None:
+            config[section][key] = value
+
+
 def write_node_config(
     node: dict,
     all_nodes: list[dict],
@@ -245,12 +258,10 @@ def write_node_config(
                 max_file_mb=app_log_max_file_mb,
                 max_total_mb=app_log_max_total_mb,
             ),
+            # The password is the mounted secret named by BdsOptions'
+            # default password_file, never a value in xian.toml.
             bds=BdsOptions(
                 host=LOCALNET_POSTGRES_SERVICE if bds_enabled else "",
-                port=5432,
-                database="xian",
-                user="xian",
-                password="xian",
                 rpc_url=bds_runtime_rpc_url(node, topology) if bds_enabled else "",
             ),
         )
@@ -262,26 +273,21 @@ def write_node_config(
     config["p2p"]["addr_book_strict"] = False
     config["p2p"]["allow_duplicate_ip"] = True
     config["rpc"]["laddr"] = "tcp://0.0.0.0:26657"
-    if consensus_timeout_propose is not None:
-        config["consensus"]["timeout_propose"] = consensus_timeout_propose
-    if consensus_timeout_propose_delta is not None:
-        config["consensus"]["timeout_propose_delta"] = consensus_timeout_propose_delta
-    if consensus_timeout_prevote is not None:
-        config["consensus"]["timeout_prevote"] = consensus_timeout_prevote
-    if consensus_timeout_prevote_delta is not None:
-        config["consensus"]["timeout_prevote_delta"] = consensus_timeout_prevote_delta
-    if consensus_timeout_precommit is not None:
-        config["consensus"]["timeout_precommit"] = consensus_timeout_precommit
-    if consensus_timeout_precommit_delta is not None:
-        config["consensus"]["timeout_precommit_delta"] = consensus_timeout_precommit_delta
-    if consensus_timeout_commit is not None:
-        config["consensus"]["timeout_commit"] = consensus_timeout_commit
-    if consensus_skip_timeout_commit is not None:
-        config["consensus"]["skip_timeout_commit"] = consensus_skip_timeout_commit
-    if mempool_size is not None:
-        config["mempool"]["size"] = mempool_size
-    if mempool_cache_size is not None:
-        config["mempool"]["cache_size"] = mempool_cache_size
+    apply_overrides(
+        config,
+        {
+            ("consensus", "timeout_propose"): consensus_timeout_propose,
+            ("consensus", "timeout_propose_delta"): consensus_timeout_propose_delta,
+            ("consensus", "timeout_prevote"): consensus_timeout_prevote,
+            ("consensus", "timeout_prevote_delta"): consensus_timeout_prevote_delta,
+            ("consensus", "timeout_precommit"): consensus_timeout_precommit,
+            ("consensus", "timeout_precommit_delta"): consensus_timeout_precommit_delta,
+            ("consensus", "timeout_commit"): consensus_timeout_commit,
+            ("consensus", "skip_timeout_commit"): consensus_skip_timeout_commit,
+            ("mempool", "size"): mempool_size,
+            ("mempool", "cache_size"): mempool_cache_size,
+        },
+    )
 
     materialize_cometbft_home(
         home=home,
@@ -548,7 +554,9 @@ def main():
         node_id_prefix = node["node_key"]["node_id"][:12]
         print(f"  {node['moniker']}: RPC=:{host_rpc} P2P=:{host_p2p} id={node_id_prefix}...")
 
-    # 4. Write docker-compose-localnet.yml
+    # 4. Write the BDS password secret and docker-compose-localnet.yml
+    if bds_enabled:
+        write_bds_password_file(LOCALNET_DIR / BDS_PASSWORD_FILE_NAME)
     write_compose_file(
         nodes,
         args.topology,
@@ -641,6 +649,7 @@ def integrated_node_services(
     }
     if depends_on_postgres:
         service["depends_on"] = postgres_dependency()
+        service["secrets"] = [BDS_PASSWORD_SECRET]
     return {moniker: service}
 
 
@@ -691,6 +700,7 @@ def split_node_services(
     }
     if depends_on_postgres:
         abci_service["depends_on"] = postgres_dependency()
+        abci_service["secrets"] = [BDS_PASSWORD_SECRET]
     cometbft_service = {
         "image": NODE_IMAGE_SPLIT,
         "restart": "always",
@@ -783,9 +793,10 @@ def write_compose_file(
             },
             "environment": {
                 "POSTGRES_USER": "xian",
-                "POSTGRES_PASSWORD": "xian",
+                "POSTGRES_PASSWORD_FILE": BDS_PASSWORD_SECRET_PATH,
                 "POSTGRES_DB": "xian",
             },
+            "secrets": [BDS_PASSWORD_SECRET],
             "healthcheck": {
                 "test": [
                     "CMD-SHELL",
@@ -844,6 +855,10 @@ def write_compose_file(
         }
     compose["services"] = services
     if bds_enabled:
+        # Written by main() beside the node homes (mounted the same way).
+        compose["secrets"] = {
+            BDS_PASSWORD_SECRET: {"file": f"./.localnet/{BDS_PASSWORD_FILE_NAME}"}
+        }
         # Native Docker storage avoids host-filesystem ownership changes during
         # initdb. A fresh generation must never reuse another chain's BDS data.
         compose["volumes"] = {

@@ -2,6 +2,8 @@
 
 import asyncio
 import socket
+import stat
+import tomllib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -64,17 +66,66 @@ def test_reindex_rediscovers_changed_mapping_after_restart(runner, monkeypatch, 
             reindexes.append(kwargs["env"])
         return SimpleNamespace(stdout="", stderr="")
 
-    monkeypatch.setattr(e2e, "run_cmd", command)
+    xian_toml = tmp_path / ".cometbft" / "config" / "xian.toml"
+    xian_toml.parent.mkdir(parents=True)
+    xian_toml.write_text(
+        'bds_enabled = true\n\n[bds]\nhost = "localnet-postgres"\nport = 5432\n'
+        'password_file = "/run/secrets/xian_bds_password"\n'
+    )
+    observed_bds = []
+
+    def record(args, **kwargs):
+        if args[0] == "uv":
+            observed_bds.append(tomllib.loads(xian_toml.read_text())["bds"])
+        return command(args, **kwargs)
+
+    monkeypatch.setattr(e2e, "run_cmd", record)
     monkeypatch.setattr(runner, "prepare_secondary_bds_home", lambda node: tmp_path)
     monkeypatch.setattr(e2e, "wait_for_container_state", AsyncMock(return_value="healthy"))
+    monkeypatch.setenv("XIAN_BDS_ENABLED", "1")
     node = SimpleNamespace(rpc_url="http://127.0.0.1:26657")
     first = runner.run_secondary_bds_reindex(source_node=node, reset=True)
     assert asyncio.run(runner.restart_secondary_bds_postgres()) == "healthy"
     second = runner.run_secondary_bds_reindex(source_node=node, reset=False)
     assert [first["host_port"], second["host_port"]] == [32123, 32124]
-    for env, port in zip(reindexes, (32123, 32124), strict=True):
-        assert env["XIAN_BDS_PORT"] == str(port)
-        assert f"@127.0.0.1:{port}/" in env["XIAN_BDS_DSN"]
+    password_file = runner.secondary_bds_password_file()
+    for env, bds, port in zip(reindexes, observed_bds, (32123, 32124), strict=True):
+        # The reindexer reads its settings only from xian.toml, its password
+        # only from the file the secondary Postgres was initialised from.
+        assert [key for key in env if key.startswith("XIAN_BDS_")] == ["XIAN_BDS_ENABLED"]
+        assert (bds["host"], bds["port"], bds["user"], bds["database"]) == (
+            "127.0.0.1",
+            port,
+            "xian",
+            "xian",
+        )
+        assert bds["password_file"] == str(password_file)
+        assert "password" not in bds and "dsn" not in bds
+
+
+def test_secondary_postgres_reads_its_password_from_an_owner_only_file(runner, monkeypatch):
+    calls = []
+
+    def command(args, **kwargs):
+        calls.append(args)
+        if args[:2] == ["docker", "port"]:
+            return SimpleNamespace(stdout="127.0.0.1:32123\n")
+        return SimpleNamespace(stdout="", stderr="")
+
+    monkeypatch.setattr(e2e, "run_cmd", command)
+    monkeypatch.setattr(e2e.subprocess, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(e2e, "wait_for_container_state", AsyncMock(return_value="healthy"))
+    asyncio.run(runner.start_secondary_bds_postgres())
+
+    password_file = runner.secondary_bds_password_file()
+    assert stat.S_IMODE(password_file.stat().st_mode) == 0o600
+    password = password_file.read_text()
+    assert len(password) >= 32
+    docker_run = next(call for call in calls if call[:2] == ["docker", "run"])
+    assert f"{password_file}:/run/secrets/xian_bds_password:ro" in docker_run
+    assert "POSTGRES_PASSWORD_FILE=/run/secrets/xian_bds_password" in docker_run
+    assert not [arg for arg in docker_run if arg.startswith("POSTGRES_PASSWORD=")]
+    assert password not in " ".join(docker_run)
 
 
 @pytest.mark.parametrize(
@@ -101,3 +152,16 @@ def test_valid_binding_port_boundaries(runner, monkeypatch, port):
         e2e, "run_cmd", lambda *args, **kwargs: SimpleNamespace(stdout=f"127.0.0.1:{port}\n")
     )
     assert runner.secondary_bds_host_port() == port
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["bds_enabled = true\n", '[bds]\nhost = "a"\n[other]\nkey = 1\n'],
+)
+def test_bds_settings_need_the_trailing_bds_table(tmp_path, text):
+    xian_toml = tmp_path / "xian.toml"
+    xian_toml.write_text("x = 1\n" + text)
+
+    with pytest.raises(e2e.E2EError, match="last table"):
+        e2e.write_bds_table(xian_toml, {"port": 1})
+    assert xian_toml.read_text() == "x = 1\n" + text

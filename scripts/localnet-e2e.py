@@ -64,6 +64,7 @@ from shielded_relayer_backend import (
     start_shielded_relayer_runtime,
     stop_shielded_relayer_runtime,
 )
+from stack_credentials import write_bds_password_file
 from state_convergence_helpers import wait_for_uniform_state
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -115,8 +116,8 @@ LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
 LOCALNET_POSTGRES_CONTAINER = "xian-localnet-postgres"
 SECONDARY_BDS_POSTGRES_IMAGE = "postgres:17.10"
 SECONDARY_BDS_POSTGRES_USER = "xian"
-SECONDARY_BDS_POSTGRES_PASSWORD = "xian"
 SECONDARY_BDS_POSTGRES_DATABASE = "xian"
+SECONDARY_BDS_PASSWORD_SECRET_PATH = "/run/secrets/xian_bds_password"
 SECONDARY_BDS_QUERY_TIMEOUT_SECONDS = 180.0
 CONTRACT_ORCHESTRATION_TX_CHI = {
     "deploy_contract": 180_000,
@@ -1716,6 +1717,28 @@ def decode_websocket_tx_execution(payload: dict[str, Any]) -> dict[str, Any] | N
         return None
 
 
+def _toml_value(value: str | int) -> str:
+    # JSON strings and integers are valid TOML values.
+    return json.dumps(value)
+
+
+def write_bds_table(xian_toml: Path, settings: dict[str, str | int]) -> None:
+    """Replace keys of the trailing [bds] table that xian-configure-node writes
+    (a copied node's dsn is dropped: these settings name the connection)."""
+    text = xian_toml.read_text(encoding="utf-8")
+    head, marker, table = text.partition("\n[bds]\n")
+    if not marker or "\n[" in table:
+        raise E2EError(f"expected [bds] as the last table of {xian_toml}")
+    replaced = {*settings, "dsn"}
+    kept = [
+        line
+        for line in table.splitlines()
+        if line.strip() and line.partition("=")[0].strip() not in replaced
+    ]
+    lines = [*kept, *(f"{key} = {_toml_value(value)}" for key, value in settings.items())]
+    xian_toml.write_text(f"{head}{marker}" + "\n".join(lines) + "\n", encoding="utf-8")
+
+
 class E2ERunner:
     def __init__(self, args: argparse.Namespace):
         self.args = args
@@ -2799,6 +2822,26 @@ class E2ERunner:
     def secondary_bds_home_dir(self) -> Path:
         return self.output_dir / "secondary-bds-home"
 
+    def secondary_bds_password_file(self) -> Path:
+        """The secondary Postgres and the host reindexer read the password here."""
+        return self.output_dir / "secondary-bds-password"
+
+    def write_secondary_bds_settings(self, secondary_home: Path, host_port: int) -> None:
+        """Point the copied node's xian.toml [bds] table (its only BDS source)
+        at the secondary Postgres on the host."""
+        write_bds_table(
+            secondary_home / ".cometbft" / "config" / "xian.toml",
+            {
+                "host": "127.0.0.1",
+                "port": host_port,
+                "database": SECONDARY_BDS_POSTGRES_DATABASE,
+                "user": SECONDARY_BDS_POSTGRES_USER,
+                "password_file": str(self.secondary_bds_password_file()),
+                "application_name": "xian-bds-secondary",
+                "spool_dir": str(secondary_home / ".cometbft" / "xian" / "secondary-bds-spool"),
+            },
+        )
+
     def prepare_secondary_bds_home(self, source_node: LocalnetNode) -> Path:
         source_home = STACK_DIR / ".localnet" / source_node.moniker / ".cometbft"
         if not source_home.exists():
@@ -2835,6 +2878,8 @@ class E2ERunner:
             capture_output=True,
             text=True,
         )
+        password_file = self.secondary_bds_password_file()
+        write_bds_password_file(password_file)
         run_cmd(
             [
                 "docker",
@@ -2861,10 +2906,12 @@ class E2ERunner:
                 "127.0.0.1::5432",
                 "--volume",
                 "/var/lib/postgresql/data",
+                "--volume",
+                f"{password_file}:{SECONDARY_BDS_PASSWORD_SECRET_PATH}:ro",
                 "--env",
                 f"POSTGRES_USER={SECONDARY_BDS_POSTGRES_USER}",
                 "--env",
-                f"POSTGRES_PASSWORD={SECONDARY_BDS_POSTGRES_PASSWORD}",
+                f"POSTGRES_PASSWORD_FILE={SECONDARY_BDS_PASSWORD_SECRET_PATH}",
                 "--env",
                 f"POSTGRES_DB={SECONDARY_BDS_POSTGRES_DATABASE}",
                 SECONDARY_BDS_POSTGRES_IMAGE,
@@ -2916,24 +2963,8 @@ class E2ERunner:
     ) -> dict[str, Any]:
         secondary_home = self.prepare_secondary_bds_home(source_node)
         host_port = self.secondary_bds_host_port()
-        env = os.environ.copy()
-        env["HOME"] = str(secondary_home)
-        env["XIAN_BDS_DSN"] = (
-            "postgresql://"
-            f"{SECONDARY_BDS_POSTGRES_USER}:"
-            f"{SECONDARY_BDS_POSTGRES_PASSWORD}@"
-            f"127.0.0.1:{host_port}/"
-            f"{SECONDARY_BDS_POSTGRES_DATABASE}"
-        )
-        env["XIAN_BDS_HOST"] = "127.0.0.1"
-        env["XIAN_BDS_PORT"] = str(host_port)
-        env["XIAN_BDS_DATABASE"] = SECONDARY_BDS_POSTGRES_DATABASE
-        env["XIAN_BDS_USER"] = SECONDARY_BDS_POSTGRES_USER
-        env["XIAN_BDS_PASSWORD"] = SECONDARY_BDS_POSTGRES_PASSWORD
-        env["XIAN_BDS_APPLICATION_NAME"] = "xian-bds-secondary"
-        env["XIAN_BDS_SPOOL_DIR"] = str(
-            secondary_home / ".cometbft" / "xian" / "secondary-bds-spool"
-        )
+        self.write_secondary_bds_settings(secondary_home, host_port)
+        env = {**os.environ, "HOME": str(secondary_home)}
 
         cmd = [
             "uv",
