@@ -22,11 +22,9 @@ BOOLEAN_OPTIONS = (
 # is configurable.
 APP_METRICS_CONTAINER_HOST = "0.0.0.0"
 APP_METRICS_CONTAINER_PORT = "9108"
-# The integrated container runs CometBFT beside the node, so BDS catch-up reads
-# the node's own RPC. All other [bds] settings keep xian-configure-node's
-# defaults (the stack's Postgres service and its mounted password secret);
+# [bds] settings keep xian-configure-node's defaults (the stack's Postgres
+# service, its mounted password secret and the node's own RPC for catch-up);
 # change them with xian-configure-node flags in CONFIGURE_ARGS.
-BDS_RPC_URL = "http://127.0.0.1:26657"
 FALSE_VALUES = {"0", "false", "FALSE", "False", "no", "NO", "No", "off", "OFF", "Off"}
 VALUE_OPTIONS = (
     ("XIAN_APP_LOG_RETENTION_DAYS", "--app-log-retention-days"),
@@ -48,7 +46,6 @@ def configuration_arguments(environment: Mapping[str, str]) -> list[str]:
     arguments.extend(
         ("--metrics-host", APP_METRICS_CONTAINER_HOST, "--metrics-port", APP_METRICS_CONTAINER_PORT)
     )
-    arguments.extend(("--bds-rpc-url", BDS_RPC_URL))
     return arguments
 
 
