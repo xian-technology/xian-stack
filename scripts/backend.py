@@ -43,7 +43,7 @@ from stack_backend.request import (
     args_from_backend_request,
     read_backend_request,
 )
-from stack_credentials import ensure_credentials
+from stack_credentials import BDS_DATABASE_USER, ensure_credentials
 
 STACK_DIR = Path(__file__).resolve().parent.parent
 LOCALNET_NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
@@ -92,7 +92,6 @@ def stack_secrets_env_path(env: dict[str, str]) -> Path:
 
 
 STACK_SECURITY_DEFAULTS = {
-    "XIAN_BDS_USER": "xian",
     "XIAN_PUBLIC_RPC_ENABLED": "0",
     "XIAN_PUBLIC_QUERY_ENABLED": "0",
     "XIAN_PUBLIC_METRICS_ENABLED": "0",
@@ -134,15 +133,12 @@ def is_public_host(value: str | None) -> bool:
 
 
 def credential_errors(env: dict[str, str]) -> list[str]:
-    """Passwords are always present: ensure_credentials fills any that are missing."""
-    errors: list[str] = []
-    if env["XIAN_BDS_PASSWORD"] == "xian":
-        errors.append("XIAN_BDS_PASSWORD cannot use the weak default value 'xian'")
-    if env["XIAN_POSTGRAPHILE_PASSWORD"] == env["XIAN_BDS_PASSWORD"]:
-        errors.append("XIAN_POSTGRAPHILE_PASSWORD must differ from XIAN_BDS_PASSWORD")
-    if env.get("XIAN_POSTGRAPHILE_USER") == env.get("XIAN_BDS_USER"):
-        errors.append("XIAN_POSTGRAPHILE_USER must differ from XIAN_BDS_USER")
-    return errors
+    """ensure_credentials creates and checks the passwords themselves."""
+    if env.get("XIAN_POSTGRAPHILE_USER") == BDS_DATABASE_USER:
+        return [
+            f"XIAN_POSTGRAPHILE_USER must differ from the BDS database user '{BDS_DATABASE_USER}'"
+        ]
+    return []
 
 
 def node_exposure_errors(env: dict[str, str]) -> list[str]:

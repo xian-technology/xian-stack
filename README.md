@@ -103,10 +103,19 @@ The stack defaults to fail-closed host bindings:
   for interactive queries against the read-only `/graphql` endpoint.
 - `endpoints`, `status`, and `health` report the GraphiQL URL, and health marks
   the BDS surface degraded when the browser UI is not reachable.
-- Local credentials are generated once into `.stack-secrets.env`, which is
-  private and ignored by git. Python, shell, and Make workflows share a literal
-  reader; nonempty environment overrides take precedence. See
+- Local credentials are generated once into private files ignored by git:
+  `.stack-secrets.env` holds the PostGraphile password, and the BDS password
+  lives only in its own owner-only file `.stack-bds-password` (override the
+  path with `XIAN_BDS_PASSWORD_FILE`). Compose mounts that file as the secret
+  `/run/secrets/xian_bds_password` into Postgres (`POSTGRES_PASSWORD_FILE`)
+  and into the node, whose `xian.toml` names it in `[bds] password_file`. See
   [scripts/README.md](scripts/README.md) for the file format.
+- BDS node settings (connection, pool, catch-up, spool) live only in the node's
+  `xian.toml` `[bds]` table. Change them with `xian-configure-node` flags, for
+  example `make node-configure CONFIGURE_ARGS="--bds-pool-max-size 20"`, or in
+  the xian-cli profile; the stack no longer reads `XIAN_BDS_*` setting
+  variables and refuses to run while one (such as `XIAN_BDS_PASSWORD` or
+  `XIAN_BDS_HOST`) is set.
 - BDS uses a dedicated read-only PostgreSQL role for PostGraphile rather than
   the BDS owner account.
 - Local stack defaults may use third-party image tags for Postgres,

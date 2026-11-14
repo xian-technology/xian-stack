@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).absolute().parents[1] / "scripts"))
 
 backend = importlib.import_module("backend")
 
@@ -58,7 +58,10 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
             secrets_env = stack_dir / ".stack-secrets.env"
             self.assertTrue(secrets_env.exists())
             self.assertEqual(str(secrets_env.resolve()), env["XIAN_STACK_SECRETS_ENV"])
-            self.assertTrue(env["XIAN_BDS_PASSWORD"])
+            password_file = stack_dir / ".stack-bds-password"
+            self.assertEqual(str(password_file.resolve()), env["XIAN_BDS_PASSWORD_FILE"])
+            self.assertTrue(password_file.read_text(encoding="utf-8"))
+            self.assertNotIn("XIAN_BDS_PASSWORD", env)
             self.assertTrue(env["XIAN_POSTGRAPHILE_PASSWORD"])
             self.assertEqual("127.0.0.1", env["XIAN_COMETBFT_RPC_HOST"])
             self.assertEqual("127.0.0.1", env["XIAN_COMETBFT_METRICS_HOST"])
@@ -123,13 +126,13 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             stack_dir = Path(temp_dir) / "xian-stack"
             stack_dir.mkdir()
+            password_file = stack_dir / ".stack-bds-password"
+            password_file.write_text("xian\n")
+            password_file.chmod(0o600)
             with patch.object(backend, "STACK_DIR", stack_dir):
                 with patch.dict(
                     os.environ,
-                    {
-                        "XIAN_BDS_PASSWORD": "xian",
-                        "XIAN_POSTGRAPHILE_PASSWORD": "strong-postgraphile-secret",
-                    },
+                    {"XIAN_POSTGRAPHILE_PASSWORD": "strong-postgraphile-secret"},
                     clear=True,
                 ):
                     with self.assertRaisesRegex(ValueError, "weak default value 'xian'"):
@@ -331,7 +334,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
             }
             result = subprocess.run(
                 ["bash", "-lc", "source ./scripts/stack-env.sh && export_stack_env >/dev/null"],
-                cwd=Path(__file__).resolve().parents[1],
+                cwd=Path(__file__).absolute().parents[1],
                 env=env,
                 capture_output=True,
                 text=True,
@@ -351,7 +354,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
             }
             result = subprocess.run(
                 ["bash", "-lc", "source ./scripts/stack-env.sh && export_stack_env >/dev/null"],
-                cwd=Path(__file__).resolve().parents[1],
+                cwd=Path(__file__).absolute().parents[1],
                 env=env,
                 capture_output=True,
                 text=True,
@@ -373,7 +376,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
             }
             result = subprocess.run(
                 ["bash", "-lc", "source ./scripts/stack-env.sh && export_stack_env >/dev/null"],
-                cwd=Path(__file__).resolve().parents[1],
+                cwd=Path(__file__).absolute().parents[1],
                 env=env,
                 capture_output=True,
                 text=True,
@@ -391,7 +394,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
             }
             result = subprocess.run(
                 ["bash", "-lc", "source ./scripts/stack-env.sh && export_stack_env >/dev/null"],
-                cwd=Path(__file__).resolve().parents[1],
+                cwd=Path(__file__).absolute().parents[1],
                 env=env,
                 capture_output=True,
                 text=True,
@@ -479,19 +482,19 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
         self.assertEqual("0.0.0.0", env["XIAN_GRAFANA_HOST"])
 
     def test_monitoring_compose_does_not_enable_prometheus_lifecycle(self) -> None:
-        compose = Path(__file__).resolve().parents[1] / "docker-compose-monitoring.yml"
+        compose = Path(__file__).absolute().parents[1] / "docker-compose-monitoring.yml"
 
         self.assertNotIn("--web.enable-lifecycle", compose.read_text(encoding="utf-8"))
 
     def test_bds_compose_uses_configurable_postgres_image(self) -> None:
-        compose = Path(__file__).resolve().parents[1] / "docker-compose-abci-bds.yml"
+        compose = Path(__file__).absolute().parents[1] / "docker-compose-abci-bds.yml"
         source = compose.read_text(encoding="utf-8")
 
         self.assertIn("image: ${XIAN_POSTGRES_IMAGE:-postgres:17.10}", source)
         self.assertNotIn("image: postgres:17.10", source)
 
     def test_compose_uses_long_form_host_ip_for_configurable_port_binds(self) -> None:
-        root = Path(__file__).resolve().parents[1]
+        root = Path(__file__).absolute().parents[1]
         compose_sources = "\n".join(
             path.read_text(encoding="utf-8")
             for path in (

@@ -1,4 +1,8 @@
-"""Make configuration transports credentials and operator options as argv data."""
+"""Make configuration transports operator options as argv data.
+
+The BDS password is never an argument or environment value: configure-node
+records only the secret's path (its default, /run/secrets/xian_bds_password).
+"""
 
 import json
 import os
@@ -9,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).absolute().parents[1]
 
 
 @pytest.fixture
@@ -22,8 +26,12 @@ def configuration_probe(tmp_path):
         "from xian.cli.configure_node import build_parser\n"
         "parsed = build_parser().parse_args(sys.argv[1:])\n"
         "with open(os.environ['CONFIG_LOG'], 'w') as handle:\n"
-        "    payload = {'args': sys.argv[1:], 'password': os.environ['XIAN_BDS_PASSWORD'],\n"
-        "               'parsed_password': parsed.bds_password}\n"
+        "    stack = ('XIAN_BDS_ENABLED', 'XIAN_BDS_DATA_DIR', 'XIAN_BDS_PASSWORD_FILE')\n"
+        "    bds = sorted(k for k in os.environ if k.startswith('XIAN_BDS_')\n"
+        "                 and k not in stack and not k.startswith('XIAN_BDS_SNAPSHOT'))\n"
+        "    payload = {'args': sys.argv[1:], 'bds_environment': bds,\n"
+        "               'password_file': parsed.bds_password_file,\n"
+        "               'rpc_url': parsed.bds_rpc_url}\n"
         "    json.dump(payload, handle)\n"
     )
     configure.chmod(0o700)
@@ -39,19 +47,19 @@ def configuration_probe(tmp_path):
         "raise SystemExit(subprocess.call([os.environ['CONFIG_RECORDER'], *remaining]))\n"
     )
     secrets = tmp_path / "secrets.env"
+    bds_password = tmp_path / ".stack-bds-password"
 
-    def run(password="plain-placeholder", source="file", overrides=None):
+    def run(password="plain-placeholder", overrides=None, make_arguments=()):
         secrets.write_text(
-            "# xian-stack-credentials-v1\n"
-            f"XIAN_BDS_PASSWORD={json.dumps(password if source == 'file' else 'file-fallback')}\n"
-            'XIAN_POSTGRAPHILE_PASSWORD="different-placeholder"\n'
+            '# xian-stack-credentials-v1\nXIAN_POSTGRAPHILE_PASSWORD="different-placeholder"\n'
         )
+        bds_password.write_text(password)
+        bds_password.chmod(0o600)
         config_log.unlink(missing_ok=True)
         environment = {
-            **os.environ,
+            **{key: value for key, value in os.environ.items() if not key.startswith("XIAN_BDS_")},
             "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
             "XIAN_STACK_SECRETS_ENV": str(secrets),
-            "XIAN_BDS_PASSWORD": password if source == "environment" else "",
             "XIAN_POSTGRAPHILE_PASSWORD": "",
             "CONFIG_LOG": str(config_log),
             "CONFIG_RECORDER": str(configure),
@@ -59,9 +67,7 @@ def configuration_probe(tmp_path):
             "CONFIGURE_ARGS": "--moniker placeholder",
             **(overrides or {}),
         }
-        command = ["make", "--no-print-directory", "node-configure"]
-        if source == "make":
-            command.append(f"XIAN_BDS_PASSWORD={password}")
+        command = ["make", "--no-print-directory", "node-configure", *make_arguments]
         result = subprocess.run(
             command, cwd=ROOT, env=environment, capture_output=True, text=True, check=False
         )
@@ -86,31 +92,48 @@ def option_value(arguments, option):
         "plain-placeholder",
         'apostrophe\'s "quoted" value\\end',
         "literal-$(printf changed)-`printf changed`-$HOME",
-        " first line\nsecond line\n",
         "--starts-with-option",
     ],
 )
-@pytest.mark.parametrize("source", ["file", "environment", "make"])
-def test_make_node_configure_keeps_credentials_and_options_literal(
-    configuration_probe, password, source
-):
-    dsn = "postgresql://literal'host/db?option=$(printf changed)"
+def test_make_node_configure_never_handles_the_bds_password(configuration_probe, password):
     moniker = "literal-$(printf changed)-`printf changed`"
     result, observed = configuration_probe(
-        password,
-        source,
-        {"XIAN_BDS_DSN": dsn, "CONFIGURE_ARGS": shlex.join(["--moniker", moniker])},
+        password, {"CONFIGURE_ARGS": shlex.join(["--moniker", moniker])}
     )
     assert result.returncode == 0, result.stderr
-    # GNU Make itself trims assignment-leading whitespace before our code sees it.
-    if source == "make":
-        password = password.lstrip(" \t")
-    assert option_value(observed["args"], "--bds-password") == password
-    assert option_value(observed["args"], "--bds-dsn") == dsn
+    assert password not in observed["args"]
+    assert not [arg for arg in observed["args"] if arg.startswith("--bds-password")]
+    assert observed["bds_environment"] == []
+    # xian.toml names the mounted secret; the stack's node reaches its own RPC.
+    assert observed["password_file"] == "/run/secrets/xian_bds_password"
+    assert observed["rpc_url"] == "http://127.0.0.1:26657"
     assert option_value(observed["args"], "--moniker") == moniker
-    assert observed["password"] == password
-    assert observed["parsed_password"] == password
     assert password not in result.stdout
+
+
+@pytest.mark.parametrize("variable", ["XIAN_BDS_PASSWORD", "XIAN_BDS_HOST", "XIAN_BDS_DSN"])
+@pytest.mark.parametrize("source", ["environment", "make"])
+def test_removed_bds_settings_fail_configuration_by_name(configuration_probe, variable, source):
+    if source == "make":
+        result, observed = configuration_probe(make_arguments=[f"{variable}=old-value"])
+    else:
+        result, observed = configuration_probe(overrides={variable: "old-value"})
+
+    assert result.returncode != 0
+    assert variable in result.stderr
+    assert "xian.toml" in result.stderr
+    assert "old-value" not in result.stderr
+    assert observed is None
+
+
+def test_bds_node_settings_go_through_configure_flags(configuration_probe):
+    result, observed = configuration_probe(
+        overrides={"CONFIGURE_ARGS": "--moniker m --bds-pool-max-size 20 --bds-rpc-url http://x:1"}
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert option_value(observed["args"], "--bds-pool-max-size") == "20"
+    assert observed["rpc_url"] == "http://x:1"
 
 
 @pytest.mark.parametrize(
@@ -118,16 +141,12 @@ def test_make_node_configure_keeps_credentials_and_options_literal(
     [
         (
             {"XIAN_BDS_ENABLED": "1"},
-            ["--bds-enabled", "--metrics-enabled", "--bds-catchup-enabled"],
+            ["--bds-enabled", "--metrics-enabled"],
             {"--block-policy-mode": "periodic", "--block-policy-interval": "5s"},
         ),
         (
-            {
-                "XIAN_BDS_ENABLED": "0",
-                "XIAN_APP_METRICS_ENABLED": "0",
-                "XIAN_BDS_CATCHUP_ENABLED": "0",
-            },
-            ["--no-bds-enabled", "--no-metrics-enabled", "--no-bds-catchup-enabled"],
+            {"XIAN_BDS_ENABLED": "0", "XIAN_APP_METRICS_ENABLED": "0"},
+            ["--no-bds-enabled", "--no-metrics-enabled"],
             {},
         ),
         (

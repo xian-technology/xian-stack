@@ -5,9 +5,12 @@ import json
 import os
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 
 STACK_DIR = Path(__file__).resolve().parent.parent
+# The node container mounts the CometBFT home here.
+CONTAINER_COMETBFT_HOME = Path("/root/.cometbft")
 
 
 def env_path(name: str, default: Path) -> Path:
@@ -15,6 +18,19 @@ def env_path(name: str, default: Path) -> Path:
     if raw:
         return Path(raw).expanduser().resolve()
     return default.resolve()
+
+
+def bds_spool_dir(cometbft_home: Path) -> Path:
+    """The BDS spool on the host, from the node's xian.toml [bds].spool_dir."""
+    xian_toml = cometbft_home / "config" / "xian.toml"
+    settings = tomllib.loads(xian_toml.read_text(encoding="utf-8")) if xian_toml.exists() else {}
+    configured = settings.get("bds", {}).get("spool_dir") or ""
+    if not configured:
+        return cometbft_home / "xian" / "bds-spool"
+    path = Path(configured)
+    if path.is_relative_to(CONTAINER_COMETBFT_HOME):
+        return cometbft_home / path.relative_to(CONTAINER_COMETBFT_HOME)
+    return path
 
 
 def nearest_existing_path(path: Path) -> Path:
@@ -69,7 +85,7 @@ def describe_path(path: Path) -> dict:
 def main() -> int:
     cometbft_home = env_path("XIAN_COMETBFT_HOME", STACK_DIR / ".cometbft")
     xian_home = cometbft_home / "xian"
-    spool_dir = env_path("XIAN_BDS_SPOOL_DIR", xian_home / "bds-spool")
+    spool_dir = bds_spool_dir(cometbft_home)
     bds_data_dir = env_path("XIAN_BDS_DATA_DIR", STACK_DIR / ".bds.db")
     disk_free_warn_bytes = int(os.environ.get("XIAN_STACK_DISK_FREE_WARN_BYTES", "10737418240"))
 

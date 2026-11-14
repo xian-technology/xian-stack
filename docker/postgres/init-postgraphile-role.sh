@@ -5,8 +5,9 @@ set -euo pipefail
 : "${PGPORT:?PGPORT must be set}"
 : "${PGDATABASE:?PGDATABASE must be set}"
 : "${PGUSER:?PGUSER must be set}"
-: "${PGPASSWORD:?PGPASSWORD must be set}"
-: "${XIAN_BDS_USER:?XIAN_BDS_USER must be set}"
+# The BDS owner's password comes only from the mounted BDS secret.
+PGPASSWORD="$(cat "${XIAN_BDS_PASSWORD_FILE:?XIAN_BDS_PASSWORD_FILE must name the BDS password secret}")"
+export PGPASSWORD
 : "${XIAN_POSTGRAPHILE_USER:?XIAN_POSTGRAPHILE_USER must be set}"
 : "${XIAN_POSTGRAPHILE_PASSWORD:?XIAN_POSTGRAPHILE_PASSWORD must be set}"
 : "${XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS:=10000}"
@@ -19,7 +20,7 @@ fi
 psql \
   --no-psqlrc \
   --set ON_ERROR_STOP=1 \
-  --set "owner_role=${XIAN_BDS_USER}" \
+  --set "owner_role=${PGUSER}" \
   --set "postgraphile_user=${XIAN_POSTGRAPHILE_USER}" \
   --set "postgraphile_password=${XIAN_POSTGRAPHILE_PASSWORD}" \
   --set "postgraphile_statement_timeout_ms=${XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS}" \

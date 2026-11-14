@@ -65,15 +65,24 @@ tooling behind `xian-stack`.
 
 ## Notes
 
-Credential files contain only `XIAN_BDS_PASSWORD` and
-`XIAN_POSTGRAPHILE_PASSWORD`. New writes use JSON strings after an explicit
-version marker, preserving quotes, backslashes, dollar text, and newlines:
+The credentials file contains only `XIAN_POSTGRAPHILE_PASSWORD`. New writes
+use JSON strings after an explicit version marker, preserving quotes,
+backslashes, dollar text, and newlines:
 
 ```text
 # xian-stack-credentials-v1
-XIAN_BDS_PASSWORD="operator-selected value"
-XIAN_POSTGRAPHILE_PASSWORD="different operator-selected value"
+XIAN_POSTGRAPHILE_PASSWORD="operator-selected value"
 ```
+
+The BDS password is the whole content of one owner-only file (mode `0600`;
+trailing newlines are ignored, as Postgres' `POSTGRES_PASSWORD_FILE` does):
+`XIAN_BDS_PASSWORD_FILE`, by default `.stack-bds-password` beside the
+credentials file. It is generated on first use, must differ from the
+PostGraphile password and must not be `xian`. Consumers only ever receive its
+path: Compose mounts it as `/run/secrets/xian_bds_password` for Postgres, the
+PostGraphile role setup and the node. A credentials file that still contains
+`XIAN_BDS_PASSWORD` fails with an error naming it; move the value into the BDS
+password file and delete the line.
 
 The shared reader also accepts unmarked legacy assignments, removing enclosing
 quotes literally while preserving backslashes. Shell expressions are literal

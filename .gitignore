@@ -10,6 +10,7 @@ __pycache__
 .mcp-local/
 .stack-secrets.env
 .stack-secrets.env.lock
+.stack-bds-password
 .venv-localnet/
 docker-compose-localnet.yml
 /contracts/*

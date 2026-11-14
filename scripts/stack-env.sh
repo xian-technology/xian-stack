@@ -69,23 +69,24 @@ _stack_is_digest_pinned_image() {
 ensure_stack_secrets_env() {
   local secrets_env="${XIAN_STACK_SECRETS_ENV:-${stack_secrets_env_default}}"
   export XIAN_STACK_SECRETS_ENV="${secrets_env}"
-  local credentials_output bds_password postgraphile_password
+  local credentials_output postgraphile_password bds_password_file
   credentials_output="$(mktemp)" || return 1
   if ! python3 "${stack_root}/scripts/stack_credentials.py" --path "${secrets_env}" >"${credentials_output}"; then
     rm -f "${credentials_output}"
     return 1
   fi
   if ! {
-    IFS= read -r -d '' bds_password &&
-    IFS= read -r -d '' postgraphile_password
+    IFS= read -r -d '' postgraphile_password &&
+    IFS= read -r -d '' bds_password_file
   } <"${credentials_output}"; then
     rm -f "${credentials_output}"
     printf 'xian-stack credentials: incomplete credential output\n' >&2
     return 1
   fi
   rm -f "${credentials_output}" || return 1
-  export XIAN_BDS_PASSWORD="${bds_password}"
   export XIAN_POSTGRAPHILE_PASSWORD="${postgraphile_password}"
+  # Only the path: Compose mounts the file as /run/secrets/xian_bds_password.
+  export XIAN_BDS_PASSWORD_FILE="${bds_password_file}"
 }
 
 validate_stack_security_env() {
@@ -105,20 +106,13 @@ validate_stack_security_env() {
     fi
   done
 
-  if [[ -z "${XIAN_BDS_PASSWORD:-}" ]]; then
-    errors+=("XIAN_BDS_PASSWORD must be set")
-  elif [[ "${XIAN_BDS_PASSWORD}" == "xian" ]]; then
-    errors+=("XIAN_BDS_PASSWORD cannot use the weak default value 'xian'")
-  fi
-
+  # stack_credentials.py checks the BDS password file itself.
   if [[ -z "${XIAN_POSTGRAPHILE_PASSWORD:-}" ]]; then
     errors+=("XIAN_POSTGRAPHILE_PASSWORD must be set")
-  elif [[ "${XIAN_POSTGRAPHILE_PASSWORD}" == "${XIAN_BDS_PASSWORD:-}" ]]; then
-    errors+=("XIAN_POSTGRAPHILE_PASSWORD must differ from XIAN_BDS_PASSWORD")
   fi
 
-  if [[ "${XIAN_POSTGRAPHILE_USER:-}" == "${XIAN_BDS_USER:-}" ]]; then
-    errors+=("XIAN_POSTGRAPHILE_USER must differ from XIAN_BDS_USER")
+  if [[ "${XIAN_POSTGRAPHILE_USER:-}" == "xian" ]]; then
+    errors+=("XIAN_POSTGRAPHILE_USER must differ from the BDS database user 'xian'")
   fi
 
   if ! _stack_is_loopback_host "${XIAN_COMETBFT_RPC_HOST:-127.0.0.1}" \
@@ -245,25 +239,6 @@ export_stack_env() {
   export XIAN_MAX_BLOCK_CHI="${XIAN_MAX_BLOCK_CHI:-}"
   export XIAN_BDS_DATA_DIR="${XIAN_BDS_DATA_DIR:-${stack_root}/.bds.db}"
   ensure_stack_secrets_env || return 1
-  export XIAN_BDS_DSN="${XIAN_BDS_DSN:-}"
-  export XIAN_BDS_HOST="${XIAN_BDS_HOST:-postgres}"
-  export XIAN_BDS_PORT="${XIAN_BDS_PORT:-5432}"
-  export XIAN_BDS_DATABASE="${XIAN_BDS_DATABASE:-xian}"
-  export XIAN_BDS_USER="${XIAN_BDS_USER:-xian}"
-  export XIAN_BDS_PASSWORD="${XIAN_BDS_PASSWORD:-}"
-  export XIAN_BDS_POOL_MIN_SIZE="${XIAN_BDS_POOL_MIN_SIZE:-1}"
-  export XIAN_BDS_POOL_MAX_SIZE="${XIAN_BDS_POOL_MAX_SIZE:-10}"
-  export XIAN_BDS_STATEMENT_TIMEOUT_MS="${XIAN_BDS_STATEMENT_TIMEOUT_MS:-0}"
-  export XIAN_BDS_ACQUIRE_TIMEOUT_MS="${XIAN_BDS_ACQUIRE_TIMEOUT_MS:-10000}"
-  export XIAN_BDS_APPLICATION_NAME="${XIAN_BDS_APPLICATION_NAME:-xian-bds}"
-  export XIAN_BDS_QUEUE_MAX_SIZE="${XIAN_BDS_QUEUE_MAX_SIZE:-128}"
-  export XIAN_BDS_CATCHUP_ENABLED="${XIAN_BDS_CATCHUP_ENABLED:-1}"
-  export XIAN_BDS_CATCHUP_POLL_SECONDS="${XIAN_BDS_CATCHUP_POLL_SECONDS:-1.0}"
-  export XIAN_BDS_RPC_URL="${XIAN_BDS_RPC_URL:-http://127.0.0.1:26657}"
-  export XIAN_BDS_SPOOL_DIR="${XIAN_BDS_SPOOL_DIR:-}"
-  export XIAN_BDS_SPOOL_WARN_ENTRIES="${XIAN_BDS_SPOOL_WARN_ENTRIES:-256}"
-  export XIAN_BDS_SPOOL_WARN_BYTES="${XIAN_BDS_SPOOL_WARN_BYTES:-536870912}"
-  export XIAN_BDS_DISK_FREE_WARN_BYTES="${XIAN_BDS_DISK_FREE_WARN_BYTES:-2147483648}"
   export XIAN_STACK_DISK_FREE_WARN_BYTES="${XIAN_STACK_DISK_FREE_WARN_BYTES:-10737418240}"
   export XIAN_CONTRACTS_DIR="${XIAN_CONTRACTS_DIR:-${stack_root}/contracts}"
   export XIAN_COMETBFT_VERSION="${XIAN_COMETBFT_VERSION:-0.39.3}"

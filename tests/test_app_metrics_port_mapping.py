@@ -6,7 +6,7 @@ import re
 import sys
 from pathlib import Path
 
-STACK_ROOT = Path(__file__).resolve().parents[1]
+STACK_ROOT = Path(__file__).absolute().parents[1]
 sys.path.insert(0, str(STACK_ROOT / "scripts"))
 
 import configure_node  # noqa: E402
@@ -19,7 +19,6 @@ PUBLISHED_APP_METRICS = re.compile(
 def _environment(**overrides: str) -> dict[str, str]:
     environment = {key: "value" for key, _option in configure_node.VALUE_OPTIONS}
     environment.update({key: "1" for key, *_flags in configure_node.BOOLEAN_OPTIONS})
-    environment["XIAN_BDS_PASSWORD"] = "placeholder"
     environment.update(overrides)
     return environment
 

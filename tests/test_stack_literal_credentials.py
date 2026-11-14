@@ -1,4 +1,9 @@
-"""Credential persistence and shell/bootstrap consumers treat values as data."""
+"""Credential persistence and shell/bootstrap consumers treat values as data.
+
+The stack credentials file holds the PostGraphile password. The BDS password
+lives only in its own owner-only file (XIAN_BDS_PASSWORD_FILE), which Compose
+mounts as /run/secrets/xian_bds_password for Postgres and the node.
+"""
 
 import json
 import os
@@ -9,12 +14,12 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).absolute().parents[1] / "scripts"))
 
 import stack_credentials as credentials
 
-ROOT = Path(__file__).resolve().parents[1]
-KEYS = ("XIAN_BDS_PASSWORD", "XIAN_POSTGRAPHILE_PASSWORD")
+ROOT = Path(__file__).absolute().parents[1]
+KEY = "XIAN_POSTGRAPHILE_PASSWORD"
 VALUES = [
     "simple-placeholder",
     'apostrophe\'s "quoted" value\\end',
@@ -24,50 +29,164 @@ VALUES = [
 
 
 def shell_credentials(path, **overrides):
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in credentials.REMOVED_BDS_VARIABLES
+    }
     return subprocess.run(
         [
             "bash",
             "-c",
             "source ./scripts/stack-env.sh && ensure_stack_secrets_env && "
             "python3 -c 'import json,os; print(json.dumps({k:os.environ[k] for k in "
-            '["XIAN_BDS_PASSWORD","XIAN_POSTGRAPHILE_PASSWORD"]}))\'',
+            '["XIAN_POSTGRAPHILE_PASSWORD","XIAN_BDS_PASSWORD_FILE"]}))\'',
         ],
         cwd=ROOT,
-        env={**os.environ, "XIAN_STACK_SECRETS_ENV": str(path), **overrides},
+        env={**environment, "XIAN_STACK_SECRETS_ENV": str(path), **overrides},
         capture_output=True,
         text=True,
         check=False,
     )
 
 
+def write_bds_password(path: Path, value: str, mode: int = 0o600) -> Path:
+    path.write_text(value, encoding="utf-8")
+    path.chmod(mode)
+    return path
+
+
 @pytest.mark.parametrize("value", VALUES)
 def test_backend_written_credentials_roundtrip_through_shell(tmp_path, value):
     path = tmp_path / "secrets.env"
-    expected = {KEYS[0]: value, KEYS[1]: "different-placeholder"}
-    credentials.write_credentials(path, expected)
-    assert credentials.read_credentials(path) == expected
-    result = shell_credentials(path, **{key: "" for key in KEYS})
+    credentials.write_credentials(path, {KEY: value})
+    assert credentials.read_credentials(path) == {KEY: value}
+    result = shell_credentials(path, **{KEY: ""})
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == expected
+    assert json.loads(result.stdout) == {
+        KEY: value,
+        "XIAN_BDS_PASSWORD_FILE": str(tmp_path / ".stack-bds-password"),
+    }
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_first_use_generates_an_owner_only_bds_password_file(tmp_path):
+    path = tmp_path / "secrets.env"
+
+    values = credentials.ensure_credentials(path, {})
+
+    password_file = tmp_path / ".stack-bds-password"
+    assert values == {KEY: values[KEY], "XIAN_BDS_PASSWORD_FILE": str(password_file)}
+    assert stat.S_IMODE(password_file.stat().st_mode) == 0o600
+    password = password_file.read_text(encoding="utf-8")
+    assert len(password) >= 32
+    assert password not in path.read_text(encoding="utf-8")
+    assert password != values[KEY]
+
+
+def test_bds_password_file_in_a_new_directory_is_created_privately(tmp_path):
+    password_file = tmp_path / "private" / "nested" / "bds-password"
+
+    values = credentials.ensure_credentials(
+        tmp_path / "secrets.env", {"XIAN_BDS_PASSWORD_FILE": str(password_file)}
+    )
+
+    assert values["XIAN_BDS_PASSWORD_FILE"] == str(password_file)
+    assert stat.S_IMODE(password_file.stat().st_mode) == 0o600
+    assert stat.S_IMODE(password_file.parent.stat().st_mode) == 0o700
+
+
+def test_existing_bds_password_file_is_used_unchanged(tmp_path):
+    password_file = write_bds_password(tmp_path / "chosen-password", "operator value\n")
+
+    values = credentials.ensure_credentials(
+        tmp_path / "secrets.env", {"XIAN_BDS_PASSWORD_FILE": str(password_file)}
+    )
+
+    assert values["XIAN_BDS_PASSWORD_FILE"] == str(password_file)
+    assert password_file.read_text(encoding="utf-8") == "operator value\n"
+    assert credentials.read_bds_password(password_file) == "operator value"
+
+
+@pytest.mark.parametrize(
+    ("content", "mode", "message"),
+    [
+        ("secret", 0o640, "owner"),
+        ("secret", 0o604, "owner"),
+        ("\n", 0o600, "empty"),
+        ("xian", 0o600, "weak default value 'xian'"),
+    ],
+)
+def test_unsafe_bds_password_files_are_refused(tmp_path, content, mode, message):
+    password_file = write_bds_password(tmp_path / ".stack-bds-password", content, mode)
+
+    with pytest.raises(ValueError, match=message):
+        credentials.ensure_credentials(tmp_path / "secrets.env", {})
+    assert password_file.read_text(encoding="utf-8") == content
+
+
+def test_bds_password_must_differ_from_the_postgraphile_password(tmp_path):
+    write_bds_password(tmp_path / ".stack-bds-password", "shared-value")
+
+    with pytest.raises(ValueError, match="XIAN_POSTGRAPHILE_PASSWORD must differ"):
+        credentials.ensure_credentials(tmp_path / "secrets.env", {KEY: "shared-value"})
+
+
+def test_bds_password_symlink_is_rejected_without_reading_the_target(tmp_path):
+    target = write_bds_password(tmp_path / "target", "untouched-placeholder")
+    (tmp_path / ".stack-bds-password").symlink_to(target)
+
+    with pytest.raises((ValueError, OSError)):
+        credentials.ensure_credentials(tmp_path / "secrets.env", {})
+    assert target.read_text(encoding="utf-8") == "untouched-placeholder"
+
+
+def test_stored_bds_password_names_the_removed_key_and_its_new_home(tmp_path):
+    path = tmp_path / "secrets.env"
+    source = (
+        "# xian-stack-credentials-v1\n"
+        'XIAN_BDS_PASSWORD="old-placeholder"\n'
+        'XIAN_POSTGRAPHILE_PASSWORD="other"\n'
+    )
+    path.write_text(source)
+
+    with pytest.raises(ValueError, match="XIAN_BDS_PASSWORD.*XIAN_BDS_PASSWORD_FILE"):
+        credentials.ensure_credentials(path, {})
+    result = shell_credentials(path)
+    assert result.returncode != 0
+    assert "XIAN_BDS_PASSWORD" in result.stderr
+    assert "old-placeholder" not in result.stderr
+    assert path.read_text() == source
+    assert not (tmp_path / ".stack-bds-password").exists()
+
+
+@pytest.mark.parametrize(
+    "variable", ["XIAN_BDS_PASSWORD", "XIAN_BDS_HOST", "XIAN_BDS_DSN", "XIAN_BDS_POOL_MAX_SIZE"]
+)
+def test_removed_bds_environment_settings_are_refused_by_name(tmp_path, variable):
+    with pytest.raises(ValueError, match=f"{variable}.*xian.toml"):
+        credentials.ensure_credentials(tmp_path / "secrets.env", {variable: ""})
+    assert not (tmp_path / "secrets.env").exists()
+
+
+def test_stack_operations_variables_are_not_bds_settings(tmp_path):
+    environment = {
+        "XIAN_BDS_ENABLED": "1",
+        "XIAN_BDS_DATA_DIR": str(tmp_path / "bds"),
+        "XIAN_BDS_SNAPSHOT_PATH": str(tmp_path / "snapshot.tar.gz"),
+    }
+
+    assert credentials.ensure_credentials(tmp_path / "secrets.env", environment)[KEY]
 
 
 def test_legacy_assignments_are_literal_and_environment_overrides_win(tmp_path):
     path = tmp_path / "legacy.env"
-    source = (
-        "# generated legacy assignments\n"
-        "XIAN_BDS_PASSWORD='legacy-placeholder'\n"
-        "XIAN_POSTGRAPHILE_PASSWORD=$(printf changed)\n"
-    )
+    source = "# generated legacy assignments\nXIAN_POSTGRAPHILE_PASSWORD=$(printf changed)\n"
     path.write_text(source)
-    result = shell_credentials(
-        path, XIAN_BDS_PASSWORD="explicit' value\n", XIAN_POSTGRAPHILE_PASSWORD=""
-    )
+    assert credentials.read_credentials(path) == {KEY: "$(printf changed)"}
+    result = shell_credentials(path, **{KEY: "explicit' value\n"})
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {
-        KEYS[0]: "explicit' value\n",
-        KEYS[1]: "$(printf changed)",
-    }
+    assert json.loads(result.stdout)[KEY] == "explicit' value\n"
     assert path.read_text() == source
 
 
@@ -76,12 +195,12 @@ def test_legacy_assignments_are_literal_and_environment_overrides_win(tmp_path):
     [
         "not-an-assignment\n",
         "UNKNOWN_SECRET=placeholder\n",
-        'XIAN_BDS_PASSWORD="unterminated\n',
-        "XIAN_BDS_PASSWORD='unterminated\n",
-        "XIAN_BDS_PASSWORD=first\nXIAN_BDS_PASSWORD=second\n",
-        '# xian-stack-credentials-v1\nXIAN_BDS_PASSWORD="bad\\u0000value"\n',
-        '# xian-stack-credentials-v2\nXIAN_BDS_PASSWORD="placeholder"\n',
-        '# legacy comment\n# xian-stack-credentials-v1\nXIAN_BDS_PASSWORD="placeholder"\n',
+        'XIAN_POSTGRAPHILE_PASSWORD="unterminated\n',
+        "XIAN_POSTGRAPHILE_PASSWORD='unterminated\n",
+        "XIAN_POSTGRAPHILE_PASSWORD=first\nXIAN_POSTGRAPHILE_PASSWORD=second\n",
+        '# xian-stack-credentials-v1\nXIAN_POSTGRAPHILE_PASSWORD="bad\\u0000value"\n',
+        '# xian-stack-credentials-v2\nXIAN_POSTGRAPHILE_PASSWORD="placeholder"\n',
+        '# legacy comment\n# xian-stack-credentials-v1\nXIAN_POSTGRAPHILE_PASSWORD="placeholder"\n',
     ],
 )
 def test_malformed_credentials_fail_before_shell_consumer_continues(tmp_path, source):
@@ -89,7 +208,7 @@ def test_malformed_credentials_fail_before_shell_consumer_continues(tmp_path, so
     path.write_text(source)
     with pytest.raises(ValueError):
         credentials.read_credentials(path)
-    result = shell_credentials(path, **{key: "" for key in KEYS})
+    result = shell_credentials(path, **{KEY: ""})
     assert result.returncode != 0
     assert result.stdout == ""
     assert path.read_text() == source
@@ -97,28 +216,38 @@ def test_malformed_credentials_fail_before_shell_consumer_continues(tmp_path, so
 
 def test_failed_atomic_write_preserves_previous_credentials(tmp_path, monkeypatch):
     path = tmp_path / "secrets.env"
-    original = {KEYS[0]: "previous", KEYS[1]: "other-previous"}
-    credentials.write_credentials(path, original)
+    credentials.write_credentials(path, {KEY: "previous"})
 
     def fail_replace(*_args):
         raise OSError("simulated replacement failure")
 
     monkeypatch.setattr(os, "replace", fail_replace)
     with pytest.raises(OSError, match="replacement failure"):
-        credentials.write_credentials(path, {KEYS[0]: "new", KEYS[1]: "other-new"})
-    assert credentials.read_credentials(path) == original
+        credentials.write_credentials(path, {KEY: "new"})
+    assert credentials.read_credentials(path) == {KEY: "previous"}
     assert set(tmp_path.iterdir()) <= {path, path.with_name(path.name + ".lock")}
+
+
+def test_failed_bds_password_write_leaves_no_partial_file(tmp_path, monkeypatch):
+    def fail_replace(*_args):
+        raise OSError("simulated replacement failure")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+    with pytest.raises(OSError, match="replacement failure"):
+        credentials.ensure_credentials(tmp_path / "secrets.env", {})
+    assert not (tmp_path / ".stack-bds-password").exists()
+    assert not [item for item in tmp_path.iterdir() if ".stack-bds-password." in item.name]
 
 
 def test_legacy_quoted_backslashes_are_not_reinterpreted_as_json(tmp_path):
     path = tmp_path / "legacy.env"
-    source = 'XIAN_BDS_PASSWORD="literal\\n\\t\\\\value"\nXIAN_POSTGRAPHILE_PASSWORD=other\n'
+    source = 'XIAN_POSTGRAPHILE_PASSWORD="literal\\n\\t\\\\value"\n'
     path.write_text(source)
-    expected = {KEYS[0]: r"literal\n\t\\value", KEYS[1]: "other"}
+    expected = {KEY: r"literal\n\t\\value"}
     assert credentials.read_credentials(path) == expected
-    result = shell_credentials(path, **{key: "" for key in KEYS})
+    result = shell_credentials(path, **{KEY: ""})
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == expected
+    assert json.loads(result.stdout)[KEY] == expected[KEY]
     assert path.read_text() == source
 
 
@@ -130,11 +259,11 @@ def test_credential_symlink_is_rejected_without_touching_target(tmp_path):
     with pytest.raises((ValueError, OSError)):
         credentials.read_credentials(path)
     with pytest.raises((ValueError, OSError)):
-        credentials.write_credentials(path, {KEYS[0]: "new", KEYS[1]: "other-new"})
+        credentials.write_credentials(path, {KEY: "new"})
     assert target.read_text() == "untouched-placeholder"
 
 
-def test_concurrent_first_use_generates_one_shared_credential_pair(tmp_path):
+def test_concurrent_first_use_generates_one_shared_credential_set(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
 
@@ -143,20 +272,26 @@ def test_concurrent_first_use_generates_one_shared_credential_pair(tmp_path):
 
     def load():
         barrier.wait()
-        return credentials.ensure_credentials(path, {})
+        values = credentials.ensure_credentials(path, {})
+        return values, credentials.read_bds_password(Path(values["XIAN_BDS_PASSWORD_FILE"]))
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(lambda _index: load(), range(8)))
-    assert all(value == results[0] for value in results)
-    assert credentials.read_credentials(path) == results[0]
-    assert results[0][KEYS[0]] != results[0][KEYS[1]]
+    assert all(result == results[0] for result in results)
+    values, bds_password = results[0]
+    assert credentials.read_credentials(path) == {KEY: values[KEY]}
+    assert bds_password != values[KEY]
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 def test_command_consumer_receives_literal_environment(tmp_path):
     path = tmp_path / "secrets.env"
-    values = {KEYS[0]: VALUES[-1], KEYS[1]: VALUES[-2]}
-    credentials.write_credentials(path, values)
+    credentials.write_credentials(path, {KEY: VALUES[-1]})
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in credentials.REMOVED_BDS_VARIABLES
+    }
     result = subprocess.run(
         [
             sys.executable,
@@ -166,21 +301,25 @@ def test_command_consumer_receives_literal_environment(tmp_path):
             "--",
             sys.executable,
             "-c",
-            "import os,json; print(json.dumps({k:os.environ[k] for k in "
-            '["XIAN_BDS_PASSWORD","XIAN_POSTGRAPHILE_PASSWORD"]}))',
+            "import os,json; print(json.dumps({k:os.environ.get(k) for k in "
+            '["XIAN_POSTGRAPHILE_PASSWORD","XIAN_BDS_PASSWORD_FILE","XIAN_BDS_PASSWORD"]}))',
         ],
-        env={**os.environ, **{key: "" for key in KEYS}},
+        env={**environment, KEY: ""},
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == values
+    assert json.loads(result.stdout) == {
+        KEY: VALUES[-1],
+        "XIAN_BDS_PASSWORD_FILE": str(tmp_path / ".stack-bds-password"),
+        "XIAN_BDS_PASSWORD": None,
+    }
 
 
 def test_failed_file_inspection_closes_the_open_descriptor(tmp_path, monkeypatch):
     path = tmp_path / "secrets.env"
-    path.write_text("XIAN_BDS_PASSWORD=placeholder\n")
+    path.write_text("XIAN_POSTGRAPHILE_PASSWORD=placeholder\n")
     opened = []
     original_open = os.open
     original_fstat = os.fstat
@@ -203,12 +342,11 @@ def test_failed_file_inspection_closes_the_open_descriptor(tmp_path, monkeypatch
 
 def test_empty_legacy_values_remain_empty_until_generation(tmp_path):
     path = tmp_path / "secrets.env"
-    path.write_text("XIAN_BDS_PASSWORD=''\nXIAN_POSTGRAPHILE_PASSWORD=other\n")
-    assert credentials.read_credentials(path) == {KEYS[0]: "", KEYS[1]: "other"}
+    path.write_text("XIAN_POSTGRAPHILE_PASSWORD=''\n")
+    assert credentials.read_credentials(path) == {KEY: ""}
     values = credentials.ensure_credentials(path, {})
-    assert values[KEYS[0]]
-    assert values[KEYS[1]] == "other"
-    assert credentials.read_credentials(path) == values
+    assert values[KEY]
+    assert credentials.read_credentials(path) == {KEY: values[KEY]}
 
 
 def test_invalid_assignment_reports_its_source_line(tmp_path):
@@ -220,9 +358,8 @@ def test_invalid_assignment_reports_its_source_line(tmp_path):
 
 def test_nested_credential_directory_is_created_privately(tmp_path):
     path = tmp_path / "nested" / "private" / "secrets.env"
-    values = {KEYS[0]: "placeholder", KEYS[1]: "other"}
-    credentials.write_credentials(path, values)
-    assert credentials.read_credentials(path) == values
+    credentials.write_credentials(path, {KEY: "placeholder"})
+    assert credentials.read_credentials(path) == {KEY: "placeholder"}
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
 
 
@@ -240,24 +377,27 @@ def test_nested_credential_directory_is_created_privately(tmp_path):
 )
 def test_make_compose_families_receive_decoded_environment(tmp_path, compose_variable):
     path = tmp_path / "private store" / "quoted' credential file.env"
-    values = {KEYS[0]: "quoted' value\n", KEYS[1]: "literal$HOME-`text`"}
-    credentials.write_credentials(path, values)
+    credentials.write_credentials(path, {KEY: "literal$HOME-`text`"})
     recorder = tmp_path / "record compose.py"
     recorder.write_text(
         "import os,json\n"
-        "print(json.dumps({key:os.environ[key] for key in "
-        "['XIAN_BDS_PASSWORD','XIAN_POSTGRAPHILE_PASSWORD']}))\n"
+        "print(json.dumps({key:os.environ.get(key) for key in "
+        "['XIAN_POSTGRAPHILE_PASSWORD','XIAN_BDS_PASSWORD_FILE','XIAN_BDS_PASSWORD']}))\n"
     )
     probe = tmp_path / "probe.mk"
     probe.write_text(f"credential-probe:\n\t@$({compose_variable}) config\n")
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in credentials.REMOVED_BDS_VARIABLES
+    }
     result = subprocess.run(
         ["make", "--no-print-directory", "-f", "Makefile", "-f", str(probe), "credential-probe"],
         cwd=ROOT,
         env={
-            **os.environ,
+            **environment,
             "XIAN_STACK_SECRETS_ENV": str(path),
-            "XIAN_BDS_PASSWORD": "",
-            "XIAN_POSTGRAPHILE_PASSWORD": "",
+            KEY: "",
             "DOCKER_COMPOSE": f"{sys.executable} '{recorder}'",
         },
         capture_output=True,
@@ -265,7 +405,11 @@ def test_make_compose_families_receive_decoded_environment(tmp_path, compose_var
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == values
+    assert json.loads(result.stdout) == {
+        KEY: "literal$HOME-`text`",
+        "XIAN_BDS_PASSWORD_FILE": str(path.parent / ".stack-bds-password"),
+        "XIAN_BDS_PASSWORD": None,
+    }
 
 
 def test_make_help_does_not_create_or_load_credentials(tmp_path):
@@ -273,12 +417,7 @@ def test_make_help_does_not_create_or_load_credentials(tmp_path):
     result = subprocess.run(
         ["make", "--no-print-directory", "help"],
         cwd=ROOT,
-        env={
-            **os.environ,
-            "XIAN_STACK_SECRETS_ENV": str(path),
-            "XIAN_BDS_PASSWORD": "",
-            "XIAN_POSTGRAPHILE_PASSWORD": "",
-        },
+        env={**os.environ, "XIAN_STACK_SECRETS_ENV": str(path), KEY: ""},
         capture_output=True,
         text=True,
         check=False,
@@ -286,3 +425,4 @@ def test_make_help_does_not_create_or_load_credentials(tmp_path):
     assert result.returncode == 0, result.stderr
     assert not path.exists()
     assert not path.with_name(path.name + ".lock").exists()
+    assert not path.with_name(".stack-bds-password").exists()

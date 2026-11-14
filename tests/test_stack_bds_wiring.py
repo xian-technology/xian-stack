@@ -1,36 +1,58 @@
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
-STACK_ROOT = Path(__file__).resolve().parents[1]
+STACK_ROOT = Path(__file__).absolute().parents[1]
 
-BDS_RUNTIME_ENV_KEYS = {
-    "XIAN_BDS_DSN": "--bds-dsn",
-    "XIAN_BDS_HOST": "--bds-host",
-    "XIAN_BDS_PORT": "--bds-port",
-    "XIAN_BDS_DATABASE": "--bds-database",
-    "XIAN_BDS_USER": "--bds-user",
-    "XIAN_BDS_PASSWORD": "--bds-password",
-    "XIAN_BDS_POOL_MIN_SIZE": "--bds-pool-min-size",
-    "XIAN_BDS_POOL_MAX_SIZE": "--bds-pool-max-size",
-    "XIAN_BDS_STATEMENT_TIMEOUT_MS": "--bds-statement-timeout-ms",
-    "XIAN_BDS_ACQUIRE_TIMEOUT_MS": "--bds-acquire-timeout-ms",
-    "XIAN_BDS_APPLICATION_NAME": "--bds-application-name",
-    "XIAN_BDS_QUEUE_MAX_SIZE": "--bds-queue-max-size",
-    "XIAN_BDS_CATCHUP_ENABLED": "--bds-catchup-enabled",
-    "XIAN_BDS_CATCHUP_POLL_SECONDS": "--bds-catchup-poll-seconds",
-    "XIAN_BDS_RPC_URL": "--bds-rpc-url",
-    "XIAN_BDS_SPOOL_DIR": "--bds-spool-dir",
-    "XIAN_BDS_SPOOL_WARN_ENTRIES": "--bds-spool-warn-entries",
-    "XIAN_BDS_SPOOL_WARN_BYTES": "--bds-spool-warn-bytes",
-    "XIAN_BDS_DISK_FREE_WARN_BYTES": "--bds-disk-free-warn-bytes",
-}
+# BDS node settings live only in the node's xian.toml [bds] table; these
+# variables were a second, silently merged source and are gone everywhere.
+REMOVED_BDS_SETTING_VARIABLES = tuple(
+    f"XIAN_BDS_{name}"
+    for name in (
+        "DSN",
+        "HOST",
+        "PORT",
+        "DATABASE",
+        "USER",
+        "PASSWORD",
+        "POOL_MIN_SIZE",
+        "POOL_MAX_SIZE",
+        "STATEMENT_TIMEOUT_MS",
+        "ACQUIRE_TIMEOUT_MS",
+        "APPLICATION_NAME",
+        "QUEUE_MAX_SIZE",
+        "CATCHUP_ENABLED",
+        "CATCHUP_POLL_SECONDS",
+        "RPC_URL",
+        "SPOOL_DIR",
+        "SPOOL_WARN_ENTRIES",
+        "SPOOL_WARN_BYTES",
+        "DISK_FREE_WARN_BYTES",
+    )
+)
+SECRET = "/run/secrets/xian_bds_password"
+CONFIGURATION_SURFACES = (
+    "Makefile",
+    "docker-compose-abci.yml",
+    "docker-compose-abci-bds.yml",
+    "docker-compose-abci-dev.yml",
+    "scripts/stack-env.sh",
+    "scripts/configure_node.py",
+    "scripts/backend.py",
+    "scripts/localnet-init.py",
+    "scripts/localnet-e2e.py",
+    "scripts/storage-report.py",
+    "docker/postgres/init-postgraphile-role.sh",
+)
 
-SENSITIVE_ENV_KEYS = {
-    "XIAN_BDS_DSN",
-    "XIAN_BDS_PASSWORD",
-}
+
+def service_block(compose: str, name: str) -> str:
+    start = compose.index(f"\n  {name}:\n")
+    following = re.search(r"\n  [a-z][a-z0-9-]*:\n", compose[start + 1 :])
+    return compose[start : start + 1 + following.start()] if following else compose[start:]
+
 
 POSTGRAPHILE_HARDENING_ENV_KEYS = {
     "XIAN_POSTGRAPHILE_STATEMENT_TIMEOUT_MS",
@@ -43,49 +65,36 @@ POSTGRAPHILE_HARDENING_ENV_KEYS = {
 
 
 class StackBdsWiringTests(unittest.TestCase):
-    def test_makefile_wires_bds_runtime_options(self) -> None:
-        makefile = (STACK_ROOT / "Makefile").read_text(encoding="utf-8")
-        configure = (STACK_ROOT / "scripts" / "configure_node.py").read_text(encoding="utf-8")
+    def test_no_configuration_surface_carries_removed_bds_settings(self) -> None:
+        for relative in CONFIGURATION_SURFACES:
+            text = (STACK_ROOT / relative).read_text(encoding="utf-8")
+            for name in REMOVED_BDS_SETTING_VARIABLES:
+                with self.subTest(file=relative, name=name):
+                    self.assertIsNone(re.search(rf"\b{name}\b", text))
 
-        for env_key, cli_flag in BDS_RUNTIME_ENV_KEYS.items():
-            with self.subTest(env_key=env_key):
-                declaration = "override " if env_key == "XIAN_BDS_PASSWORD" else ""
-                self.assertIn(f"{declaration}{env_key}", makefile)
-                self.assertIn(f"export {env_key}", makefile)
-                self.assertIn(cli_flag, configure)
-                if env_key not in SENSITIVE_ENV_KEYS:
-                    self.assertIn(f'printf "{env_key}=', makefile)
-
-        self.assertIn("XIAN_BLOCK_POLICY_MODE ?= periodic", makefile)
-        self.assertIn("XIAN_BLOCK_POLICY_INTERVAL ?= 5s", makefile)
-        self.assertIn('XIAN_BLOCK_POLICY_MODE", "--block-policy-mode', configure)
-        self.assertIn('XIAN_BLOCK_POLICY_INTERVAL", "--block-policy-interval', configure)
-        # Fee policy variables are genesis inputs; their behavior is covered by
-        # test_node_configure_literal_arguments and test_localnet_genesis_fee_policy.
-        self.assertIn("XIAN_TX_FEE_MODE ?=\n", makefile)
-        self.assertIn("genesis_fee_policy_arguments(environment)", configure)
-
-    # Runtime flag/override behavior is exercised with the real Make target and
-    # a recording Compose executable in test_node_configure_literal_arguments.
-
-    def test_stack_env_exports_bds_runtime_options(self) -> None:
-        stack_env = (STACK_ROOT / "scripts" / "stack-env.sh").read_text(encoding="utf-8")
-
-        for env_key in BDS_RUNTIME_ENV_KEYS:
-            with self.subTest(env_key=env_key):
-                self.assertIn(f"export {env_key}=", stack_env)
-        self.assertIn("export XIAN_BLOCK_POLICY_MODE=", stack_env)
-        self.assertIn("export XIAN_BLOCK_POLICY_INTERVAL=", stack_env)
-        self.assertIn("export XIAN_TX_FEE_MODE=", stack_env)
-        self.assertIn("export XIAN_MAX_TX_CHI=", stack_env)
-        self.assertIn("export XIAN_MAX_BLOCK_CHI=", stack_env)
-
-    def test_compose_overlay_passes_bds_runtime_environment(self) -> None:
+    def test_node_and_postgres_read_one_mounted_password_secret(self) -> None:
         compose = (STACK_ROOT / "docker-compose-abci-bds.yml").read_text(encoding="utf-8")
+        abci = service_block(compose, "abci")
+        postgres = service_block(compose, "postgres")
+        init = service_block(compose, "postgraphile-db-init")
 
-        for env_key in BDS_RUNTIME_ENV_KEYS:
-            with self.subTest(env_key=env_key):
-                self.assertIn(f"{env_key}: ${{{env_key}}}", compose)
+        self.assertIn(
+            "secrets:\n  xian_bds_password:\n    file: ${XIAN_BDS_PASSWORD_FILE:?", compose
+        )
+        self.assertNotIn("environment:", abci)
+        for block in (abci, postgres, init):
+            self.assertIn("    secrets:\n      - xian_bds_password\n", block)
+        self.assertIn(f"POSTGRES_PASSWORD_FILE: {SECRET}", postgres)
+        self.assertNotIn("POSTGRES_PASSWORD:", postgres)
+        self.assertIn(f"XIAN_BDS_PASSWORD_FILE: {SECRET}", init)
+        self.assertNotIn("PGPASSWORD", init)
+
+    def test_postgraphile_role_init_reads_the_mounted_bds_secret(self) -> None:
+        role_init = (STACK_ROOT / "docker" / "postgres" / "init-postgraphile-role.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('PGPASSWORD="$(cat "${XIAN_BDS_PASSWORD_FILE:?', role_init)
 
     def test_postgraphile_hardening_defaults_are_wired(self) -> None:
         makefile = (STACK_ROOT / "Makefile").read_text(encoding="utf-8")

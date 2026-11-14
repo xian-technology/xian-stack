@@ -16,13 +16,17 @@ from stack_credentials import ensure_credentials
 BOOLEAN_OPTIONS = (
     ("XIAN_BDS_ENABLED", "--bds-enabled", "--no-bds-enabled"),
     ("XIAN_APP_METRICS_ENABLED", "--metrics-enabled", "--no-metrics-enabled"),
-    ("XIAN_BDS_CATCHUP_ENABLED", "--bds-catchup-enabled", "--no-bds-catchup-enabled"),
 )
 # docker-compose-abci.yml publishes XIAN_APP_METRICS_HOST:XIAN_APP_METRICS_PORT on the
 # host to this container address, so the node always listens here; only the host side
 # is configurable.
 APP_METRICS_CONTAINER_HOST = "0.0.0.0"
 APP_METRICS_CONTAINER_PORT = "9108"
+# The integrated container runs CometBFT beside the node, so BDS catch-up reads
+# the node's own RPC. All other [bds] settings keep xian-configure-node's
+# defaults (the stack's Postgres service and its mounted password secret);
+# change them with xian-configure-node flags in CONFIGURE_ARGS.
+BDS_RPC_URL = "http://127.0.0.1:26657"
 FALSE_VALUES = {"0", "false", "FALSE", "False", "no", "NO", "No", "off", "OFF", "Off"}
 VALUE_OPTIONS = (
     ("XIAN_APP_LOG_RETENTION_DAYS", "--app-log-retention-days"),
@@ -31,25 +35,6 @@ VALUE_OPTIONS = (
     ("XIAN_BLOCK_POLICY_MODE", "--block-policy-mode"),
     ("XIAN_BLOCK_POLICY_INTERVAL", "--block-policy-interval"),
     ("XIAN_APP_METRICS_BDS_REFRESH_SECONDS", "--metrics-bds-refresh-seconds"),
-    ("XIAN_BDS_HOST", "--bds-host"),
-    ("XIAN_BDS_PORT", "--bds-port"),
-    ("XIAN_BDS_DATABASE", "--bds-database"),
-    ("XIAN_BDS_USER", "--bds-user"),
-    ("XIAN_BDS_POOL_MIN_SIZE", "--bds-pool-min-size"),
-    ("XIAN_BDS_POOL_MAX_SIZE", "--bds-pool-max-size"),
-    ("XIAN_BDS_STATEMENT_TIMEOUT_MS", "--bds-statement-timeout-ms"),
-    ("XIAN_BDS_ACQUIRE_TIMEOUT_MS", "--bds-acquire-timeout-ms"),
-    ("XIAN_BDS_APPLICATION_NAME", "--bds-application-name"),
-    ("XIAN_BDS_QUEUE_MAX_SIZE", "--bds-queue-max-size"),
-    ("XIAN_BDS_CATCHUP_POLL_SECONDS", "--bds-catchup-poll-seconds"),
-    ("XIAN_BDS_SPOOL_WARN_ENTRIES", "--bds-spool-warn-entries"),
-    ("XIAN_BDS_SPOOL_WARN_BYTES", "--bds-spool-warn-bytes"),
-    ("XIAN_BDS_DISK_FREE_WARN_BYTES", "--bds-disk-free-warn-bytes"),
-)
-OPTIONAL_OPTIONS = (
-    ("XIAN_BDS_DSN", "--bds-dsn"),
-    ("XIAN_BDS_RPC_URL", "--bds-rpc-url"),
-    ("XIAN_BDS_SPOOL_DIR", "--bds-spool-dir"),
 )
 
 
@@ -63,11 +48,7 @@ def configuration_arguments(environment: Mapping[str, str]) -> list[str]:
     arguments.extend(
         ("--metrics-host", APP_METRICS_CONTAINER_HOST, "--metrics-port", APP_METRICS_CONTAINER_PORT)
     )
-    # A valid password may itself begin with '-' and must remain one value.
-    arguments.append("--bds-password=" + environment["XIAN_BDS_PASSWORD"])
-    for key, option in OPTIONAL_OPTIONS:
-        if environment.get(key, "").strip():
-            arguments.extend((option, environment[key]))
+    arguments.extend(("--bds-rpc-url", BDS_RPC_URL))
     return arguments
 
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).absolute().parents[1] / "scripts"))
 
 backend = importlib.import_module("backend")
 
@@ -18,7 +18,6 @@ PINNED = "@sha256:" + "a" * 64
 def security_errors(tmp_path: Path, **env: str) -> list[str]:
     environment = {
         "XIAN_STACK_SECRETS_ENV": str(tmp_path / "secrets.env"),
-        "XIAN_BDS_PASSWORD": "bds-secret",
         "XIAN_POSTGRAPHILE_PASSWORD": "graphql-secret",
         **env,
     }
@@ -40,22 +39,35 @@ def test_safe_defaults_pass_and_fill_the_environment(tmp_path):
     assert result["XIAN_COMETBFT_RPC_HOST"] == "127.0.0.1"
     assert result["XIAN_POSTGRAPHILE_USER"] == "xian_graphql"
     assert result["XIAN_GRAFANA_IMAGE"] == "grafana/grafana:12.4.5"
-    assert result["XIAN_BDS_PASSWORD"]
-    assert result["XIAN_POSTGRAPHILE_PASSWORD"] != result["XIAN_BDS_PASSWORD"]
+    # Only the BDS password file's path enters the environment, never the value.
+    assert result["XIAN_BDS_PASSWORD_FILE"] == str(tmp_path / ".stack-bds-password")
+    assert "XIAN_BDS_PASSWORD" not in result
+    password = (tmp_path / ".stack-bds-password").read_text(encoding="utf-8")
+    assert result["XIAN_POSTGRAPHILE_PASSWORD"] != password
     assert result["XIAN_STACK_SECRETS_ENV"] == str((tmp_path / "secrets.env").resolve())
 
 
 def test_explicit_values_are_kept(tmp_path):
+    password_file = tmp_path / "chosen-bds-password"
+    password_file.write_text("chosen")
+    password_file.chmod(0o600)
     result = backend.ensure_stack_security_env(
         {
             "XIAN_STACK_SECRETS_ENV": str(tmp_path / "secrets.env"),
             "XIAN_DASHBOARD_PORT": "9999",
-            "XIAN_BDS_PASSWORD": "chosen",
+            "XIAN_BDS_PASSWORD_FILE": str(password_file),
         }
     )
 
     assert result["XIAN_DASHBOARD_PORT"] == "9999"
-    assert result["XIAN_BDS_PASSWORD"] == "chosen"
+    assert result["XIAN_BDS_PASSWORD_FILE"] == str(password_file)
+
+
+def test_removed_bds_settings_are_refused_by_name(tmp_path):
+    with pytest.raises(ValueError, match="XIAN_BDS_PASSWORD.*xian.toml"):
+        backend.ensure_stack_security_env(
+            {"XIAN_STACK_SECRETS_ENV": str(tmp_path / "secrets.env"), "XIAN_BDS_PASSWORD": "x"}
+        )
 
 
 @pytest.mark.parametrize(
@@ -63,16 +75,8 @@ def test_explicit_values_are_kept(tmp_path):
     [
         ({}, []),
         (
-            {"XIAN_BDS_PASSWORD": "xian"},
-            ["XIAN_BDS_PASSWORD cannot use the weak default value 'xian'"],
-        ),
-        (
-            {"XIAN_POSTGRAPHILE_PASSWORD": "bds-secret"},
-            ["XIAN_POSTGRAPHILE_PASSWORD must differ from XIAN_BDS_PASSWORD"],
-        ),
-        (
             {"XIAN_POSTGRAPHILE_USER": "xian"},
-            ["XIAN_POSTGRAPHILE_USER must differ from XIAN_BDS_USER"],
+            ["XIAN_POSTGRAPHILE_USER must differ from the BDS database user 'xian'"],
         ),
         (
             {"XIAN_COMETBFT_RPC_HOST": "0.0.0.0"},
@@ -155,7 +159,6 @@ def test_explicit_values_are_kept(tmp_path):
         ),
         (
             {
-                "XIAN_BDS_PASSWORD": "xian",
                 "XIAN_POSTGRAPHILE_USER": "xian",
                 "XIAN_COMETBFT_RPC_HOST": "0.0.0.0",
                 "XIAN_COMETBFT_METRICS_HOST": "0.0.0.0",
@@ -168,8 +171,7 @@ def test_explicit_values_are_kept(tmp_path):
                 "XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES": "yes",
             },
             [
-                "XIAN_BDS_PASSWORD cannot use the weak default value 'xian'",
-                "XIAN_POSTGRAPHILE_USER must differ from XIAN_BDS_USER",
+                "XIAN_POSTGRAPHILE_USER must differ from the BDS database user 'xian'",
                 "Public RPC exposure requires XIAN_PUBLIC_RPC_ENABLED=1",
                 "Public metrics exposure requires XIAN_PUBLIC_METRICS_ENABLED=1",
                 "Public PostGraphile exposure requires XIAN_BDS_ENABLED=1",
