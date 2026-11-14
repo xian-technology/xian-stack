@@ -19,9 +19,8 @@ monitoring stack.
 ## Notes
 
 - These assets are optional, but they are part of the validated operator path.
-- The dashboards and alert rules are intentionally aligned with the operator and
-  monitoring profiles used across `xian-configs`, `xian-cli`, and
-  `xian-deploy`.
+- The dashboards and alert rules are intentionally aligned with the operator
+  profiles used across `xian-configs`, `xian-cli`, and `xian-deploy`.
 - `shared-network` is the current profile-specific monitoring posture.
   Local indexed nodes use the overview, VM runtime, and BDS recovery dashboards
   without a separate profile variant.
