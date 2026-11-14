@@ -45,45 +45,38 @@ def test_oracle_rejects_dropped_transaction_seed():
 
 def test_authored_rng_uses_each_explicit_transaction_context(tmp_path):
     from contracting.storage.driver import Driver
-    from xian.execution_engine import VmRuntime, execute_vm_transaction
-    from xian.processor import TxProcessor
+    from vm_call_support import process_transaction
+    from xian.fee_policy import TxFeePolicy
 
-    processor = object.__new__(TxProcessor)
-    processor.execution_runtime = VmRuntime()
     with Driver(vm_profile="xian_vm_v2", storage_home=tmp_path) as driver:
         driver.set_contract_from_source("con_rng", (SOURCE_DIR / "commitments.py").read_text())
         driver.commit()
-        for signature in ["signature-one", "signature-two"]:
-            environment = processor.get_environment(
-                {
-                    "b_meta": {
-                        "nanos": 1793709296123456789,
-                        "height": 17,
-                        "hash": "ab" * 32,
-                        "chain_id": "local-rng-audit",
-                    },
-                    "metadata": {"signature": signature},
-                }
-            )
-            outcome = execute_vm_transaction(
-                VmRuntime(),
-                driver,
-                sender="alice",
-                contract_name="con_rng",
-                function_name="transaction_random",
-                kwargs={},
-                environment=environment,
-                chi_budget=100_000,
-                transaction_size_bytes=0,
-                chi_cost=20,
-                meter=True,
-                apply_metering_writes=False,
-            )
+        for nonce, signature in enumerate(["signature-one", "signature-two"]):
+            tx = {
+                "payload": {
+                    "sender": "alice",
+                    "contract": "con_rng",
+                    "function": "transaction_random",
+                    "kwargs": {},
+                    "nonce": nonce,
+                    "chi_supplied": 100_000,
+                },
+                "metadata": {"signature": signature},
+                "b_meta": {
+                    "nanos": 1793709296123456789,
+                    "height": 17,
+                    "hash": "ab" * 32,
+                    "chain_id": "local-rng-audit",
+                },
+            }
+            # The node's own path: the Rust executor reads the block time and
+            # the transaction's input hash from the block and the signature.
+            receipt = process_transaction(driver, tx, TxFeePolicy.free_metered())
             expected = transaction_random_value(BLOCK, signature)
-            assert outcome.output.status_code == 0, outcome.output.result
-            assert outcome.output.result == expected
-            assert outcome.writes == {"con_rng.result": expected}
-            driver.apply_writes(outcome.writes)
+            assert receipt["status"] == 0, receipt["result"]
+            # A 64-bit draw is beyond the 53-bit wire integers.
+            assert receipt["result"] == {"__big_int__": str(expected)}
+            assert receipt["state"] == [{"key": "con_rng.result", "value": expected}]
             driver.commit()
             assert driver.get("con_rng.result") == expected
 

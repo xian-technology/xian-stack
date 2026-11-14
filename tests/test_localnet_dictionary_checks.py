@@ -13,8 +13,8 @@ from localnet_e2e_support import E2EError
 
 
 def test_live_dictionary_contract_executes_and_rolls_back(tmp_path):
-    import xian_vm_core
     from contracting.storage.driver import Driver
+    from vm_call_support import execute_contract
 
     driver = Driver(vm_profile="xian_vm_v2", storage_home=tmp_path)
     name = "con_dictionary_fixture"
@@ -22,8 +22,7 @@ def test_live_dictionary_contract_executes_and_rolls_back(tmp_path):
     driver.set(f"{name}.progress", 0)
     driver.commit()
     for function, progress in [("probe", 1), ("invalid", 1), ("probe", 2)]:
-        output = xian_vm_core.execute_contract(
-            vm_profile="xian_vm_v2",
+        output = execute_contract(
             driver=driver,
             contract_name=name,
             function_name=function,

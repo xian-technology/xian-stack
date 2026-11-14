@@ -6,8 +6,8 @@ import localnet_compatibility_checks as checks
 
 
 def test_runtime_compatibility_fixture_and_failure_recovery(tmp_path):
-    import xian_vm_core
     from contracting.storage.driver import Driver
+    from vm_call_support import execute_contract
 
     driver = Driver(vm_profile="xian_vm_v2", storage_home=tmp_path)
     name = "con_runtime_fixture"
@@ -20,8 +20,7 @@ def test_runtime_compatibility_fixture_and_failure_recovery(tmp_path):
         ("changed_dictionary", 1, "size"),
         ("probe", 2, None),
     ]:
-        result = xian_vm_core.execute_contract(
-            vm_profile="xian_vm_v2",
+        result = execute_contract(
             driver=driver,
             contract_name=name,
             function_name=function,

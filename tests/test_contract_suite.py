@@ -11,8 +11,8 @@ from localnet_e2e_support import normalize_value
 
 
 def test_native_contract_suite(tmp_path):
-    import xian_vm_core
     from contracting.local import ContractingClient
+    from vm_call_support import execute_contract
     from xian.utils.encoding import encode_abci_json
     from xian_py.wallet import Wallet
     from xian_runtime_types.time import Datetime
@@ -31,9 +31,8 @@ def test_native_contract_suite(tmp_path):
     driver.commit()
 
     def execute(contract, function, kwargs, actor="alice", chi=500_000):
-        return xian_vm_core.execute_contract(
+        return execute_contract(
             driver=driver,
-            vm_profile="xian_vm_v2",
             contract_name=contract,
             function_name=function,
             kwargs=kwargs,

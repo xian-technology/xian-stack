@@ -140,8 +140,8 @@ def test_nonce_fixture_budget_covers_native_currency_and_failed_followup(tmp_pat
     from contracting.storage.driver import Driver
     from localnet_chain_checks import CURRENCY_TRANSFER_CHI
     from localnet_execution_checks import NONCE_INITIAL_BALANCE
-    from xian.execution_engine import build_vm_runtime, execute_vm_transaction
-    from xian_runtime_types.time import Datetime
+    from vm_call_support import process_transaction
+    from xian.fee_policy import TxFeePolicy
 
     source = Path(__file__).resolve().parents[2] / "xian-configs/contracts/currency.s.py"
     sender, recipient = "a" * 64, "b" * 64
@@ -149,31 +149,34 @@ def test_nonce_fixture_budget_covers_native_currency_and_failed_followup(tmp_pat
         driver.set_contract_from_source("currency", source.read_text())
         driver.set(f"currency.balances:{sender}", NONCE_INITIAL_BALANCE)
         driver.set(f"currency.balances:{recipient}", 0)
+        driver.set("chi_cost.S:value", 20)
         driver.commit()
-        runtime = build_vm_runtime()
-        for amount, expected_success in [(70, True), (70, False), (1, True)]:
+        for nonce, (amount, expected_success) in enumerate([(70, True), (70, False), (1, True)]):
             # Admission reserves the full supplied budget before execution.
             balance = driver.get(f"currency.balances:{sender}")
             assert balance >= CURRENCY_TRANSFER_CHI / 20
-            outcome = execute_vm_transaction(
-                runtime,
-                driver,
-                sender=sender,
-                contract_name="currency",
-                function_name="transfer",
-                kwargs={"amount": amount, "to": recipient},
-                environment={"now": Datetime(2026, 11, 1), "chain_id": "local-test"},
-                chi_budget=CURRENCY_TRANSFER_CHI,
-                transaction_size_bytes=1024,
-                chi_cost=20,
-                meter=True,
-                apply_metering_on_success_only=False,
-            )
-            assert (outcome.output.status_code == 0) is expected_success, outcome.output.result
-            assert 0 < outcome.chi_used < CURRENCY_TRANSFER_CHI
+            tx = {
+                "payload": {
+                    "sender": sender,
+                    "contract": "currency",
+                    "function": "transfer",
+                    "kwargs": {"amount": amount, "to": recipient},
+                    "nonce": nonce,
+                    "chi_supplied": CURRENCY_TRANSFER_CHI,
+                    "chain_id": "local-test",
+                },
+                "metadata": {"signature": f"{nonce:0128x}"},
+                "b_meta": {
+                    "nanos": 1_793_500_000_000_000_000 + nonce,
+                    "height": nonce + 1,
+                    "hash": "ab" * 32,
+                    "chain_id": "local-test",
+                },
+            }
+            receipt = process_transaction(driver, tx, TxFeePolicy.paid_metered())
+            assert (receipt["status"] == 0) is expected_success, receipt["result"]
+            assert 0 < receipt["chi_used"] < CURRENCY_TRANSFER_CHI
             if not expected_success:
-                assert "not enough coins" in str(outcome.output.result).lower()
-            for key, value in outcome.writes.items():
-                driver.set(key, value)
+                assert "not enough coins" in str(receipt["result"]).lower()
             driver.commit()
         assert driver.get(f"currency.balances:{recipient}") == 71
