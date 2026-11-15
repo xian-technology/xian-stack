@@ -181,9 +181,10 @@ def _job_status(submission: Any) -> str:
     return "submitted"
 
 
-# Relays supply exactly their simulated chi; a relay whose chain state
-# changed after the estimate (another relay moved the note tree) runs out of
-# chi. Nothing was spent, so the client can request the relay again.
+# Relays supply their simulated chi plus the SDK's 2-chi margin; a relay whose
+# chain state changed more than that after the estimate (another relay moved
+# the note tree) runs out of chi. Nothing was spent, so the client can request
+# the relay again.
 OUT_OF_CHI_JOB_ERROR = (
     "Out of chi: the chain state changed since the estimate. Submit the relay again."
 )

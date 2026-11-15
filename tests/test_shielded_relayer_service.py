@@ -194,7 +194,7 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("con_shielded_note_token", contract)
         self.assertEqual("relay_transfer_shielded", function_name)
         self.assertEqual(["0xnullifier"], kwargs["input_nullifiers"])
-        # No explicit chi and no headroom: the SDK supplies the simulated chi.
+        # No explicit chi: the SDK supplies the simulated chi plus its margin.
         self.assertEqual(
             {"mode", "wait_for_tx", "timeout_seconds", "poll_interval_seconds"}, set(extra)
         )
