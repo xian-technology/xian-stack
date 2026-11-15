@@ -41,5 +41,6 @@ if [[ -f "${XIAN_INTENTKIT_DIR}/deployment/docker-compose.yml" ]]; then
   fi
 fi
 uv run --project "${XIAN_CLI_DIR}" python3 "${XIAN_CONFIGS_DIR}/scripts/validate-manifests.py"
+./scripts/test-monitoring-rules.sh
 
 printf 'xian-stack validation passed\n'

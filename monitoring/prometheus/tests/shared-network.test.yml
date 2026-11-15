@@ -1,0 +1,242 @@
+# promtool unit tests for rules/shared-network.yml.
+# Run: ./scripts/test-monitoring-rules.sh (also part of make validate).
+# Series names and labels are the ones CometBFT v0.39 and node-exporter
+# export; job/instance match monitoring/prometheus/fidelity.yml.
+rule_files:
+  - ../rules/shared-network.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: a healthy validator raises none of the node alerts
+    interval: 1m
+    input_series:
+      - series: 'cometbft_p2p_peers{job="xian_cometbft",instance="cometbft:26660",chain_id="xian-test-1"}'
+        values: '6x30'
+      - series: 'cometbft_consensus_latest_block_height{job="xian_cometbft",instance="cometbft:26660",chain_id="xian-test-1"}'
+        values: '100+12x30'
+      - series: 'cometbft_consensus_validator_last_signed_height{job="xian_cometbft",instance="cometbft:26660",chain_id="xian-test-1",validator_address="AB12"}'
+        values: '100+12x30'
+      - series: 'cometbft_consensus_validator_missed_blocks{job="xian_cometbft",instance="cometbft:26660",chain_id="xian-test-1",validator_address="AB12"}'
+        values: '1x30'
+      - series: 'node_filesystem_avail_bytes{job="xian_node",instance="node-exporter:9100",device="/dev/sda1",fstype="ext4",mountpoint="/"}'
+        values: '50x30'
+      - series: 'node_filesystem_size_bytes{job="xian_node",instance="node-exporter:9100",device="/dev/sda1",fstype="ext4",mountpoint="/"}'
+        values: '100x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: XianPeersLow
+      - eval_time: 30m
+        alertname: XianNoPeers
+      - eval_time: 30m
+        alertname: XianBlockProductionStalled
+      - eval_time: 30m
+        alertname: XianValidatorMissedBlocks
+      - eval_time: 30m
+        alertname: XianValidatorNotSigning
+      - eval_time: 30m
+        alertname: XianDiskSpaceLow
+      - eval_time: 30m
+        alertname: XianDiskSpaceCritical
+      - eval_time: 30m
+        alertname: XianDiskFillingUp
+
+  - name: one peer is low, zero peers is critical
+    interval: 1m
+    input_series:
+      - series: 'cometbft_p2p_peers{job="xian_cometbft",instance="a:26660",chain_id="xian-test-1"}'
+        values: '1x20'
+      - series: 'cometbft_p2p_peers{job="xian_cometbft",instance="b:26660",chain_id="xian-test-1"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: XianPeersLow
+      - eval_time: 5m
+        alertname: XianNoPeers
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              profile: shared_network
+              job: xian_cometbft
+              instance: b:26660
+              chain_id: xian-test-1
+            exp_annotations:
+              summary: The node has no peers
+              description: CometBFT has had zero connected peers for two minutes; the node cannot receive blocks or votes and, as a validator, cannot sign.
+      - eval_time: 15m
+        alertname: XianPeersLow
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              profile: shared_network
+              job: xian_cometbft
+              instance: a:26660
+              chain_id: xian-test-1
+            exp_annotations:
+              summary: The node has fewer than two peers
+              description: CometBFT has had fewer than two connected peers for ten minutes; losing one more peer isolates the node.
+          - exp_labels:
+              severity: warning
+              profile: shared_network
+              job: xian_cometbft
+              instance: b:26660
+              chain_id: xian-test-1
+            exp_annotations:
+              summary: The node has fewer than two peers
+              description: CometBFT has had fewer than two connected peers for ten minutes; losing one more peer isolates the node.
+
+  - name: a committed height that stops moving is a stall
+    interval: 1m
+    input_series:
+      - series: 'cometbft_consensus_latest_block_height{job="xian_cometbft",instance="cometbft:26660",chain_id="xian-test-1"}'
+        values: '100+12x5 160x15'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: XianBlockProductionStalled
+      - eval_time: 14m
+        alertname: XianBlockProductionStalled
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              profile: shared_network
+              job: xian_cometbft
+              instance: cometbft:26660
+              chain_id: xian-test-1
+            exp_annotations:
+              summary: No block was committed for five minutes
+              description: The node's committed height has not advanced for five minutes. Shared networks produce an empty block every idle interval, so either the chain has stopped or this node no longer follows it.
+
+  - name: the own validator missing blocks warns
+    interval: 1m
+    input_series:
+      - series: 'cometbft_consensus_validator_missed_blocks{job="xian_cometbft",instance="cometbft:26660",chain_id="xian-test-1",validator_address="AB12"}'
+        values: '1x5 1+1x15'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: XianValidatorMissedBlocks
+      - eval_time: 15m
+        alertname: XianValidatorMissedBlocks
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              profile: shared_network
+              job: xian_cometbft
+              instance: cometbft:26660
+              chain_id: xian-test-1
+              validator_address: AB12
+            exp_annotations:
+              summary: This validator is missing blocks
+              description: This node's validator key was absent from at least five commits in the last ten minutes.
+
+  - name: the own validator falling more than ten blocks behind is critical
+    interval: 1m
+    input_series:
+      - series: 'cometbft_consensus_latest_block_height{job="xian_cometbft",instance="a:26660",chain_id="xian-test-1"}'
+        values: '100+12x20'
+      - series: 'cometbft_consensus_validator_last_signed_height{job="xian_cometbft",instance="a:26660",chain_id="xian-test-1",validator_address="AA11"}'
+        values: '90+12x20'
+      - series: 'cometbft_consensus_latest_block_height{job="xian_cometbft",instance="b:26660",chain_id="xian-test-1"}'
+        values: '100+12x20'
+      - series: 'cometbft_consensus_validator_last_signed_height{job="xian_cometbft",instance="b:26660",chain_id="xian-test-1",validator_address="BB22"}'
+        values: '89+12x20'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: XianValidatorNotSigning
+      - eval_time: 10m
+        alertname: XianValidatorNotSigning
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              profile: shared_network
+              job: xian_cometbft
+              instance: b:26660
+              chain_id: xian-test-1
+              validator_address: BB22
+            exp_annotations:
+              summary: This validator has stopped signing
+              description: This node's validator last signed more than ten blocks below the committed height for two minutes. If the validator left the set on purpose, restart the node to drop the stale series.
+
+  - name: low and critical disk space on real filesystems only
+    interval: 1m
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="xian_node",instance="node-exporter:9100",device="/dev/sda1",fstype="ext4",mountpoint="/"}'
+        values: '4x20'
+      - series: 'node_filesystem_size_bytes{job="xian_node",instance="node-exporter:9100",device="/dev/sda1",fstype="ext4",mountpoint="/"}'
+        values: '100x20'
+      - series: 'node_filesystem_avail_bytes{job="xian_node",instance="node-exporter:9100",device="/dev/sdb1",fstype="xfs",mountpoint="/srv"}'
+        values: '10x20'
+      - series: 'node_filesystem_size_bytes{job="xian_node",instance="node-exporter:9100",device="/dev/sdb1",fstype="xfs",mountpoint="/srv"}'
+        values: '100x20'
+      - series: 'node_filesystem_avail_bytes{job="xian_node",instance="node-exporter:9100",device="tmpfs",fstype="tmpfs",mountpoint="/run"}'
+        values: '1x20'
+      - series: 'node_filesystem_size_bytes{job="xian_node",instance="node-exporter:9100",device="tmpfs",fstype="tmpfs",mountpoint="/run"}'
+        values: '100x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: XianDiskSpaceCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              profile: shared_network
+              job: xian_node
+              instance: node-exporter:9100
+              device: /dev/sda1
+              fstype: ext4
+              mountpoint: /
+            exp_annotations:
+              summary: Disk space is critically low
+              description: Less than five percent of the filesystem at / is free. A node that cannot write stops committing blocks.
+      - eval_time: 15m
+        alertname: XianDiskSpaceLow
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              profile: shared_network
+              job: xian_node
+              instance: node-exporter:9100
+              device: /dev/sda1
+              fstype: ext4
+              mountpoint: /
+            exp_annotations:
+              summary: Disk space is low
+              description: Less than fifteen percent of the filesystem at / has been free for ten minutes.
+          - exp_labels:
+              severity: warning
+              profile: shared_network
+              job: xian_node
+              instance: node-exporter:9100
+              device: /dev/sdb1
+              fstype: xfs
+              mountpoint: /srv
+            exp_annotations:
+              summary: Disk space is low
+              description: Less than fifteen percent of the filesystem at /srv has been free for ten minutes.
+
+  - name: a filesystem under a quarter free and on track to fill within a day warns
+    interval: 1m
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="xian_node",instance="node-exporter:9100",device="/dev/sda1",fstype="ext4",mountpoint="/"}'
+        values: '24-0.02x480'
+      - series: 'node_filesystem_size_bytes{job="xian_node",instance="node-exporter:9100",device="/dev/sda1",fstype="ext4",mountpoint="/"}'
+        values: '100x480'
+      - series: 'node_filesystem_avail_bytes{job="xian_node",instance="node-exporter:9100",device="/dev/sdb1",fstype="xfs",mountpoint="/srv"}'
+        values: '60-0.05x480'
+      - series: 'node_filesystem_size_bytes{job="xian_node",instance="node-exporter:9100",device="/dev/sdb1",fstype="xfs",mountpoint="/srv"}'
+        values: '100x480'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: XianDiskFillingUp
+      - eval_time: 7h
+        alertname: XianDiskFillingUp
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              profile: shared_network
+              job: xian_node
+              instance: node-exporter:9100
+              device: /dev/sda1
+              fstype: ext4
+              mountpoint: /
+            exp_annotations:
+              summary: Disk is filling up
+              description: At the rate of the last six hours the filesystem at / runs out of space within a day.

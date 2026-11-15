@@ -1,4 +1,10 @@
 groups:
+  # Free-space share of the host's real filesystems (pseudo and image
+  # filesystems excluded), as seen by node-exporter.
+  - name: xian_node_filesystem
+    rules:
+      - record: xian:filesystem_avail:ratio
+        expr: node_filesystem_avail_bytes{job="xian_node",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|nsfs|autofs|iso9660|fuse\\..*"} / node_filesystem_size_bytes{job="xian_node"}
   - name: xian_shared_network
     rules:
       - alert: XianAbciTargetDown
@@ -37,6 +43,78 @@ groups:
         annotations:
           summary: Block progress appears stalled
           description: Block height has not advanced over the last fifteen minutes on a shared-network posture.
+      - alert: XianBlockProductionStalled
+        expr: delta(cometbft_consensus_latest_block_height[5m]) < 1
+        for: 2m
+        labels:
+          severity: critical
+          profile: shared_network
+        annotations:
+          summary: No block was committed for five minutes
+          description: The node's committed height has not advanced for five minutes. Shared networks produce an empty block every idle interval, so either the chain has stopped or this node no longer follows it.
+      - alert: XianNoPeers
+        expr: cometbft_p2p_peers == 0
+        for: 2m
+        labels:
+          severity: critical
+          profile: shared_network
+        annotations:
+          summary: The node has no peers
+          description: CometBFT has had zero connected peers for two minutes; the node cannot receive blocks or votes and, as a validator, cannot sign.
+      - alert: XianPeersLow
+        expr: cometbft_p2p_peers < 2
+        for: 10m
+        labels:
+          severity: warning
+          profile: shared_network
+        annotations:
+          summary: The node has fewer than two peers
+          description: CometBFT has had fewer than two connected peers for ten minutes; losing one more peer isolates the node.
+      # CometBFT exports both validator series only for this node's own key.
+      - alert: XianValidatorNotSigning
+        expr: cometbft_consensus_latest_block_height - on (job, instance, chain_id) group_right cometbft_consensus_validator_last_signed_height > 10
+        for: 2m
+        labels:
+          severity: critical
+          profile: shared_network
+        annotations:
+          summary: This validator has stopped signing
+          description: This node's validator last signed more than ten blocks below the committed height for two minutes. If the validator left the set on purpose, restart the node to drop the stale series.
+      - alert: XianValidatorMissedBlocks
+        expr: delta(cometbft_consensus_validator_missed_blocks[10m]) >= 5
+        labels:
+          severity: warning
+          profile: shared_network
+        annotations:
+          summary: This validator is missing blocks
+          description: This node's validator key was absent from at least five commits in the last ten minutes.
+      - alert: XianDiskSpaceCritical
+        expr: xian:filesystem_avail:ratio < 0.05
+        for: 5m
+        labels:
+          severity: critical
+          profile: shared_network
+        annotations:
+          summary: Disk space is critically low
+          description: Less than five percent of the filesystem at {{ $labels.mountpoint }} is free. A node that cannot write stops committing blocks.
+      - alert: XianDiskSpaceLow
+        expr: xian:filesystem_avail:ratio < 0.15
+        for: 10m
+        labels:
+          severity: warning
+          profile: shared_network
+        annotations:
+          summary: Disk space is low
+          description: Less than fifteen percent of the filesystem at {{ $labels.mountpoint }} has been free for ten minutes.
+      - alert: XianDiskFillingUp
+        expr: (xian:filesystem_avail:ratio < 0.25) and predict_linear(node_filesystem_avail_bytes{job="xian_node"}[6h], 86400) < 0
+        for: 1h
+        labels:
+          severity: warning
+          profile: shared_network
+        annotations:
+          summary: Disk is filling up
+          description: At the rate of the last six hours the filesystem at {{ $labels.mountpoint }} runs out of space within a day.
       - alert: XianBdsLagHigh
         expr: xian_bds_metric{field="height_lag"} > 5
         for: 10m
