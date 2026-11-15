@@ -78,6 +78,7 @@ XIAN_PROMETHEUS_CONFIG ?= ./monitoring/prometheus/integrated.yml
 XIAN_PROMETHEUS_HOST ?= 127.0.0.1
 XIAN_PROMETHEUS_PORT ?= 9090
 XIAN_GRAFANA_IMAGE ?= grafana/grafana:12.4.5
+XIAN_NODE_EXPORTER_IMAGE ?= prom/node-exporter:v1.12.1
 XIAN_GRAFANA_HOST ?= 127.0.0.1
 XIAN_GRAFANA_PORT ?= 3000
 XIAN_STACK_TOPOLOGY ?= integrated
@@ -215,6 +216,7 @@ export XIAN_PROMETHEUS_CONFIG := $(XIAN_PROMETHEUS_CONFIG)
 export XIAN_PROMETHEUS_HOST := $(XIAN_PROMETHEUS_HOST)
 export XIAN_PROMETHEUS_PORT := $(XIAN_PROMETHEUS_PORT)
 export XIAN_GRAFANA_IMAGE := $(XIAN_GRAFANA_IMAGE)
+export XIAN_NODE_EXPORTER_IMAGE := $(XIAN_NODE_EXPORTER_IMAGE)
 export XIAN_GRAFANA_HOST := $(XIAN_GRAFANA_HOST)
 export XIAN_GRAFANA_PORT := $(XIAN_GRAFANA_PORT)
 export XIAN_STACK_TOPOLOGY := $(XIAN_STACK_TOPOLOGY)
@@ -449,12 +451,12 @@ help:
 	@printf "  %-24s %s\n" "dashboard-fidelity-build" "Build the optional fidelity dashboard image"
 	@printf "  %-24s %s\n" "dashboard-fidelity-up" "Start the optional fidelity dashboard service"
 	@printf "  %-24s %s\n" "dashboard-fidelity-down" "Stop the optional fidelity dashboard service"
-	@printf "  %-24s %s\n" "monitoring-up" "Start optional Prometheus and Grafana for the integrated node"
-	@printf "  %-24s %s\n" "monitoring-down" "Stop optional Prometheus and Grafana for the integrated node"
-	@printf "  %-24s %s\n" "monitoring-bds-up" "Start optional Prometheus and Grafana for the integrated BDS stack"
-	@printf "  %-24s %s\n" "monitoring-bds-down" "Stop optional Prometheus and Grafana for the integrated BDS stack"
-	@printf "  %-24s %s\n" "monitoring-fidelity-up" "Start optional Prometheus and Grafana for the fidelity stack"
-	@printf "  %-24s %s\n" "monitoring-fidelity-down" "Stop optional Prometheus and Grafana for the fidelity stack"
+	@printf "  %-24s %s\n" "monitoring-up" "Start optional Prometheus, Grafana and node-exporter for the integrated node"
+	@printf "  %-24s %s\n" "monitoring-down" "Stop optional Prometheus, Grafana and node-exporter for the integrated node"
+	@printf "  %-24s %s\n" "monitoring-bds-up" "Start optional Prometheus, Grafana and node-exporter for the integrated BDS stack"
+	@printf "  %-24s %s\n" "monitoring-bds-down" "Stop optional Prometheus, Grafana and node-exporter for the integrated BDS stack"
+	@printf "  %-24s %s\n" "monitoring-fidelity-up" "Start optional Prometheus, Grafana and node-exporter for the fidelity stack"
+	@printf "  %-24s %s\n" "monitoring-fidelity-down" "Stop optional Prometheus, Grafana and node-exporter for the fidelity stack"
 	@printf "  %-24s %s\n" "abci-bds-build" "Build the integrated ABCI + BDS stack"
 	@printf "  %-24s %s\n" "abci-bds-up" "Start the integrated ABCI + BDS stack"
 	@printf "  %-24s %s\n" "abci-bds-down" "Stop the integrated ABCI + BDS stack"
@@ -535,6 +537,7 @@ print-env:
 	@printf "XIAN_PROMETHEUS_HOST=%s\n" "$(XIAN_PROMETHEUS_HOST)"
 	@printf "XIAN_PROMETHEUS_PORT=%s\n" "$(XIAN_PROMETHEUS_PORT)"
 	@printf "XIAN_GRAFANA_IMAGE=%s\n" "$(XIAN_GRAFANA_IMAGE)"
+	@printf "XIAN_NODE_EXPORTER_IMAGE=%s\n" "$(XIAN_NODE_EXPORTER_IMAGE)"
 	@printf "XIAN_GRAFANA_HOST=%s\n" "$(XIAN_GRAFANA_HOST)"
 	@printf "XIAN_GRAFANA_PORT=%s\n" "$(XIAN_GRAFANA_PORT)"
 	@printf "XIAN_STACK_TOPOLOGY=%s\n" "$(XIAN_STACK_TOPOLOGY)"
@@ -704,24 +707,24 @@ dashboard-fidelity-down:
 
 monitoring-up: prepare-dirs
 	$(call maybe_pull_integrated,XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml,abci)
-	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci prometheus grafana
+	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci prometheus grafana node-exporter
 
 monitoring-down:
-	$(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
+	$(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana node-exporter
 
 monitoring-bds-up: prepare-dirs
 	$(call maybe_pull_integrated,XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml,abci)
-	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci postgres postgraphile prometheus grafana
+	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci postgres postgraphile prometheus grafana node-exporter
 
 monitoring-bds-down:
-	$(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
+	$(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana node-exporter
 
 monitoring-fidelity-up: prepare-dirs
 	$(call maybe_pull_fidelity,XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/fidelity.yml $(STACK_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml,abci-app cometbft)
-	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/fidelity.yml $(STACK_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci-app cometbft prometheus grafana
+	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/fidelity.yml $(STACK_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci-app cometbft prometheus grafana node-exporter
 
 monitoring-fidelity-down:
-	$(STACK_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana
+	$(STACK_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana node-exporter
 
 dev-base-abci-shell:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci

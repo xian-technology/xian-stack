@@ -155,6 +155,8 @@ def test_removed_bds_settings_are_refused_by_name(tmp_path):
                 "XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1",
                 "XIAN_GRAFANA_IMAGE must be digest-pinned when "
                 "XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1",
+                "XIAN_NODE_EXPORTER_IMAGE must be digest-pinned when "
+                "XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1",
             ],
         ),
         (
@@ -184,6 +186,8 @@ def test_removed_bds_settings_are_refused_by_name(tmp_path):
                 "XIAN_PROMETHEUS_IMAGE must be digest-pinned when "
                 "XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1",
                 "XIAN_GRAFANA_IMAGE must be digest-pinned when "
+                "XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1",
+                "XIAN_NODE_EXPORTER_IMAGE must be digest-pinned when "
                 "XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1",
             ],
         ),

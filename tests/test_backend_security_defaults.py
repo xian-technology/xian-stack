@@ -17,6 +17,7 @@ backend = importlib.import_module("backend")
 PINNED_POSTGRES_IMAGE = "postgres:17.10@sha256:" + "a" * 64
 PINNED_PROMETHEUS_IMAGE = "prom/prometheus:v3.12.0@sha256:" + "b" * 64
 PINNED_GRAFANA_IMAGE = "grafana/grafana:12.4.5@sha256:" + "c" * 64
+PINNED_NODE_EXPORTER_IMAGE = "prom/node-exporter:v1.12.1@sha256:" + "d" * 64
 
 
 def runtime_env_kwargs(**overrides: object) -> dict[str, object]:
@@ -84,6 +85,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
             self.assertEqual("postgres:17.10", env["XIAN_POSTGRES_IMAGE"])
             self.assertEqual("prom/prometheus:v3.12.0", env["XIAN_PROMETHEUS_IMAGE"])
             self.assertEqual("grafana/grafana:12.4.5", env["XIAN_GRAFANA_IMAGE"])
+            self.assertEqual("prom/node-exporter:v1.12.1", env["XIAN_NODE_EXPORTER_IMAGE"])
 
     def test_runtime_env_offsets_hidden_intentkit_s3_port_on_collision(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -530,6 +532,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
         self.assertEqual("postgres:17.10", env["XIAN_POSTGRES_IMAGE"])
         self.assertEqual("prom/prometheus:v3.12.0", env["XIAN_PROMETHEUS_IMAGE"])
         self.assertEqual("grafana/grafana:12.4.5", env["XIAN_GRAFANA_IMAGE"])
+        self.assertEqual("prom/node-exporter:v1.12.1", env["XIAN_NODE_EXPORTER_IMAGE"])
 
     def test_runtime_env_rejects_tagged_third_party_images_when_strict(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -559,6 +562,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
                         "XIAN_POSTGRES_IMAGE": PINNED_POSTGRES_IMAGE,
                         "XIAN_PROMETHEUS_IMAGE": PINNED_PROMETHEUS_IMAGE,
                         "XIAN_GRAFANA_IMAGE": PINNED_GRAFANA_IMAGE,
+                        "XIAN_NODE_EXPORTER_IMAGE": PINNED_NODE_EXPORTER_IMAGE,
                     },
                     clear=True,
                 ):
@@ -567,6 +571,31 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
         self.assertEqual(PINNED_POSTGRES_IMAGE, env["XIAN_POSTGRES_IMAGE"])
         self.assertEqual(PINNED_PROMETHEUS_IMAGE, env["XIAN_PROMETHEUS_IMAGE"])
         self.assertEqual(PINNED_GRAFANA_IMAGE, env["XIAN_GRAFANA_IMAGE"])
+        self.assertEqual(PINNED_NODE_EXPORTER_IMAGE, env["XIAN_NODE_EXPORTER_IMAGE"])
+
+    def test_shell_security_rejects_tagged_node_exporter_when_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = {
+                **os.environ,
+                "XIAN_STACK_SECRETS_ENV": str(Path(temp_dir) / "secrets.env"),
+                "XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES": "1",
+                "XIAN_POSTGRES_IMAGE": PINNED_POSTGRES_IMAGE,
+                "XIAN_PROMETHEUS_IMAGE": PINNED_PROMETHEUS_IMAGE,
+                "XIAN_GRAFANA_IMAGE": PINNED_GRAFANA_IMAGE,
+                "XIAN_NODE_EXPORTER_IMAGE": "prom/node-exporter:v1.12.1",
+            }
+            result = subprocess.run(
+                ["bash", "-lc", "source ./scripts/stack-env.sh && export_stack_env >/dev/null"],
+                cwd=Path(__file__).absolute().parents[1],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("XIAN_NODE_EXPORTER_IMAGE must be digest-pinned", result.stderr)
+        self.assertNotIn("XIAN_GRAFANA_IMAGE must be digest-pinned", result.stderr)
 
 
 if __name__ == "__main__":

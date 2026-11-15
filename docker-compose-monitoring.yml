@@ -41,6 +41,22 @@ services:
       retries: 20
       start_period: 30s
 
+  # Host metrics for the disk alerts. Reachable only on the compose network
+  # (Prometheus scrapes node-exporter:9100); no port is published. The host
+  # root is mounted read-only without mount propagation (rslave is refused on
+  # Docker Desktop); filesystems mounted later appear after a restart.
+  node-exporter:
+    logging: *x-logging
+    profiles: ["monitoring"]
+    image: ${XIAN_NODE_EXPORTER_IMAGE}
+    restart: always
+    hostname: xian-stack-node-exporter
+    command: ["--path.rootfs=/host"]
+    volumes:
+      - /:/host:ro
+    networks:
+      - xian-net
+
   grafana:
     logging: *x-logging
     profiles: ["monitoring"]

@@ -15,3 +15,8 @@ scrape_configs:
     static_configs:
       - targets:
           - cometbft:26660
+
+  - job_name: xian_node
+    static_configs:
+      - targets:
+          - node-exporter:9100

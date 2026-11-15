@@ -169,6 +169,9 @@ validate_stack_security_env() {
     if ! _stack_is_digest_pinned_image "${XIAN_GRAFANA_IMAGE:-grafana/grafana:12.4.5}"; then
       errors+=("XIAN_GRAFANA_IMAGE must be digest-pinned when XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1")
     fi
+    if ! _stack_is_digest_pinned_image "${XIAN_NODE_EXPORTER_IMAGE:-prom/node-exporter:v1.12.1}"; then
+      errors+=("XIAN_NODE_EXPORTER_IMAGE must be digest-pinned when XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1")
+    fi
   fi
 
   if [[ "${#errors[@]}" -gt 0 ]]; then
@@ -271,6 +274,7 @@ export_stack_env() {
   export XIAN_PROMETHEUS_HOST="${XIAN_PROMETHEUS_HOST:-127.0.0.1}"
   export XIAN_PROMETHEUS_PORT="${XIAN_PROMETHEUS_PORT:-9090}"
   export XIAN_GRAFANA_IMAGE="${XIAN_GRAFANA_IMAGE:-grafana/grafana:12.4.5}"
+  export XIAN_NODE_EXPORTER_IMAGE="${XIAN_NODE_EXPORTER_IMAGE:-prom/node-exporter:v1.12.1}"
   export XIAN_GRAFANA_HOST="${XIAN_GRAFANA_HOST:-127.0.0.1}"
   export XIAN_GRAFANA_PORT="${XIAN_GRAFANA_PORT:-3000}"
   export XIAN_STACK_TOPOLOGY="${XIAN_STACK_TOPOLOGY:-integrated}"

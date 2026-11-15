@@ -124,8 +124,14 @@ STACK_SECURITY_DEFAULTS = {
     "XIAN_POSTGRES_IMAGE": "postgres:17.10",
     "XIAN_PROMETHEUS_IMAGE": "prom/prometheus:v3.12.0",
     "XIAN_GRAFANA_IMAGE": "grafana/grafana:12.4.5",
+    "XIAN_NODE_EXPORTER_IMAGE": "prom/node-exporter:v1.12.1",
 }
-THIRD_PARTY_IMAGE_KEYS = ("XIAN_POSTGRES_IMAGE", "XIAN_PROMETHEUS_IMAGE", "XIAN_GRAFANA_IMAGE")
+THIRD_PARTY_IMAGE_KEYS = (
+    "XIAN_POSTGRES_IMAGE",
+    "XIAN_PROMETHEUS_IMAGE",
+    "XIAN_GRAFANA_IMAGE",
+    "XIAN_NODE_EXPORTER_IMAGE",
+)
 
 
 def is_public_host(value: str | None) -> bool:
