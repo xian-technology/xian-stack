@@ -2186,6 +2186,10 @@ def get_status():
                     "max_active_set_churn": 3,
                     "min_bond_margin_bps": 0,
                     "manual_override_enabled": True,
+                    # The evidence rebalance below admits node4 into a
+                    # two-validator set; the newcomer power cap (tested in
+                    # xian-configs) would keep it out.
+                    "max_new_power_bps": 10000,
                 },
                 label_prefix="auto-update-policy",
             )
