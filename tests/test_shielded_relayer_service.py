@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).absolute().parents[1] / "scripts"))
 
 import shielded_relayer_backend
 from shielded_relayer_backend import shielded_relayer_endpoints
@@ -21,6 +21,7 @@ from shielded_relayer_service import (
     ShieldedRelayerPolicy,
     ShieldedRelayerService,
     ShieldedRelayerServiceConfig,
+    _build_app,
     _validate_config,
     load_config_from_env,
 )
@@ -267,6 +268,36 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(45, info["operations"]["job_history_ttl_seconds"])
         self.assertTrue(info["capabilities"]["metrics"])
+
+    async def test_private_routes_require_the_exact_bearer_token(self) -> None:
+        from aiohttp.test_utils import TestClient, TestServer
+
+        service = ShieldedRelayerService(
+            ShieldedRelayerServiceConfig(
+                relayer_private_key="1" * 64,
+                auth_token="secret-token",
+                access_policy=ShieldedRelayerAccessPolicy(public_info=False),
+                log_requests=False,
+            ),
+            xian_client=FakeXianClient(),
+            now_fn=lambda: datetime(2026, 4, 10, 12, 0, 0),
+        )
+        async with TestClient(TestServer(_build_app(service))) as client:
+            statuses = []
+            for header in (
+                None,
+                "Bearer secret-token",
+                "Bearer secret-tokem",
+                "Bearer secret-token ",
+                "bearer secret-token",
+                "Bearer ",
+            ):
+                headers = {} if header is None else {"Authorization": header}
+                response = await client.get("/v1/info", headers=headers)
+                statuses.append(response.status)
+
+        self.assertEqual([401, 200, 401, 401, 401, 401], statuses)
+        self.assertEqual(5, service._auth_failures_total)
 
     async def test_job_history_ttl_expires_old_jobs(self) -> None:
         current_time = datetime(2026, 4, 10, 12, 0, 0)

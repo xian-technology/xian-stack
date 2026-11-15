@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import hmac
 import ipaddress
 import json
 import logging
@@ -1073,8 +1074,10 @@ def _auth_middleware(service: ShieldedRelayerService):
     ) -> web.StreamResponse:
         if service.is_public_request(request):
             return await handler(request)
-        expected = f"Bearer {service.config.auth_token}"
-        if request.headers.get("Authorization") != expected:
+        expected = f"Bearer {service.config.auth_token}".encode()
+        presented = request.headers.get("Authorization", "").encode()
+        # Constant time, so response timing does not reveal the token.
+        if not hmac.compare_digest(presented, expected):
             service.record_auth_failure()
             raise RelayerApiError(401, "missing or invalid bearer token")
         return await handler(request)
