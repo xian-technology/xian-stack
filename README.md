@@ -119,10 +119,11 @@ The stack defaults to fail-closed host bindings:
 - BDS uses a dedicated read-only PostgreSQL role for PostGraphile rather than
   the BDS owner account.
 - Local stack defaults may use third-party image tags for Postgres,
-  Prometheus, and Grafana. Set
+  Prometheus, Grafana, and node-exporter. Set
   `XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1` for production/release-style
-  validation; then `XIAN_POSTGRES_IMAGE`, `XIAN_PROMETHEUS_IMAGE`, and
-  `XIAN_GRAFANA_IMAGE` must use `@sha256:` image refs.
+  validation; then `XIAN_POSTGRES_IMAGE`, `XIAN_PROMETHEUS_IMAGE`,
+  `XIAN_GRAFANA_IMAGE`, and `XIAN_NODE_EXPORTER_IMAGE` must use `@sha256:`
+  image refs.
 
 ### Localnet
 
@@ -412,8 +413,9 @@ python3 ./scripts/backend.py localnet-e2e
   `abci-dev`, `contracting`, `intentkit`, `localnet`, `monitoring`).
 - `scripts/` — backend control plane (`backend.py`), release orchestrator,
   smoke flows, localnet tooling, and TPS benchmarks.
-- `monitoring/` — Prometheus, Grafana dashboards (including dedicated
-  `Xian VM Runtime` and `Xian BDS Recovery`), and alert variants.
+- `monitoring/` — Prometheus, node-exporter, Grafana dashboards (including
+  dedicated `Xian VM Runtime` and `Xian BDS Recovery`), alert rules with their
+  promtool tests, and the Alertmanager wiring guide.
 - `workloads/` — localnet workload fixtures and contracts.
 - `contracts/` — stack-local runtime contract mount; localnet bootstrap pulls
   product bundles from their owning repos (e.g. `xian-dex`).

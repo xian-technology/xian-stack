@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Check the Prometheus configs and unit-test the alert rules with the promtool
-# shipped in the stack's own Prometheus image (XIAN_PROMETHEUS_IMAGE).
+# shipped in the stack's own Prometheus image (XIAN_PROMETHEUS_IMAGE), and
+# check the example Alertmanager routing with amtool.
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/stack-env.sh"
@@ -22,5 +23,11 @@ promtool() {
 promtool check config --syntax-only fidelity.yml integrated.yml
 promtool check rules rules/*.yml
 promtool test rules tests/*.test.yml
+
+# The example routing must stay loadable by the Alertmanager it documents.
+docker run --rm --network none --entrypoint amtool \
+  -v "${stack_root}/monitoring/alertmanager:/xian-alertmanager:ro" \
+  "${XIAN_ALERTMANAGER_CHECK_IMAGE:-prom/alertmanager:v0.34.2}" \
+  check-config /xian-alertmanager/alertmanager.example.yml
 
 printf 'xian-stack monitoring rules passed\n'

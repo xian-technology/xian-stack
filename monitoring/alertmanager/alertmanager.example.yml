@@ -39,3 +39,19 @@ inhibit_rules:
     target_matchers:
       - alertname=~"XianBds.*|XianNodeInfoMissing"
     equal: ["instance", "profile"]
+  # Without CometBFT metrics the peer, signing and stall alerts say nothing new.
+  - source_matchers:
+      - alertname="XianCometBftTargetDown"
+    target_matchers:
+      - alertname=~"XianNoPeers|XianPeersLow|XianValidator.*|XianBlockProductionStalled"
+    equal: ["instance", "profile"]
+  - source_matchers:
+      - alertname="XianNoPeers"
+    target_matchers:
+      - alertname="XianPeersLow"
+    equal: ["instance", "profile"]
+  - source_matchers:
+      - alertname="XianDiskSpaceCritical"
+    target_matchers:
+      - alertname=~"XianDiskSpaceLow|XianDiskFillingUp"
+    equal: ["instance", "mountpoint"]
