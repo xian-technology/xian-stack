@@ -14,4 +14,7 @@ RUN chmod +x ./start-postgraphile.sh
 
 ENV PATH="/usr/src/app/node_modules/.bin:${PATH}"
 
+# The GraphQL server is the stack's most exposed service; it needs no root.
+USER node
+
 EXPOSE 5000
