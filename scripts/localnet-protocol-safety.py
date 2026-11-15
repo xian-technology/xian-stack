@@ -2252,14 +2252,10 @@ def get_status():
                 250,
                 label="delegation amount after delegate",
             )
-            assert_true(
-                self.delegator_wallet.public_key
-                in await node0.call(
-                    "validators",
-                    "get_delegators",
-                    {"validator": self.nodes[3].account_public_key},
-                ),
-                label="delegator listed for node3",
+            assert_equal(
+                coerce_int(reward_distribution_before_rebalance["delegator_count"]),
+                1,
+                label="delegator counted for node3",
             )
 
             rebalance_receipt = await self.submit_tx(

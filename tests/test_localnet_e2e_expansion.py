@@ -188,14 +188,14 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
 
         self.assertEqual(localnet_e2e.CURRENT_UV_PYTHON, expected)
 
-    def test_reward_bucket_total_combines_operator_and_delegator_rewards(self) -> None:
+    def test_reward_bucket_total_combines_operator_and_delegator_pool_rewards(self) -> None:
         rewards = {
             "validator_reward": {
                 "validator-1": {"__fixed__": "1.25"},
                 "validator-2": "0.75",
             },
-            "delegator_reward": {
-                "delegator-1": Decimal("0.50"),
+            "delegator_pool_reward": {
+                "validators": Decimal("0.50"),
             },
         }
 
@@ -204,7 +204,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             localnet_e2e.reward_bucket_total(
                 rewards,
                 "validator_reward",
-                "delegator_reward",
+                "delegator_pool_reward",
             ),
         )
 
@@ -476,7 +476,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertIn('type_of_vote="reward_change"', phase_source)
         self.assertIn('label="governed reward split"', phase_source)
         self.assertIn('"validator_reward"', phase_source)
-        self.assertIn('"delegator_reward"', phase_source)
+        self.assertIn('"delegator_pool_reward"', phase_source)
         self.assertIn('"foundation_reward"', phase_source)
         self.assertIn('"developer_reward"', phase_source)
         self.assertIn("governed reward split was not applied", phase_source)

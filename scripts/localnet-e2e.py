@@ -6423,7 +6423,7 @@ class E2ERunner:
                 "validators": reward_bucket_total(
                     reward_outputs,
                     "validator_reward",
-                    "delegator_reward",
+                    "delegator_pool_reward",
                 ),
                 "foundation": reward_bucket_total(
                     reward_outputs,
