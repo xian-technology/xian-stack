@@ -2360,6 +2360,23 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("smoke-cli")
     subparsers.add_parser("storage-report")
 
+    for action in ("export", "inspect", "check-stopped"):
+        snapshot_parser = subparsers.add_parser("node-store-snapshot-" + action)
+        add_node_image_args(snapshot_parser)
+        if action == "export":
+            for name in ("home", "archive-output", "manifest-output", "signing-key-file"):
+                snapshot_parser.add_argument("--" + name, type=Path)
+            snapshot_parser.add_argument("--snapshot-url")
+            snapshot_parser.add_argument(
+                "--offline", action=argparse.BooleanOptionalAction, default=False
+            )
+        elif action == "inspect":
+            snapshot_parser.add_argument("--db-dir", type=Path)
+            snapshot_parser.add_argument("--genesis-file", type=Path)
+            snapshot_parser.add_argument("--db-backend", default="goleveldb")
+        else:
+            snapshot_parser.add_argument("--home", type=Path)
+
     bds_snapshot_export = subparsers.add_parser("bds-snapshot-export")
     bds_snapshot_export.add_argument(
         "--output-path",
@@ -2877,6 +2894,14 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_make_result("smoke-cli")
     elif args.command == "storage-report":
         payload = backend_storage_report()
+    elif args.command in {
+        "node-store-snapshot-export",
+        "node-store-snapshot-inspect",
+        "node-store-snapshot-check-stopped",
+    }:
+        from node_store_snapshot_backend import backend_snapshot
+
+        payload = backend_snapshot(args)
     elif args.command == "bds-snapshot-export":
         payload = backend_bds_snapshot_export(
             output_path=args.output_path,

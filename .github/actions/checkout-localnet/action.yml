@@ -41,7 +41,7 @@ runs:
       uses: actions/checkout@v7
       with:
         repository: xian-technology/xian-cli
-        ref: 836760ded78b45b079403b3d3bae4cde28090b6d
+        ref: 52e5369271de58513b5f1983ea3785ce40d4a375
         path: xian-cli
     - name: Check out xian-contracts
       if: inputs.products == 'true'

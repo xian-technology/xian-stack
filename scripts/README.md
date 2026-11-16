@@ -58,6 +58,13 @@ tooling behind `xian-stack`.
 - `localnet-workload.py`, `localnet-memwatch.py`,
   `localnet-leak-hunt.py`, `localnet-perf-summary.py`: deeper runtime
   investigation helpers
+- `node_store_snapshot_backend.py`: image-backed offline full-store export and
+  native inspection for the structured backend commands
+  `node-store-snapshot-export` and `node-store-snapshot-inspect`
+- `export_node_store_snapshot.py`: stopped-source archive production, protected
+  identity exclusions, bounded archive streams, canonical signed v2 manifests,
+  and destination-local no-overwrite publication; the public operator entrypoint
+  is `xian snapshot export`, which also proves the managed runtime is stopped
 - `release_manifest.py` and `trusted_publishers.py`: release and publisher
   support helpers
 - `release_orchestrator.py`: local multi-repo release planner and tag pusher for
@@ -132,3 +139,15 @@ flowchart LR
   ProtocolSafety --> ReleaseSafety["release-safety"]
   RuntimeReport --> ReleaseSafety
 ```
+
+The offline store commands share `node_store_runtime_guard.py`, also shipped as
+`/usr/local/bin/xian-node-store-check-stopped`. Run this stdlib script on the
+Docker host with `--home HOME`; it accepts a fresh home only after a successful
+global container query and refuses any running writable parent/subpath mount.
+Unknown Docker query or mount inventories cannot prove a node stopped.
+
+Export mounts the donor at the runtime home and its known host alias, preserving
+configured absolute identity exclusions through the shared Node path rules.
+Unavailable absolute identity files are refused before copying. Use relative
+identity paths within the node home, or an accessible configured home alias;
+never remove keys or signing state to make a backup proceed.

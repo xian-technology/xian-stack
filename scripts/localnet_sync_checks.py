@@ -1,11 +1,24 @@
-"""Bootstrap disposable non-validators by block replay and peer state sync."""
+"""Replay and public signed full-node-store snapshot export/restore rehearsal.
+
+Stage21 is part of every full five-validator E2E run. It exercises `snapshot
+export` and `snapshot restore` through the current public CLI; no peer snapshot
+bootstrap or node identity/signing-state import is used.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import gzip
+import hashlib
+import importlib.util
 import json
+import os
 import re
 import shutil
+import subprocess
+import sys
+import tarfile
 import time
 from types import SimpleNamespace
 
@@ -22,6 +35,15 @@ from localnet_chain_checks import (
     wait_height,
     write_config,
 )
+from localnet_history_checks import collect_policy_proof
+from xian_py.wallet import Wallet
+
+DAY_NS = 86_400_000_000_000
+IDENTITY_FILES = (
+    "config/node_key.json",
+    "config/priv_validator_key.json",
+    "data/priv_validator_state.json",
+)
 
 
 def set_config(text, section, updates):
@@ -37,176 +59,657 @@ def set_config(text, section, updates):
     return text[: match.start(2)] + body + text[match.end(2) :]
 
 
+def observer_config(text, peers):
+    text = set_config(text, "p2p", {"persistent_peers": peers})
+    text = set_config(text, "statesync", {"enable": False})
+    return re.sub(
+        r"^proxy_app\s*=.*$", 'proxy_app = "unix:///tmp/abci.sock"', text, flags=re.MULTILINE
+    )
+
+
+def identity_fingerprint(home):
+    return {name: hashlib.sha256((home / name).read_bytes()).hexdigest() for name in IDENTITY_FILES}
+
+
+def restore_fingerprint(home):
+    roots = [home / "config", home / "data", home / "xian"]
+    return {
+        str(path.relative_to(home)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for root in roots
+        if root.exists()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def cli_environment(stack=STACK):
+    env = os.environ.copy()
+    sources = [str(stack.parent / "xian-cli/src"), str(stack.parent / "xian-abci/src")]
+    if env.get("PYTHONPATH"):
+        sources.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(sources)
+    env["UV_NO_SYNC"] = "1"
+    env["COMPOSE_PROJECT_NAME"] = (
+        "xian-snapshot-check-" + hashlib.sha256(str(stack).encode()).hexdigest()[:12]
+    )
+    env["XIAN_STACK_TOPOLOGY"] = "integrated"
+    return env
+
+
+async def snapshot_cli(runner, base, *args, check=True):
+    result = await asyncio.to_thread(
+        subprocess.run,
+        [sys.executable, "-m", "xian_cli", "snapshot", *map(str, args), "--base-dir", str(base)],
+        cwd=STACK,
+        env=cli_environment(),
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if check:
+        require(result.returncode == 0, f"snapshot {args[:2]} failed: {result.stderr[-3000:]}")
+    return result
+
+
+def write_snapshot_profiles(base, source_home, target_home, image, publisher, chain_id):
+    # Public model APIs keep this fixture aligned with operator metadata.
+    sys.path.insert(0, str(STACK.parent / "xian-cli/src"))
+    from xian_cli.models import normalize_network_manifest, normalize_node_profile, write_json
+
+    network = "snapshot-e2e"
+    write_json(
+        base / "networks" / network / "manifest.json",
+        normalize_network_manifest(
+            {
+                "schema_version": 1,
+                "name": network,
+                "chain_id": chain_id,
+                "genesis": {"kind": "source", "source": str(source_home / "config/genesis.json")},
+            }
+        ),
+    )
+    for name, home in (("snapshot-source", source_home), ("snapshot-target", target_home)):
+        profile = {
+            "schema_version": 1,
+            "name": name,
+            "network": network,
+            "moniker": name,
+            "home": str(home),
+            "stack_dir": str(STACK),
+            "node_image_mode": "registry",
+            "node_integrated_image": image,
+            "node_split_image": image,
+            "snapshot_signing_keys": [publisher],
+            "services": {
+                "bds": {"enabled": False},
+                "dashboard": {"enabled": False},
+                "monitoring": {"enabled": False},
+            },
+        }
+        write_json(base / "nodes" / (name + ".json"), normalize_node_profile(profile))
+
+
+async def prepare_home(source_home, home, image, peers):
+    require(not home.exists(), f"Observer home already exists: {home}")
+    (home / "config").mkdir(parents=True)
+    for name in ("config.toml", "genesis.json", "xian.toml"):
+        shutil.copy2(source_home / "config" / name, home / "config" / name)
+    await command(
+        "docker",
+        "run",
+        "--rm",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
+        "--entrypoint",
+        "cometbft",
+        "--volume",
+        f"{home}:/node-home",
+        image,
+        "init",
+        "--home",
+        "/node-home",
+    )
+    config = home / "config/config.toml"
+    write_config(config, observer_config(config.read_text(), peers))
+    runtime = home / "config/xian.toml"
+    write_config(
+        runtime,
+        re.sub(
+            r"^bds_enabled\s*=.*$", "bds_enabled = false", runtime.read_text(), flags=re.MULTILINE
+        ),
+    )
+
+
+async def observer_address(container, mode):
+    info = json.loads(await command("docker", "inspect", container))[0]
+    ports = info["NetworkSettings"]["Ports"].get("26657/tcp")
+    require(info["State"]["Running"] and ports, f"Observer {mode} exited before RPC startup")
+    return SimpleNamespace(moniker=mode, rpc_url="http://127.0.0.1:" + ports[0]["HostPort"])
+
+
+async def create_observer(home, container, image, network, mode):
+    await command(
+        "docker",
+        "create",
+        "--entrypoint",
+        "/bin/bash",
+        "--name",
+        container,
+        "--network",
+        network,
+        "--publish",
+        "127.0.0.1::26657",
+        "--memory",
+        "1536m",
+        "--env",
+        f"XIAN_E2E_CONFIG_HASHES={config_hashes(home)}",
+        "--volume",
+        f"{home}:/root/.cometbft",
+        image,
+        "-c",
+        OBSERVER_COMMAND,
+    )
+    try:
+        await command("docker", "start", container)
+        return await observer_address(container, mode)
+    except BaseException:
+        with contextlib.suppress(Exception):
+            await command("docker", "rm", "-f", "-v", container)
+        raise
+
+
+async def common_block_proof(session, nodes, consensus):
+    common_height = max(item["height"] for item in consensus["checks"])
+    blocks = [await rpc(session, node, "block", height=common_height) for node in nodes]
+    hashes = {block["block_id"]["hash"] for block in blocks}
+    require(len(hashes) == 1, "Observer block identities diverged")
+    return {
+        "height": common_height,
+        "block_hash": blocks[0]["block_id"]["hash"],
+        "header": blocks[0]["block"]["header"],
+    }
+
+
+async def observer_agreement(runner, session, observer):
+    await wait_height(session, observer, await height(session, runner.nodes[0]), timeout=300)
+    status = await rpc(session, observer, "status")
+    require(
+        int(status["validator_info"]["voting_power"]) == 0, "Observer unexpectedly has voting power"
+    )
+    consensus = await agreement(session, [*runner.nodes, observer], window=3)
+    for key in (
+        "validators.current",
+        "governance.proposal_count",
+        f"__n.{runner.founder_wallet.public_key}:",
+    ):
+        expected = await query(session, runner.nodes[0], "/get/" + key)
+        require(
+            await query(session, observer, "/get/" + key) == expected,
+            f"Observer state mismatch at {key}",
+        )
+    return {
+        "consensus": consensus,
+        "voting_power": 0,
+        "common_block": await common_block_proof(session, [*runner.nodes, observer], consensus),
+    }
+
+
+async def stop_backup_source(container):
+    # Let stock Comet close after its in-flight ABCI work; only then does the
+    # observer supervisor's wait-n/EXIT path stop the application process.
+    await command("docker", "exec", container, "pkill", "-TERM", "-x", "cometbft")
+    await command("docker", "wait", container, timeout=60)
+    state = json.loads(await command("docker", "inspect", container))[0]["State"]
+    require(
+        not state["Running"] and not state.get("OOMKilled"), "Backup source did not stop cleanly"
+    )
+
+
+async def remove_observer(runner, container, mode):
+    logs = await command("docker", "logs", container, combine_output=True)
+    (runner.output_dir / f"observer-{mode}.log").write_text(logs)
+    await command("docker", "rm", "-f", "-v", container)
+
+
+async def rejected_restore(runner, target, manifest_url, label):
+    before = restore_fingerprint(target)
+    result = await snapshot_cli(
+        runner,
+        runner.output_dir / "snapshot-cli",
+        "restore",
+        "snapshot-target",
+        "--snapshot-url",
+        manifest_url,
+        check=False,
+    )
+    require(result.returncode != 0, f"{label} restore unexpectedly succeeded")
+    require(
+        restore_fingerprint(target) == before,
+        f"{label} restore published application data or changed local identity",
+    )
+    error = (result.stderr + result.stdout)[-2000:]
+    reasons = {
+        "tampered-archive": ("sha256", "checksum", "byte count", "byte limit"),
+        "wrong-chain": ("chain_id",),
+        "incomplete-native-store": ("native", "blockstore"),
+    }
+    if label in reasons:
+        require(
+            any(word in error.lower() for word in reasons[label]),
+            f"{label} failed for an unrelated reason: {error}",
+        )
+    return {
+        "case": label,
+        "rejected": True,
+        "returncode": result.returncode,
+        "error": error,
+    }
+
+
+def sign_manifest(manifest, wallet, path):
+    from xian.node_admin import full_node_store_manifest_payload
+
+    manifest = {**manifest, "signing_public_key": wallet.public_key}
+    manifest["signature"] = wallet.sign_msg(full_node_store_manifest_payload(manifest))
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    return path.as_uri()
+
+
+def archive_metadata(path):
+    with gzip.open(path, "rb") as stream:
+        raw_bytes = sum(len(chunk) for chunk in iter(lambda: stream.read(1024 * 1024), b""))
+    with path.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    return {
+        "snapshot_url": path.as_uri(),
+        "snapshot_sha256": digest,
+        "snapshot_bytes": path.stat().st_size,
+        "uncompressed_bytes": raw_bytes,
+    }
+
+
+def negative_manifests(archive, manifest, wallet, output):
+    tampered = output / "tampered.tar.gz"
+    shutil.copy2(archive, tampered)
+    with tampered.open("r+b") as stream:
+        offset = tampered.stat().st_size // 2
+        stream.seek(offset)
+        value = stream.read(1)
+        require(bool(value), "Cannot tamper an empty snapshot archive")
+        stream.seek(offset)
+        stream.write(bytes([value[0] ^ 1]))
+    bad_sha = {**manifest, "snapshot_url": tampered.as_uri()}
+    wrong_chain = {**manifest, "chain_id": manifest["chain_id"] + "-wrong"}
+    incomplete = output / "incomplete.tar.gz"
+    with tarfile.open(archive, "r:gz") as source, tarfile.open(incomplete, "w:gz") as target:
+        for member in source:
+            if member.name == "data/blockstore.db" or member.name.startswith("data/blockstore.db/"):
+                continue
+            target.addfile(member, source.extractfile(member) if member.isfile() else None)
+    missing_store = {**manifest, **archive_metadata(incomplete)}
+    variants = {
+        "tampered-archive": bad_sha,
+        "wrong-chain": wrong_chain,
+        "incomplete-native-store": missing_store,
+    }
+    return {
+        label: sign_manifest(value, wallet, output / (label + ".json"))
+        for label, value in variants.items()
+    }
+
+
+async def wait_validator_ready(runner, session, target):
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        async with runner.client(runner.validator_wallets[0], 0, session) as client:
+            record = await client.call("validators", "get_validator", {"account": target})
+        if record.get("pending_slash_count") == 0 and record.get("jailed") is True:
+            return record
+        await asyncio.sleep(0.5)
+    raise RuntimeError("Snapshot evidence penalty did not finish before validator recovery")
+
+
+async def governance_vote(runner, session, kind, arg, label):
+    async with contextlib.AsyncExitStack() as stack:
+        clients = [
+            await stack.enter_async_context(runner.client(wallet, index, session))
+            for index, wallet in enumerate(runner.validator_wallets[:4])
+        ]
+        vote = await runner.approve_members_vote(
+            clients[0],
+            [(f"node{index}", client) for index, client in enumerate(clients[1:], start=1)],
+            type_of_vote=kind,
+            arg=arg,
+            label_prefix=label,
+        )
+    heights = [item.get("height", 0) for item in [vote["proposal_receipt"], *vote["vote_receipts"]]]
+    await asyncio.gather(*(wait_height(session, node, max(heights) + 1) for node in runner.nodes))
+    return vote
+
+
+async def validator_selection(runner, session):
+    async with runner.client(runner.validator_wallets[0], 0, session) as client:
+        return await client.call("validators", "get_active_validators", {})
+
+
+async def verify_native_selection(session, nodes, expected, consensus):
+    wanted = {
+        hashlib.sha256(bytes.fromhex(item["account"])).hexdigest()[:40].upper(): int(item["power"])
+        for item in expected
+    }
+    common_height = max(item["height"] for item in consensus["checks"])
+    responses = [
+        await rpc(session, node, "validators", height=common_height, per_page=100) for node in nodes
+    ]
+    powers = [
+        {entry["address"]: int(entry["voting_power"]) for entry in response["validators"]}
+        for response in responses
+    ]
+    require(
+        all(value == wanted for value in powers),
+        "Restored native validator powers differ from application selection",
+    )
+    return powers
+
+
+async def wait_selection(runner, session, expected):
+    deadline = time.monotonic() + 90
+    wanted = {item["account"]: item["power"] for item in expected}
+    while time.monotonic() < deadline:
+        values = await validator_selection(runner, session)
+        if {item["account"]: item["power"] for item in values} == wanted:
+            consensus = await agreement(session, runner.nodes, window=3)
+            await verify_native_selection(session, runner.nodes, expected, consensus)
+            return values
+        await asyncio.sleep(0.5)
+    raise RuntimeError("Validator selection did not recover after snapshot evidence rehearsal")
+
+
+async def restore_evidence_validator(runner, session, before, target):
+    record = await wait_validator_ready(runner, session, target)
+    unjail = await governance_vote(runner, session, "unjail_member", target, "snapshot-unjail")
+    active = await validator_selection(runner, session)
+    add = None
+    if target not in {item["account"] for item in active}:
+        add = await governance_vote(runner, session, "add_member", target, "snapshot-readd")
+    return {
+        "penalty_completed": record,
+        "unjail": unjail,
+        "add_member": add,
+        "restored_active": await wait_selection(runner, session, before),
+    }
+
+
+def protocol_module():
+    name = "snapshot_protocol_safety"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            name, STACK / "scripts/localnet-protocol-safety.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return sys.modules[name]
+
+
+async def historical_evidence(runner, session, observer, checkpoint):
+    protocol = protocol_module()
+    helper = object.__new__(protocol.ProtocolSafetyRunner)
+    helper.nodes, helper.network = runner.nodes, runner.network
+    before = await validator_selection(runner, session)
+    target = runner.nodes[4].account_public_key
+    require(
+        target in {item["account"] for item in before},
+        "Snapshot evidence target node4 must be active",
+    )
+    start = await height(session, runner.nodes[0])
+    infraction = checkpoint - 1
+    evidence = await helper.broadcast_duplicate_vote_evidence(
+        session,
+        reporter_node_index=0,
+        target_node_index=4,
+        evidence_height=infraction,
+    )
+    require(
+        "error" not in evidence["response"],
+        f"Snapshot historical proof rejected: {evidence['response']}",
+    )
+    included = await find_evidence_block(session, runner.nodes[0], start, infraction)
+    nodes = [*runner.nodes, observer]
+    await asyncio.gather(*(wait_height(session, node, included + 3) for node in nodes))
+    results = [await rpc(session, node, "block_results", height=included) for node in nodes]
+    require(
+        len({json.dumps(value, sort_keys=True) for value in results}) == 1,
+        "Historical evidence block results differ across restored peer",
+    )
+    headers = [
+        (await rpc(session, node, "block", height=included + 1))["block"]["header"]
+        for node in nodes
+    ]
+    require(
+        len({header["last_results_hash"] for header in headers}) == 1,
+        "Historical evidence LastResultsHash differs",
+    )
+    check = await agreement(session, nodes, window=3)
+    recovery = await restore_evidence_validator(runner, session, before, target)
+    return {
+        "infraction_height": infraction,
+        "evidence": evidence,
+        "included_height": included,
+        "exact_results": results,
+        "next_headers": headers,
+        "consensus": check,
+        "validator_recovery": recovery,
+    }
+
+
+async def find_evidence_block(session, node, start, infraction):
+    deadline = time.monotonic() + 120
+    checked = start
+    while time.monotonic() < deadline:
+        latest = await height(session, node)
+        for candidate in range(checked, latest + 1):
+            block = await rpc(session, node, "block", height=candidate)
+            items = block["block"].get("evidence", {}).get("evidence") or []
+            if any(
+                int(item.get("value", {}).get("vote_a", {}).get("height", 0)) == infraction
+                for item in items
+            ):
+                return candidate
+        checked = latest + 1
+        await asyncio.sleep(0.5)
+    raise RuntimeError("Accepted historical evidence was not committed")
+
+
+async def retention_rehearsal(runner, session):
+    async with runner.client(runner.validator_wallets[0], 0, session) as client:
+        old_days = await client.get_state("validators", "config", "unbonding_period_days")
+    policy = await query(session, runner.nodes[0], "/get/__evidence_policy")
+    target = int(policy["target_max_age_duration"])
+    new_days = target // DAY_NS + 1
+    require(
+        new_days <= 106750, "Snapshot retention rehearsal cannot exceed the supported policy range"
+    )
+    increase = await governance_vote(
+        runner,
+        session,
+        "update_policy",
+        {"unbonding_period_days": new_days},
+        "snapshot-retention-increase",
+    )
+    grown = await collect_policy_proof(session, runner.nodes[0])
+    current = await query(session, runner.nodes[0], "/get/__evidence_policy")
+    require(
+        int(current["target_max_age_duration"]) > target,
+        "Snapshot retention target did not increase",
+    )
+    require(
+        int(current["max_age_duration"]) > int(policy["max_age_duration"]),
+        "Effective retention did not grow after the policy increase",
+    )
+    decrease = await governance_vote(
+        runner,
+        session,
+        "update_policy",
+        {"unbonding_period_days": old_days},
+        "snapshot-retention-restore",
+    )
+    reduced = await query(session, runner.nodes[0], "/get/__evidence_policy")
+    require(
+        reduced["target_max_age_duration"] == current["target_max_age_duration"],
+        "Retention high-water shrank after policy reduction",
+    )
+    return {
+        "original_days": old_days,
+        "raised_days": new_days,
+        "target_before": target,
+        "target_after": int(reduced["target_max_age_duration"]),
+        "increase_vote": increase,
+        "restore_vote": decrease,
+        "growth_proof": grown,
+    }
+
+
+async def repeated_restart(runner, session, container, observer, retention):
+    proof = []
+    for attempt in range(2):
+        before = await query(session, observer, "/get/__evidence_policy")
+        await command("docker", "restart", "--time", "30", container)
+        observer = await observer_address(container, "full-node-store")
+        consensus = await observer_agreement(runner, session, observer)
+        after = await query(session, observer, "/get/__evidence_policy")
+        require(
+            int(after["target_max_age_duration"]) == retention["target_after"],
+            "Restored retention target changed after restart",
+        )
+        require(
+            int(after["max_age_duration"]) >= int(before["max_age_duration"]),
+            "Effective retention shrank after restart",
+        )
+        proof.append(
+            {
+                "attempt": attempt + 1,
+                "consensus": consensus,
+                "evidence_policy": await collect_policy_proof(session, observer),
+            }
+        )
+    return proof
+
+
+async def snapshot_export(runner, source_home, target_home, image, backup):
+    wallet = Wallet()
+    key = backup / "publisher.key"
+    key.write_text(wallet.private_key)
+    key.chmod(0o600)
+    base = runner.output_dir / "snapshot-cli"
+    write_snapshot_profiles(
+        base, source_home, target_home, image, wallet.public_key, runner.network["chain_id"]
+    )
+    archive = backup / "full-node-store.tar.gz"
+    manifest_path = backup / "manifest.json"
+    await snapshot_cli(
+        runner,
+        base,
+        "export",
+        "snapshot-source",
+        "--archive-output",
+        archive,
+        "--manifest-output",
+        manifest_path,
+        "--snapshot-url",
+        archive.as_uri(),
+        "--signing-key-file",
+        key,
+    )
+    manifest = json.loads(manifest_path.read_text())
+    require(
+        manifest["manifest_version"] == 2 and manifest["snapshot_kind"] == "full_node_store",
+        "CLI did not export a verified full-node-store manifest",
+    )
+    negatives = negative_manifests(archive, manifest, wallet, backup)
+    return manifest_path, manifest, negatives
+
+
+def advance_recipient_signing_state(home, checkpoint):
+    state = home / "data/priv_validator_state.json"
+    value = json.loads(state.read_text())
+    value["height"] = str(checkpoint + 1000)
+    state.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    state.chmod(0o600)
+
+
+async def restore_snapshot(runner, target_home, manifest_path, negatives):
+    rejected = []
+    for label, url in negatives.items():
+        rejected.append(await rejected_restore(runner, target_home, url, label))
+    identities = identity_fingerprint(target_home)
+    await snapshot_cli(
+        runner,
+        runner.output_dir / "snapshot-cli",
+        "restore",
+        "snapshot-target",
+        "--snapshot-url",
+        manifest_path.as_uri(),
+    )
+    require(
+        identity_fingerprint(target_home) == identities,
+        "Full-store restore imported another node's identity or signing high-water",
+    )
+    return rejected
+
+
+async def full_store_rehearsal(runner, session, image, network, source_home, peers):
+    replay_home = runner.output_dir / "observers/replay"
+    target_home = runner.output_dir / "observers/full_node_store"
+    await prepare_home(source_home, replay_home, image, peers)
+    await prepare_home(source_home, target_home, image, peers)
+    replay_container = f"xian-e2e-{runner.run_id.lower()}-replay"
+    restored_container = f"xian-e2e-{runner.run_id.lower()}-full-store"
+    created = []
+    try:
+        replay = await create_observer(replay_home, replay_container, image, network, "replay")
+        created.append((replay_container, "replay"))
+        replay_proof = await observer_agreement(runner, session, replay)
+        retention = await retention_rehearsal(runner, session)
+        await observer_agreement(runner, session, replay)
+        await stop_backup_source(replay_container)
+        backup = runner.output_dir / "node-store-backup"
+        backup.mkdir()
+        manifest_path, manifest, negatives = await snapshot_export(
+            runner, replay_home, target_home, image, backup
+        )
+        advance_recipient_signing_state(target_home, manifest["height"])
+        rejected = await restore_snapshot(runner, target_home, manifest_path, negatives)
+        restored = await create_observer(
+            target_home, restored_container, image, network, "full-node-store"
+        )
+        created.append((restored_container, "full-node-store"))
+        restored_proof = await observer_agreement(runner, session, restored)
+        evidence = await historical_evidence(runner, session, restored, manifest["height"])
+        restarts = await repeated_restart(runner, session, restored_container, restored, retention)
+        return {
+            "snapshot": manifest,
+            "observers": [
+                {"mode": "replay", **replay_proof},
+                {"mode": "full_node_store", **restored_proof},
+            ],
+            "negative_restores": rejected,
+            "retention": retention,
+            "historical_evidence": evidence,
+            "restarts": restarts,
+        }
+    finally:
+        for container, mode in reversed(created):
+            await remove_observer(runner, container, mode)
+
+
 async def sync_phase(runner, session):
     source = runner.nodes[0]
     info = json.loads(await command("docker", "inspect", source.abci_container))[0]
     image = info["Image"]
     network = next(iter(info["NetworkSettings"]["Networks"]))
     source_home = STACK / ".localnet" / source.moniker / ".cometbft"
-    export_code = """import json
-from pathlib import Path
-from xian.services.state_sync import StateSnapshotManager
-p=Path('/root/.cometbft')
-g=json.loads((p/'config/genesis.json').read_text())
-m=StateSnapshotManager(storage_home=p/'xian',chain_id=g['chain_id'],chunk_size=32768)
-print(json.dumps(m.export_snapshot()))
-"""
-    exported = json.loads(
-        await command(
-            "docker", "exec", "-i", source.abci_container, "python", "-", input=export_code
-        )
-    )
-    require(exported["chunks"] > 1, "Interrupted state sync requires a multi-chunk snapshot")
-    for node in runner.nodes[1:2]:
-        # The node creates this directory as root on Linux. Copy through the
-        # container API instead of writing into its bind mount as the host user.
-        await command(
-            "docker",
-            "cp",
-            str(source_home / "xian/snapshots") + "/.",
-            f"{node.abci_container}:/root/.cometbft/xian/snapshots",
-        )
-    snapshot_height = int(exported["height"])
-    await wait_height(session, source, snapshot_height + 2)
-    trusted = await rpc(session, source, "block", height=snapshot_height)
     peers = ",".join(
-        f"{n['node_id'].lower()}@{n['moniker']}:26656" for n in runner.network["nodes"]
+        f"{node['node_id'].lower()}@{node['moniker']}:26656" for node in runner.network["nodes"]
     )
-    target = await command(
-        "docker",
-        "exec",
-        source.abci_container,
-        "python",
-        "-c",
-        "import sysconfig; print(sysconfig.get_path('purelib')+'/sitecustomize.py')",
-    )
-    results = []
-    for mode in ("replay", "state_sync_interrupted"):
-        home = runner.output_dir / "observers" / mode
-        require(
-            not home.exists(), f"Observer home already exists: {home}; use a fresh run directory"
-        )
-        (home / "config").mkdir(parents=True)
-        for path in (source_home / "config").iterdir():
-            if path.name in {"node_key.json", "priv_validator_key.json"}:
-                continue
-            destination = home / "config" / path.name
-            if path.is_dir():
-                shutil.copytree(path, destination)
-            else:
-                shutil.copy2(path, destination)
-        await command(
-            "docker",
-            "run",
-            "--rm",
-            "--entrypoint",
-            "cometbft",
-            "--volume",
-            f"{home}:/root/.cometbft",
-            image,
-            "init",
-        )
-        config = home / "config/config.toml"
-        text = set_config(config.read_text(), "p2p", {"persistent_peers": peers})
-        if mode != "replay":
-            text = set_config(
-                text,
-                "statesync",
-                {
-                    "enable": True,
-                    "rpc_servers": "http://node-0:26657,http://node-1:26657",
-                    "trust_height": snapshot_height,
-                    "trust_hash": trusted["block_id"]["hash"],
-                    "discovery_time": "5s",
-                    "chunk_fetchers": "1",
-                },
-            )
-            (home / "e2e-fault.json").write_text(json.dumps({"stage": "snapshot_chunk"}))
-        text = re.sub(
-            r"^proxy_app\s*=.*$", 'proxy_app = "unix:///tmp/abci.sock"', text, flags=re.MULTILINE
-        )
-        write_config(config, text)
-        runtime = home / "config/xian.toml"
-        text = runtime.read_text()
-        text = re.sub(r"^bds_enabled\s*=.*$", "bds_enabled = false", text, flags=re.MULTILINE)
-        write_config(runtime, text)
-        container = f"xian-e2e-{runner.run_id.lower()}-" + mode.replace("_", "-")
-        try:
-            await command(
-                "docker",
-                "create",
-                "--entrypoint",
-                "/bin/bash",
-                "--name",
-                container,
-                "--network",
-                network,
-                "--publish",
-                "127.0.0.1::26657",
-                "--memory",
-                "1536m",
-                "--env",
-                f"XIAN_E2E_CONFIG_HASHES={config_hashes(home)}",
-                "--volume",
-                f"{home}:/root/.cometbft",
-                image,
-                "-c",
-                OBSERVER_COMMAND,
-            )
-            if mode != "replay":
-                await command(
-                    "docker",
-                    "cp",
-                    STACK / "scripts/e2e_hooks/sitecustomize.py",
-                    f"{container}:{target}",
-                )
-            await command("docker", "start", container)
-            info = json.loads(await command("docker", "inspect", container))[0]
-            require(
-                info["State"]["Running"] and info["NetworkSettings"]["Ports"].get("26657/tcp"),
-                f"Observer exited before RPC startup; inspect observer-{mode}.log",
-            )
-            port = info["NetworkSettings"]["Ports"]["26657/tcp"][0]["HostPort"]
-            observer = SimpleNamespace(moniker=mode, rpc_url=f"http://127.0.0.1:{port}")
-            if mode != "replay":
-                hit = home / "e2e-fault.hit.json"
-                deadline = time.monotonic() + 150
-                while not hit.exists() and time.monotonic() < deadline:
-                    await asyncio.sleep(0.5)
-                require(hit.exists(), "Observer never reached the snapshot interruption point")
-                await command("docker", "restart", container)
-                # Docker may allocate a different ephemeral host port on restart.
-                info = json.loads(await command("docker", "inspect", container))[0]
-                port = info["NetworkSettings"]["Ports"]["26657/tcp"][0]["HostPort"]
-                observer.rpc_url = f"http://127.0.0.1:{port}"
-            current = await height(session, source)
-            await wait_height(session, observer, current, timeout=240)
-            status = await rpc(session, observer, "status")
-            require(
-                int(status["validator_info"]["voting_power"]) == 0,
-                "Fresh observer unexpectedly has validator voting power",
-            )
-            check = await agreement(session, [*runner.nodes, observer], window=3)
-            sample_keys = [
-                "validators.current",
-                "governance.proposal_count",
-                f"__n.{runner.founder_wallet.public_key}:",
-            ]
-            for key in sample_keys:
-                expected = await query(session, source, "/get/" + key)
-                actual = await query(session, observer, "/get/" + key)
-                require(actual == expected, f"Observer state mismatch at {key}")
-            results.append(
-                {
-                    "mode": mode,
-                    "consensus": check,
-                    "voting_power": 0,
-                    "snapshot_height": snapshot_height if mode != "replay" else None,
-                    "interrupted_after_first_chunk": mode != "replay",
-                }
-            )
-        finally:
-            logs = await command("docker", "logs", container, combine_output=True)
-            (runner.output_dir / f"observer-{mode}.log").write_text(logs)
-            await command("docker", "rm", "-f", "-v", container)
-    return {"snapshot": exported, "observers": results}
+    return await full_store_rehearsal(runner, session, image, network, source_home, peers)

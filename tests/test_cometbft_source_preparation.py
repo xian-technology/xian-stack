@@ -23,91 +23,82 @@ def inputs(tmp_path):
     archive = tmp_path / "upstream.tar.gz"
     with tarfile.open(archive, "w:gz") as tar:
         tar.add(source, arcname="cometbft-source")
-    patch = tmp_path / "history.patch"
-    patch.write_text(
-        "diff --git a/history.txt b/history.txt\n--- a/history.txt\n+++ b/history.txt\n"
-        "@@ -1 +1 @@\n-stock\n+history-aware\n"
-    )
     env = dict(
         {"PATH": os.environ["PATH"]},
         COMETBFT_VERSION="0.40.0",
         COMETBFT_SOURCE_COMMIT=COMMIT,
         COMETBFT_SOURCE_URL="https://codeload.github.com/cometbft/cometbft/tar.gz/" + COMMIT,
         COMETBFT_SOURCE_SHA256=hashlib.sha256(archive.read_bytes()).hexdigest(),
-        COMETBFT_PATCH_SHA256=hashlib.sha256(patch.read_bytes()).hexdigest(),
-        COMETBFT_HISTORY_REVISION="1",
     )
-    return archive, patch, tmp_path / "prepared", env
+    return archive, tmp_path / "prepared", env
 
 
 def prepare(inputs):
-    archive, patch, destination, env = inputs
+    archive, destination, env = inputs
     return subprocess.run(
-        ["bash", str(SCRIPT), str(archive), str(destination), str(patch)],
+        ["bash", str(SCRIPT), str(archive), str(destination)],
         env=env,
         capture_output=True,
         text=True,
     )
 
 
-def test_prepared_source_has_verified_patch_version_and_provenance(inputs):
+def test_prepared_source_preserves_every_upstream_byte_and_records_release_provenance(inputs):
     result = prepare(inputs)
     assert result.returncode == 0, result.stderr
-    _, _, destination, env = inputs
-    assert (destination / "history.txt").read_text() == "history-aware\n"
-    assert 'TMCoreSemVer = "0.40.0"' in (destination / "version/version.go").read_text()
-    proof = json.loads((destination / "xian-cometbft-provenance.json").read_text())
-    assert proof == {
+    archive, destination, env = inputs
+    assert (destination / "history.txt").read_text() == "stock\n"
+    assert 'TMCoreSemVer = "0.39.0"' in (destination / "version/version.go").read_text()
+    with tarfile.open(archive) as stream:
+        for member in stream.getmembers():
+            if member.isfile():
+                relative = Path(member.name).relative_to("cometbft-source")
+                assert (destination / relative).read_bytes() == stream.extractfile(member).read()
+    assert json.loads((destination / "xian-cometbft-provenance.json").read_text()) == {
         "version": "0.40.0",
         "source_url": env["COMETBFT_SOURCE_URL"],
         "source_commit": COMMIT,
         "source_sha256": env["COMETBFT_SOURCE_SHA256"],
-        "patch_sha256": env["COMETBFT_PATCH_SHA256"],
-        "history_revision": "1",
     }
-    # Preparation must never mutate the caller's archive or patch input.
-    assert hashlib.sha256(inputs[0].read_bytes()).hexdigest() == env["COMETBFT_SOURCE_SHA256"]
-    assert hashlib.sha256(inputs[1].read_bytes()).hexdigest() == env["COMETBFT_PATCH_SHA256"]
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == env["COMETBFT_SOURCE_SHA256"]
 
 
-@pytest.mark.parametrize("field", ["COMETBFT_SOURCE_SHA256", "COMETBFT_PATCH_SHA256"])
-def test_wrong_input_checksum_refuses_before_extraction(inputs, field):
-    inputs[3][field] = "0" * 64
+def test_wrong_archive_checksum_refuses_before_extraction(inputs):
+    inputs[2]["COMETBFT_SOURCE_SHA256"] = "0" * 64
     result = prepare(inputs)
     assert result.returncode != 0
     assert "checksum" in result.stderr.lower()
-    assert not inputs[2].exists()
+    assert not inputs[1].exists()
 
 
-def test_unapplicable_patch_fails_without_publishing_tree(inputs):
-    inputs[1].write_text("unapplicable patch\n")
-    inputs[3]["COMETBFT_PATCH_SHA256"] = hashlib.sha256(inputs[1].read_bytes()).hexdigest()
+def test_invalid_archive_leaves_no_published_or_staged_tree(inputs):
+    inputs[0].write_bytes(b"not a tar archive")
+    inputs[2]["COMETBFT_SOURCE_SHA256"] = hashlib.sha256(inputs[0].read_bytes()).hexdigest()
     result = prepare(inputs)
     assert result.returncode != 0
-    assert not inputs[2].exists()
-    assert not list(inputs[2].parent.glob("prepared.stage.*"))
+    assert not inputs[1].exists()
+    assert not list(inputs[1].parent.glob("prepared.stage.*"))
 
 
 @pytest.mark.parametrize(
     "field,value",
     [
         ("COMETBFT_SOURCE_COMMIT", "short"),
-        ("COMETBFT_HISTORY_REVISION", "2"),
         ("COMETBFT_VERSION", "0.40.0;command"),
         ("COMETBFT_VERSION", "0.39.3"),
         ("COMETBFT_SOURCE_URL", "https://example.test/unreviewed"),
     ],
 )
 def test_invalid_provenance_inputs_cannot_be_built(inputs, field, value):
-    inputs[3][field] = value
+    inputs[2][field] = value
     result = prepare(inputs)
     assert result.returncode != 0
-    assert not inputs[2].exists()
+    assert not inputs[1].exists()
 
 
 def test_existing_prepared_directory_cannot_be_overwritten(inputs):
-    inputs[2].mkdir()
-    marker = inputs[2] / "operator-data"
+    inputs[1].mkdir()
+    marker = inputs[1] / "operator-data"
     marker.write_text("preserve")
     result = prepare(inputs)
     assert result.returncode != 0

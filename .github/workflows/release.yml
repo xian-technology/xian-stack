@@ -37,9 +37,6 @@ jobs:
       cometbft_source_url: ${{ steps.resolve.outputs.cometbft_source_url }}
       cometbft_source_sha256: ${{ steps.resolve.outputs.cometbft_source_sha256 }}
       cometbft_source_commit: ${{ steps.resolve.outputs.cometbft_source_commit }}
-      cometbft_patch_path: ${{ steps.resolve.outputs.cometbft_patch_path }}
-      cometbft_patch_sha256: ${{ steps.resolve.outputs.cometbft_patch_sha256 }}
-      cometbft_history_revision: ${{ steps.resolve.outputs.cometbft_history_revision }}
       s6_overlay_version: ${{ steps.resolve.outputs.s6_overlay_version }}
       s6_overlay_noarch_sha256: ${{ steps.resolve.outputs.s6_overlay_noarch_sha256 }}
       s6_overlay_x86_64_sha256: ${{ steps.resolve.outputs.s6_overlay_x86_64_sha256 }}
@@ -258,9 +255,6 @@ jobs:
             COMETBFT_SOURCE_URL=${{ needs.release-manifest.outputs.cometbft_source_url }}
             COMETBFT_SOURCE_SHA256=${{ needs.release-manifest.outputs.cometbft_source_sha256 }}
             COMETBFT_SOURCE_COMMIT=${{ needs.release-manifest.outputs.cometbft_source_commit }}
-            COMETBFT_PATCH_PATH=${{ needs.release-manifest.outputs.cometbft_patch_path }}
-            COMETBFT_PATCH_SHA256=${{ needs.release-manifest.outputs.cometbft_patch_sha256 }}
-            COMETBFT_HISTORY_REVISION=${{ needs.release-manifest.outputs.cometbft_history_revision }}
             S6_OVERLAY_VERSION=${{ needs.release-manifest.outputs.s6_overlay_version }}
             S6_OVERLAY_NOARCH_SHA256=${{ needs.release-manifest.outputs.s6_overlay_noarch_sha256 }}
             S6_OVERLAY_X86_64_SHA256=${{ needs.release-manifest.outputs.s6_overlay_x86_64_sha256 }}
@@ -299,9 +293,6 @@ jobs:
             COMETBFT_SOURCE_URL=${{ needs.release-manifest.outputs.cometbft_source_url }}
             COMETBFT_SOURCE_SHA256=${{ needs.release-manifest.outputs.cometbft_source_sha256 }}
             COMETBFT_SOURCE_COMMIT=${{ needs.release-manifest.outputs.cometbft_source_commit }}
-            COMETBFT_PATCH_PATH=${{ needs.release-manifest.outputs.cometbft_patch_path }}
-            COMETBFT_PATCH_SHA256=${{ needs.release-manifest.outputs.cometbft_patch_sha256 }}
-            COMETBFT_HISTORY_REVISION=${{ needs.release-manifest.outputs.cometbft_history_revision }}
             S6_OVERLAY_VERSION=${{ needs.release-manifest.outputs.s6_overlay_version }}
             S6_OVERLAY_NOARCH_SHA256=${{ needs.release-manifest.outputs.s6_overlay_noarch_sha256 }}
             S6_OVERLAY_X86_64_SHA256=${{ needs.release-manifest.outputs.s6_overlay_x86_64_sha256 }}

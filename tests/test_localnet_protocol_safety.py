@@ -9,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "localnet-protocol-safety.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
 
@@ -432,3 +434,144 @@ class LocalnetProtocolSafetyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_explicit_evidence_height_does_not_substitute_a_newer_block():
+    assert localnet_protocol_safety.evidence_candidate_heights(100, 30, 7) == [7]
+    assert localnet_protocol_safety.evidence_candidate_heights(4, 2, None) == [4, 3, 2]
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, 101, "7"])
+def test_explicit_evidence_height_requires_a_committed_positive_integer(bad):
+    with pytest.raises(localnet_protocol_safety.RunnerError, match="evidence height"):
+        localnet_protocol_safety.evidence_candidate_heights(100, 30, bad)
+
+
+@pytest.mark.parametrize("exact,expected", [(7, 7), (None, 99)])
+def test_duplicate_vote_submission_is_signed_for_exact_or_first_available_committed_height(
+    monkeypatch, exact, expected
+):
+    import base64
+    import datetime
+    import hashlib
+    import json
+
+    import nacl.signing
+    from google.protobuf.internal.encoder import _VarintBytes
+    from google.protobuf.timestamp_pb2 import Timestamp
+
+    key = nacl.signing.SigningKey.generate()
+    address = hashlib.sha256(bytes(key.verify_key)).digest()[:20].hex().upper()
+    reporter = SimpleNamespace(rpc_url="http://reporter", moniker="reporter")
+    target = SimpleNamespace(moniker="target", account_public_key="account")
+    runner = object.__new__(localnet_protocol_safety.ProtocolSafetyRunner)
+    runner.nodes = [reporter, target]
+    runner.load_priv_validator_key = lambda index: {
+        "address": address,
+        "priv_key": {"value": base64.b64encode(bytes(key) + bytes(key.verify_key)).decode()},
+    }
+    monkeypatch.setattr(localnet_protocol_safety, "latest_height", AsyncMock(return_value=100))
+    requested = []
+
+    async def fetch(session, url, **kwargs):
+        h = int(kwargs["params"]["height"])
+        requested.append(h)
+        if url.endswith("/validators"):
+            entries = (
+                [] if exact is None and h == 100 else [{"address": address, "voting_power": "10"}]
+            )
+            return {"result": {"validators": entries}}
+        return {
+            "result": {
+                "block_id": {"hash": "AA" * 32, "parts": {"total": 1, "hash": "BB" * 32}},
+                "block": {
+                    "header": {
+                        "height": str(h),
+                        "time": "2026-11-16T00:00:00Z",
+                        "chain_id": "unit-chain",
+                    }
+                },
+            }
+        }
+
+    monkeypatch.setattr(localnet_protocol_safety, "fetch_json", fetch)
+
+    class Response:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def json(self):
+            return {"result": {"hash": "evidence-hash"}}
+
+    submitted = []
+
+    class Session:
+        def get(self, url, **kwargs):
+            submitted.append(json.loads(kwargs["params"]["evidence"]))
+            return Response()
+
+    result = asyncio.run(
+        runner.broadcast_duplicate_vote_evidence(
+            Session(),
+            reporter_node_index=0,
+            target_node_index=1,
+            evidence_height=exact,
+            height_lookback=2,
+        )
+    )
+    assert result["height"] == expected
+    assert requested == ([7, 7] if exact == 7 else [100, 100, 99, 99])
+    assert submitted == [result["evidence"]]
+    timestamp = Timestamp(
+        seconds=int(datetime.datetime(2026, 11, 16, tzinfo=datetime.timezone.utc).timestamp())
+    )
+    value = result["evidence"]["value"]
+    for vote in [value["vote_a"], value["vote_b"]]:
+        assert vote["height"] == str(expected) and vote["validator_address"] == address
+        canonical = localnet_protocol_safety.canonical_pb2.CanonicalVote(
+            type=2,
+            height=expected,
+            round=0,
+            chain_id="unit-chain",
+            timestamp=timestamp,
+            block_id=localnet_protocol_safety.canonical_pb2.CanonicalBlockID(
+                hash=bytes.fromhex(vote["block_id"]["hash"]),
+                part_set_header=localnet_protocol_safety.canonical_pb2.CanonicalPartSetHeader(
+                    total=1, hash=bytes.fromhex(vote["block_id"]["parts"]["hash"])
+                ),
+            ),
+        )
+        payload = canonical.SerializeToString()
+        key.verify_key.verify(
+            _VarintBytes(len(payload)) + payload, base64.b64decode(vote["signature"])
+        )
+    assert {value["vote_a"]["block_id"]["hash"], value["vote_b"]["block_id"]["hash"]} == {
+        "AA" * 32,
+        "11" * 32,
+    }
+
+
+def test_duplicate_vote_helper_refuses_no_available_committed_validator_material(monkeypatch):
+    import base64
+
+    runner = object.__new__(localnet_protocol_safety.ProtocolSafetyRunner)
+    runner.nodes = [SimpleNamespace(rpc_url="rpc", moniker="reporter"), SimpleNamespace()]
+    runner.load_priv_validator_key = lambda index: {
+        "address": "address",
+        "priv_key": {"value": base64.b64encode(bytes(64)).decode()},
+    }
+    with pytest.raises(localnet_protocol_safety.RunnerError, match="could not find validator"):
+        asyncio.run(
+            runner.broadcast_duplicate_vote_evidence(
+                object(),
+                reporter_node_index=0,
+                target_node_index=1,
+                evidence_height=7,
+                timeout_seconds=0,
+            )
+        )

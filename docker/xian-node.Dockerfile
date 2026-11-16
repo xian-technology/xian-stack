@@ -14,9 +14,6 @@ ARG COMETBFT_VERSION=0.40.0
 ARG COMETBFT_SOURCE_URL=https://codeload.github.com/cometbft/cometbft/tar.gz/0880b4d378f347ab16e54ec677ff50d803f37d62
 ARG COMETBFT_SOURCE_SHA256=c421c1461494d4e1e922a334f1899aab2f638e990a465316ed6e2437a8d71a66
 ARG COMETBFT_SOURCE_COMMIT=0880b4d378f347ab16e54ec677ff50d803f37d62
-ARG COMETBFT_PATCH_PATH=docker/cometbft-patches/0001-verified-evidence-history.patch
-ARG COMETBFT_PATCH_SHA256=c97b141dde639ec369a4205306e234f5a565bcc4f066ca3dae7dc09aee4bad63
-ARG COMETBFT_HISTORY_REVISION=1
 
 FROM ${GO_IMAGE} AS cometbft-builder
 
@@ -25,9 +22,6 @@ ARG COMETBFT_VERSION
 ARG COMETBFT_SOURCE_URL
 ARG COMETBFT_SOURCE_SHA256
 ARG COMETBFT_SOURCE_COMMIT
-ARG COMETBFT_PATCH_PATH
-ARG COMETBFT_PATCH_SHA256
-ARG COMETBFT_HISTORY_REVISION
 ARG TARGETOS=linux
 ARG TARGETARCH
 
@@ -39,7 +33,6 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
     ca-certificates \
-    git \
     tar \
     wget; \
     rm -rf /var/lib/apt/lists/*
@@ -47,20 +40,24 @@ RUN set -eux; \
 WORKDIR /tmp
 
 COPY docker/prepare-cometbft-source.sh /usr/local/bin/prepare-cometbft-source
-COPY ${COMETBFT_PATCH_PATH} /tmp/cometbft-history.patch
 RUN wget -O /tmp/cometbft.tar.gz "${COMETBFT_SOURCE_URL}" \
-    && /usr/local/bin/prepare-cometbft-source /tmp/cometbft.tar.gz /tmp/cometbft-src /tmp/cometbft-history.patch \
-    && rm -f /tmp/cometbft.tar.gz /tmp/cometbft-history.patch
+    && /usr/local/bin/prepare-cometbft-source /tmp/cometbft.tar.gz /tmp/cometbft-src \
+    && rm -f /tmp/cometbft.tar.gz
+
+COPY docker/node-store-inspect /tmp/node-store-inspect
 
 WORKDIR /tmp/cometbft-src
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go version \
-    && GOMAXPROCS=2 go test -count=1 -p 2 ./statesync ./evidence ./node ./types ./config ./light/provider/http ./rpc/core ./rpc/core/types \
+    && GOMAXPROCS=2 go test -count=1 -p 2 /tmp/node-store-inspect/main.go /tmp/node-store-inspect/main_test.go \
     && GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" GOMAXPROCS=2 \
     go build -trimpath -buildvcs=false \
-    -ldflags="-s -w -buildid= -X github.com/cometbft/cometbft/version.TMGitCommitHash=${COMETBFT_SOURCE_COMMIT}.xian-history.${COMETBFT_HISTORY_REVISION}.${COMETBFT_PATCH_SHA256}" \
+    -ldflags="-s -w -buildid= -X github.com/cometbft/cometbft/version.TMGitCommitHash=${COMETBFT_SOURCE_COMMIT}" \
     -p 2 -o /out/cometbft ./cmd/cometbft \
+    && GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" GOMAXPROCS=2 \
+    go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" \
+    -p 2 -o /out/xian-node-store-inspect /tmp/node-store-inspect/main.go \
     && cp xian-cometbft-provenance.json /out/cometbft-provenance.json
 
 FROM ${RUST_IMAGE} AS rust-toolchain
@@ -125,14 +122,10 @@ FROM ${PYTHON_IMAGE} AS node-base
 ARG DEBIAN_SNAPSHOT
 ARG COMETBFT_VERSION
 ARG COMETBFT_SOURCE_COMMIT
-ARG COMETBFT_PATCH_SHA256
-ARG COMETBFT_HISTORY_REVISION
 ARG TARGETARCH
 
 LABEL org.xian.cometbft.version="${COMETBFT_VERSION}" \
-    org.xian.cometbft.source.commit="${COMETBFT_SOURCE_COMMIT}" \
-    org.xian.cometbft.patch.sha256="${COMETBFT_PATCH_SHA256}" \
-    org.xian.cometbft.history.revision="${COMETBFT_HISTORY_REVISION}"
+    org.xian.cometbft.source.commit="${COMETBFT_SOURCE_COMMIT}"
 ARG SOURCE_DATE_EPOCH
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -170,6 +163,8 @@ COPY --from=xian-configs templates /opt/xian-configs/templates
 COPY --from=python-wheel-builder /tmp/wheels /tmp/wheels
 COPY --from=python-wheel-builder /tmp/build/python-runtime-requirements.txt /tmp/python-runtime-requirements.txt
 COPY --from=cometbft-builder /out/cometbft /usr/local/bin/cometbft
+COPY --from=cometbft-builder /out/xian-node-store-inspect /usr/local/bin/xian-node-store-inspect
+COPY --chmod=0755 scripts/node_store_runtime_guard.py /usr/local/bin/xian-node-store-check-stopped
 COPY --from=cometbft-builder /out/cometbft-provenance.json /usr/local/share/xian/cometbft-provenance.json
 
 # Release image reproducibility: uv injects two non-deterministic artifacts into

@@ -18,3 +18,9 @@ graphify-out/
 
 # ub-mode quality-tool output (crapper, dryer, mutator)
 .metrics/
+
+# Local Python and companion-tool environments/artifacts
+.venv
+.coverage
+coverage.json
+target/

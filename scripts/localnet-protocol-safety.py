@@ -604,6 +604,53 @@ def assert_true(value: Any, *, label: str) -> None:
         raise RunnerError(f"{label}: expected truthy value, got {value!r}")
 
 
+def evidence_candidate_heights(latest: int, lookback: int, exact: int | None) -> list[int]:
+    if exact is not None:
+        if type(exact) is not int or not 1 <= exact <= latest:
+            raise RunnerError("evidence height must be a committed positive integer")
+        return [exact]
+    return list(range(latest, max(latest - lookback, 1) - 1, -1))
+
+
+async def evidence_block_material(
+    session,
+    reporter,
+    target_consensus_address,
+    *,
+    height_lookback,
+    timeout_seconds,
+    evidence_height,
+):
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        latest = await latest_height(session, reporter.rpc_url)
+        for candidate_height in evidence_candidate_heights(
+            latest, height_lookback, evidence_height
+        ):
+            block = await fetch_json(
+                session,
+                f"{reporter.rpc_url}/block",
+                timeout=5.0,
+                params={"height": str(candidate_height)},
+            )
+            validators = await fetch_json(
+                session,
+                f"{reporter.rpc_url}/validators",
+                timeout=5.0,
+                params={"height": str(candidate_height), "per_page": "100"},
+            )
+            if any(
+                entry["address"] == target_consensus_address
+                for entry in validators["result"]["validators"]
+            ):
+                return candidate_height, block["result"], validators["result"]
+        await asyncio.sleep(1.0)
+    raise RunnerError(
+        f"could not find validator {target_consensus_address} in the requested "
+        f"{height_lookback} heights after waiting {timeout_seconds} seconds"
+    )
+
+
 class ProtocolSafetyRunner:
     def __init__(self, args: argparse.Namespace):
         self.args = args
@@ -1471,6 +1518,7 @@ class ProtocolSafetyRunner:
         target_node_index: int,
         height_lookback: int = 30,
         timeout_seconds: float = 45.0,
+        evidence_height: int | None = None,
     ) -> dict[str, Any]:
         reporter = self.nodes[reporter_node_index]
         target = self.nodes[target_node_index]
@@ -1480,42 +1528,14 @@ class ProtocolSafetyRunner:
             base64.b64decode(target_priv_validator["priv_key"]["value"])[:32]
         )
 
-        chosen_height = None
-        block_result = None
-        validators_result = None
-        deadline = time.monotonic() + timeout_seconds
-        while time.monotonic() < deadline and chosen_height is None:
-            latest = await latest_height(session, reporter.rpc_url)
-            for offset in range(0, height_lookback + 1):
-                candidate_height = latest - offset
-                if candidate_height <= 0:
-                    break
-                block_candidate = await fetch_json(
-                    session,
-                    f"{reporter.rpc_url}/block",
-                    timeout=5.0,
-                    params={"height": str(candidate_height)},
-                )
-                validators_candidate = await fetch_json(
-                    session,
-                    f"{reporter.rpc_url}/validators",
-                    timeout=5.0,
-                    params={"height": str(candidate_height), "per_page": "100"},
-                )
-                validator_entries = validators_candidate["result"]["validators"]
-                if any(entry["address"] == target_consensus_address for entry in validator_entries):
-                    chosen_height = candidate_height
-                    block_result = block_candidate["result"]
-                    validators_result = validators_candidate["result"]
-                    break
-            if chosen_height is None:
-                await asyncio.sleep(1.0)
-
-        if chosen_height is None or block_result is None or validators_result is None:
-            raise RunnerError(
-                f"could not find validator {target_consensus_address} in the last "
-                f"{height_lookback} heights after waiting {timeout_seconds} seconds"
-            )
+        chosen_height, block_result, validators_result = await evidence_block_material(
+            session,
+            reporter,
+            target_consensus_address,
+            height_lookback=height_lookback,
+            timeout_seconds=timeout_seconds,
+            evidence_height=evidence_height,
+        )
 
         validator_entries = validators_result["validators"]
         target_validator_index = next(

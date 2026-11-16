@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 from pathlib import Path
@@ -29,9 +28,6 @@ REQUIRED_BUILD_FIELDS = (
     "cometbft_source_url",
     "cometbft_source_sha256",
     "cometbft_source_commit",
-    "cometbft_patch_path",
-    "cometbft_patch_sha256",
-    "cometbft_history_revision",
     "s6_overlay_version",
     "s6_overlay_noarch_sha256",
     "s6_overlay_x86_64_sha256",
@@ -85,44 +81,23 @@ def validate_cometbft_pins(build: dict) -> None:
     for name, digits in (
         ("cometbft_source_commit", 40),
         ("cometbft_source_sha256", 64),
-        ("cometbft_patch_sha256", 64),
     ):
         if re.fullmatch(r"[0-9a-f]{" + str(digits) + r"}", build[name]) is None:
             raise SystemExit(f"build.{name} must be a full lowercase hexadecimal digest")
     if build["cometbft_version"] != "0.40.0":
-        raise SystemExit("build.cometbft_version must be 0.40.0 for history revision 1")
-    if build["cometbft_history_revision"] != "1":
-        raise SystemExit("build.cometbft_history_revision must be the supported revision 1")
-
-
-def checked_patch_path(root: Path, relative: str) -> Path:
-    path = Path(relative)
-    if (
-        ".." in path.parts
-        or path.parts[:2] != ("docker", "cometbft-patches")
-        or path.suffix != ".patch"
-    ):
-        raise SystemExit("CometBFT patch path must be inside docker/cometbft-patches")
-    target = root / path
-    if not target.resolve().is_relative_to(root.resolve()):
-        raise SystemExit("CometBFT patch path must stay inside the release source tree")
-    return target
-
-
-def validate_patch_file(build: dict, root: Path) -> None:
-    path = checked_patch_path(root, build["cometbft_patch_path"])
-    if path.is_symlink() or not path.is_file():
-        raise SystemExit("CometBFT patch must be an existing regular file")
-    with path.open("rb") as handle:
-        actual = hashlib.file_digest(handle, "sha256").hexdigest()
-    if actual != build["cometbft_patch_sha256"]:
-        raise SystemExit("CometBFT patch checksum does not match the release manifest")
+        raise SystemExit("build.cometbft_version must identify pinned upstream release 0.40.0")
+    expected_url = (
+        "https://codeload.github.com/cometbft/cometbft/tar.gz/" + build["cometbft_source_commit"]
+    )
+    if build["cometbft_source_url"] != expected_url:
+        raise SystemExit("build.cometbft_source_url must identify the pinned source commit")
+    if any(name.startswith(("cometbft_patch", "cometbft_history")) for name in build):
+        raise SystemExit("CometBFT builds must use unmodified upstream source")
 
 
 def validated_manifest(path: Path) -> dict:
     data = load_manifest(path)
     validate_manifest(data)
-    validate_patch_file(data["build"], path.parent)
     return data
 
 

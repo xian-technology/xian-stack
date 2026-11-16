@@ -11,25 +11,23 @@ bds_enabled="${XIAN_BDS_ENABLED:-0}"
 required_processes=("xian" "cometbft")
 
 if [[ "${stack_topology}" == "integrated" ]]; then
-  compose_files=(docker-compose-abci.yml)
   compose_cmd=(docker compose --profile integrated -f docker-compose-abci.yml)
-  runtime_services=("abci")
   if [[ "${bds_enabled}" == "1" || "${bds_enabled}" == "true" ]]; then
-    compose_files+=(docker-compose-abci-bds.yml)
     compose_cmd=(docker compose --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml)
   fi
 elif [[ "${stack_topology}" == "fidelity" ]]; then
-  compose_files=(docker-compose-abci.yml)
   compose_cmd=(docker compose --profile fidelity -f docker-compose-abci.yml)
-  runtime_services=("abci-app" "cometbft")
 else
   printf 'unsupported XIAN_STACK_TOPOLOGY: %s\n' "${stack_topology}" >&2
   exit 1
 fi
 
 compose_status_raw="[]"
-if compose_status_raw="$("${compose_cmd[@]}" ps --format json 2>/dev/null)"; then
-  :
+runtime_status_known=0
+if compose_status_raw="$("${compose_cmd[@]}" ps --all --format json 2>/dev/null)"; then
+  runtime_status_known=1
+else
+  compose_status_raw="[]"
 fi
 
 inspect_runtime_processes() {
@@ -131,7 +129,7 @@ PY
 )"
 fi
 
-python3 - "${compose_status_raw}" "${runtime_processes_raw}" "${stack_topology}" "${bds_enabled}" "${node_id}" "${required_processes[@]}" <<'PY'
+python3 - "${compose_status_raw}" "${runtime_processes_raw}" "${stack_topology}" "${bds_enabled}" "${node_id}" "${runtime_status_known}" "${required_processes[@]}" <<'PY'
 import json
 import sys
 
@@ -173,7 +171,8 @@ runtime_processes = parse_json_stream(sys.argv[2])
 stack_topology = sys.argv[3]
 bds_enabled = sys.argv[4] in {"1", "true"}
 node_id = sys.argv[5] or None
-required_processes = sys.argv[6:]
+runtime_status_known = sys.argv[6] == "1"
+required_processes = sys.argv[7:]
 
 runtime_containers = {
     "integrated": ["abci"],
@@ -200,11 +199,12 @@ result = {
     "bds_enabled": bds_enabled,
     "compose_services": compose_services,
     "runtime_containers": runtime_containers,
+    "runtime_status_known": runtime_status_known,
     "runtime_services_running": runtime_services_running,
     "runtime_processes": runtime_processes,
     "required_processes": required_processes,
     "required_processes_online": required_processes_online,
-    "backend_running": runtime_services_running and required_processes_online,
+    "backend_running": runtime_status_known and runtime_services_running and required_processes_online,
     "node_id": node_id,
 }
 print(json.dumps(result, indent=2))

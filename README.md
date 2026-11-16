@@ -344,6 +344,16 @@ builtins, historical hash aliases, selected-object identity, lazy huge ranges an
 storage snapshots. Cyclic return values and size-changing dictionary iteration
 must roll back writes/events, and the next valid call must still succeed.
 
+The permanent `21-fresh-node-sync` phase first catches up a nonvalidator by
+block replay. It stops that source, uses the public CLI to export a signed
+full-node-store archive, and restores a fresh nonvalidator with its own keys and
+signing state. Tampered, wrong-chain and incomplete archives must fail before
+publication. The restored observer must agree with all five validators, accept
+still-valid evidence from before the backup, and remain consistent across two
+restarts. The phase also checks governed evidence-retention growth and reduction
+without shortening the retained target. CometBFT peer state sync is disabled;
+ordinary replay and verified full-store restore are the bootstrap paths.
+
 Each successful run also exports `replay-corpus/`: public configuration,
 CometBFT block databases, expected transaction-result digests, and source
 revisions. It excludes application state and validator private keys. The
@@ -376,7 +386,7 @@ Use a fresh output directory for each replay. See the
 interpretation of these checks.
 
 `localnet-e2e` uses periodic blocks with a one-second interval, including when
-throughput tuning is selected. Its lifecycle, quorum, and state-sync checks
+throughput tuning is selected. Its lifecycle, quorum, and full-store restore checks
 need later idle heights. Set `XIAN_LOCALNET_BLOCK_POLICY_INTERVAL` to choose
 another periodic interval; an explicit `on_demand` mode is refused before
 bootstrap. On-demand production remains available in localnet workload and

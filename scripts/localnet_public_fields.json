@@ -350,7 +350,11 @@
     ],
     "21-fresh-node-sync": [
       "observers",
-      "snapshot"
+      "snapshot",
+      "negative_restores",
+      "retention",
+      "historical_evidence",
+      "restarts"
     ],
     "23-nonce-recovery": [
       "checks",
