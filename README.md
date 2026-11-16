@@ -151,10 +151,11 @@ make localnet-dex-bootstrap
 XIAN_DEX_BOOTSTRAP_RPC_URL=http://127.0.0.1:26657 make localnet-dex-bootstrap
 ```
 
-DEX bootstrap submissions use xian-py's simulation-based automatic chi
-estimation by default. Set `XIAN_DEX_CHI_BUDGET_MODE=fixed` only when a
-diagnostic or release check must exercise the bundle and bootstrap ceilings
-directly.
+DEX bootstrap submissions supply xian-py's simulated chi plus its margin (a
+fixed budget would pay half of whatever it leaves unused). The deployer key
+comes from `--deployer-key-file` / `XIAN_DEX_DEPLOYER_KEY_FILE`,
+`XIAN_DEX_DEPLOYER_PRIVATE_KEY`, or the local stack keys; it is never passed
+on the command line, where `ps` and shell history would show it.
 
 Higher-level harnesses:
 

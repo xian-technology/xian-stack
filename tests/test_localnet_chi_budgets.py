@@ -53,12 +53,6 @@ DELIBERATE_BUDGETS = {
     ("localnet-workload.py", "PARALLEL_PROBE_TX_CHI"),
     # handed to the external IntentKit x402 smoke as its --settlement-chi
     ("localnet-e2e.py", "X402_SETTLEMENT_TX_CHI"),
-    # localnet-dex-bootstrap's --chi-budget-mode fixed (auto is the default)
-    ("localnet-dex-bootstrap.py", "CORE_DEPLOY_CHI"),
-    ("localnet-dex-bootstrap.py", "TOKEN_DEPLOY_CHI"),
-    ("localnet-dex-bootstrap.py", "LP_TOKEN_DEPLOY_CHI"),
-    ("localnet-dex-bootstrap.py", "TOKEN_TX_CHI"),
-    ("localnet-dex-bootstrap.py", "DEX_TX_CHI"),
 }
 GENEROUS_BUDGET = 5_000
 

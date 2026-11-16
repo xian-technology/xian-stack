@@ -46,18 +46,6 @@ except ImportError:  # pragma: no cover - only used outside the workspace layout
     read_contract_source_from_bundle = None
     validate_contract_bundle = None
 
-
-# Fallbacks matching the xian-dex bundle budgets (revision 14 deploys, with the
-# 15,000-chi deployment charge: 28,062 / 27,079 / 17,083 chi).
-CORE_DEPLOY_CHI = {
-    "con_pairs": 50_000,
-    "con_dex": 50_000,
-    "con_dex_helper": 30_000,
-}
-TOKEN_DEPLOY_CHI = 160_000
-LP_TOKEN_DEPLOY_CHI = 160_000
-TOKEN_TX_CHI = 7_500
-DEX_TX_CHI = 75_000
 CONTRACT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -91,12 +79,22 @@ def private_key_from_validator_key(path: Path) -> str | None:
     return raw[:32].hex()
 
 
+def private_key_from_key_file(path: Path) -> str:
+    key = path.expanduser().read_text(encoding="utf-8").strip()
+    if not key:
+        raise DexBootstrapError(f"deployer key file {path} is empty")
+    return key
+
+
 def resolve_deployer_private_key(
     *,
     args: argparse.Namespace,
     network: dict[str, Any] | None,
 ) -> str:
-    explicit = args.deployer_private_key or os.environ.get("XIAN_DEX_DEPLOYER_PRIVATE_KEY")
+    """The deployer key: never a command-line value (ps and shell history show those)."""
+    if args.deployer_key_file is not None:
+        return private_key_from_key_file(args.deployer_key_file)
+    explicit = os.environ.get("XIAN_DEX_DEPLOYER_PRIVATE_KEY")
     if explicit:
         return explicit
 
@@ -113,7 +111,7 @@ def resolve_deployer_private_key(
         return validator_key
 
     raise DexBootstrapError(
-        "no deployer private key found; pass --deployer-private-key, set "
+        "no deployer private key found; pass --deployer-key-file, set "
         "XIAN_DEX_DEPLOYER_PRIVATE_KEY, or run against a local stack with "
         f"{args.validator_key_path}"
     )
@@ -204,25 +202,6 @@ def _source_env_path(name: str) -> Path | None:
     return Path(value).expanduser()
 
 
-def _contract_default_chi(
-    entry: dict[str, Any],
-    fallback: int,
-) -> int:
-    value = entry.get("default_chi")
-    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-        return value
-    return fallback
-
-
-def submission_chi(fixed_chi: int, *, chi_budget_mode: str) -> int | None:
-    """Resolve the xian-py chi argument for an automatic or fixed submission."""
-    if chi_budget_mode == "auto":
-        return None
-    if chi_budget_mode == "fixed":
-        return fixed_chi
-    raise DexBootstrapError(f"unsupported chi budget mode: {chi_budget_mode!r}")
-
-
 def _require_bundle_support() -> None:
     if (
         contract_by_role is None
@@ -263,21 +242,12 @@ def load_dex_contract_sources(
 ) -> dict[str, Any]:
     if args.dex_contracts_dir is not None:
         dex_contracts_dir = args.dex_contracts_dir.expanduser().resolve()
-        core_sources: dict[str, dict[str, Any]] = {
-            "con_pairs": {
-                "code": read_required(dex_contracts_dir / "con_pairs.py"),
-                "chi": CORE_DEPLOY_CHI["con_pairs"],
-            },
-            "con_dex": {
-                "code": read_required(dex_contracts_dir / "con_dex.py"),
-                "chi": CORE_DEPLOY_CHI["con_dex"],
-            },
+        core_sources = {
+            "con_pairs": read_required(dex_contracts_dir / "con_pairs.py"),
+            "con_dex": read_required(dex_contracts_dir / "con_dex.py"),
         }
         if args.deploy_helper:
-            core_sources["con_dex_helper"] = {
-                "code": read_required(dex_contracts_dir / "con_dex_helper.py"),
-                "chi": CORE_DEPLOY_CHI["con_dex_helper"],
-            }
+            core_sources["con_dex_helper"] = read_required(dex_contracts_dir / "con_dex_helper.py")
 
         return {
             "kind": "directory",
@@ -300,26 +270,14 @@ def load_dex_contract_sources(
     if pairs_entry["name"] != "con_pairs" or router_entry["name"] != "con_dex":
         raise DexBootstrapError("DEX bootstrap expects canonical con_pairs and con_dex names")
 
-    core_sources = {
-        "con_pairs": {
-            "code": pairs_source,
-            "chi": _contract_default_chi(pairs_entry, CORE_DEPLOY_CHI["con_pairs"]),
-        },
-        "con_dex": {
-            "code": router_source,
-            "chi": _contract_default_chi(router_entry, CORE_DEPLOY_CHI["con_dex"]),
-        },
-    }
+    core_sources = {"con_pairs": pairs_source, "con_dex": router_source}
     if args.deploy_helper:
         helper_entry, helper_source = _bundle_source_by_role(bundle_path, bundle, "helper")
         if helper_entry["name"] != "con_dex_helper":
             raise DexBootstrapError("DEX bootstrap expects canonical con_dex_helper name")
-        core_sources["con_dex_helper"] = {
-            "code": helper_source,
-            "chi": _contract_default_chi(helper_entry, CORE_DEPLOY_CHI["con_dex_helper"]),
-        }
+        core_sources["con_dex_helper"] = helper_source
 
-    lp_entry, lp_source = _bundle_source_by_role(bundle_path, bundle, "lp_token_template")
+    _, lp_source = _bundle_source_by_role(bundle_path, bundle, "lp_token_template")
     demo_entry = contract_by_role(bundle, "demo_token")
     demo_source = None
     if demo_entry is not None:
@@ -332,10 +290,8 @@ def load_dex_contract_sources(
         "contracts_dir": None,
         "core_sources": core_sources,
         "lp_token_source": lp_source,
-        "lp_token_chi": _contract_default_chi(lp_entry, LP_TOKEN_DEPLOY_CHI),
         "demo_token_source": demo_source
         or read_required(WORKLOADS_DIR / "dex_bootstrap" / "demo_token.py"),
-        "demo_token_chi": _contract_default_chi(demo_entry or {}, TOKEN_DEPLOY_CHI),
     }
 
 
@@ -358,19 +314,17 @@ def submit_contract_if_missing(
     name: str,
     code: str,
     constructor_args: dict[str, Any] | None,
-    chi: int | None,
     mode: str,
     receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
     if contract_exists(client, name):
         return {"contract": name, "action": "skipped", "reason": "already_exists"}
 
-    print(f"Deploying {name}...")
+    print(f"Deploying {name}...")  # chi: xian-py simulates the deployment
     submission = client.submit_contract(
         name,
         code,
         args=constructor_args,
-        chi=chi,
         mode=mode,
         wait_for_tx=True,
         timeout_seconds=receipt_timeout_seconds,
@@ -391,16 +345,15 @@ def send_call(
     contract: str,
     function: str,
     kwargs: dict[str, Any],
-    chi: int | None,
     mode: str,
     receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
+    """Submit one call; xian-py simulates it and supplies the estimate plus its margin."""
     print(label)
     submission = client.send_tx(
         contract,
         function,
         kwargs,
-        chi=chi,
         mode=mode,
         wait_for_tx=True,
         timeout_seconds=receipt_timeout_seconds,
@@ -459,7 +412,6 @@ def approve_for_dex(
     *,
     token: str,
     amount: Decimal,
-    chi_budget_mode: str,
     mode: str,
     receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
@@ -469,10 +421,39 @@ def approve_for_dex(
         contract=token,
         function="approve",
         kwargs={"amount": amount, "to": "con_dex"},
-        chi=submission_chi(TOKEN_TX_CHI, chi_budget_mode=chi_budget_mode),
         mode=mode,
         receipt_timeout_seconds=receipt_timeout_seconds,
     )
+
+
+def register_lp_token_if_missing(
+    client: Xian,
+    *,
+    token_contract: str,
+    lp_contract: str,
+    mode: str,
+    receipt_timeout_seconds: float,
+) -> list[dict[str, Any]]:
+    """Register the demo LP token for the currency pair unless it is; refuse another one."""
+    registered_lp_token = get_registered_lp_token(client, "currency", token_contract)
+    if registered_lp_token == lp_contract:
+        return []
+    if registered_lp_token is not None:
+        raise DexBootstrapError(
+            f"registered demo LP token is {registered_lp_token!r}, expected {lp_contract!r}"
+        )
+    token0, token1 = pair_tokens("currency", token_contract)
+    return [
+        send_call(
+            client,
+            label="Registering DEX demo LP token...",
+            contract="con_pairs",
+            function="registerLpToken",
+            kwargs={"tokenA": token0, "tokenB": token1, "lpToken": lp_contract},
+            mode=mode,
+            receipt_timeout_seconds=receipt_timeout_seconds,
+        )
+    ]
 
 
 def seed_demo_pool(
@@ -483,7 +464,6 @@ def seed_demo_pool(
     liquidity_currency_amount: Decimal,
     liquidity_demo_token_amount: Decimal,
     top_up_liquidity: bool,
-    chi_budget_mode: str,
     mode: str,
     receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
@@ -508,36 +488,19 @@ def seed_demo_pool(
                 f"expected {lp_contract!r}"
             )
     else:
-        registered_lp_token = get_registered_lp_token(client, "currency", token_contract)
-        if registered_lp_token is None:
-            token0, token1 = pair_tokens("currency", token_contract)
-            operations.append(
-                send_call(
-                    client,
-                    label="Registering DEX demo LP token...",
-                    contract="con_pairs",
-                    function="registerLpToken",
-                    kwargs={
-                        "tokenA": token0,
-                        "tokenB": token1,
-                        "lpToken": lp_contract,
-                    },
-                    chi=submission_chi(DEX_TX_CHI, chi_budget_mode=chi_budget_mode),
-                    mode=mode,
-                    receipt_timeout_seconds=receipt_timeout_seconds,
-                )
-            )
-        elif registered_lp_token != lp_contract:
-            raise DexBootstrapError(
-                f"registered demo LP token is {registered_lp_token!r}, expected {lp_contract!r}"
-            )
+        operations += register_lp_token_if_missing(
+            client,
+            token_contract=token_contract,
+            lp_contract=lp_contract,
+            mode=mode,
+            receipt_timeout_seconds=receipt_timeout_seconds,
+        )
 
     operations.append(
         approve_for_dex(
             client,
             token="currency",
             amount=liquidity_currency_amount,
-            chi_budget_mode=chi_budget_mode,
             mode=mode,
             receipt_timeout_seconds=receipt_timeout_seconds,
         )
@@ -547,7 +510,6 @@ def seed_demo_pool(
             client,
             token=token_contract,
             amount=liquidity_demo_token_amount,
-            chi_budget_mode=chi_budget_mode,
             mode=mode,
             receipt_timeout_seconds=receipt_timeout_seconds,
         )
@@ -571,7 +533,6 @@ def seed_demo_pool(
             contract="con_dex",
             function="addLiquidity",
             kwargs=kwargs,
-            chi=submission_chi(DEX_TX_CHI, chi_budget_mode=chi_budget_mode),
             mode=mode,
             receipt_timeout_seconds=receipt_timeout_seconds,
         )
@@ -592,7 +553,6 @@ def emit_test_swap(
     *,
     token_contract: str,
     amount: Decimal,
-    chi_budget_mode: str,
     mode: str,
     receipt_timeout_seconds: float,
 ) -> dict[str, Any]:
@@ -604,7 +564,6 @@ def emit_test_swap(
             client,
             token="currency",
             amount=amount,
-            chi_budget_mode=chi_budget_mode,
             mode=mode,
             receipt_timeout_seconds=receipt_timeout_seconds,
         )
@@ -623,7 +582,6 @@ def emit_test_swap(
                 "to": client.wallet.public_key,
                 "deadline": deadline_value(seconds_from_now=300),
             },
-            chi=submission_chi(DEX_TX_CHI, chi_budget_mode=chi_budget_mode),
             mode=mode,
             receipt_timeout_seconds=receipt_timeout_seconds,
         )
@@ -635,25 +593,105 @@ def emit_test_swap(
     }
 
 
-def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
-    validate_contract_name(args.demo_token_contract, label="demo token contract")
-    validate_contract_name(args.demo_lp_contract, label="demo LP contract")
-
-    network = load_network(args.network_path)
+def resolve_rpc_url(args: argparse.Namespace, network: dict[str, Any] | None) -> str:
     if args.rpc_url is None and network is None:
         raise DexBootstrapError(
             f"localnet metadata not found at {args.network_path}; pass --rpc-url "
             "when bootstrapping a single local stack node"
         )
-    rpc_url = args.rpc_url or localnet_rpc_url(network)
+    return args.rpc_url or localnet_rpc_url(network)
+
+
+def wants_demo_contracts(args: argparse.Namespace) -> bool:
+    return args.seed_demo_pool or args.emit_test_swap
+
+
+def deploy_demo_contracts(
+    client: Xian,
+    args: argparse.Namespace,
+    source_bundle: dict[str, Any],
+    deployer: str,
+) -> list[dict[str, Any]]:
+    """The demo token and its LP token, each deployed unless it exists."""
+    demo_contracts = (
+        (
+            args.demo_token_contract,
+            source_bundle["demo_token_source"],
+            {
+                "owner": deployer,
+                "supply": args.demo_token_supply,
+                "token_name": args.demo_token_name,
+                "token_symbol": args.demo_token_symbol,
+                "precision": args.demo_token_precision,
+            },
+        ),
+        (
+            args.demo_lp_contract,
+            source_bundle["lp_token_source"],
+            {
+                "token_name": f"{args.demo_token_symbol}/XIAN LP",
+                "token_symbol": f"XIAN-{args.demo_token_symbol}-LP",
+                "operator_address": deployer,
+                "minter_address": "con_pairs",
+            },
+        ),
+    )
+    return [
+        submit_contract_if_missing(
+            client,
+            name=name,
+            code=code,
+            constructor_args=constructor_args,
+            mode=args.submission_mode,
+            receipt_timeout_seconds=args.receipt_timeout_seconds,
+        )
+        for name, code, constructor_args in demo_contracts
+    ]
+
+
+def bootstrap_report(
+    args: argparse.Namespace,
+    *,
+    source_bundle: dict[str, Any],
+    chain_id: str,
+    rpc_url: str,
+    deployer: str,
+    outcome: dict[str, Any],
+) -> dict[str, Any]:
+    demo = wants_demo_contracts(args)
+    bundle_path = source_bundle["bundle_path"]
+    contracts_dir = source_bundle["contracts_dir"]
+    return {
+        "ok": True,
+        "chain_id": chain_id,
+        "rpc_url": rpc_url,
+        "deployer": deployer,
+        "execution_mode": "xian_vm_v2",
+        "dex_source": source_bundle["kind"],
+        "dex_bundle": str(bundle_path) if bundle_path is not None else None,
+        "dex_contracts_dir": str(contracts_dir) if contracts_dir is not None else None,
+        "contracts": {
+            "router": "con_dex",
+            "pairs": "con_pairs",
+            "helper": "con_dex_helper" if args.deploy_helper else None,
+            "demo_token": args.demo_token_contract if demo else None,
+            "demo_lp_token": args.demo_lp_contract if demo else None,
+        },
+        **outcome,
+    }
+
+
+def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
+    validate_contract_name(args.demo_token_contract, label="demo token contract")
+    validate_contract_name(args.demo_lp_contract, label="demo LP contract")
+
+    network = load_network(args.network_path)
+    rpc_url = resolve_rpc_url(args, network)
     wait_for_rpc_ready(rpc_url, timeout_seconds=args.rpc_timeout_seconds)
 
     source_bundle = load_dex_contract_sources(args)
     deployer_wallet = Wallet(private_key=resolve_deployer_private_key(args=args, network=network))
-
-    core_sources = source_bundle["core_sources"]
-    demo_token_source = source_bundle["demo_token_source"]
-    lp_token_source = source_bundle["lp_token_source"]
+    deployer = deployer_wallet.public_key
 
     chain_id = args.chain_id or (None if args.rpc_url else (network or {}).get("chain_id"))
     with Xian(
@@ -663,126 +701,59 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         config=XianClientConfig(vm_profile="xian_vm_v2"),
     ) as client:
         client.refresh_nonce()
-        resolved_chain_id = client.chain_id
-        deployments: list[dict[str, Any]] = []
-
-        for name, source_info in core_sources.items():
-            deployments.append(
-                submit_contract_if_missing(
-                    client,
-                    name=name,
-                    code=source_info["code"],
-                    constructor_args=None,
-                    chi=submission_chi(
-                        source_info["chi"],
-                        chi_budget_mode=args.chi_budget_mode,
-                    ),
-                    mode=args.submission_mode,
-                    receipt_timeout_seconds=args.receipt_timeout_seconds,
-                )
-            )
-
-        if args.seed_demo_pool or args.emit_test_swap:
-            deployments.append(
-                submit_contract_if_missing(
-                    client,
-                    name=args.demo_token_contract,
-                    code=demo_token_source,
-                    constructor_args={
-                        "owner": deployer_wallet.public_key,
-                        "supply": args.demo_token_supply,
-                        "token_name": args.demo_token_name,
-                        "token_symbol": args.demo_token_symbol,
-                        "precision": args.demo_token_precision,
-                    },
-                    chi=submission_chi(
-                        source_bundle.get("demo_token_chi", TOKEN_DEPLOY_CHI),
-                        chi_budget_mode=args.chi_budget_mode,
-                    ),
-                    mode=args.submission_mode,
-                    receipt_timeout_seconds=args.receipt_timeout_seconds,
-                )
-            )
-            deployments.append(
-                submit_contract_if_missing(
-                    client,
-                    name=args.demo_lp_contract,
-                    code=lp_token_source,
-                    constructor_args={
-                        "token_name": f"{args.demo_token_symbol}/XIAN LP",
-                        "token_symbol": f"XIAN-{args.demo_token_symbol}-LP",
-                        "operator_address": deployer_wallet.public_key,
-                        "minter_address": "con_pairs",
-                    },
-                    chi=submission_chi(
-                        source_bundle.get("lp_token_chi", LP_TOKEN_DEPLOY_CHI),
-                        chi_budget_mode=args.chi_budget_mode,
-                    ),
-                    mode=args.submission_mode,
-                    receipt_timeout_seconds=args.receipt_timeout_seconds,
-                )
-            )
-
-        pool_result = None
-        if args.seed_demo_pool:
-            pool_result = seed_demo_pool(
+        deployments = [
+            submit_contract_if_missing(
                 client,
-                token_contract=args.demo_token_contract,
-                lp_contract=args.demo_lp_contract,
-                liquidity_currency_amount=args.liquidity_currency_amount,
-                liquidity_demo_token_amount=args.liquidity_demo_token_amount,
-                top_up_liquidity=args.top_up_liquidity,
-                chi_budget_mode=args.chi_budget_mode,
+                name=name,
+                code=code,
+                constructor_args=None,
                 mode=args.submission_mode,
                 receipt_timeout_seconds=args.receipt_timeout_seconds,
             )
-
-        test_swap_result = None
-        if args.emit_test_swap:
-            test_swap_result = emit_test_swap(
-                client,
-                token_contract=args.demo_token_contract,
-                amount=args.test_swap_amount,
-                chi_budget_mode=args.chi_budget_mode,
-                mode=args.submission_mode,
-                receipt_timeout_seconds=args.receipt_timeout_seconds,
-            )
-
+            for name, code in source_bundle["core_sources"].items()
+        ]
+        if wants_demo_contracts(args):
+            deployments += deploy_demo_contracts(client, args, source_bundle, deployer)
+        outcome = {
+            "deployments": deployments,
+            "demo_pool": seed_demo_pool_for(client, args) if args.seed_demo_pool else None,
+            "test_swap": emit_test_swap_for(client, args) if args.emit_test_swap else None,
+        }
         pair_id = get_pair_id(client, "currency", args.demo_token_contract)
-        pair = get_pair_snapshot(client, pair_id) if pair_id is not None else None
+        outcome["pair"] = get_pair_snapshot(client, pair_id) if pair_id is not None else None
+        resolved_chain_id = client.chain_id
 
-    return {
-        "ok": True,
-        "chain_id": resolved_chain_id,
-        "rpc_url": rpc_url,
-        "deployer": deployer_wallet.public_key,
-        "execution_mode": "xian_vm_v2",
-        "chi_budget_mode": args.chi_budget_mode,
-        "dex_source": source_bundle["kind"],
-        "dex_bundle": (
-            str(source_bundle["bundle_path"]) if source_bundle["bundle_path"] is not None else None
-        ),
-        "dex_contracts_dir": (
-            str(source_bundle["contracts_dir"])
-            if source_bundle["contracts_dir"] is not None
-            else None
-        ),
-        "contracts": {
-            "router": "con_dex",
-            "pairs": "con_pairs",
-            "helper": "con_dex_helper" if args.deploy_helper else None,
-            "demo_token": args.demo_token_contract
-            if args.seed_demo_pool or args.emit_test_swap
-            else None,
-            "demo_lp_token": args.demo_lp_contract
-            if args.seed_demo_pool or args.emit_test_swap
-            else None,
-        },
-        "deployments": deployments,
-        "demo_pool": pool_result,
-        "test_swap": test_swap_result,
-        "pair": pair,
-    }
+    return bootstrap_report(
+        args,
+        source_bundle=source_bundle,
+        chain_id=resolved_chain_id,
+        rpc_url=rpc_url,
+        deployer=deployer,
+        outcome=outcome,
+    )
+
+
+def seed_demo_pool_for(client: Xian, args: argparse.Namespace) -> dict[str, Any]:
+    return seed_demo_pool(
+        client,
+        token_contract=args.demo_token_contract,
+        lp_contract=args.demo_lp_contract,
+        liquidity_currency_amount=args.liquidity_currency_amount,
+        liquidity_demo_token_amount=args.liquidity_demo_token_amount,
+        top_up_liquidity=args.top_up_liquidity,
+        mode=args.submission_mode,
+        receipt_timeout_seconds=args.receipt_timeout_seconds,
+    )
+
+
+def emit_test_swap_for(client: Xian, args: argparse.Namespace) -> dict[str, Any]:
+    return emit_test_swap(
+        client,
+        token_contract=args.demo_token_contract,
+        amount=args.test_swap_amount,
+        mode=args.submission_mode,
+        receipt_timeout_seconds=args.receipt_timeout_seconds,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -792,7 +763,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--network-path", type=Path, default=NETWORK_PATH)
     parser.add_argument("--rpc-url", default=None)
     parser.add_argument("--chain-id", default=None)
-    parser.add_argument("--deployer-private-key", default=None)
+    parser.add_argument(
+        "--deployer-key-file",
+        type=Path,
+        default=_source_env_path("XIAN_DEX_DEPLOYER_KEY_FILE"),
+        help=(
+            "file holding the deployer's hex private key; otherwise "
+            "XIAN_DEX_DEPLOYER_PRIVATE_KEY or the local stack keys are used"
+        ),
+    )
     parser.add_argument(
         "--validator-key-path",
         type=Path,
@@ -858,15 +837,6 @@ def parse_args() -> argparse.Namespace:
         "--submission-mode",
         choices=("checktx", "commit"),
         default="checktx",
-    )
-    parser.add_argument(
-        "--chi-budget-mode",
-        choices=("auto", "fixed"),
-        default="auto",
-        help=(
-            "use xian-py simulation-based chi estimation (auto, default), or "
-            "submit bundle/constant ceilings directly (fixed)"
-        ),
     )
     parser.add_argument("--rpc-timeout-seconds", type=float, default=90.0)
     parser.add_argument("--receipt-timeout-seconds", type=float, default=60.0)

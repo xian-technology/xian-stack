@@ -1931,12 +1931,11 @@ def backend_localnet_up(
             demo_lp_contract="con_dex_demo_lp",
             rpc_url=None,
             chain_id=None,
-            deployer_private_key=None,
+            deployer_key_file=None,
             dex_bundle=None,
             dex_contracts_dir=None,
             liquidity_currency_amount=10_000.0,
             liquidity_demo_token_amount=10_000.0,
-            chi_budget_mode="auto",
         )
     return result
 
@@ -1953,6 +1952,16 @@ def backend_localnet_status(*, timeout_seconds: float) -> dict:
     }
 
 
+def given_options(**values: str | None) -> list[str]:
+    """``--name value`` for each value given, in order (``dex_bundle`` -> ``--dex-bundle``)."""
+    return [
+        argument
+        for name, value in values.items()
+        if value is not None
+        for argument in (f"--{name.replace('_', '-')}", value)
+    ]
+
+
 def backend_localnet_dex_bootstrap(
     *,
     deploy_helper: bool,
@@ -1963,12 +1972,11 @@ def backend_localnet_dex_bootstrap(
     demo_lp_contract: str,
     rpc_url: str | None,
     chain_id: str | None,
-    deployer_private_key: str | None,
+    deployer_key_file: str | None,
     dex_bundle: str | None,
     dex_contracts_dir: str | None,
     liquidity_currency_amount: float,
     liquidity_demo_token_amount: float,
-    chi_budget_mode: str,
 ) -> dict:
     script_args = [
         "--json-only",
@@ -1984,20 +1992,19 @@ def backend_localnet_dex_bootstrap(
         str(liquidity_currency_amount),
         "--liquidity-demo-token-amount",
         str(liquidity_demo_token_amount),
-        "--chi-budget-mode",
-        chi_budget_mode,
     ]
-    if dex_bundle is not None:
-        script_args.extend(["--dex-bundle", dex_bundle])
-    if dex_contracts_dir is not None:
-        script_args.extend(["--dex-contracts-dir", dex_contracts_dir])
-    if rpc_url is not None:
-        script_args.extend(["--rpc-url", rpc_url])
-    if chain_id is not None:
-        script_args.extend(["--chain-id", chain_id])
-    if deployer_private_key is not None:
-        script_args.extend(["--deployer-private-key", deployer_private_key])
+    script_args += given_options(
+        dex_bundle=dex_bundle,
+        dex_contracts_dir=dex_contracts_dir,
+        rpc_url=rpc_url,
+        chain_id=chain_id,
+        deployer_key_file=deployer_key_file,
+    )
+    return run_dex_bootstrap_script(script_args)
 
+
+def run_dex_bootstrap_script(script_args: list[str]) -> dict:
+    """Run localnet-dex-bootstrap.py with xian-py's environment; its JSON report."""
     try:
         result = run_python_script(
             LOCALNET_DEX_BOOTSTRAP_SCRIPT,
@@ -2465,7 +2472,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     localnet_dex_bootstrap.add_argument("--rpc-url")
     localnet_dex_bootstrap.add_argument("--chain-id")
-    localnet_dex_bootstrap.add_argument("--deployer-private-key")
+    localnet_dex_bootstrap.add_argument(
+        "--deployer-key-file",
+        help=(
+            "file holding the deployer's private key (never pass a key itself on the "
+            "command line); default: XIAN_DEX_DEPLOYER_PRIVATE_KEY or the local stack keys"
+        ),
+    )
     localnet_dex_bootstrap.add_argument("--dex-bundle")
     localnet_dex_bootstrap.add_argument("--dex-contracts-dir")
     localnet_dex_bootstrap.add_argument(
@@ -2477,15 +2490,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--liquidity-demo-token-amount",
         type=float,
         default=10_000.0,
-    )
-    localnet_dex_bootstrap.add_argument(
-        "--chi-budget-mode",
-        choices=("auto", "fixed"),
-        default="auto",
-        help=(
-            "use xian-py automatic chi estimation (default), or the bundle and "
-            "bootstrap fixed budgets"
-        ),
     )
 
     localnet_node_report = subparsers.add_parser("localnet-node-report")
@@ -2915,12 +2919,11 @@ def main(argv: list[str] | None = None) -> int:
             demo_lp_contract=args.demo_lp_contract,
             rpc_url=args.rpc_url,
             chain_id=args.chain_id,
-            deployer_private_key=args.deployer_private_key,
+            deployer_key_file=args.deployer_key_file,
             dex_bundle=args.dex_bundle,
             dex_contracts_dir=args.dex_contracts_dir,
             liquidity_currency_amount=args.liquidity_currency_amount,
             liquidity_demo_token_amount=args.liquidity_demo_token_amount,
-            chi_budget_mode=args.chi_budget_mode,
         )
     elif args.command == "localnet-node-report":
         payload = backend_localnet_node_report(

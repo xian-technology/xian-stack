@@ -24,7 +24,6 @@ XIAN_DEX_BOOTSTRAP_RPC_URL ?=
 XIAN_DEX_BOOTSTRAP_CHAIN_ID ?=
 XIAN_DEX_DEPLOYER_PRIVATE_KEY ?=
 XIAN_DEX_VALIDATOR_KEY_PATH ?= ./.cometbft/config/priv_validator_key.json
-XIAN_DEX_CHI_BUDGET_MODE ?= auto
 XIAN_STACK_PYTHON ?= 3.14
 XIAN_DOCKER_LOG_MAX_FILE_MB ?= 50
 XIAN_DOCKER_LOG_MAX_FILES ?= 5
@@ -840,7 +839,6 @@ localnet-dex-bootstrap:
 		$(if $(XIAN_DEX_BOOTSTRAP_RPC_URL),--rpc-url "$(XIAN_DEX_BOOTSTRAP_RPC_URL)",) \
 		$(if $(XIAN_DEX_BOOTSTRAP_CHAIN_ID),--chain-id "$(XIAN_DEX_BOOTSTRAP_CHAIN_ID)",) \
 		--validator-key-path "$(XIAN_DEX_VALIDATOR_KEY_PATH)" \
-		--chi-budget-mode "$(XIAN_DEX_CHI_BUDGET_MODE)" \
 		$(if $(filter 1,$(LOCALNET_DEX_DEPLOY_HELPER)),--deploy-helper,--no-deploy-helper) \
 		$(if $(filter 1,$(LOCALNET_DEX_SEED_DEMO_POOL)),--seed-demo-pool,--no-seed-demo-pool) \
 		$(if $(filter 1,$(LOCALNET_DEX_TOP_UP_LIQUIDITY)),--top-up-liquidity,--no-top-up-liquidity) \
