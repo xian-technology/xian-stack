@@ -46,7 +46,7 @@ async def dictionary_checks(runner, session):
     transactions = []
     async with runner.client(runner.founder_wallet, 0, session) as client:
         for function, progress in [("probe", 1), ("invalid", 1), ("probe", 2)]:
-            submission = await client.send_tx(name, function, {}, chi=100_000, wait_for_tx=True)
+            submission = await client.send_tx(name, function, {}, wait_for_tx=True)
             if function == "invalid":
                 failed = failed_execution(submission, function, fragment="unhashable")
                 require(not failed.get("events"), "Invalid dictionary key retained an event")

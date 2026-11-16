@@ -1059,7 +1059,10 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         wallet = SimpleNamespace(public_key="wallet-0")
 
         with (
-            patch.object(localnet_e2e.tr, "create_tx", return_value={"signed": "tx"}),
+            patch.object(
+                localnet_e2e, "simulated_chi_supply", AsyncMock(return_value=257)
+            ) as simulate,
+            patch.object(localnet_e2e.tr, "create_tx", return_value={"signed": "tx"}) as create,
             patch.object(
                 localnet_e2e.tr,
                 "broadcast_tx_wait_async",
@@ -1075,13 +1078,17 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                     {"amount": 1, "to": "recipient"},
                     preferred_index=0,
                     excluded_indices=None,
-                    chi=localnet_e2e.DEFAULT_TRANSFER_CHI,
                     label="transfer",
                     timeout_seconds=30,
                 )
             )
 
         self.assertEqual("broadcast-hash", submission.tx_hash)
+        # Without a chi the payload supplies the simulated chi from the nonce node.
+        self.assertEqual("http://node-0", simulate.await_args.args[1])
+        self.assertEqual(7, simulate.await_args.args[2]["nonce"])
+        self.assertEqual(257, create.call_args.args[0]["chi_supplied"])
+        self.assertEqual(257, submission.chi_supplied)
         receipt_call = runner.wait_for_tx_receipt_via_healthy_node.await_args
         self.assertEqual("broadcast-hash", receipt_call.args[2])
 
@@ -1694,7 +1701,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                 tx_hash="tx-hash",
                 mode="checktx-failover",
                 nonce=1,
-                chi_supplied=localnet_e2e.DEFAULT_TRANSFER_CHI,
+                chi_supplied=257,
                 receipt=SimpleNamespace(
                     success=True,
                     message="ok",
@@ -1716,7 +1723,6 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             {"amount": 3000, "to": "wallet-0"},
             preferred_index=0,
             excluded_indices=None,
-            chi=localnet_e2e.DEFAULT_TRANSFER_CHI,
             label="fund wallet-0 (+3000)",
             timeout_seconds=30.0,
         )
@@ -1740,7 +1746,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                 tx_hash="tx-hash",
                 mode="checktx-failover",
                 nonce=1,
-                chi_supplied=localnet_e2e.DEFAULT_TRANSFER_CHI,
+                chi_supplied=257,
                 receipt=SimpleNamespace(
                     success=True,
                     message="ok",

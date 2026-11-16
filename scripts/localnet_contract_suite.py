@@ -88,7 +88,6 @@ async def check_state(runner, session, expected, label):
 
 
 # The suite's largest contract deploys for ~8,400 chi on the rev-11 VM.
-SUITE_DEPLOY_CHI = 50_000
 
 
 async def deploy_suite(runner, session, names, accounts):
@@ -100,7 +99,6 @@ async def deploy_suite(runner, session, names, accounts):
                 name=names[role],
                 source=source,
                 args=arguments.get(role, {}),
-                chi=SUITE_DEPLOY_CHI,
                 wait_for_tx=True,
             )
             successful(submission, f"deploy-{role}")
@@ -114,7 +112,7 @@ async def transaction_random_checks(runner, session, names, signer, expected):
     for index in range(2):
         async with runner.client(signer, index, session) as client:
             submitted = await client.send_tx(
-                names["commitments"], "transaction_random", {}, chi=200_000, wait_for_tx=True
+                names["commitments"], "transaction_random", {}, wait_for_tx=True
             )
         successful(submitted, "transaction-rng")
         height = await matching_receipts(runner, session, submitted, success=True)

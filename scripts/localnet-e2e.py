@@ -31,7 +31,16 @@ from governance_vote_helpers import (
     wait_for_status,
 )
 from localnet_abci_queries import EXPECTED_QUOTE, QUOTE_INCREMENT, check_live_abci, local_numeric_ir
-from localnet_common import compare_app_hash_window, fetch_json
+from localnet_common import (
+    GOVERNANCE_TX_CHI,
+    REBALANCE_TX_CHI,
+    E2EClient,
+    compare_app_hash_window,
+    fetch_json,
+    paid_fee_chi,
+    simulated_chi_supply,
+    unused_chi_charge,
+)
 from localnet_diagnostics import collect_failure_diagnostics
 from localnet_e2e_phases import (
     bind_phase_sequence,
@@ -89,9 +98,6 @@ INVALID_FSTRING_DIAGNOSTIC = "f-string: invalid conversion character"
 DEFAULT_LOCALNET_NODES = 5
 DEFAULT_GENESIS_NETWORK = "testnet"
 MAX_CANONICAL_JSON_DEPTH = 128
-DEFAULT_TX_CHI = 15_000
-DEFAULT_TRANSFER_CHI = 2_000
-GOVERNANCE_TX_CHI = 200_000
 E2E_GOVERNED_REWARD_SPLIT = (
     Decimal("0.60"),
     Decimal("0.10"),
@@ -119,23 +125,11 @@ SECONDARY_BDS_POSTGRES_USER = "xian"
 SECONDARY_BDS_POSTGRES_DATABASE = "xian"
 SECONDARY_BDS_PASSWORD_SECRET_PATH = "/run/secrets/xian_bds_password"
 SECONDARY_BDS_QUERY_TIMEOUT_SECONDS = 180.0
-CONTRACT_ORCHESTRATION_TX_CHI = {
-    "deploy_contract": 180_000,
-    "deploy_family": 100_000,
-    "dynamic_call": 50_000,
-}
 X402_CONTRACT_SOURCE = (
     ROOT_DIR / "xian-py" / "examples" / "x402_exact" / "contracts" / "x402_settlement.s.py"
 )
 X402_PAYMENT_AMOUNT = Decimal("0.001")
 X402_SETTLEMENT_TX_CHI = 15_000
-# Rev-11 shielded note token proofs use at most ~8,100 chi (deposit 7,780, transfer 8,074,
-# withdraw 7,845); the chain caps a transaction at 200,000 chi by default.
-SHIELDED_TX_CHI = {
-    "deposit": 50_000,
-    "transfer": 50_000,
-    "withdraw": 50_000,
-}
 CURRENT_UV_PYTHON = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
 sys.path.insert(0, str(XIAN_CONTRACTING_SRC))
@@ -1969,7 +1963,7 @@ class E2ERunner:
         kwargs: dict[str, Any],
         *,
         label: str,
-        chi: int = DEFAULT_TX_CHI,
+        chi: int | None = None,
         mode: str | None = None,
     ) -> dict[str, Any]:
         submission = await client.send_tx(
@@ -2076,15 +2070,15 @@ class E2ERunner:
         *,
         preferred_index: int | None,
         excluded_indices: set[int] | None,
-        chi: int,
         label: str,
+        chi: int | None = None,
         timeout_seconds: float | None = None,
     ) -> TransactionSubmission:
         timeout_seconds = (
             self.args.rpc_timeout_seconds if timeout_seconds is None else timeout_seconds
         )
         base_excluded = set(excluded_indices or set())
-        nonce, _nonce_index = await self.next_nonce_with_rpc_failover(
+        nonce, nonce_index = await self.next_nonce_with_rpc_failover(
             session,
             wallet,
             preferred_index=preferred_index,
@@ -2099,8 +2093,10 @@ class E2ERunner:
             "kwargs": kwargs,
             "nonce": nonce,
             "sender": wallet.public_key,
-            "chi_supplied": chi,
         }
+        if chi is None:
+            chi = await simulated_chi_supply(session, self.nodes[nonce_index].rpc_url, payload)
+        payload["chi_supplied"] = chi
         tx = tr.create_tx(payload, wallet, vm_profile="xian_vm_v2")
         prepared_tx = tr.prepare_transaction(tx)
         tx_hash = prepared_tx.tx_hash
@@ -2240,8 +2236,8 @@ class E2ERunner:
         args: dict[str, Any] | None = None,
         preferred_index: int | None,
         excluded_indices: set[int] | None,
-        chi: int,
         label: str,
+        chi: int | None = None,
         timeout_seconds: float | None = None,
     ) -> TransactionSubmission:
         kwargs: dict[str, Any] = {
@@ -3163,7 +3159,6 @@ class E2ERunner:
             deployment = await client.deploy_contract(
                 name=name,
                 source=code,
-                chi=120_000,
                 wait_for_tx=True,
             )
             receipt = ensure_positive_submission(
@@ -3220,7 +3215,7 @@ class E2ERunner:
     ) -> XianAsync:
         if wallet is None:
             raise E2EError("wallet is required")
-        return XianAsync(
+        return E2EClient(
             node_url=self.nodes[node_index].rpc_url,
             chain_id=self.network["chain_id"],
             wallet=wallet,
@@ -3345,7 +3340,6 @@ class E2ERunner:
                 {"amount": send_amount, "to": wallet.public_key},
                 preferred_index=node_index,
                 excluded_indices=None,
-                chi=DEFAULT_TRANSFER_CHI,
                 label=label,
                 timeout_seconds=self.args.rpc_timeout_seconds,
             )
@@ -3408,7 +3402,6 @@ class E2ERunner:
                     name=conflict_contract,
                     code=read_text(WORKLOADS_DIR / "e2e" / "conflict_guard.py"),
                 ),
-                chi=120_000,
                 wait_for_tx=True,
             )
             patch_submission = await client.submit_contract(
@@ -3417,7 +3410,6 @@ class E2ERunner:
                     name=patch_contract,
                     code=read_text(WORKLOADS_DIR / "e2e" / "patch_target.py"),
                 ),
-                chi=90_000,
                 wait_for_tx=True,
             )
             allocation_submission = await client.submit_contract(
@@ -3426,7 +3418,6 @@ class E2ERunner:
                     name=allocation_contract,
                     code=read_text(WORKLOADS_DIR / "e2e" / "allocation_guards.py"),
                 ),
-                chi=120_000,
                 wait_for_tx=True,
             )
             conflict_receipt = ensure_positive_submission(
@@ -3461,7 +3452,6 @@ class E2ERunner:
                     allocation_contract,
                     "small_bytes",
                     {"size": 16},
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="allocation-small-bytes",
@@ -3477,29 +3467,32 @@ class E2ERunner:
             )
 
             allocation_limit_receipts = []
-            for function_name, kwargs in (
-                ("explode_range", {"size": 131_073}),
-                ("explode_bytes", {"size": 131_073}),
-                ("explode_bytearray", {"size": 131_073}),
-                ("explode_string_repeat", {"count": 65_537}),
-                ("explode_list_repeat", {"count": 65_537}),
+            # A lazy range spends loop chi before materialization reaches the
+            # collection limit, so a 15,000-chi budget runs out first (a
+            # simulated budget would reach the limit); eager allocations fail
+            # immediately.
+            for function_name, kwargs, chi, expected_message_fragment in (
+                ("explode_range", {"size": 131_073}, 15_000, "Out of chi"),
+                ("explode_bytes", {"size": 131_073}, None, "maximum allowed allocation size"),
+                ("explode_bytearray", {"size": 131_073}, None, "maximum allowed allocation size"),
+                (
+                    "explode_string_repeat",
+                    {"count": 65_537},
+                    None,
+                    "maximum allowed allocation size",
+                ),
+                ("explode_list_repeat", {"count": 65_537}, None, "maximum allowed allocation size"),
             ):
                 failed = ensure_failed_submission(
                     await client.send_tx(
                         allocation_contract,
                         function_name,
                         kwargs,
-                        chi=DEFAULT_TX_CHI,
+                        chi=chi,
                         wait_for_tx=True,
                     ),
                     label=f"allocation-{function_name}",
-                    # Lazy ranges spend loop chi before materialization reaches
-                    # the collection limit; eager allocations fail immediately.
-                    expected_message_fragment=(
-                        "Out of chi"
-                        if function_name == "explode_range"
-                        else "maximum allowed allocation size"
-                    ),
+                    expected_message_fragment=expected_message_fragment,
                 )
                 allocation_limit_receipts.append(failed)
 
@@ -3633,7 +3626,6 @@ class E2ERunner:
                     name=name,
                     **self.contract_submission_kwargs(name=name, code=code),
                     args=constructor_args,
-                    chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
                     mode="commit",
                 )
                 deployments.append(
@@ -3656,7 +3648,6 @@ class E2ERunner:
                     factory_name,
                     "deploy_family",
                     {"prefix": family_prefix},
-                    chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_family"],
                     mode="commit",
                 )
                 family_receipt = ensure_positive_submission(
@@ -3728,7 +3719,6 @@ class E2ERunner:
                         "name": bad_artifact_name,
                         "deployment_artifacts": obsolete_artifacts,
                     },
-                    chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
                     wait_for_tx=True,
                 ),
                 label="orchestration-obsolete-artifacts",
@@ -3746,7 +3736,6 @@ class E2ERunner:
                         "name": bad_fstring_name,
                         "code": bad_fstring_source,
                     },
-                    chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
                     wait_for_tx=True,
                 ),
                 label="orchestration-bad-fstring-source",
@@ -3765,7 +3754,6 @@ class E2ERunner:
                     compiler_probe_name,
                     "record_storage_shadow",
                     {"account": operator.public_key},
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="orchestration-storage-shadow",
@@ -3795,7 +3783,8 @@ class E2ERunner:
             },
             "nonce": deep_nonce,
             "sender": compiler_security_sender.public_key,
-            "chi_supplied": DEFAULT_TX_CHI,
+            # Admission refuses the payload before execution: the budget is never used.
+            "chi_supplied": 1_000,
         }
         deep_response = await tr.broadcast_tx_wait_async(
             self.nodes[1].rpc_url,
@@ -3821,7 +3810,6 @@ class E2ERunner:
                     compiler_probe_name,
                     "record_storage_shadow",
                     {"account": compiler_security_sender.public_key},
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="orchestration-post-depth-valid-tx",
@@ -3857,7 +3845,6 @@ class E2ERunner:
             },
             preferred_index=2,
             excluded_indices=None,
-            chi=CONTRACT_ORCHESTRATION_TX_CHI["dynamic_call"],
             label="orchestration-dynamic-touch",
             timeout_seconds=self.args.rpc_timeout_seconds,
         )
@@ -3928,7 +3915,6 @@ class E2ERunner:
             },
             preferred_index=3,
             excluded_indices=None,
-            chi=CONTRACT_ORCHESTRATION_TX_CHI["dynamic_call"],
             label="orchestration-pending-overlay",
             timeout_seconds=self.args.rpc_timeout_seconds,
         )
@@ -3997,7 +3983,6 @@ class E2ERunner:
                     "currency",
                     "approve",
                     {"amount": direct_allowance, "to": spender.public_key},
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="currency-direct-approve",
@@ -4021,7 +4006,6 @@ class E2ERunner:
                         "to": recipient.public_key,
                         "main_account": operator.public_key,
                     },
-                    chi=DEFAULT_TRANSFER_CHI,
                     wait_for_tx=True,
                 ),
                 label="currency-direct-transfer-from",
@@ -4060,7 +4044,6 @@ class E2ERunner:
                         "nonce": 0,
                         "signature": permit_signature,
                     },
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="currency-permit-approve",
@@ -4084,7 +4067,6 @@ class E2ERunner:
                         "to": permit_recipient.public_key,
                         "main_account": operator.public_key,
                     },
-                    chi=DEFAULT_TRANSFER_CHI,
                     wait_for_tx=True,
                 ),
                 label="currency-permit-transfer-from",
@@ -4138,7 +4120,6 @@ class E2ERunner:
                         "nonce": 1,
                         "signature": expired_signature,
                     },
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="currency-permit-expired",
@@ -4183,7 +4164,6 @@ class E2ERunner:
                         "nonce": 1,
                         "signature": wrong_signature,
                     },
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="currency-permit-invalid-signature",
@@ -4213,7 +4193,6 @@ class E2ERunner:
                         "nonce": 0,
                         "signature": permit_signature,
                     },
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="currency-permit-replay",
@@ -4256,8 +4235,10 @@ class E2ERunner:
             },
             "nonce": duplicate_nonce_before,
             "sender": duplicate_sender.public_key,
-            "chi_supplied": DEFAULT_TRANSFER_CHI,
         }
+        duplicate_payload["chi_supplied"] = await simulated_chi_supply(
+            session, self.nodes[0].rpc_url, duplicate_payload
+        )
         duplicate_tx = tr.create_tx(duplicate_payload, duplicate_sender, vm_profile="xian_vm_v2")
         duplicate_prepared_tx = tr.prepare_transaction(duplicate_tx)
         duplicate_tx_hash = duplicate_prepared_tx.tx_hash
@@ -4373,7 +4354,6 @@ class E2ERunner:
                     "target_contract": alpha_name,
                     "function_name": "internal_secret",
                 },
-                chi=CONTRACT_ORCHESTRATION_TX_CHI["dynamic_call"],
                 mode="commit",
             )
             private_receipt = normalize_receipt(
@@ -4387,7 +4367,6 @@ class E2ERunner:
                 factory_name,
                 "deploy_family_with_failure",
                 {"prefix": failed_prefix},
-                chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_family"],
                 mode="commit",
             )
             failed_receipt = normalize_receipt(
@@ -4507,7 +4486,6 @@ class E2ERunner:
                             name=contract_name,
                             code=read_text(WORKLOADS_DIR / "e2e" / "atomic_rollback.py"),
                         ),
-                        chi=120_000,
                         wait_for_tx=True,
                     ),
                     label=f"deploy {contract_name}",
@@ -4524,7 +4502,6 @@ class E2ERunner:
                     contract_name,
                     "set_record",
                     {"key": "baseline", "value": 5},
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="atomic-baseline-set",
@@ -4560,7 +4537,6 @@ class E2ERunner:
                     contract_name,
                     "mutate_then_assert",
                     {"key": "assert-failure", "value": 7},
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="atomic-assertion-failure",
@@ -4575,7 +4551,6 @@ class E2ERunner:
                         "to": recipient.public_key,
                         "amount": 1,
                     },
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="atomic-overdraw-failure",
@@ -4586,7 +4561,6 @@ class E2ERunner:
                     contract_name,
                     "mutate_then_type_error",
                     {"key": "type-error-failure", "value": 11},
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="atomic-type-error-failure",
@@ -4629,7 +4603,6 @@ class E2ERunner:
                     contract_name,
                     "set_record",
                     {"key": "recovery", "value": 13},
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 ),
                 label="atomic-recovery-set",
@@ -4731,7 +4704,6 @@ class E2ERunner:
                             name=contract_name,
                             code=read_text(X402_CONTRACT_SOURCE),
                         ),
-                        chi=CONTRACT_ORCHESTRATION_TX_CHI["deploy_contract"],
                         mode="commit",
                     ),
                     label=f"deploy {contract_name}",
@@ -5140,7 +5112,6 @@ class E2ERunner:
                     submission = await client.send(
                         amount=1,
                         to_address=recipient,
-                        chi=DEFAULT_TRANSFER_CHI,
                         wait_for_tx=True,
                     )
                     tx_records.append(
@@ -5257,7 +5228,6 @@ class E2ERunner:
                     conflict_contract,
                     "claim",
                     {"slot": slot, "amount": 1},
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=False,
                 )
                 receipt = normalize_receipt(submission, label=label)
@@ -5299,7 +5269,6 @@ class E2ERunner:
                 conflict_contract,
                 "claim",
                 {"slot": "", "amount": -1},
-                chi=DEFAULT_TX_CHI,
                 wait_for_tx=True,
             )
             invalid_result = normalize_receipt(invalid, label="invalid-claim")
@@ -5357,7 +5326,6 @@ class E2ERunner:
             {"amount": Decimal("10"), "to": wallet.public_key},
             preferred_index=None,
             excluded_indices=None,
-            chi=DEFAULT_TRANSFER_CHI,
             label="fund automation recovery token input",
         )
         ensure_positive_submission(submission, label="automation recovery token funding")
@@ -5692,7 +5660,6 @@ class E2ERunner:
                 {"label": "bds-catchup"},
                 preferred_index=(service.index + 1) % len(self.nodes),
                 excluded_indices=submission_excluded_indices,
-                chi=DEFAULT_TX_CHI,
                 label="bds-typed-set-refresh",
                 timeout_seconds=self.args.rpc_timeout_seconds,
             )
@@ -5714,7 +5681,6 @@ class E2ERunner:
                     {"slot": slot, "amount": 1},
                     preferred_index=node_index,
                     excluded_indices=submission_excluded_indices,
-                    chi=DEFAULT_TX_CHI,
                     label=label,
                     timeout_seconds=self.args.rpc_timeout_seconds,
                 )
@@ -5817,7 +5783,6 @@ class E2ERunner:
                     {"slot": slot, "amount": 1},
                     preferred_index=node_index,
                     excluded_indices=submission_excluded_indices,
-                    chi=DEFAULT_TX_CHI,
                     label=label,
                     timeout_seconds=self.args.rpc_timeout_seconds,
                 )
@@ -6305,7 +6270,6 @@ class E2ERunner:
                 self.contracts["conflict"],
                 "claim",
                 {"slot": slot, "amount": 1},
-                chi=DEFAULT_TX_CHI,
                 wait_for_tx=True,
             )
             trigger_receipt = ensure_positive_submission(
@@ -6400,7 +6364,6 @@ class E2ERunner:
                     "slot": f"reward-split-{short_hash(self.run_id)}",
                     "amount": 1,
                 },
-                chi=DEFAULT_TX_CHI,
                 wait_for_tx=True,
             )
             reward_probe_receipt = ensure_positive_submission(
@@ -6434,18 +6397,29 @@ class E2ERunner:
                     "developer_reward",
                 ),
             }
-            reward_totals["burn"] = total_fee - sum(
-                reward_totals.values(),
-                Decimal("0"),
+            # The split applies to the chi used; half of the supplied chi left
+            # unused is burned on top (revision 14).
+            used_chi, paid_out = paid_fee_chi(
+                reward_outputs, chi_cost, E2E_GOVERNED_REWARD_SPLIT[1]
             )
+            reward_totals["burn"] = total_fee - paid_out
+            unused_charge = unused_chi_charge(int(reward_probe_submission.chi_supplied), used_chi)
+            if chi_used != used_chi + unused_charge:
+                raise E2EError(
+                    "governed reward probe charge is not the chi used plus half of the "
+                    f"unused chi: chi_used={chi_used} used={used_chi} "
+                    f"supplied={reward_probe_submission.chi_supplied}"
+                )
+            used_fee = Decimal(used_chi) / chi_cost
             expected_reward_totals = {
-                bucket: total_fee * ratio
+                bucket: used_fee * ratio
                 for bucket, ratio in zip(
                     ("validators", "burn", "foundation", "developers"),
                     E2E_GOVERNED_REWARD_SPLIT,
                     strict=True,
                 )
             }
+            expected_reward_totals["burn"] += Decimal(unused_charge) / chi_cost
             for bucket, expected_total in expected_reward_totals.items():
                 actual_total = reward_totals[bucket]
                 if abs(actual_total - expected_total) > REWARD_DISTRIBUTION_TOLERANCE:
@@ -6560,7 +6534,6 @@ class E2ERunner:
                     "currency",
                     "approve",
                     {"amount": registration_fee, "to": "validators"},
-                    chi=DEFAULT_TX_CHI,
                     wait_for_tx=True,
                 )
                 approval_receipt = ensure_positive_submission(
@@ -6694,7 +6667,6 @@ class E2ERunner:
                         "approve",
                         {"amount": standby_registration_fee, "to": "validators"},
                         label="hybrid-standby-register-approve",
-                        chi=DEFAULT_TX_CHI,
                     )
                     standby_register = await self.submit_tx(
                         standby,
@@ -6714,7 +6686,7 @@ class E2ERunner:
                         "rebalance",
                         {},
                         label="hybrid-rebalance-before-standby-approval",
-                        chi=GOVERNANCE_TX_CHI,
+                        chi=REBALANCE_TX_CHI,
                     )
                     hybrid_active = await node0.call(
                         "validators",
@@ -7118,7 +7090,6 @@ class E2ERunner:
             rejected_submission = await client.send(
                 amount=1,
                 to_address=self.founder_wallet.public_key,
-                chi=DEFAULT_TRANSFER_CHI,
                 wait_for_tx=True,
             )
             if rejected_submission.accepted:
@@ -7129,7 +7100,6 @@ class E2ERunner:
                 submission = await client.send(
                     amount=1,
                     to_address=self.founder_wallet.public_key,
-                    chi=DEFAULT_TRANSFER_CHI,
                     wait_for_tx=True,
                 )
             receipt = ensure_positive_submission(submission, label=label)
@@ -7352,16 +7322,6 @@ class E2ERunner:
         vk_bindings: dict[str, dict[str, Any]] = {}
         scheduler_auth_summary: dict[str, Any] | None = None
         command_pool_summary: dict[str, Any] | None = None
-        # Measured on the rev-11 VM (the largest of each kind, with 2.5x-10x headroom):
-        # control txs <= 3,967 chi, scheduler adapter proofs 3,424, command proofs 20,098,
-        # scheduler/adapter deploys 6,998, command pool deploy 20,131. The chain caps a
-        # transaction at 200,000 chi by default.
-        scheduler_control_chi = 20_000
-        scheduler_proof_chi = 50_000
-        scheduler_deploy_chi = 50_000
-        command_control_chi = 20_000
-        command_proof_chi = 100_000
-        command_deploy_chi = 100_000
 
         def runtime_datetime_from_utc(value: datetime) -> RuntimeDatetime:
             utc_value = value.astimezone(UTC).replace(tzinfo=None, microsecond=0)
@@ -7495,7 +7455,6 @@ class E2ERunner:
                     {"amount": delta, "to": wallet.public_key},
                     preferred_index=shielded_submission_index,
                     excluded_indices=shielded_excluded_indices,
-                    chi=DEFAULT_TRANSFER_CHI,
                     label=f"shielded-topup-{wallet.public_key[:12]}",
                 )
                 ensure_positive_submission(
@@ -7529,7 +7488,6 @@ class E2ERunner:
                     },
                     preferred_index=shielded_submission_index,
                     excluded_indices=shielded_excluded_indices,
-                    chi=100_000,  # measured deploy: 17,570 chi
                     label="deploy-shielded-token",
                 )
                 ensure_positive_submission(
@@ -7557,7 +7515,6 @@ class E2ERunner:
                     },
                     preferred_index=shielded_submission_index,
                     excluded_indices=shielded_excluded_indices,
-                    chi=scheduler_deploy_chi,
                     label="deploy-shielded-scheduler",
                 )
                 ensure_positive_submission(
@@ -7573,7 +7530,6 @@ class E2ERunner:
                     code=scheduler_target_source,
                     preferred_index=shielded_submission_index,
                     excluded_indices=shielded_excluded_indices,
-                    chi=scheduler_control_chi,
                     label="deploy-shielded-scheduler-target",
                 )
                 ensure_positive_submission(
@@ -7598,7 +7554,6 @@ class E2ERunner:
                     },
                     preferred_index=shielded_submission_index,
                     excluded_indices=shielded_excluded_indices,
-                    chi=scheduler_deploy_chi,
                     label="deploy-shielded-scheduler-adapter",
                 )
                 ensure_positive_submission(
@@ -7616,7 +7571,6 @@ class E2ERunner:
                     code=command_fee_token_source,
                     preferred_index=shielded_submission_index,
                     excluded_indices=shielded_excluded_indices,
-                    chi=command_control_chi,
                     label="deploy-shielded-command-fee-token",
                 )
                 ensure_positive_submission(
@@ -7632,7 +7586,6 @@ class E2ERunner:
                     code=command_target_source,
                     preferred_index=shielded_submission_index,
                     excluded_indices=shielded_excluded_indices,
-                    chi=command_control_chi,
                     label="deploy-shielded-command-target",
                 )
                 ensure_positive_submission(
@@ -7655,7 +7608,6 @@ class E2ERunner:
                     },
                     preferred_index=shielded_submission_index,
                     excluded_indices=shielded_excluded_indices,
-                    chi=command_deploy_chi,
                     label="deploy-shielded-command-pool",
                 )
                 ensure_positive_submission(
@@ -7670,7 +7622,6 @@ class E2ERunner:
                 {"target_contract": scheduler_target_name, "enabled": True},
                 preferred_index=shielded_submission_index,
                 excluded_indices=shielded_excluded_indices,
-                chi=scheduler_control_chi,
                 label="allow-shielded-scheduler-target",
             )
             ensure_positive_submission(
@@ -7685,7 +7636,6 @@ class E2ERunner:
                 {"target_contract": command_target_name, "enabled": True},
                 preferred_index=shielded_submission_index,
                 excluded_indices=shielded_excluded_indices,
-                chi=command_control_chi,
                 label="allow-shielded-command-target",
             )
             ensure_positive_submission(
@@ -7819,7 +7769,6 @@ class E2ERunner:
                     {"amount": mint_amount, "to": alice.public_key},
                     preferred_index=shielded_submission_index,
                     excluded_indices=shielded_excluded_indices,
-                    chi=20_000,
                     label="shielded-mint-public",
                 )
                 ensure_positive_submission(
@@ -7927,7 +7876,7 @@ class E2ERunner:
                     kwargs,
                     preferred_index=self.preferred_index,
                     excluded_indices=shielded_excluded_indices,
-                    chi=DEFAULT_TX_CHI if chi is None else chi,
+                    chi=chi,
                     label=f"shielded-validator-{contract}.{function}",
                 )
 
@@ -8044,7 +7993,6 @@ class E2ERunner:
                         token_name,
                         "configure_vk",
                         {"action": action, "vk_id": vk_id},
-                        chi=20_000,
                         mode="async",
                         wait_for_tx=True,
                     )
@@ -8143,7 +8091,6 @@ class E2ERunner:
                         command_name,
                         "configure_vk",
                         {"action": action, "vk_id": vk_id},
-                        chi=command_control_chi,
                         mode="async",
                         wait_for_tx=True,
                     )
@@ -8263,7 +8210,6 @@ class E2ERunner:
                 scheduler_adapter_name,
                 "configure_authorization_vk",
                 {"vk_id": auth_manifest["configure_actions"][0]["vk_id"]},
-                chi=scheduler_control_chi,
                 wait_for_tx=True,
             )
             configure_auth_receipt = ensure_positive_submission(
@@ -8286,7 +8232,6 @@ class E2ERunner:
                 scheduler_adapter_name,
                 "interact",
                 {"payload": cancel_schedule_payload},
-                chi=scheduler_control_chi,
                 wait_for_tx=True,
             )
             cancel_schedule_receipt = ensure_positive_submission(
@@ -8317,7 +8262,6 @@ class E2ERunner:
                             "reason": "copied-public-value",
                         }
                     },
-                    chi=scheduler_proof_chi,
                     wait_for_tx=True,
                 ),
                 label="shielded-scheduler-copied-public-cancel",
@@ -8338,7 +8282,6 @@ class E2ERunner:
                     scheduler_adapter_name,
                     "interact",
                     {"payload": wrong_cancel_payload},
-                    chi=scheduler_proof_chi,
                     wait_for_tx=True,
                 ),
                 label="shielded-scheduler-wrong-owner-cancel",
@@ -8358,7 +8301,6 @@ class E2ERunner:
                 scheduler_adapter_name,
                 "interact",
                 {"payload": cancel_payload},
-                chi=scheduler_proof_chi,
                 wait_for_tx=True,
             )
             cancel_receipt = ensure_positive_submission(
@@ -8370,7 +8312,6 @@ class E2ERunner:
                     scheduler_adapter_name,
                     "interact",
                     {"payload": cancel_payload},
-                    chi=scheduler_proof_chi,
                     wait_for_tx=True,
                 ),
                 label="shielded-scheduler-cancel-replay",
@@ -8413,7 +8354,6 @@ class E2ERunner:
                 scheduler_adapter_name,
                 "interact",
                 {"payload": reschedule_schedule_payload},
-                chi=scheduler_control_chi,
                 wait_for_tx=True,
             )
             reschedule_schedule_receipt = ensure_positive_submission(
@@ -8450,7 +8390,6 @@ class E2ERunner:
                     scheduler_adapter_name,
                     "interact",
                     {"payload": tampered_reschedule_payload},
-                    chi=scheduler_proof_chi,
                     wait_for_tx=True,
                 ),
                 label="shielded-scheduler-tampered-reschedule",
@@ -8467,7 +8406,6 @@ class E2ERunner:
                 scheduler_adapter_name,
                 "interact",
                 {"payload": reschedule_payload},
-                chi=scheduler_proof_chi,
                 wait_for_tx=True,
             )
             reschedule_receipt = ensure_positive_submission(
@@ -8519,7 +8457,6 @@ class E2ERunner:
                 scheduler_adapter_name,
                 "interact",
                 {"payload": execute_schedule_payload},
-                chi=scheduler_control_chi,
                 wait_for_tx=True,
             )
             execute_schedule_receipt = ensure_positive_submission(
@@ -8535,7 +8472,6 @@ class E2ERunner:
                 scheduler_adapter_name,
                 "interact",
                 {"payload": {"action": "execute", "adapter_action_id": execute_adapter_action_id}},
-                chi=scheduler_control_chi,
                 wait_for_tx=True,
             )
             execute_receipt = ensure_positive_submission(
@@ -8602,7 +8538,6 @@ class E2ERunner:
                 command_fee_token_name,
                 "mint",
                 {"amount": 20, "to": alice.public_key},
-                chi=command_control_chi,
                 wait_for_tx=True,
             )
             mint_alice_receipt = ensure_positive_submission(
@@ -8613,7 +8548,6 @@ class E2ERunner:
                 command_fee_token_name,
                 "mint",
                 {"amount": 3, "to": bob.public_key},
-                chi=command_control_chi,
                 wait_for_tx=True,
             )
             mint_bob_receipt = ensure_positive_submission(
@@ -8624,7 +8558,6 @@ class E2ERunner:
                 command_fee_token_name,
                 "transfer",
                 {"amount": 3, "to": command_name},
-                chi=command_control_chi,
                 wait_for_tx=True,
             )
             unsolicited_receipt = ensure_positive_submission(
@@ -8651,7 +8584,6 @@ class E2ERunner:
                 command_fee_token_name,
                 "approve",
                 {"amount": 20, "to": command_name},
-                chi=command_control_chi,
                 wait_for_tx=True,
             )
             approve_receipt = ensure_positive_submission(
@@ -8682,7 +8614,6 @@ class E2ERunner:
                     "output_commitments": command_deposit.output_commitments,
                     "proof_hex": command_deposit.proof_hex,
                 },
-                chi=command_proof_chi,
                 wait_for_tx=True,
             )
             command_deposit_receipt = ensure_positive_submission(
@@ -8746,7 +8677,6 @@ class E2ERunner:
                     "public_amount": 0,
                     "payload": {"increment": 5, "label": "command"},
                 },
-                chi=command_proof_chi,
                 wait_for_tx=True,
             )
             command_execute_receipt = ensure_positive_submission(
@@ -8820,7 +8750,6 @@ class E2ERunner:
                     "output_commitments": command_withdraw.output_commitments,
                     "proof_hex": command_withdraw.proof_hex,
                 },
-                chi=command_proof_chi,
                 wait_for_tx=True,
             )
             command_withdraw_receipt = ensure_positive_submission(
@@ -8857,7 +8786,6 @@ class E2ERunner:
                     command_name,
                     "sweep_excess",
                     {"to": founder.public_key},
-                    chi=command_control_chi,
                     wait_for_tx=True,
                 ),
                 label="shielded-command-unauthorized-sweep",
@@ -8867,7 +8795,6 @@ class E2ERunner:
                 command_name,
                 "sweep_excess",
                 {"to": founder.public_key},
-                chi=command_control_chi,
                 wait_for_tx=True,
             )
             sweep_receipt = ensure_positive_submission(
@@ -9038,7 +8965,6 @@ class E2ERunner:
                     "proof_hex": deposit.proof_hex,
                     "output_payloads": deposit_payloads,
                 },
-                chi=SHIELDED_TX_CHI["deposit"],
                 wait_for_tx=True,
             )
             deposit_receipt = ensure_positive_submission(
@@ -9127,7 +9053,6 @@ class E2ERunner:
                     "proof_hex": transfer.proof_hex,
                     "output_payloads": transfer_payloads,
                 },
-                chi=SHIELDED_TX_CHI["transfer"],
                 wait_for_tx=True,
             )
             transfer_receipt = ensure_positive_submission(
@@ -9212,7 +9137,6 @@ class E2ERunner:
                     "relayer_fee": relay_proof.relayer_fee,
                     "output_payloads": relay_plan.output_payloads,
                 },
-                chi=SHIELDED_TX_CHI["transfer"],
                 wait_for_tx=True,
             )
             relay_receipt = ensure_positive_submission(
@@ -9300,7 +9224,6 @@ class E2ERunner:
                     "proof_hex": withdraw.proof_hex,
                     "output_payloads": withdraw_payloads,
                 },
-                chi=SHIELDED_TX_CHI["withdraw"],
                 wait_for_tx=True,
             )
             withdraw_receipt = ensure_positive_submission(
@@ -9379,7 +9302,6 @@ class E2ERunner:
                     "proof_hex": withdraw.proof_hex,
                     "output_payloads": withdraw_payloads,
                 },
-                chi=SHIELDED_TX_CHI["withdraw"],
                 wait_for_tx=True,
             )
             replay_receipt = ensure_failed_submission(
@@ -9409,7 +9331,6 @@ class E2ERunner:
                     "proof_hex": exact_withdraw.proof_hex,
                     "output_payloads": exact_withdraw_plan.output_payloads,
                 },
-                chi=SHIELDED_TX_CHI["withdraw"],
                 wait_for_tx=True,
             )
             exact_withdraw_receipt = ensure_positive_submission(
@@ -9477,7 +9398,6 @@ class E2ERunner:
                     "proof_hex": recent_root_deposit.proof_hex,
                     "output_payloads": recent_root_deposit_payloads,
                 },
-                chi=SHIELDED_TX_CHI["deposit"],
                 wait_for_tx=True,
             )
             recent_root_deposit_receipt = ensure_positive_submission(
@@ -10138,7 +10058,7 @@ class E2ERunner:
         function: str,
         kwargs: dict[str, Any],
         label: str,
-        chi: int = DEFAULT_TX_CHI,
+        chi: int | None = None,
         expect_success: bool = True,
         expected_message_fragment: str | None = None,
     ) -> dict[str, Any]:

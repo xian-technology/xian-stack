@@ -14,7 +14,6 @@ from localnet_chain_checks import (
 from localnet_e2e_support import short_hash
 
 # The probe calls and failed deploys below use at most ~1,500 chi on the rev-11 VM.
-SAFETY_TX_CHI = 10_000
 
 CHILD_SOURCE = """value = Variable()
 @construct
@@ -144,7 +143,6 @@ async def metadata_checks(runner, session, client, factory, child, probe):
             probe,
             field,
             {"target": child, "replacement": runner.founder_wallet.public_key},
-            chi=SAFETY_TX_CHI,
             wait_for_tx=True,
         )
         results[field] = failed_execution(
@@ -155,9 +153,7 @@ async def metadata_checks(runner, session, client, factory, child, probe):
             f"@construct\ndef seed():\n    Contract.set_{field}({child!r}, 'unauthorized')\n"
             "@export\ndef ready():\n    return True\n"
         )
-        attempt = await client.deploy_contract(
-            name=name, source=code, chi=SAFETY_TX_CHI, wait_for_tx=True
-        )
+        attempt = await client.deploy_contract(name=name, source=code, wait_for_tx=True)
         results[f"constructor_{field}"] = failed_execution(
             attempt, f"constructor {field}", fragment="restricted to submission"
         )
@@ -169,7 +165,6 @@ async def metadata_checks(runner, session, client, factory, child, probe):
         probe,
         "deploy_direct",
         {"name": direct_name, "code": CHILD_SOURCE},
-        chi=SAFETY_TX_CHI,
         wait_for_tx=True,
     )
     results["direct_deployment"] = failed_execution(
@@ -194,7 +189,6 @@ async def authority_checks(runner, session):
                 factory,
                 "spawn",
                 {"name": child, "code": CHILD_SOURCE},
-                chi=SAFETY_TX_CHI,
                 wait_for_tx=True,
             ),
             "owned child deployment",
@@ -204,7 +198,6 @@ async def authority_checks(runner, session):
                 child,
                 "bump",
                 {},
-                chi=100_000,
                 wait_for_tx=True,
             ),
             "direct call to contract-owned child",
@@ -217,7 +210,6 @@ async def authority_checks(runner, session):
                 factory,
                 "bump",
                 {"target": child},
-                chi=100_000,
                 wait_for_tx=True,
             ),
             "owner contract call",
@@ -228,14 +220,11 @@ async def authority_checks(runner, session):
                 factory,
                 "transfer_owner",
                 {"target": child, "replacement": runner.founder_wallet.public_key},
-                chi=100_000,
                 wait_for_tx=True,
             ),
             "authorized owner transfer",
         )
-        successful(
-            await client.send_tx(child, "bump", {}, chi=100_000, wait_for_tx=True), "new owner call"
-        )
+        successful(await client.send_tx(child, "bump", {}, wait_for_tx=True), "new owner call")
         await agreement(session, runner.nodes, window=1)
         await uniform_state(
             runner,
@@ -248,14 +237,19 @@ async def authority_checks(runner, session):
 async def constructor_budget_checks(runner, session):
     factory = await deploy(runner, session, "runtime-factory", FACTORY_SOURCE)
     prefix = "con_budget_" + short_hash(runner.run_id)
-    # The V2 single constructor costs about 5,260 chi. Two must exceed this budget.
-    budget = 7500
     nested = "import submission\n" + METER_SOURCE.replace(
         "    value = 0",
         f"    submission.submit_contract(name={prefix + '_inner'!r}, code=code)\n    value = 0",
     ).replace("def seed():", "def seed(code: str):")
     results = {}
     async with runner.client(runner.founder_wallet, 0, session) as client:
+        # A deployment pays its price (base plus source bytes) before compiling and
+        # then runs its constructor: one bounded deployment fits half again its own
+        # cost, two in one transaction do not.
+        single = await client.estimate_chi(
+            "submission", "submit_contract", {"name": prefix + "_single", "code": METER_SOURCE}
+        )
+        budget = single["estimated"] * 3 // 2
         successful(
             await client.deploy_contract(
                 name=prefix + "_single",
@@ -313,7 +307,7 @@ async def stored_value_checks(runner, session):
     failures = {}
     async with runner.client(runner.founder_wallet, 0, session) as client:
         for index, function in enumerate(("invalid_set", "invalid_nested_set", "invalid_key")):
-            bad = await client.send_tx(name, function, {}, chi=100_000, wait_for_tx=True)
+            bad = await client.send_tx(name, function, {}, wait_for_tx=True)
             fragment = (
                 "builtin sets cannot cross the vm boundary" if function != "invalid_key" else None
             )
@@ -323,7 +317,7 @@ async def stored_value_checks(runner, session):
             await uniform_state(
                 runner, session, {f"{name}.value": "unchanged", f"{name}.progress": index}
             )
-            good = await client.send_tx(name, "recover", {}, chi=100_000, wait_for_tx=True)
+            good = await client.send_tx(name, "recover", {}, wait_for_tx=True)
             successful(good, "post-invalid-value recovery")
             require(
                 int(good.receipt.raw["result"]["height"])
@@ -335,7 +329,7 @@ async def stored_value_checks(runner, session):
                 runner, session, {f"{name}.value": "unchanged", f"{name}.progress": index + 1}
             )
         successful(
-            await client.send_tx(name, "return_set", {}, chi=100_000, wait_for_tx=True),
+            await client.send_tx(name, "return_set", {}, wait_for_tx=True),
             "set return value",
         )
     return {
@@ -400,7 +394,7 @@ async def invalid_registration_check(runner, session):
         fee = await client.get_state("validators", "registration_fee")
         successful(
             await client.send_tx(
-                "currency", "transfer", {"amount": fee, "to": name}, chi=100_000, wait_for_tx=True
+                "currency", "transfer", {"amount": fee, "to": name}, wait_for_tx=True
             ),
             "fund validator registration probe",
         )
@@ -413,9 +407,7 @@ async def invalid_registration_check(runner, session):
         ]
         before = {key: await query(session, runner.nodes[0], f"/get/{key}") for key in keys}
         validators_before = (await rpc(session, runner.nodes[0], "validators"))["validators"]
-        submission = await client.send_tx(
-            name, "register", {"amount": fee}, chi=SAFETY_TX_CHI, wait_for_tx=True
-        )
+        submission = await client.send_tx(name, "register", {"amount": fee}, wait_for_tx=True)
         failure = failed_execution(
             submission,
             "contract validator registration",

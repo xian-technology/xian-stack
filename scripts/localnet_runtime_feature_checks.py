@@ -11,7 +11,6 @@ ZK_FEATURE_KEY = "__runtime_features.zk"
 ZK_DISABLED = "zk runtime feature is disabled"
 ZK_PROBE_SOURCE = "@export\ndef check():\n    return zk.is_available()\n"
 # The probe calls and zk deploys use a few thousand chi on the rev-14 VM.
-ZK_TOGGLE_TX_CHI = 20_000
 SHIELDED_PHASE = "15-shielded-note-token"
 
 
@@ -59,9 +58,7 @@ async def switch_zk(runner, session, *, enabled: bool, label: str) -> dict:
 
 
 async def send(client, contract, function, kwargs=None):
-    return await client.send_tx(
-        contract, function, kwargs or {}, chi=ZK_TOGGLE_TX_CHI, wait_for_tx=True
-    )
+    return await client.send_tx(contract, function, kwargs or {}, wait_for_tx=True)
 
 
 async def zk_runs(runner, session, probe, token, label) -> dict:
@@ -84,7 +81,7 @@ async def zk_refused(runner, session, probe, plain, token) -> dict:
             await send(client, probe, "check"), "zk probe while off", fragment=ZK_DISABLED
         )
         deploy_attempt = await client.deploy_contract(
-            name=f"{probe}_off", source=ZK_PROBE_SOURCE, chi=ZK_TOGGLE_TX_CHI, wait_for_tx=True
+            name=f"{probe}_off", source=ZK_PROBE_SOURCE, wait_for_tx=True
         )
         result["deploy"] = failed_execution(
             deploy_attempt, "zk deploy while off", fragment=ZK_DISABLED

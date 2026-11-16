@@ -22,7 +22,6 @@ STACK = Path(__file__).resolve().parents[1]
 CURRENCY_TRANSFER_CHI = 500
 # Check contracts deploy for at most ~2,400 chi on the rev-11 VM; the chain
 # caps a transaction at 200,000 chi by default.
-CHECK_DEPLOY_CHI = 20_000
 
 # Both integrated and split images carry these executables. Temporary observers
 # run both locally, so they do not depend on an image-specific supervisor.
@@ -235,9 +234,7 @@ async def deploy(runner, session, label, source):
     async with runner.client(runner.founder_wallet, 0, session) as client:
         existing = await client.get_contract_source(name)
         if existing is None:
-            result = await client.deploy_contract(
-                name=name, source=source, chi=CHECK_DEPLOY_CHI, wait_for_tx=True
-            )
+            result = await client.deploy_contract(name=name, source=source, wait_for_tx=True)
             require(
                 result.accepted and result.finalized and result.receipt.success,
                 f"Failed to deploy lifecycle fixture {name}: accepted={result.accepted}, "

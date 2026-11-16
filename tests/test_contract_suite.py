@@ -82,7 +82,9 @@ def test_native_contract_suite(tmp_path):
 
     check_state("constructors")
     for case in scenarios:
-        result = execute(case.contract, case.function, case.kwargs, case.actor, case.chi)
+        # A case without a budget supplies the simulated chi on the localnet.
+        budget = 500_000 if case.chi is None else case.chi
+        result = execute(case.contract, case.function, case.kwargs, case.actor, budget)
         assert result.chi_used > 0, case.label
         if case.error is not None:
             assert result.status_code == 1, (case.label, result.result)
@@ -151,6 +153,6 @@ def test_followup_budget_failure_retries_the_same_work_successfully():
     failure, recovery = scenarios[-2:]
     assert failure.function == recovery.function == "hash_callbacks"
     assert failure.error == "out of chi" and recovery.error is None
-    assert failure.chi < recovery.chi
+    assert failure.chi == 80 and recovery.chi is None  # the retry supplies the simulated chi
     assert recovery.state == {"con_test.result": recovery.result}
     assert recovery.events[0]["data"] == {"mode": "hash budget"}

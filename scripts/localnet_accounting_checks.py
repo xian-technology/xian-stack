@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from localnet_chain_checks import agreement, command, deploy, require, wallet
+from localnet_common import paid_fee_chi, unused_chi_charge
 
 LEDGER_SOURCE = """balances = Hash(default_value=0)
 staked = Hash(default_value=0)
@@ -140,7 +141,7 @@ async def accounting_phase(runner, session):
     async with runner.client(runner.founder_wallet, 0, session) as client:
         for account in accounts:
             result = await client.send_tx(
-                name, "mint", {"account": account, "amount": 1000}, chi=15000, wait_for_tx=True
+                name, "mint", {"account": account, "amount": 1000}, wait_for_tx=True
             )
             require(result.receipt.success, "Initial ledger allocation failed")
     model = LedgerModel()
@@ -171,7 +172,7 @@ async def accounting_phase(runner, session):
         before = await native_balances(runner, [*accounts, runner.founder_wallet.public_key])
         expected_success = model.apply(action, sender, receiver, amount)
         async with runner.client(signer, index % len(runner.nodes), session) as client:
-            result = await client.send_tx(name, action, kwargs, chi=15000, wait_for_tx=True)
+            result = await client.send_tx(name, action, kwargs, wait_for_tx=True)
         require(result.accepted and result.finalized, "Accounting transaction did not finalize")
         require(result.receipt.success == expected_success, f"Ledger outcome drift at step {index}")
         await agreement(session, runner.nodes, window=1)
@@ -179,11 +180,20 @@ async def accounting_phase(runner, session):
             actual = await client.call(name, "report", {"accounts": accounts})
         require(actual == model.report(), f"Ledger accounting/rollback drift at step {index}")
         execution = result.receipt.execution
-        fee = Decimal(str(execution["chi_used"])) / Decimal(before["chi_cost"])
+        chi_cost = Decimal(before["chi_cost"])
+        burn_ratio = Decimal(before["burn_ratio"])
+        fee = Decimal(str(execution["chi_used"])) / chi_cost
         after = await native_balances(runner, [*accounts, runner.founder_wallet.public_key])
-        # Every paid call's fee, failed or not, is paid out through the reward
-        # split, so only the governed burn share leaves the native supply.
-        expected_burn = fee * Decimal(before["burn_ratio"])
+        # Every paid call's fee on the chi it used, failed or not, is paid out
+        # through the reward split; only the governed burn share of it and the
+        # unused-chi charge (half of the budget left unused) leave the supply.
+        used_chi, _ = paid_fee_chi(execution["rewards"], chi_cost, burn_ratio)
+        unused_charge = unused_chi_charge(int(result.chi_supplied), used_chi)
+        require(
+            int(execution["chi_used"]) == used_chi + unused_charge,
+            f"Charged chi is not the chi used plus the unused-chi charge at step {index}",
+        )
+        expected_burn = used_chi / chi_cost * burn_ratio + unused_charge / chi_cost
         tolerance = Decimal("0.00000001") * (before["balance_count"] + 1)
         actual_burn = Decimal(before["total"]) - Decimal(after["total"])
         require(

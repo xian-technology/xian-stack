@@ -143,7 +143,9 @@ async def crash_phase(runner, session):
     name = await deploy(runner, session, "crash", PROBE_SOURCE)
     node = runner.nodes[4]
     signer = wallet(runner, "crash-signer")
-    await runner.fund_wallets(session, [signer], amount=1000)
+    # Three pre-signed 15,000-chi bumps: each pays its use plus half of the
+    # unused budget (~380) and the next must still cover its 750 reservation.
+    await runner.fund_wallets(session, [signer], amount=3000)
     home = STACK / ".localnet" / node.moniker / ".cometbft"
     arm = home / "e2e-fault.json"
     hit = home / "e2e-fault.hit.json"

@@ -22,7 +22,7 @@ from typing import Any
 
 import aiohttp
 from governance_vote_helpers import read_freshest_status
-from localnet_common import fetch_json
+from localnet_common import GOVERNANCE_TX_CHI, REBALANCE_TX_CHI, E2EClient, fetch_json
 from localnet_diagnostics import collect_failure_diagnostics
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -32,10 +32,6 @@ NETWORK_PATH = STACK_DIR / ".localnet" / "network.json"
 OUTPUT_ROOT = STACK_DIR / ".artifacts" / "localnet-protocol-safety"
 XIAN_ABCI_SRC = ROOT_DIR / "xian-abci" / "src"
 
-DEFAULT_TRANSFER_CHI = 2_000
-DEFAULT_TX_CHI = 200_000
-# Rev-11 governance/validator txs use at most ~4,600 chi (a finalizing policy vote).
-GOVERNANCE_TX_CHI = 20_000
 DEFAULT_LOCALNET_NODES = 5
 DEFAULT_GENESIS_NETWORK = "testnet"
 ABCI_HEALTH_QUERY_PATH = "/get/currency.balances:__xian_localnet_governance_health_probe__"
@@ -631,7 +627,7 @@ class ProtocolSafetyRunner:
         if self.network is None:
             raise RunnerError("network is not initialized")
         # Let XianAsync own its session so its transport timeouts apply to RPC calls.
-        return XianAsync(
+        return E2EClient(
             node_url=self.nodes[node_index].rpc_url,
             chain_id=self.network["chain_id"],
             wallet=wallet,
@@ -923,7 +919,6 @@ class ProtocolSafetyRunner:
                 submission = await client.send(
                     amount=amount,
                     to_address=wallet.public_key,
-                    chi=DEFAULT_TRANSFER_CHI,
                     wait_for_tx=True,
                 )
                 receipts.append(
@@ -979,7 +974,7 @@ class ProtocolSafetyRunner:
         kwargs: dict[str, Any],
         *,
         label: str,
-        chi: int = DEFAULT_TX_CHI,
+        chi: int | None = None,
     ) -> dict[str, Any]:
         submission = await client.send_tx(
             contract,
@@ -2268,7 +2263,7 @@ def get_status():
                 "rebalance",
                 {},
                 label="auto-rebalance-after-delegation",
-                chi=GOVERNANCE_TX_CHI,
+                chi=REBALANCE_TX_CHI,
             )
             active_after_rebalance = await node0.call(
                 "validators",
@@ -2346,7 +2341,7 @@ def get_status():
                 "rebalance",
                 {},
                 label="auto-rebalance-after-unjail",
-                chi=GOVERNANCE_TX_CHI,
+                chi=REBALANCE_TX_CHI,
             )
             active_after_unjail = await self.wait_for_active_validators(
                 node0,
@@ -2637,7 +2632,7 @@ def get_status():
                 "rebalance",
                 {},
                 label="hybrid-rebalance-before-approval",
-                chi=GOVERNANCE_TX_CHI,
+                chi=REBALANCE_TX_CHI,
             )
             active_before_approval = await node3.call(
                 "validators",
@@ -2888,7 +2883,7 @@ def get_status():
                 "rebalance",
                 {},
                 label="rebalance-after-announce-leave",
-                chi=GOVERNANCE_TX_CHI,
+                chi=REBALANCE_TX_CHI,
             )
             active_after_rebalance = await self.wait_for_active_validators(
                 node0,

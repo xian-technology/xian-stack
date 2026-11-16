@@ -39,3 +39,39 @@ def test_fixed_localnet_chi_budgets_fit_the_default_tx_cap():
                 if chi > DEFAULT_MAX_TX_CHI
             ]
     assert over_cap == []
+
+
+# Fixed budgets kept on purpose. Every other submission supplies the simulated
+# chi plus the SDK margin: a paid transaction pays half of the chi it leaves
+# unused (revision 14), so a generous fixed budget drains the test wallets.
+DELIBERATE_BUDGETS = {
+    # rebalance's work depends on the epoch of the block it lands in
+    ("localnet_common.py", "REBALANCE_TX_CHI"),
+    # a vote that reaches the threshold executes the proposal
+    ("localnet_common.py", "GOVERNANCE_TX_CHI"),
+    # the parallel probe races writers and scanners into one block
+    ("localnet-workload.py", "PARALLEL_PROBE_TX_CHI"),
+    # handed to the external IntentKit x402 smoke as its --settlement-chi
+    ("localnet-e2e.py", "X402_SETTLEMENT_TX_CHI"),
+    # localnet-dex-bootstrap's --chi-budget-mode fixed (auto is the default)
+    ("localnet-dex-bootstrap.py", "CORE_DEPLOY_CHI"),
+    ("localnet-dex-bootstrap.py", "TOKEN_DEPLOY_CHI"),
+    ("localnet-dex-bootstrap.py", "LP_TOKEN_DEPLOY_CHI"),
+    ("localnet-dex-bootstrap.py", "TOKEN_TX_CHI"),
+    ("localnet-dex-bootstrap.py", "DEX_TX_CHI"),
+}
+GENEROUS_BUDGET = 5_000
+
+
+def test_localnet_scripts_supply_simulated_chi_instead_of_generous_budgets():
+    generous = []
+    for path in sorted(SCRIPTS.glob("*.py")):
+        for name, value in _fixed_budgets(ast.parse(path.read_text())):
+            if (path.name, name) in DELIBERATE_BUDGETS:
+                continue
+            generous += [
+                f"{path.name}:{value.lineno} {name} {chi}"
+                for chi in _int_values(value)
+                if chi >= GENEROUS_BUDGET
+            ]
+    assert generous == []

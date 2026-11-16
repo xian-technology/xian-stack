@@ -33,7 +33,7 @@ class Case:
     actor: str = "alice"
     error: str | None = None
     events: tuple = ()
-    chi: int = 200_000
+    chi: int | None = None
 
 
 def sources(names):

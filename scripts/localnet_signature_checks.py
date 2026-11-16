@@ -150,9 +150,7 @@ async def signature_phase(runner, session):
     contract = await deploy(runner, session, "ed25519-verification", PROBE_SOURCE)
     vectors = signature_vectors()
     async with runner.client(runner.founder_wallet, 0, session) as client:
-        result = await client.send_tx(
-            contract, "probe", {"vectors": vectors}, chi=100_000, wait_for_tx=True
-        )
+        result = await client.send_tx(contract, "probe", {"vectors": vectors}, wait_for_tx=True)
         require(
             result.finalized and result.receipt.success,
             f"Signature verification fixture failed: {result.message}",

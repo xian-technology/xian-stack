@@ -44,7 +44,7 @@ async def storage_scan_phase(runner, session):
             runner.founder_wallet, seed % len(runner.nodes), session
         ) as client:
             submission = await client.send_tx(
-                reader, "probe", {"target": data, "seed": seed}, chi=100_000, wait_for_tx=True
+                reader, "probe", {"target": data, "seed": seed}, wait_for_tx=True
             )
             require(
                 submission.finalized and submission.receipt.success,

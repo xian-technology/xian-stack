@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
-from localnet_common import compare_app_hash_window, fetch_json
+from localnet_common import E2EClient, compare_app_hash_window, fetch_json, simulated_chi_supply
 from xian_runtime_types.decimal import ContractingDecimal
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -39,21 +39,20 @@ from xian_py.models import TransactionSubmission  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian_async import XianAsync  # noqa: E402
 
-COUNTER_DEPLOY_CHI = 75_000
-COUNTER_TX_CHI = 1_500
 COUNTER_BROADCAST_BATCH_SIZE = 40
-TOKEN_DEPLOY_CHI = 150_000
-PAIR_DEPLOY_CHI = 50_000  # rev-11 con_pairs deploy: 11,118 chi
-DEX_DEPLOY_CHI = 200_000
-TOKEN_TX_CHI = 7_500
-DEX_TX_CHI = 60_000
-PARALLEL_PROBE_DEPLOY_CHI = 90_000
-PARALLEL_PROBE_TX_CHI = 2_000
 # Transactions per probe batch, so each batch fills blocks with several txs.
 PARALLEL_PROBE_MIN_BATCH_SIZE = 10
-THROUGHPUT_TRANSFER_TX_CHI = 1_500
-THROUGHPUT_CONTRACT_DEPLOY_CHI = 120_000
-THROUGHPUT_CONTRACT_TX_CHI = 6_000
+# The parallel probe races writers and readers of one contract into the same
+# block on purpose: a prefix scan or tail read pays for the entries written
+# before it in that block, which a simulation on the last block cannot see.
+PARALLEL_PROBE_TX_CHI = 2_000
+# The two swaps of a round race on one pair and usually land in one block, so
+# the second runs on reserves the first changed. A fresh pool's round reserves
+# grow ~30 fractional digits with the first swap, and every reserve, balance and
+# event value the second swap writes is that much longer than simulated: the
+# SDK's 2-chi margin ran out of chi on round 0. Half of the unused extra is
+# charged (revision 14), so the headroom costs at most 25 chi.
+RACING_SWAP_EXTRA_CHI = 50
 RECEIPT_TIMEOUT_SECONDS = 45.0
 RECEIPT_FALLBACK_BLOCK_SCAN_WINDOW = 1_200
 ABCI_HEALTH_QUERY_PATH = "/get/currency.balances:__xian_localnet_workload_health_probe__"
@@ -252,7 +251,7 @@ class WorkloadContext:
 
     def client(self, wallet: Wallet, rpc_index: int) -> XianAsync:
         node = self.nodes[rpc_index % len(self.nodes)]
-        return XianAsync(
+        return E2EClient(
             config=XianClientConfig(vm_profile="xian_vm_v2"),
             node_url=node.rpc_url,
             chain_id=self.chain_id,
@@ -419,11 +418,12 @@ class WorkloadContext:
         contract: str,
         function: str,
         kwargs: dict[str, Any],
-        chi: int,
         expected_success: bool,
         expected_message: str | None = None,
         mode: str = "checktx",
         nonce: int | None = None,
+        chi: int | None = None,
+        extra_chi: int = 0,
     ) -> BroadcastRecord:
         preferred_index = self.submission_index(rpc_index)
         if nonce is None:
@@ -438,8 +438,11 @@ class WorkloadContext:
             "kwargs": kwargs,
             "nonce": reserved_nonce,
             "sender": wallet.public_key,
-            "chi_supplied": chi,
         }
+        if chi is None:
+            node = self.nodes[preferred_index % len(self.nodes)]
+            chi = await simulated_chi_supply(self.session, node.rpc_url, payload) + extra_chi
+        payload["chi_supplied"] = chi
         tx = tr.create_tx(payload, wallet, vm_profile="xian_vm_v2")
         prepared_tx = tr.prepare_transaction(tx)
         local_tx_hash = prepared_tx.tx_hash
@@ -1343,7 +1346,6 @@ async def submit_mempool_flush_tx(
         contract="currency",
         function="transfer",
         kwargs={"amount": fixed(1), "to": context.founder_wallet.public_key},
-        chi=THROUGHPUT_TRANSFER_TX_CHI,
         expected_success=True,
     )
     await context.resolve_records(
@@ -1392,7 +1394,6 @@ async def fund_wallets(
     seed_wallet: Wallet,
     worker_wallets: list[Wallet],
     amount: ContractingDecimal,
-    chi: int,
     label_prefix: str,
     timeout_seconds: float = RECEIPT_TIMEOUT_SECONDS,
 ) -> list[BroadcastRecord]:
@@ -1408,7 +1409,6 @@ async def fund_wallets(
                 contract="currency",
                 function="transfer",
                 kwargs={"amount": amount, "to": wallet.public_key},
-                chi=chi,
                 expected_success=True,
                 timeout_seconds=timeout_seconds,
             )
@@ -1545,7 +1545,6 @@ async def broadcast_funding_record(
             contract="currency",
             function="transfer",
             kwargs={"amount": gas_amount, "to": wallet.public_key},
-            chi=TOKEN_TX_CHI,
             expected_success=True,
             timeout_seconds=timeout_seconds,
         ),
@@ -1557,7 +1556,6 @@ async def broadcast_funding_record(
             contract=token_a,
             function="transfer",
             kwargs={"amount": token_amount, "to": wallet.public_key},
-            chi=TOKEN_TX_CHI,
             expected_success=True,
             timeout_seconds=timeout_seconds,
         ),
@@ -1569,7 +1567,6 @@ async def broadcast_funding_record(
             contract=token_b,
             function="transfer",
             kwargs={"amount": token_amount, "to": wallet.public_key},
-            chi=TOKEN_TX_CHI,
             expected_success=True,
             timeout_seconds=timeout_seconds,
         ),
@@ -1593,7 +1590,6 @@ async def broadcast_approval_record(
         contract=token_name,
         function="approve",
         kwargs={"amount": fixed(1_000_000), "to": dex_contract},
-        chi=TOKEN_TX_CHI,
         expected_success=True,
         timeout_seconds=timeout_seconds,
     )
@@ -1627,7 +1623,6 @@ async def run_counter_basic(
             name=contract_name,
             code=contract_code,
         ),
-        chi=COUNTER_DEPLOY_CHI,
         expected_success=True,
     )
     await context.resolve_records([deploy_record], timeout_seconds=receipt_timeout_seconds)
@@ -1644,7 +1639,6 @@ async def run_counter_basic(
                 contract="currency",
                 function="transfer",
                 kwargs={"amount": fixed(5_000), "to": wallet.public_key},
-                chi=COUNTER_TX_CHI,
                 expected_success=True,
                 timeout_seconds=receipt_timeout_seconds,
             )
@@ -1678,7 +1672,6 @@ async def run_counter_basic(
                 contract="currency",
                 function="transfer",
                 kwargs={"amount": fixed(1), "to": recipient},
-                chi=COUNTER_TX_CHI,
                 expected_success=True,
                 mode="async",
             )
@@ -1691,7 +1684,6 @@ async def run_counter_basic(
                 contract=contract_name,
                 function="increment",
                 kwargs={},
-                chi=COUNTER_TX_CHI,
                 expected_success=True,
                 mode="async",
             )
@@ -1705,7 +1697,6 @@ async def run_counter_basic(
                 contract=contract_name,
                 function="add",
                 kwargs={"amount": amount},
-                chi=COUNTER_TX_CHI,
                 expected_success=True,
                 mode="async",
             )
@@ -1804,7 +1795,6 @@ async def run_dex_mixed(
                     "symbol": "WTA",
                 },
             ),
-            chi=TOKEN_DEPLOY_CHI,
             expected_success=True,
             timeout_seconds=receipt_timeout_seconds,
         ),
@@ -1825,7 +1815,6 @@ async def run_dex_mixed(
                     "symbol": "WTB",
                 },
             ),
-            chi=TOKEN_DEPLOY_CHI,
             expected_success=True,
             timeout_seconds=receipt_timeout_seconds,
         ),
@@ -1840,7 +1829,6 @@ async def run_dex_mixed(
                 name=pairs_contract,
                 code=pairs_code,
             ),
-            chi=PAIR_DEPLOY_CHI,
             expected_success=True,
             timeout_seconds=receipt_timeout_seconds,
         ),
@@ -1855,7 +1843,6 @@ async def run_dex_mixed(
                 name=dex_contract,
                 code=dex_code,
             ),
-            chi=DEX_DEPLOY_CHI,
             expected_success=True,
             timeout_seconds=receipt_timeout_seconds,
         ),
@@ -1919,7 +1906,6 @@ async def run_dex_mixed(
             "to": founder.public_key,
             "deadline": deadline_value(seconds_from_now=300),
         },
-        chi=DEX_TX_CHI,
         expected_success=True,
     )
     await context.resolve_records(
@@ -1947,7 +1933,6 @@ async def run_dex_mixed(
         contract=pairs_contract,
         function="liqApprove",
         kwargs={"pair": pair_id, "amount": fixed(10_000), "to": dex_contract},
-        chi=DEX_TX_CHI,
         expected_success=True,
         timeout_seconds=receipt_timeout_seconds,
     )
@@ -1982,8 +1967,8 @@ async def run_dex_mixed(
                     "to": trader_a.public_key,
                     "deadline": deadline_value(seconds_from_now=300),
                 },
-                chi=DEX_TX_CHI,
                 expected_success=True,
+                extra_chi=RACING_SWAP_EXTRA_CHI,
             ),
             await context.broadcast_tx(
                 label=f"swap tokenB->tokenA round-{round_index}",
@@ -1999,8 +1984,8 @@ async def run_dex_mixed(
                     "to": trader_b.public_key,
                     "deadline": deadline_value(seconds_from_now=300),
                 },
-                chi=DEX_TX_CHI,
                 expected_success=True,
+                extra_chi=RACING_SWAP_EXTRA_CHI,
             ),
             await context.broadcast_tx(
                 label=f"expired swap round-{round_index}",
@@ -2016,7 +2001,6 @@ async def run_dex_mixed(
                     "to": trader_c.public_key,
                     "deadline": deadline_value(seconds_from_now=-5),
                 },
-                chi=DEX_TX_CHI,
                 expected_success=False,
                 expected_message="EXPIRED",
             ),
@@ -2034,7 +2018,6 @@ async def run_dex_mixed(
                     "to": founder.public_key,
                     "deadline": deadline_value(seconds_from_now=300),
                 },
-                chi=DEX_TX_CHI,
                 expected_success=False,
                 expected_message="INSUFFICIENT_OUTPUT_AMOUNT",
             ),
@@ -2062,7 +2045,6 @@ async def run_dex_mixed(
                 "to": unapproved_trader.public_key,
                 "deadline": deadline_value(seconds_from_now=300),
             },
-            chi=DEX_TX_CHI,
             expected_success=False,
             expected_message="approved",
         )
@@ -2082,7 +2064,6 @@ async def run_dex_mixed(
                 "to": approved_traders[0].public_key,
                 "deadline": deadline_value(seconds_from_now=300),
             },
-            chi=DEX_TX_CHI,
             expected_success=False,
             expected_message="INSUFFICIENT_LIQUIDITY",
         )
@@ -2103,7 +2084,6 @@ async def run_dex_mixed(
                 "to": founder.public_key,
                 "deadline": deadline_value(seconds_from_now=300),
             },
-            chi=DEX_TX_CHI,
             expected_success=True,
         )
     )
@@ -2285,7 +2265,6 @@ async def run_parallel_probe(
             name=contract_name,
             code=contract_code,
         ),
-        chi=PARALLEL_PROBE_DEPLOY_CHI,
         expected_success=True,
     )
     await context.resolve_records([deploy_record], timeout_seconds=receipt_timeout_seconds)
@@ -2302,7 +2281,6 @@ async def run_parallel_probe(
                 contract="currency",
                 function="transfer",
                 kwargs={"amount": fixed(5_000), "to": wallet.public_key},
-                chi=PARALLEL_PROBE_TX_CHI,
                 expected_success=True,
                 timeout_seconds=receipt_timeout_seconds,
             )
@@ -2317,6 +2295,7 @@ async def run_parallel_probe(
         non_conflicting_records.append(
             await context.broadcast_tx(
                 label=f"parallel unique #{index}",
+                chi=PARALLEL_PROBE_TX_CHI,
                 wallet=wallet,
                 rpc_index=index % len(context.nodes),
                 contract=contract_name,
@@ -2326,7 +2305,6 @@ async def run_parallel_probe(
                     "key": f"unique-{index}",
                     "value": value,
                 },
-                chi=PARALLEL_PROBE_TX_CHI,
                 expected_success=True,
             )
         )
@@ -2345,6 +2323,7 @@ async def run_parallel_probe(
         same_sender_records.append(
             await context.broadcast_tx(
                 label=f"parallel same-sender #{index}",
+                chi=PARALLEL_PROBE_TX_CHI,
                 wallet=same_sender_wallet,
                 rpc_index=0,
                 contract=contract_name,
@@ -2354,7 +2333,6 @@ async def run_parallel_probe(
                     "key": f"same-{index}",
                     "value": value,
                 },
-                chi=PARALLEL_PROBE_TX_CHI,
                 expected_success=True,
             )
         )
@@ -2375,22 +2353,22 @@ async def run_parallel_probe(
         records: list[BroadcastRecord] = [
             await context.broadcast_tx(
                 label=f"parallel set-flag attempt {attempt}",
+                chi=PARALLEL_PROBE_TX_CHI,
                 wallet=writer_wallets[0],
                 rpc_index=0,
                 contract=contract_name,
                 function="set_flag",
                 kwargs={"group": flag_group, "value": 7},
-                chi=PARALLEL_PROBE_TX_CHI,
                 expected_success=True,
             ),
             await context.broadcast_tx(
                 label=f"parallel observe-flag attempt {attempt}",
+                chi=PARALLEL_PROBE_TX_CHI,
                 wallet=writer_wallets[1],
                 rpc_index=0,
                 contract=contract_name,
                 function="observe_flag",
                 kwargs={"group": flag_group, "tag": observation_tag},
-                chi=PARALLEL_PROBE_TX_CHI,
                 expected_success=True,
             ),
         ]
@@ -2399,6 +2377,7 @@ async def run_parallel_probe(
             records.append(
                 await context.broadcast_tx(
                     label=f"parallel read-tail attempt {attempt} #{index}",
+                    chi=PARALLEL_PROBE_TX_CHI,
                     wallet=writer_wallets[index],
                     rpc_index=0,
                     contract=contract_name,
@@ -2408,7 +2387,6 @@ async def run_parallel_probe(
                         "key": f"tail-{index}",
                         "value": value,
                     },
-                    chi=PARALLEL_PROBE_TX_CHI,
                     expected_success=True,
                 )
             )
@@ -2487,12 +2465,12 @@ async def run_parallel_probe(
 
         prefix_write_record = await context.broadcast_tx(
             label=f"parallel prefix-write attempt {attempt}",
+            chi=PARALLEL_PROBE_TX_CHI,
             wallet=writer_wallets[0],
             rpc_index=0,
             contract=contract_name,
             function="write_value",
             kwargs={"group": group, "key": "seed", "value": seed_value},
-            chi=PARALLEL_PROBE_TX_CHI,
             expected_success=True,
         )
         records.append(prefix_write_record)
@@ -2500,12 +2478,12 @@ async def run_parallel_probe(
 
         snapshot_record = await context.broadcast_tx(
             label=f"parallel prefix-snapshot attempt {attempt}",
+            chi=PARALLEL_PROBE_TX_CHI,
             wallet=writer_wallets[1],
             rpc_index=0,
             contract=contract_name,
             function="snapshot_sum",
             kwargs={"group": group, "tag": observation_tag},
-            chi=PARALLEL_PROBE_TX_CHI,
             expected_success=True,
         )
         records.append(snapshot_record)
@@ -2514,6 +2492,7 @@ async def run_parallel_probe(
             value = 300 + index
             record = await context.broadcast_tx(
                 label=f"parallel prefix-tail attempt {attempt} #{index}",
+                chi=PARALLEL_PROBE_TX_CHI,
                 wallet=writer_wallets[index],
                 rpc_index=0,
                 contract=contract_name,
@@ -2523,7 +2502,6 @@ async def run_parallel_probe(
                     "key": f"tail-{index}",
                     "value": value,
                 },
-                chi=PARALLEL_PROBE_TX_CHI,
                 expected_success=True,
             )
             records.append(record)
@@ -2690,7 +2668,6 @@ async def run_transfer_fanout(
         seed_wallet=context.founder_wallet,
         worker_wallets=sender_wallets,
         amount=funding_amount,
-        chi=THROUGHPUT_TRANSFER_TX_CHI,
         label_prefix="fund throughput sender",
         timeout_seconds=receipt_timeout_seconds,
     )
@@ -2716,7 +2693,6 @@ async def run_transfer_fanout(
                     "contract": "currency",
                     "function": "transfer",
                     "kwargs": {"amount": fixed(1), "to": recipient},
-                    "chi": THROUGHPUT_TRANSFER_TX_CHI,
                     "expected_success": True,
                     "mode": broadcast_mode,
                     "nonce": nonce,
@@ -2840,7 +2816,6 @@ async def run_contract_heavy(
             name=contract_name,
             code=contract_code,
         ),
-        chi=THROUGHPUT_CONTRACT_DEPLOY_CHI,
         expected_success=True,
         mode="checktx",
     )
@@ -2868,7 +2843,6 @@ async def run_contract_heavy(
         seed_wallet=context.founder_wallet,
         worker_wallets=worker_wallets,
         amount=funding_amount,
-        chi=THROUGHPUT_TRANSFER_TX_CHI,
         label_prefix="fund heavy worker",
         timeout_seconds=receipt_timeout_seconds,
     )
@@ -2903,7 +2877,6 @@ async def run_contract_heavy(
                         "payload": f"{seed}-{slot}",
                         "rounds": rounds,
                     },
-                    "chi": THROUGHPUT_CONTRACT_TX_CHI,
                     "expected_success": True,
                     "mode": broadcast_mode,
                     "nonce": nonce,

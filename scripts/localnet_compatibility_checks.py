@@ -105,7 +105,7 @@ async def compatibility_checks(runner, session):
             ("changed_dictionary", 1, "size"),
             ("probe", 2, None),
         ]:
-            submission = await client.send_tx(name, function, {}, chi=100_000, wait_for_tx=True)
+            submission = await client.send_tx(name, function, {}, wait_for_tx=True)
             if failure:
                 outcome = failed_execution(submission, function, fragment=failure)
                 if outcome.get("events"):
