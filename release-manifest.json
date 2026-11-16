@@ -3,19 +3,19 @@
   "components": {
     "xian-abci": {
       "repository": "xian-technology/xian-abci",
-      "ref": "cbc30343a9eb34c4bd8d6ad41c810ba2d3e76b39"
+      "ref": "7cb76e23881f699f68a59e0a01bd119e3c0a049d"
     },
     "xian-configs": {
       "repository": "xian-technology/xian-configs",
-      "ref": "1b724c66eb981d2b47947b3266ac8977b21a7456"
+      "ref": "5681d5f3902ae54c47ebcdab4c4722fe60519457"
     },
     "xian-contracting": {
       "repository": "xian-technology/xian-contracting",
-      "ref": "2b0e58fe641bce0f554857a9c703644fa2fd61e1"
+      "ref": "83f8f4ea0977dce7f2f48f9eeb28f6b946ad5494"
     },
     "xian-py": {
       "repository": "xian-technology/xian-py",
-      "ref": "ddf6f9a87ac2be60486b99cf357fe459b26e146c"
+      "ref": "a59585cef964c2dacf82aaed2c79a7fc72014a75"
     }
   },
   "build": {
@@ -29,13 +29,17 @@
     "packaging_version": "26.2",
     "wheel_version": "0.47.0",
     "maturin_version": "1.14.1",
-    "cometbft_version": "0.39.3",
-    "cometbft_source_url": "https://github.com/cometbft/cometbft/archive/refs/tags/v0.39.3.tar.gz",
-    "cometbft_source_sha256": "f674a39ce3bdb3f62ac547a1c3296142ef1433f56fff185055c50a38b3afeee8",
+    "cometbft_version": "0.40.0",
+    "cometbft_source_url": "https://codeload.github.com/cometbft/cometbft/tar.gz/0880b4d378f347ab16e54ec677ff50d803f37d62",
+    "cometbft_source_sha256": "c421c1461494d4e1e922a334f1899aab2f638e990a465316ed6e2437a8d71a66",
     "s6_overlay_version": "3.2.3.0",
     "s6_overlay_noarch_sha256": "b720f9d9340efc8bb07528b9743813c836e4b02f8693d90241f047998b4c53cf",
     "s6_overlay_x86_64_sha256": "a93f02882c6ed46b21e7adb5c0add86154f01236c93cd82c7d682722e8840563",
-    "s6_overlay_aarch64_sha256": "0952056ff913482163cc30e35b2e944b507ba1025d78f5becbb89367bf344581"
+    "s6_overlay_aarch64_sha256": "0952056ff913482163cc30e35b2e944b507ba1025d78f5becbb89367bf344581",
+    "cometbft_source_commit": "0880b4d378f347ab16e54ec677ff50d803f37d62",
+    "cometbft_patch_path": "docker/cometbft-patches/0001-verified-evidence-history.patch",
+    "cometbft_patch_sha256": "c97b141dde639ec369a4205306e234f5a565bcc4f066ca3dae7dc09aee4bad63",
+    "cometbft_history_revision": "1"
   },
   "images": {
     "integrated": "xian-node",

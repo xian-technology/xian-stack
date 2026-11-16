@@ -41,26 +41,26 @@ runs:
       uses: actions/checkout@v7
       with:
         repository: xian-technology/xian-cli
-        ref: a8fbeeb26881059352f14f2ca975e63c91d63c7a
+        ref: 836760ded78b45b079403b3d3bae4cde28090b6d
         path: xian-cli
     - name: Check out xian-contracts
       if: inputs.products == 'true'
       uses: actions/checkout@v7
       with:
         repository: xian-technology/xian-contracts
-        ref: ac8bd779374501ddd7f89a7346d93d0744e7d1ff
+        ref: add629a4cf9c1d9b28970183db1228d66e0940f2
         path: xian-contracts
     - name: Check out xian-dex
       if: inputs.products == 'true'
       uses: actions/checkout@v7
       with:
         repository: xian-technology/xian-dex
-        ref: a47121fcb561f5f786f65f877ae72ccbca87b703
+        ref: 4faca67732377ff3401ead66ce17033ce0fd10f9
         path: xian-dex
     - name: Check out xian-dex-automation
       if: inputs.products == 'true'
       uses: actions/checkout@v7
       with:
         repository: xian-technology/xian-dex-automation
-        ref: 6a04a6eae4b2254048c63bfc1ce4ac84a7454158
+        ref: 24f8b6ec037a8664c813ed244a7a97fc9f402c21
         path: xian-dex-automation

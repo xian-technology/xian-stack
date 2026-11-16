@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 from pathlib import Path
 
 REQUIRED_COMPONENTS = (
@@ -26,6 +28,10 @@ REQUIRED_BUILD_FIELDS = (
     "cometbft_version",
     "cometbft_source_url",
     "cometbft_source_sha256",
+    "cometbft_source_commit",
+    "cometbft_patch_path",
+    "cometbft_patch_sha256",
+    "cometbft_history_revision",
     "s6_overlay_version",
     "s6_overlay_noarch_sha256",
     "s6_overlay_x86_64_sha256",
@@ -38,40 +44,86 @@ def load_manifest(path: Path) -> dict:
     return json.loads(path.read_text())
 
 
-def validate_manifest(data: dict) -> None:
-    if data.get("schema_version") != 1:
-        raise SystemExit("release manifest schema_version must be 1")
+def manifest_object(data: dict, name: str) -> dict:
+    value = data.get(name)
+    if not isinstance(value, dict):
+        raise SystemExit(f"release manifest must contain a {name} object")
+    return value
 
-    components = data.get("components")
-    if not isinstance(components, dict):
-        raise SystemExit("release manifest must contain a components object")
 
+def validate_components(components: dict) -> None:
     for name in REQUIRED_COMPONENTS:
         component = components.get(name)
         if not isinstance(component, dict):
             raise SystemExit(f"release manifest missing component: {name}")
-        repository = component.get("repository")
-        ref = component.get("ref")
-        if not repository or not isinstance(repository, str):
-            raise SystemExit(f"component {name} is missing a repository value")
-        if not ref or not isinstance(ref, str):
-            raise SystemExit(f"component {name} is missing a ref value")
+        for field in ("repository", "ref"):
+            value = component.get(field)
+            if not value or not isinstance(value, str):
+                raise SystemExit(f"component {name} is missing a {field} value")
 
-    build = data.get("build")
-    if not isinstance(build, dict):
-        raise SystemExit("release manifest must contain a build object")
-    for name in REQUIRED_BUILD_FIELDS:
-        value = build.get(name)
-        if not value or not isinstance(value, str):
-            raise SystemExit(f"release manifest is missing build.{name}")
 
-    images = data.get("images")
-    if not isinstance(images, dict):
-        raise SystemExit("release manifest must contain an images object")
-    for name in REQUIRED_IMAGE_FIELDS:
-        value = images.get(name)
+def validate_string_fields(values: dict, names: tuple[str, ...], prefix: str) -> None:
+    for name in names:
+        value = values.get(name)
         if not value or not isinstance(value, str):
-            raise SystemExit(f"release manifest is missing images.{name}")
+            raise SystemExit(f"release manifest is missing {prefix}.{name}")
+
+
+def validate_manifest(data: dict) -> None:
+    if not isinstance(data, dict):
+        raise SystemExit("release manifest must be an object")
+    if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
+        raise SystemExit("release manifest schema_version must be 1")
+    validate_components(manifest_object(data, "components"))
+    build = manifest_object(data, "build")
+    validate_string_fields(build, REQUIRED_BUILD_FIELDS, "build")
+    validate_cometbft_pins(build)
+    validate_string_fields(manifest_object(data, "images"), REQUIRED_IMAGE_FIELDS, "images")
+
+
+def validate_cometbft_pins(build: dict) -> None:
+    for name, digits in (
+        ("cometbft_source_commit", 40),
+        ("cometbft_source_sha256", 64),
+        ("cometbft_patch_sha256", 64),
+    ):
+        if re.fullmatch(r"[0-9a-f]{" + str(digits) + r"}", build[name]) is None:
+            raise SystemExit(f"build.{name} must be a full lowercase hexadecimal digest")
+    if build["cometbft_version"] != "0.40.0":
+        raise SystemExit("build.cometbft_version must be 0.40.0 for history revision 1")
+    if build["cometbft_history_revision"] != "1":
+        raise SystemExit("build.cometbft_history_revision must be the supported revision 1")
+
+
+def checked_patch_path(root: Path, relative: str) -> Path:
+    path = Path(relative)
+    if (
+        ".." in path.parts
+        or path.parts[:2] != ("docker", "cometbft-patches")
+        or path.suffix != ".patch"
+    ):
+        raise SystemExit("CometBFT patch path must be inside docker/cometbft-patches")
+    target = root / path
+    if not target.resolve().is_relative_to(root.resolve()):
+        raise SystemExit("CometBFT patch path must stay inside the release source tree")
+    return target
+
+
+def validate_patch_file(build: dict, root: Path) -> None:
+    path = checked_patch_path(root, build["cometbft_patch_path"])
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit("CometBFT patch must be an existing regular file")
+    with path.open("rb") as handle:
+        actual = hashlib.file_digest(handle, "sha256").hexdigest()
+    if actual != build["cometbft_patch_sha256"]:
+        raise SystemExit("CometBFT patch checksum does not match the release manifest")
+
+
+def validated_manifest(path: Path) -> dict:
+    data = load_manifest(path)
+    validate_manifest(data)
+    validate_patch_file(data["build"], path.parent)
+    return data
 
 
 def flatten_outputs(data: dict) -> dict[str, str]:
@@ -88,13 +140,11 @@ def flatten_outputs(data: dict) -> dict[str, str]:
 
 
 def command_validate(args: argparse.Namespace) -> None:
-    data = load_manifest(args.manifest)
-    validate_manifest(data)
+    validated_manifest(args.manifest)
 
 
 def command_github_output(args: argparse.Namespace) -> None:
-    data = load_manifest(args.manifest)
-    validate_manifest(data)
+    data = validated_manifest(args.manifest)
     outputs = flatten_outputs(data)
     with Path(args.github_output).open("a", encoding="utf-8") as handle:
         for key, value in outputs.items():

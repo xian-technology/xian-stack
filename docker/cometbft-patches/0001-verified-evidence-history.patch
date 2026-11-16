@@ -1,0 +1,4651 @@
+diff --git a/config/config.go b/config/config.go
+index aa5a806..6bf49ca 100644
+--- a/config/config.go
++++ b/config/config.go
+@@ -1114,6 +1114,10 @@ type StateSyncConfig struct {
+ 	ChunkRequestTimeout time.Duration `mapstructure:"chunk_request_timeout"`
+ 	ChunkFetchers       int32         `mapstructure:"chunk_fetchers"`
+ 	MaxSnapshotChunks   uint32        `mapstructure:"max_snapshot_chunks"`
++	// Zero selects the bounded history defaults; exceeding either budget fails
++	// bootstrap rather than publishing a truncated evidence window.
++	HistoryMaxRecords int64 `mapstructure:"history_max_records"`
++	HistoryMaxBytes   int64 `mapstructure:"history_max_bytes"`
+ }
+ 
+ func (cfg *StateSyncConfig) TrustHashBytes() []byte {
+@@ -1143,6 +1147,9 @@ func TestStateSyncConfig() *StateSyncConfig {
+ 
+ // ValidateBasic performs basic validation.
+ func (cfg *StateSyncConfig) ValidateBasic() error {
++	if cfg.HistoryMaxRecords < 0 || cfg.HistoryMaxRecords > 10000000 || cfg.HistoryMaxBytes < 0 || cfg.HistoryMaxBytes > 1<<40 {
++		return fmt.Errorf("invalid evidence history resource limits")
++	}
+ 	if cfg.Enable {
+ 		if len(cfg.RPCServers) == 0 {
+ 			return cmterrors.ErrRequiredField{Field: "rpc_servers"}
+diff --git a/config/toml.go b/config/toml.go
+index 493a063..50e483d 100644
+--- a/config/toml.go
++++ b/config/toml.go
+@@ -539,6 +539,12 @@ chunk_fetchers = "{{ .StateSync.ChunkFetchers }}"
+ # Maximum number of chunks allowed in a snapshot (default: 100000).
+ max_snapshot_chunks = {{ .StateSync.MaxSnapshotChunks }}
+ 
++# Verified precheckpoint evidence history. Zero uses bounded defaults (1M
++# records / 2GiB); larger live windows require explicit operator budgets.
++# Bootstrap fails safely if either limit is reached; it never truncates history.
++history_max_records = {{ .StateSync.HistoryMaxRecords }}
++history_max_bytes = {{ .StateSync.HistoryMaxBytes }}
++
+ #######################################################
+ ###       Block Sync Configuration Options          ###
+ #######################################################
+diff --git a/evidence/history_cache.go b/evidence/history_cache.go
+new file mode 100644
+index 0000000..3e29bbc
+--- /dev/null
++++ b/evidence/history_cache.go
+@@ -0,0 +1,397 @@
++package evidence
++
++import (
++	"bytes"
++	"crypto/sha256"
++	"encoding/binary"
++	"fmt"
++	"hash"
++	"sync"
++
++	dbm "github.com/cometbft/cometbft-db"
++	cmtjson "github.com/cometbft/cometbft/libs/json"
++	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
++	sm "github.com/cometbft/cometbft/state"
++	"github.com/cometbft/cometbft/types"
++)
++
++// These namespaces do not overlap the pool's committed/pending evidence keys.
++var historyManifestKey = []byte{0x02}
++
++// HistoryCache contains authenticated evidence prerequisites only. The node is
++// its sole writer while state sync is paused; ordinary reads remain concurrent.
++// It never adds full blocks or validator/proposer state to the native stores.
++type HistoryCache struct {
++	db dbm.DB
++	mu sync.RWMutex
++}
++
++type historyManifest struct {
++	Version       int           `json:"version"`
++	Ready         bool          `json:"ready"`
++	Header        *types.Header `json:"header"`
++	NextHeader    *types.Header `json:"next_header"`
++	InitialHeight int64         `json:"initial_height"`
++	LowestHeight  int64         `json:"lowest_height"`
++	Count         int64         `json:"count"`
++	RecordsHash   []byte        `json:"records_hash"`
++}
++
++type historyStoredRecord struct {
++	Header *types.Header `json:"header"`
++	Commit *types.Commit `json:"commit"`
++}
++
++func NewHistoryCache(db dbm.DB) *HistoryCache { return &HistoryCache{db: db} }
++
++func (c *HistoryCache) manifest() (historyManifest, []byte, error) {
++	data, err := c.db.Get(historyManifestKey)
++	if err != nil {
++		return historyManifest{}, nil, err
++	}
++	if len(data) == 0 {
++		return historyManifest{}, nil, fmt.Errorf("evidence history cache is missing")
++	}
++	var m historyManifest
++	if err := cmtjson.Unmarshal(data, &m); err != nil {
++		return m, nil, fmt.Errorf("invalid evidence history manifest: %w", err)
++	}
++	if m.Version != 1 || m.Header == nil || m.NextHeader == nil || m.InitialHeight < 1 || m.Header.Height < m.InitialHeight {
++		return m, nil, fmt.Errorf("invalid evidence history manifest")
++	}
++	return m, data, nil
++}
++
++func (c *HistoryCache) Begin(header, next *types.Header, initialHeight int64) error {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	if header == nil || next == nil || initialHeight < 1 || header.Height < initialHeight {
++		return fmt.Errorf("invalid history checkpoint")
++	}
++	if err := historyHeaderLink(header, next); err != nil {
++		return err
++	}
++	m := historyManifest{Version: 1, Header: header, NextHeader: next, InitialHeight: initialHeight}
++	data, err := cmtjson.Marshal(m)
++	if err != nil {
++		return err
++	}
++	// Pending is durable before any record can be considered published.
++	return c.db.SetSync(historyManifestKey, data)
++}
++
++func historyKey(prefix byte, anchor []byte, height int64) []byte {
++	key := make([]byte, 1+len(anchor)+8)
++	key[0] = prefix
++	copy(key[1:], anchor)
++	binary.BigEndian.PutUint64(key[len(key)-8:], uint64(height))
++	return key
++}
++
++func historyValidatorKey(hash []byte) []byte { return append([]byte{0x04}, hash...) }
++
++func encodeHistoryRecord(header *types.Header, vals *types.ValidatorSet, commit *types.Commit) ([]byte, []byte, error) {
++	if commit == nil {
++		return nil, nil, fmt.Errorf("missing historical commit")
++	}
++	data, err := cmtjson.Marshal(historyStoredRecord{Header: header, Commit: commit})
++	if err != nil {
++		return nil, nil, err
++	}
++	protoVals, err := vals.ToProto()
++	if err != nil {
++		return nil, nil, err
++	}
++	encodedVals, err := protoVals.Marshal()
++	return data, encodedVals, err
++}
++
++func (c *HistoryCache) Put(header *types.Header, vals *types.ValidatorSet, commit *types.Commit) error {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	m, _, err := c.manifest()
++	if err != nil {
++		return err
++	}
++	if err = historyPendingRecord(m, header); err != nil {
++		return err
++	}
++	if err = historyValidatorSet(header, vals); err != nil {
++		return err
++	}
++	data, encodedVals, err := encodeHistoryRecord(header, vals, commit)
++	if err != nil {
++		return err
++	}
++	batch := c.db.NewBatch()
++	defer batch.Close()
++	if err = batch.Set(historyValidatorKey(header.ValidatorsHash), encodedVals); err != nil {
++		return err
++	}
++	if err = batch.Set(historyKey(0x03, m.Header.Hash(), header.Height), data); err != nil {
++		return err
++	}
++	return batch.WriteSync()
++}
++
++func historyPendingRecord(m historyManifest, header *types.Header) error {
++	if m.Ready || header == nil || header.Height < m.InitialHeight || header.Height > m.Header.Height {
++		return fmt.Errorf("history record outside pending checkpoint")
++	}
++	return nil
++}
++
++func (c *HistoryCache) Complete(lowest, count int64) ([]byte, error) {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	m, _, err := c.manifest()
++	if err != nil {
++		return nil, err
++	}
++	if m.Ready || lowest < m.InitialHeight || lowest > m.Header.Height || count != m.Header.Height-lowest+1 {
++		return nil, fmt.Errorf("incomplete evidence history range")
++	}
++	m.LowestHeight, m.Count = lowest, count
++	recordsHash, err := c.validateRecords(m, true)
++	if err != nil {
++		return nil, err
++	}
++	m.RecordsHash = recordsHash
++	m.Ready = true
++	data, err := cmtjson.Marshal(m)
++	if err != nil {
++		return nil, err
++	}
++	if err = c.db.SetSync(historyManifestKey, data); err != nil {
++		return nil, err
++	}
++	digest := sha256.Sum256(data)
++	return digest[:], nil
++}
++
++// Validate binds the cache to an independently persisted core-state requirement.
++// It checks every retained record before the node can catch up or vote again.
++func (c *HistoryCache) Validate(requiredDigest []byte) error {
++	c.mu.RLock()
++	defer c.mu.RUnlock()
++	m, data, err := c.manifest()
++	if err != nil {
++		return err
++	}
++	if !m.Ready || !m.publishedRangeValid() {
++		return fmt.Errorf("evidence history cache is incomplete")
++	}
++	digest := sha256.Sum256(data)
++	if len(requiredDigest) != 0 && !bytes.Equal(requiredDigest, digest[:]) {
++		return fmt.Errorf("evidence history checkpoint digest mismatch")
++	}
++	recordsHash, err := c.validateRecords(m, false)
++	if err != nil {
++		return err
++	}
++	if !bytes.Equal(recordsHash, m.RecordsHash) {
++		return fmt.Errorf("evidence history record seal mismatch")
++	}
++	return nil
++}
++
++func (m historyManifest) publishedRangeValid() bool {
++	return m.Count > 0 && m.Count == m.Header.Height-m.LowestHeight+1 && m.LowestHeight >= m.InitialHeight && m.LowestHeight <= m.Header.Height && len(m.RecordsHash) == 32
++}
++
++func historyRecordCommit(record historyStoredRecord, vals *types.ValidatorSet, next *types.Header, signatures bool) error {
++	if record.Commit == nil {
++		return fmt.Errorf("missing historical commit")
++	}
++	if err := record.Commit.ValidateBasic(); err != nil {
++		return err
++	}
++	if record.Commit.Height != record.Header.Height || !record.Commit.BlockID.Equals(next.LastBlockID) || !bytes.Equal(record.Commit.Hash(), next.LastCommitHash) {
++		return fmt.Errorf("historical commit mismatch at %d", record.Header.Height)
++	}
++	if signatures {
++		return vals.VerifyCommit(record.Header.ChainID, next.LastBlockID, record.Header.Height, record.Commit)
++	}
++	return nil
++}
++
++func historySealRecord(seal hash.Hash, record historyStoredRecord, vals *types.ValidatorSet) error {
++	data, valBytes, err := encodeHistoryRecord(record.Header, vals, record.Commit)
++	if err != nil {
++		return err
++	}
++	for _, framed := range [][]byte{data, valBytes} {
++		var length [8]byte
++		binary.BigEndian.PutUint64(length[:], uint64(len(framed)))
++		seal.Write(length[:])
++		seal.Write(framed)
++	}
++	return nil
++}
++
++func (c *HistoryCache) validateRecords(m historyManifest, signatures bool) ([]byte, error) {
++	seal := sha256.New()
++	seal.Write([]byte("xian:evidence-history-records:v1\x00"))
++	next := m.NextHeader
++	for h := m.Header.Height; h >= m.LowestHeight; h-- {
++		record, vals, err := c.record(m, h)
++		if err != nil {
++			return nil, err
++		}
++		if err = historyHeaderLink(record.Header, next); err != nil {
++			return nil, err
++		}
++		if err = historyValidatorSet(record.Header, vals); err != nil {
++			return nil, err
++		}
++		if err = historyRecordCommit(record, vals, next, signatures); err != nil {
++			return nil, err
++		}
++		if err = historySealRecord(seal, record, vals); err != nil {
++			return nil, err
++		}
++		next = record.Header
++	}
++	return seal.Sum(nil), nil
++}
++
++func historyHeaderLink(header, next *types.Header) error {
++	if header == nil || next == nil {
++		return fmt.Errorf("missing historical header")
++	}
++	if err := header.ValidateBasic(); err != nil {
++		return err
++	}
++	if err := next.ValidateBasic(); err != nil {
++		return err
++	}
++	if next.Height != header.Height+1 || next.ChainID != header.ChainID || !next.Time.After(header.Time) || !bytes.Equal(next.LastBlockID.Hash, header.Hash()) {
++		return fmt.Errorf("historical header chain mismatch at %d", header.Height)
++	}
++	return nil
++}
++
++func historyValidatorMembers(vals *types.ValidatorSet) error {
++	seen := make(map[string]bool, len(vals.Validators))
++	for _, val := range vals.Validators {
++		if val.VotingPower <= 0 || seen[string(val.Address)] {
++			return fmt.Errorf("noncanonical historical validator")
++		}
++		seen[string(val.Address)] = true
++	}
++	return nil
++}
++
++func historyValidatorSet(header *types.Header, vals *types.ValidatorSet) error {
++	if vals == nil || vals.IsNilOrEmpty() {
++		return fmt.Errorf("missing historical validators")
++	}
++	// Shared Validator.ValidateBasic validates protocol key encodings and derived
++	// addresses before Address() can panic; proposer priorities remain irrelevant.
++	if err := vals.ValidateBasic(); err != nil {
++		return err
++	}
++	if err := historyValidatorMembers(vals); err != nil {
++		return err
++	}
++	if !bytes.Equal(vals.Hash(), header.ValidatorsHash) {
++		return fmt.Errorf("historical validator hash mismatch")
++	}
++	return nil
++}
++
++func (c *HistoryCache) record(m historyManifest, height int64) (historyStoredRecord, *types.ValidatorSet, error) {
++	var record historyStoredRecord
++	data, err := c.db.Get(historyKey(0x03, m.Header.Hash(), height))
++	if err != nil {
++		return record, nil, err
++	}
++	if len(data) == 0 {
++		return record, nil, fmt.Errorf("missing evidence history record %d", height)
++	}
++	if err = cmtjson.Unmarshal(data, &record); err != nil {
++		return record, nil, err
++	}
++	if record.Header == nil || record.Header.Height != height {
++		return record, nil, fmt.Errorf("invalid evidence history record %d", height)
++	}
++	data, err = c.db.Get(historyValidatorKey(record.Header.ValidatorsHash))
++	if err != nil {
++		return record, nil, err
++	}
++	var encoded cmtproto.ValidatorSet
++	if err = encoded.Unmarshal(data); err != nil {
++		return record, nil, err
++	}
++	vals, err := types.ValidatorSetFromProto(&encoded)
++	return record, vals, err
++}
++
++func (c *HistoryCache) publishedRecord(height int64) (historyStoredRecord, *types.ValidatorSet, error) {
++	c.mu.RLock()
++	defer c.mu.RUnlock()
++	m, _, err := c.manifest()
++	if err != nil {
++		return historyStoredRecord{}, nil, err
++	}
++	if !m.Ready || height < m.LowestHeight || height > m.Header.Height {
++		return historyStoredRecord{}, nil, fmt.Errorf("height %d outside published evidence history", height)
++	}
++	return c.record(m, height)
++}
++
++func (c *HistoryCache) BlockMeta(height int64) (*types.BlockMeta, error) {
++	record, _, err := c.publishedRecord(height)
++	if err != nil {
++		return nil, err
++	}
++	return &types.BlockMeta{Header: *record.Header, BlockID: record.Commit.BlockID}, nil
++}
++func (c *HistoryCache) Commit(height int64) (*types.Commit, error) {
++	record, _, err := c.publishedRecord(height)
++	return record.Commit, err
++}
++func (c *HistoryCache) Validators(height int64) (*types.ValidatorSet, error) {
++	_, vals, err := c.publishedRecord(height)
++	return vals, err
++}
++
++type historyStateStore struct {
++	sm.Store
++	cache *HistoryCache
++}
++
++func (s historyStateStore) LoadValidators(height int64) (*types.ValidatorSet, error) {
++	vals, err := s.Store.LoadValidators(height)
++	if err == nil {
++		return vals, nil
++	}
++	if cached, cacheErr := s.cache.Validators(height); cacheErr == nil {
++		return cached, nil
++	}
++	return nil, err
++}
++
++type historyBlockStore struct {
++	BlockStore
++	cache *HistoryCache
++}
++
++func (s historyBlockStore) LoadBlockMeta(height int64) *types.BlockMeta {
++	if meta := s.BlockStore.LoadBlockMeta(height); meta != nil {
++		return meta
++	}
++	meta, _ := s.cache.BlockMeta(height)
++	return meta
++}
++func (s historyBlockStore) LoadBlockCommit(height int64) *types.Commit {
++	if commit := s.BlockStore.LoadBlockCommit(height); commit != nil {
++		return commit
++	}
++	commit, _ := s.cache.Commit(height)
++	return commit
++}
++
++// HistoryCache exposes the node's single history writer without wrapping the
++// main block executor's current state or block store.
++func (p *Pool) HistoryCache() *HistoryCache { return p.historyCache }
+diff --git a/evidence/history_cache_adversarial_test.go b/evidence/history_cache_adversarial_test.go
+new file mode 100644
+index 0000000..a594dec
+--- /dev/null
++++ b/evidence/history_cache_adversarial_test.go
+@@ -0,0 +1,187 @@
++package evidence_test
++
++import (
++	"bytes"
++	"math"
++	"testing"
++	"time"
++
++	dbm "github.com/cometbft/cometbft-db"
++	"github.com/stretchr/testify/require"
++
++	"github.com/cometbft/cometbft/evidence"
++	cmtjson "github.com/cometbft/cometbft/libs/json"
++	sm "github.com/cometbft/cometbft/state"
++	"github.com/cometbft/cometbft/types"
++)
++
++type cacheAdversarialFixture struct {
++	db         dbm.DB
++	cache      *evidence.HistoryCache
++	digest     []byte
++	headers    []*types.Header
++	commits    []*types.Commit
++	validators *types.ValidatorSet
++	private    []types.PrivValidator
++}
++
++func newCacheAdversarialFixture(t *testing.T) *cacheAdversarialFixture {
++	t.Helper()
++	headers, commits, vals, private := cacheTestChain(t)
++	db := dbm.NewMemDB()
++	t.Cleanup(func() { require.NoError(t, db.Close()) })
++	cache := evidence.NewHistoryCache(db)
++	require.NoError(t, cache.Begin(headers[3], headers[4], 1))
++	for height := int64(3); height >= 1; height-- {
++		require.NoError(t, cache.Put(headers[height], vals, commits[height]))
++	}
++	digest, err := cache.Complete(1, 3)
++	require.NoError(t, err)
++	require.NoError(t, evidence.NewHistoryCache(db).Validate(digest))
++	return &cacheAdversarialFixture{
++		db: db, cache: cache, digest: digest, headers: headers, commits: commits,
++		validators: vals, private: private,
++	}
++}
++
++func cacheAdversarialKey(t *testing.T, db dbm.DB, prefix byte) []byte {
++	t.Helper()
++	iterator, err := db.Iterator([]byte{prefix}, []byte{prefix + 1})
++	require.NoError(t, err)
++	defer iterator.Close()
++	require.True(t, iterator.Valid(), "expected an existing published history key")
++	return append([]byte(nil), iterator.Key()...)
++}
++
++func TestHistoryCacheAdversarialMissingOrCorruptPublishedData(t *testing.T) {
++	for _, attack := range []struct {
++		name    string
++		prefix  byte
++		corrupt bool
++	}{
++		{"missing record", 0x03, false},
++		{"missing validator set", 0x04, false},
++		{"corrupt validator set", 0x04, true},
++	} {
++		t.Run(attack.name, func(t *testing.T) {
++			fixture := newCacheAdversarialFixture(t)
++			key := cacheAdversarialKey(t, fixture.db, attack.prefix)
++			if attack.corrupt {
++				require.NoError(t, fixture.db.SetSync(key, []byte{0xff}))
++			} else {
++				require.NoError(t, fixture.db.DeleteSync(key))
++			}
++			require.Error(t, evidence.NewHistoryCache(fixture.db).Validate(fixture.digest))
++		})
++	}
++}
++
++func TestHistoryCacheAdversarialCommitMetadataAfterPublication(t *testing.T) {
++	mutations := map[string]func(*types.Commit){
++		"round": func(commit *types.Commit) { commit.Round++ },
++		"part set": func(commit *types.Commit) {
++			commit.BlockID.PartSetHeader.Hash[0] ^= 0xff
++		},
++	}
++	for name, mutate := range mutations {
++		t.Run(name, func(t *testing.T) {
++			fixture := newCacheAdversarialFixture(t)
++			key := cacheAdversarialKey(t, fixture.db, 0x03)
++			data, err := fixture.db.Get(key)
++			require.NoError(t, err)
++			var record struct {
++				Header *types.Header `json:"header"`
++				Commit *types.Commit `json:"commit"`
++			}
++			require.NoError(t, cmtjson.Unmarshal(data, &record))
++			oldHash := record.Commit.Hash()
++			mutate(record.Commit)
++			record.Commit = &types.Commit{
++				Height: record.Commit.Height, Round: record.Commit.Round,
++				BlockID: record.Commit.BlockID, Signatures: record.Commit.Signatures,
++			}
++			require.Equal(t, oldHash, record.Commit.Hash(), "metadata is not authenticated by Commit.Hash")
++			data, err = cmtjson.Marshal(record)
++			require.NoError(t, err)
++			require.NoError(t, fixture.db.SetSync(key, data))
++			require.Error(t, evidence.NewHistoryCache(fixture.db).Validate(fixture.digest))
++		})
++	}
++}
++
++func TestHistoryCacheAdversarialTimestampAfterPublicationNeverPanics(t *testing.T) {
++	for _, year := range []string{"0000", "10000"} {
++		t.Run(year, func(t *testing.T) {
++			fixture := newCacheAdversarialFixture(t)
++			key := cacheAdversarialKey(t, fixture.db, 0x03)
++			data, err := fixture.db.Get(key)
++			require.NoError(t, err)
++			var record struct {
++				Header *types.Header `json:"header"`
++				Commit *types.Commit `json:"commit"`
++			}
++			require.NoError(t, cmtjson.Unmarshal(data, &record))
++			oldTime := []byte(`"timestamp":"` + record.Commit.Signatures[0].Timestamp.Format(time.RFC3339Nano) + `"`)
++			newTime := []byte(`"timestamp":"` + year + `-01-01T00:00:00Z"`)
++			require.Contains(t, string(data), string(oldTime))
++			data = bytes.Replace(data, oldTime, newTime, 1)
++			require.NoError(t, fixture.db.SetSync(key, data))
++			require.NotPanics(t, func() {
++				require.Error(t, evidence.NewHistoryCache(fixture.db).Validate(fixture.digest))
++			})
++		})
++	}
++}
++
++type cacheAdversarialHistoricalGap struct {
++	sm.Store
++	requested int
++}
++
++func (s *cacheAdversarialHistoricalGap) LoadValidators(height int64) (*types.ValidatorSet, error) {
++	if height == 2 {
++		s.requested++
++		return nil, sm.ErrNoValSetForHeight{Height: height}
++	}
++	return s.Store.LoadValidators(height)
++}
++
++func TestHistoryCacheAdversarialPoolDoesNotChangeCoreProposerState(t *testing.T) {
++	fixture := newCacheAdversarialFixture(t)
++	base := initializeStateFromValidatorSet(fixture.validators, 4)
++	t.Cleanup(func() { require.NoError(t, base.Close()) })
++	state, err := base.Load()
++	require.NoError(t, err)
++	state.LastBlockTime = fixture.headers[4].Time
++	require.NoError(t, base.Save(state))
++	before, err := cmtjson.Marshal(state)
++	require.NoError(t, err)
++	current, err := base.LoadValidators(4)
++	require.NoError(t, err)
++	currentBytes, err := cmtjson.Marshal(current)
++	require.NoError(t, err)
++	gap := &cacheAdversarialHistoricalGap{Store: base}
++	pool, err := evidence.NewPool(fixture.db, gap, emptyHistoryBlocks{})
++	require.NoError(t, err)
++	copy, err := fixture.cache.Validators(2)
++	require.NoError(t, err)
++	copy.Validators[0].ProposerPriority = math.MaxInt64
++	copy.Validators[0].VotingPower = 1
++	proof, err := types.NewMockDuplicateVoteEvidenceWithValidator(2, fixture.headers[2].Time, fixture.private[0], evidenceChainID)
++	require.NoError(t, err)
++	require.NoError(t, pool.AddEvidence(proof))
++	require.Positive(t, gap.requested, "evidence verification must use the historical fallback")
++	state, err = base.Load()
++	require.NoError(t, err)
++	after, err := cmtjson.Marshal(state)
++	require.NoError(t, err)
++	require.Equal(t, before, after, "pool reads must not rewrite core state/proposer priorities")
++	current, err = base.LoadValidators(4)
++	require.NoError(t, err)
++	after, err = cmtjson.Marshal(current)
++	require.NoError(t, err)
++	require.Equal(t, currentBytes, after)
++	meta, err := fixture.cache.BlockMeta(2)
++	require.NoError(t, err)
++	require.Equal(t, int64(2), meta.Header.Height)
++}
+diff --git a/evidence/history_cache_test.go b/evidence/history_cache_test.go
+new file mode 100644
+index 0000000..b7855d4
+--- /dev/null
++++ b/evidence/history_cache_test.go
+@@ -0,0 +1,160 @@
++package evidence_test
++
++import (
++	"testing"
++	"time"
++
++	dbm "github.com/cometbft/cometbft-db"
++	"github.com/stretchr/testify/require"
++
++	"github.com/cometbft/cometbft/evidence"
++	cmttest "github.com/cometbft/cometbft/internal/test"
++	cmtversion "github.com/cometbft/cometbft/proto/tendermint/version"
++	"github.com/cometbft/cometbft/types"
++	"github.com/cometbft/cometbft/version"
++)
++
++func cacheTestChain(t *testing.T) ([]*types.Header, []*types.Commit, *types.ValidatorSet, []types.PrivValidator) {
++	t.Helper()
++	vals, private := types.RandValidatorSet(1, 10)
++	headers := make([]*types.Header, 5)
++	commits := make([]*types.Commit, 5)
++	var previous types.BlockID
++	for h := int64(1); h <= 4; h++ {
++		header := &types.Header{
++			Version: cmtversion.Consensus{Block: version.BlockProtocol}, ChainID: evidenceChainID,
++			Height: h, Time: defaultEvidenceTime.Add(time.Duration(h)), LastBlockID: previous,
++			LastCommitHash: commits[h-1].Hash(), ValidatorsHash: vals.Hash(), NextValidatorsHash: vals.Hash(),
++			ProposerAddress: vals.Validators[0].Address,
++		}
++		id := cmttest.MakeBlockIDWithHash(header.Hash())
++		commit, err := cmttest.MakeCommit(id, h, 0, vals, private, header.ChainID, header.Time)
++		require.NoError(t, err)
++		headers[h], commits[h], previous = header, commit, id
++	}
++	return headers, commits, vals, private
++}
++
++func TestHistoryCachePublicationAndRestart(t *testing.T) {
++	db := dbm.NewMemDB()
++	cache := evidence.NewHistoryCache(db)
++	headers, commits, vals, _ := cacheTestChain(t)
++	require.NoError(t, cache.Begin(headers[3], headers[4], 1))
++	require.Error(t, cache.Validate(nil))
++	for h := int64(3); h >= 1; h-- {
++		require.NoError(t, cache.Put(headers[h], vals, commits[h]))
++	}
++	digest, err := cache.Complete(1, 3)
++	require.NoError(t, err)
++	require.Len(t, digest, 32)
++	restarted := evidence.NewHistoryCache(db)
++	require.NoError(t, restarted.Validate(digest))
++	meta, err := restarted.BlockMeta(2)
++	require.NoError(t, err)
++	require.Equal(t, headers[2].Hash(), meta.Header.Hash())
++	commit, err := restarted.Commit(2)
++	require.NoError(t, err)
++	require.Equal(t, commits[2].Hash(), commit.Hash())
++	set, err := restarted.Validators(2)
++	require.NoError(t, err)
++	require.Equal(t, vals.Hash(), set.Hash())
++	require.Error(t, restarted.Validate(make([]byte, 32)))
++	require.Error(t, restarted.Validate([]byte{1}))
++}
++
++func TestHistoryCacheRejectsMalformedCheckpointLinksAndManifest(t *testing.T) {
++	for _, kind := range []string{"missing", "header", "next", "height", "chain", "time", "hash"} {
++		t.Run(kind, func(t *testing.T) {
++			headers, _, _, _ := cacheTestChain(t)
++			header, next := headers[3], headers[4]
++			switch kind {
++			case "missing":
++				header = nil
++			case "header":
++				header.Height = 0
++			case "next":
++				next.Height = 0
++			case "height":
++				next.Height++
++			case "chain":
++				next.ChainID = "wrong"
++			case "time":
++				next.Time = header.Time
++			case "hash":
++				next.LastBlockID.Hash = make([]byte, 32)
++			}
++			cache := evidence.NewHistoryCache(dbm.NewMemDB())
++			require.Error(t, cache.Begin(header, next, 1))
++			require.Error(t, cache.Validate(nil))
++		})
++	}
++	for _, data := range [][]byte{[]byte("{"), []byte("{}"), []byte(`{"version":2}`)} {
++		db := dbm.NewMemDB()
++		require.NoError(t, db.SetSync([]byte{2}, data))
++		require.Error(t, evidence.NewHistoryCache(db).Validate(nil))
++	}
++}
++
++func TestHistoryCacheRefusesHolesAndChangedCommitBeforePublication(t *testing.T) {
++	headers, commits, vals, _ := cacheTestChain(t)
++	for _, missing := range []bool{true, false} {
++		cache := evidence.NewHistoryCache(dbm.NewMemDB())
++		require.NoError(t, cache.Begin(headers[3], headers[4], 1))
++		for h := int64(3); h >= 1; h-- {
++			if missing && h == 2 {
++				continue
++			}
++			commit := commits[h].Clone()
++			if !missing && h == 2 {
++				commit.Signatures[0].Timestamp = commit.Signatures[0].Timestamp.Add(time.Second)
++			}
++			require.NoError(t, cache.Put(headers[h], vals, commit))
++		}
++		_, err := cache.Complete(1, 3)
++		require.Error(t, err)
++	}
++}
++
++func TestHistoryCacheRejectsChangedUnsignedCommitRoundBeforePublication(t *testing.T) {
++	headers, commits, vals, _ := cacheTestChain(t)
++	cache := evidence.NewHistoryCache(dbm.NewMemDB())
++	require.NoError(t, cache.Begin(headers[3], headers[4], 1))
++	for h := int64(3); h >= 1; h-- {
++		commit := commits[h].Clone()
++		if h == 2 {
++			commit.Round++
++			require.Equal(t, commits[h].Hash(), commit.Hash())
++		}
++		require.NoError(t, cache.Put(headers[h], vals, commit))
++	}
++	_, err := cache.Complete(1, 3)
++	require.Error(t, err)
++	require.Error(t, cache.Validate(nil))
++}
++
++func TestHistoryCacheMakesPrecheckpointProofVerifiableWithoutFullBlock(t *testing.T) {
++	db := dbm.NewMemDB()
++	headers, commits, vals, private := cacheTestChain(t)
++	cache := evidence.NewHistoryCache(db)
++	require.NoError(t, cache.Begin(headers[3], headers[4], 1))
++	for h := int64(3); h >= 1; h-- {
++		require.NoError(t, cache.Put(headers[h], vals, commits[h]))
++	}
++	_, err := cache.Complete(1, 3)
++	require.NoError(t, err)
++	stateStore := initializeStateFromValidatorSet(vals, 4)
++	pool, err := evidence.NewPool(db, stateStore, emptyHistoryBlocks{})
++	require.NoError(t, err)
++	proof, err := types.NewMockDuplicateVoteEvidenceWithValidator(2, headers[2].Time, private[0], evidenceChainID)
++	require.NoError(t, err)
++	require.NoError(t, pool.AddEvidence(proof))
++	set, err := stateStore.LoadValidators(2)
++	require.NoError(t, err)
++	require.Equal(t, vals.Hash(), set.Hash())
++}
++
++type emptyHistoryBlocks struct{}
++
++func (emptyHistoryBlocks) LoadBlockMeta(int64) *types.BlockMeta { return nil }
++func (emptyHistoryBlocks) LoadBlockCommit(int64) *types.Commit  { return nil }
++func (emptyHistoryBlocks) Height() int64                        { return 4 }
+diff --git a/evidence/history_record_test.go b/evidence/history_record_test.go
+new file mode 100644
+index 0000000..45edec9
+--- /dev/null
++++ b/evidence/history_record_test.go
+@@ -0,0 +1,36 @@
++package evidence
++
++import (
++	"bytes"
++	"testing"
++	"time"
++
++	cmttest "github.com/cometbft/cometbft/internal/test"
++	"github.com/cometbft/cometbft/types"
++	"github.com/stretchr/testify/require"
++)
++
++func TestHistoryRecordMetadataRemainsBoundWhenSignaturesAreAlreadySealed(t *testing.T) {
++	vals, private := types.RandValidatorSet(1, 10)
++	id := cmttest.MakeBlockIDWithHash(bytes.Repeat([]byte{1}, 32))
++	commit, err := cmttest.MakeCommit(id, 3, 0, vals, private, "history-record", time.Now().UTC())
++	require.NoError(t, err)
++	header := &types.Header{Height: 3, ChainID: "history-record"}
++	next := &types.Header{Height: 4, LastBlockID: id, LastCommitHash: commit.Hash()}
++	require.NoError(t, historyRecordCommit(historyStoredRecord{Header: header, Commit: commit}, vals, next, false))
++	for _, kind := range []string{"height", "blockid", "hash"} {
++		t.Run(kind, func(t *testing.T) {
++			changed := commit.Clone()
++			link := *next
++			switch kind {
++			case "height":
++				changed.Height++
++			case "blockid":
++				changed.BlockID.PartSetHeader.Total++
++			case "hash":
++				link.LastCommitHash = bytes.Repeat([]byte{9}, 32)
++			}
++			require.Error(t, historyRecordCommit(historyStoredRecord{Header: header, Commit: changed}, vals, &link, false))
++		})
++	}
++}
+diff --git a/evidence/pool.go b/evidence/pool.go
+index 6a255bc..1c68e3f 100644
+--- a/evidence/pool.go
++++ b/evidence/pool.go
+@@ -38,7 +38,8 @@ type Pool struct {
+ 	// needed to load validators to verify evidence
+ 	stateDB sm.Store
+ 	// needed to load headers and commits to verify evidence
+-	blockStore BlockStore
++	blockStore   BlockStore
++	historyCache *HistoryCache
+ 
+ 	mtx sync.Mutex
+ 	// latest state
+@@ -55,6 +56,9 @@ type Pool struct {
+ // NewPool creates an evidence pool. If using an existing evidence store,
+ // it will add all pending evidence to the concurrent list.
+ func NewPool(evidenceDB dbm.DB, stateDB sm.Store, blockStore BlockStore) (*Pool, error) {
++	historyCache := NewHistoryCache(evidenceDB)
++	stateDB = historyStateStore{Store: stateDB, cache: historyCache}
++	blockStore = historyBlockStore{BlockStore: blockStore, cache: historyCache}
+ 	state, err := stateDB.Load()
+ 	if err != nil {
+ 		return nil, fmt.Errorf("cannot load state: %w", err)
+@@ -63,6 +67,7 @@ func NewPool(evidenceDB dbm.DB, stateDB sm.Store, blockStore BlockStore) (*Pool,
+ 	pool := &Pool{
+ 		stateDB:         stateDB,
+ 		blockStore:      blockStore,
++		historyCache:    historyCache,
+ 		state:           state,
+ 		logger:          log.NewNopLogger(),
+ 		evidenceStore:   evidenceDB,
+diff --git a/light/provider/http/history_page_test.go b/light/provider/http/history_page_test.go
+new file mode 100644
+index 0000000..8f1e43a
+--- /dev/null
++++ b/light/provider/http/history_page_test.go
+@@ -0,0 +1,39 @@
++package http
++
++import (
++	"context"
++	"fmt"
++	"testing"
++
++	"github.com/cometbft/cometbft/light/provider"
++	rpcclient "github.com/cometbft/cometbft/rpc/client"
++	coretypes "github.com/cometbft/cometbft/rpc/core/types"
++	"github.com/stretchr/testify/require"
++)
++
++type historyPageErrorClient struct {
++	rpcclient.RemoteClient
++	err   error
++	calls int
++}
++
++func (c *historyPageErrorClient) Validators(context.Context, *int64, *int, *int) (*coretypes.ResultValidators, error) {
++	c.calls++
++	return nil, c.err
++}
++
++func TestHistoryLightValidatorPageErrorClassification(t *testing.T) {
++	ordinary := fmt.Errorf("connection refused")
++	for _, tc := range []struct{ input, want error }{
++		{fmt.Errorf("height 11 must be less than or equal to current height 10"), provider.ErrHeightTooHigh},
++		{fmt.Errorf("height 1 is not available"), provider.ErrLightBlockNotFound},
++		{ordinary, ordinary},
++	} {
++		client := &historyPageErrorClient{err: tc.input}
++		p := &http{client: client}
++		height, page, perPage := int64(2), 1, 100
++		_, err := p.validatorPage(context.Background(), &height, &page, &perPage)
++		require.ErrorIs(t, err, tc.want)
++		require.Equal(t, 1, client.calls)
++	}
++}
+diff --git a/light/provider/http/http.go b/light/provider/http/http.go
+index a82ac6f..d9bad9b 100644
+--- a/light/provider/http/http.go
++++ b/light/provider/http/http.go
+@@ -11,6 +11,7 @@ import (
+ 	"github.com/cometbft/cometbft/light/provider"
+ 	rpcclient "github.com/cometbft/cometbft/rpc/client"
+ 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
++	coretypes "github.com/cometbft/cometbft/rpc/core/types"
+ 	"github.com/cometbft/cometbft/types"
+ )
+ 
+@@ -120,52 +121,17 @@ func (p *http) validatorSet(ctx context.Context, height *int64) (*types.Validato
+ 		total   = -1
+ 	)
+ 
+-OUTER_LOOP:
+ 	for len(vals) != total && page <= maxPages {
+-		for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
+-			res, err := p.client.Validators(ctx, height, &page, &perPage)
+-			switch {
+-			case err == nil:
+-				// Validate response.
+-				if len(res.Validators) == 0 {
+-					return nil, provider.ErrBadLightBlock{
+-						Reason: fmt.Errorf("validator set is empty (height: %d, page: %d, per_page: %d)",
+-							height, page, perPage),
+-					}
+-				}
+-				if res.Total <= 0 {
+-					return nil, provider.ErrBadLightBlock{
+-						Reason: fmt.Errorf("total number of vals is <= 0: %d (height: %d, page: %d, per_page: %d)",
+-							res.Total, height, page, perPage),
+-					}
+-				}
+-
+-				total = res.Total
+-				vals = append(vals, res.Validators...)
+-				page++
+-				continue OUTER_LOOP
+-
+-			case regexpTooHigh.MatchString(err.Error()):
+-				return nil, provider.ErrHeightTooHigh
+-
+-			case regexpMissingHeight.MatchString(err.Error()):
+-				return nil, provider.ErrLightBlockNotFound
+-
+-			// if we have exceeded retry attempts then return no response error
+-			case attempt == maxRetryAttempts:
+-				return nil, provider.ErrNoResponse
+-
+-			case regexpTimedOut.MatchString(err.Error()):
+-				// we wait and try again with exponential backoff
+-				time.Sleep(backoffTimeout(uint16(attempt)))
+-				continue
+-
+-			// context canceled or connection refused we return the error
+-			default:
+-				return nil, err
+-			}
+-
++		res, err := p.validatorPage(ctx, height, &page, &perPage)
++		if err != nil {
++			return nil, err
++		}
++		if err := validateLightValidatorPage(res, *height, total, len(vals)); err != nil {
++			return nil, provider.ErrBadLightBlock{Reason: err}
+ 		}
++		total = res.Total
++		vals = append(vals, res.Validators...)
++		page++
+ 	}
+ 
+ 	valSet, err := types.ValidatorSetFromExistingValidators(vals)
+@@ -175,6 +141,51 @@ OUTER_LOOP:
+ 	return valSet, nil
+ }
+ 
++func (p *http) validatorPage(ctx context.Context, height *int64, page, perPage *int) (*coretypes.ResultValidators, error) {
++	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
++		res, err := p.client.Validators(ctx, height, page, perPage)
++		switch {
++		case err == nil:
++			return res, nil
++		case regexpTooHigh.MatchString(err.Error()):
++			return nil, provider.ErrHeightTooHigh
++		case regexpMissingHeight.MatchString(err.Error()):
++			return nil, provider.ErrLightBlockNotFound
++		case attempt == maxRetryAttempts:
++			return nil, provider.ErrNoResponse
++		case regexpTimedOut.MatchString(err.Error()):
++			time.Sleep(backoffTimeout(uint16(attempt)))
++		default:
++			return nil, err
++		}
++	}
++	return nil, provider.ErrNoResponse
++}
++
++func validateLightValidatorPage(res *coretypes.ResultValidators, height int64, total, collected int) error {
++	if res == nil || res.BlockHeight != height {
++		return fmt.Errorf("invalid validator page height")
++	}
++	if err := validateLightPageTotal(res.Total, total); err != nil {
++		return err
++	}
++	want := min(100, res.Total-collected)
++	if want <= 0 || res.Count != want || len(res.Validators) != want {
++		return fmt.Errorf("inconsistent validator page size")
++	}
++	return nil
++}
++
++func validateLightPageTotal(actual, previous int) error {
++	if actual <= 0 || actual > 10000 {
++		return fmt.Errorf("invalid validator page total")
++	}
++	if previous >= 0 && actual != previous {
++		return fmt.Errorf("validator page total changed")
++	}
++	return nil
++}
++
+ func (p *http) signedHeader(ctx context.Context, height *int64) (*types.SignedHeader, error) {
+ 	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
+ 		commit, err := p.client.Commit(ctx, height)
+diff --git a/node/history_backward_checkpoint_test.go b/node/history_backward_checkpoint_test.go
+new file mode 100644
+index 0000000..791b0f1
+--- /dev/null
++++ b/node/history_backward_checkpoint_test.go
+@@ -0,0 +1,147 @@
++package node
++
++import (
++	"bytes"
++	"context"
++	"encoding/hex"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"strconv"
++	"strings"
++	"testing"
++	"time"
++
++	dbm "github.com/cometbft/cometbft-db"
++	abci "github.com/cometbft/cometbft/abci/types"
++	cfg "github.com/cometbft/cometbft/config"
++	"github.com/cometbft/cometbft/evidence"
++	cmttest "github.com/cometbft/cometbft/internal/test"
++	cmtjson "github.com/cometbft/cometbft/libs/json"
++	"github.com/cometbft/cometbft/libs/log"
++	cmtversion "github.com/cometbft/cometbft/proto/tendermint/version"
++	coretypes "github.com/cometbft/cometbft/rpc/core/types"
++	sm "github.com/cometbft/cometbft/state"
++	"github.com/cometbft/cometbft/store"
++	"github.com/cometbft/cometbft/types"
++	"github.com/cometbft/cometbft/version"
++	"github.com/stretchr/testify/require"
++)
++
++func historyBackwardChain(t *testing.T) ([]*types.Header, []*types.Commit, *types.ValidatorSet, *types.GenesisDoc, historyQueryStub) {
++	t.Helper()
++	vals, private := types.RandValidatorSet(1, 10)
++	params := types.DefaultConsensusParams()
++	headers, commits := make([]*types.Header, 4), make([]*types.Commit, 4)
++	start := time.Now().UTC().Add(-10 * time.Second)
++	var previous types.BlockID
++	for height := int64(1); height <= 3; height++ {
++		header := &types.Header{Version: cmtversion.Consensus{Block: version.BlockProtocol, App: 7}, ChainID: "backward-checkpoint", Height: height, Time: start.Add(time.Duration(height) * time.Second), LastBlockID: previous, ValidatorsHash: vals.Hash(), NextValidatorsHash: vals.Hash(), ProposerAddress: vals.Validators[0].Address, ConsensusHash: params.Hash(), AppHash: bytes.Repeat([]byte{2}, 32)}
++		if height > 1 {
++			header.LastCommitHash = commits[height-1].Hash()
++		}
++		id := cmttest.MakeBlockIDWithHash(header.Hash())
++		commit, err := cmttest.MakeCommit(id, height, 0, vals, private, header.ChainID, header.Time)
++		require.NoError(t, err)
++		headers[height], commits[height], previous = header, commit, id
++	}
++	body, err := json.Marshal(map[string]any{"schema_version": 1, "height": "1", "app_hash": hex.EncodeToString(headers[2].AppHash), "last_block_nanos": exactHistoryNanos(headers[1].Time), "evidence": map[string]string{"max_age_num_blocks": "100000", "max_age_duration": "1296000000000000", "max_bytes": "1048576"}})
++	require.NoError(t, err)
++	query := historyQueryStub{info: &abci.ResponseInfo{LastBlockHeight: 1, LastBlockAppHash: headers[2].AppHash, AppVersion: 7}, query: &abci.ResponseQuery{Height: 1, Value: body}}
++	return headers, commits, vals, &types.GenesisDoc{ChainID: headers[1].ChainID, InitialHeight: 1, ConsensusParams: params}, query
++}
++
++func historyBackwardRPC(t *testing.T, headers []*types.Header, commits []*types.Commit, vals *types.ValidatorSet, params *types.ConsensusParams, alteration string) *httptest.Server {
++	t.Helper()
++	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		method := strings.TrimPrefix(r.URL.Path, "/")
++		heightText := r.URL.Query().Get("height")
++		var id json.RawMessage = json.RawMessage(`-1`)
++		if r.Method == http.MethodPost {
++			var request struct {
++				ID     json.RawMessage            `json:"id"`
++				Method string                     `json:"method"`
++				Params map[string]json.RawMessage `json:"params"`
++			}
++			if json.NewDecoder(r.Body).Decode(&request) != nil {
++				http.Error(w, "invalid request", 400)
++				return
++			}
++			method, id = request.Method, request.ID
++			_ = json.Unmarshal(request.Params["height"], &heightText)
++		}
++		height, _ := strconv.Atoi(heightText)
++		if height == 0 {
++			height = 3
++		}
++		if height < 1 || height > 3 {
++			http.Error(w, "unavailable height", 400)
++			return
++		}
++		var result any
++		switch method {
++		case "commit":
++			commit := commits[height].Clone()
++			if height == 1 {
++				if alteration == "round" {
++					commit.Round++
++				}
++				if alteration == "blockid" {
++					commit.BlockID.PartSetHeader.Total++
++				}
++			}
++			result = coretypes.NewResultCommit(headers[height], commit, true)
++		case "validators":
++			result = &coretypes.ResultValidators{BlockHeight: int64(height), Validators: vals.Validators, Count: 1, Total: 1}
++		case "consensus_params":
++			result = &coretypes.ResultConsensusParams{BlockHeight: int64(height), ConsensusParams: *params}
++		default:
++			http.NotFound(w, r)
++			return
++		}
++		encoded, err := cmtjson.Marshal(result)
++		if err != nil {
++			http.Error(w, "encode failure", 500)
++			return
++		}
++		body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": json.RawMessage(encoded)})
++		if err != nil {
++			http.Error(w, "envelope failure", 500)
++			return
++		}
++		_, _ = w.Write(body)
++	}))
++}
++
++func TestHistoryBackwardLightCheckpointUsesCanonicalCoreCommit(t *testing.T) {
++	for _, kind := range []string{"round", "blockid"} {
++		t.Run(kind, func(t *testing.T) {
++			headers, commits, vals, genesis, query := historyBackwardChain(t)
++			primary := historyBackwardRPC(t, headers, commits, vals, genesis.ConsensusParams, kind)
++			defer primary.Close()
++			witness := historyBackwardRPC(t, headers, commits, vals, genesis.ConsensusParams, "")
++			defer witness.Close()
++			config := cfg.DefaultConfig()
++			config.StateSync.RPCServers = []string{primary.URL, witness.URL}
++			config.StateSync.TrustHeight = 3
++			config.StateSync.TrustHash = hex.EncodeToString(headers[3].Hash())
++			config.StateSync.TrustPeriod = time.Hour
++			db := dbm.NewMemDB()
++			require.NoError(t, writeHistoryPending(db, genesis.ChainID, 0))
++			stateStore := sm.NewStore(db, sm.StoreOptions{})
++			blocks := store.NewBlockStore(dbm.NewMemDB())
++			cache := evidence.NewHistoryCache(dbm.NewMemDB())
++			old := sm.State{ChainID: genesis.ChainID, InitialHeight: 1}
++			resumed, err := resumeEvidenceHistory(context.Background(), config, db, stateStore, blocks, cache, old, genesis, query, log.NewNopLogger())
++			if kind == "blockid" {
++				require.Error(t, err, "full checkpoint BlockID must match its authenticated successor")
++				return
++			}
++			require.NoError(t, err)
++			require.Equal(t, int64(1), resumed.LastBlockHeight)
++			seen := blocks.LoadSeenCommit(1)
++			require.Equal(t, commits[1].Round, seen.Round, "core must use the canonical authenticated history commit, not the backwards light RPC commit")
++			require.NotPanics(t, func() { seen.ToVoteSet(genesis.ChainID, vals) })
++		})
++	}
++}
+diff --git a/node/history_bootstrap.go b/node/history_bootstrap.go
+new file mode 100644
+index 0000000..a137bc8
+--- /dev/null
++++ b/node/history_bootstrap.go
+@@ -0,0 +1,498 @@
++package node
++
++import (
++	"bytes"
++	"context"
++	"encoding/hex"
++	"encoding/json"
++	"fmt"
++	"io"
++	"math/big"
++	"strconv"
++	"sync"
++	"time"
++
++	dbm "github.com/cometbft/cometbft-db"
++	abci "github.com/cometbft/cometbft/abci/types"
++	cfg "github.com/cometbft/cometbft/config"
++	"github.com/cometbft/cometbft/evidence"
++	"github.com/cometbft/cometbft/libs/log"
++	"github.com/cometbft/cometbft/light"
++	sm "github.com/cometbft/cometbft/state"
++	"github.com/cometbft/cometbft/statesync"
++	"github.com/cometbft/cometbft/store"
++	"github.com/cometbft/cometbft/types"
++)
++
++type historyQuery interface {
++	Info(context.Context, *abci.RequestInfo) (*abci.ResponseInfo, error)
++	Query(context.Context, *abci.RequestQuery) (*abci.ResponseQuery, error)
++}
++
++type historyPolicyResponse struct {
++	SchemaVersion  int    `json:"schema_version"`
++	Height         string `json:"height"`
++	AppHash        string `json:"app_hash"`
++	LastBlockNanos string `json:"last_block_nanos"`
++	Evidence       struct {
++		MaxAgeNumBlocks string `json:"max_age_num_blocks"`
++		MaxAgeDuration  string `json:"max_age_duration"`
++		MaxBytes        string `json:"max_bytes"`
++	} `json:"evidence"`
++}
++
++// Timestamp anchors span protobuf's full calendar domain, beyond UnixNano's
++// int64 nanosecond limit. Duration fields have a separate signed-int64 domain.
++func exactHistoryNanos(t time.Time) string {
++	nanos := new(big.Int).Mul(big.NewInt(t.Unix()), big.NewInt(1_000_000_000))
++	return nanos.Add(nanos, big.NewInt(int64(t.Nanosecond()))).String()
++}
++
++func historyDecimal(value string, minimum int64) (int64, error) {
++	number, err := strconv.ParseInt(value, 10, 64)
++	if err != nil || number < minimum || strconv.FormatInt(number, 10) != value {
++		return 0, fmt.Errorf("noncanonical history policy integer %q", value)
++	}
++	return number, nil
++}
++
++func decodeHistoryPolicy(data []byte) (historyPolicyResponse, error) {
++	var result historyPolicyResponse
++	if len(data) == 0 || len(data) > 8192 {
++		return result, fmt.Errorf("invalid evidence policy response size")
++	}
++	decoder := json.NewDecoder(bytes.NewReader(data))
++	decoder.DisallowUnknownFields()
++	if err := decoder.Decode(&result); err != nil {
++		return result, fmt.Errorf("invalid evidence policy schema: %w", err)
++	}
++	if err := decoder.Decode(new(any)); err != io.EOF {
++		return result, fmt.Errorf("trailing evidence policy data")
++	}
++	if result.SchemaVersion != 1 {
++		return result, fmt.Errorf("unsupported evidence policy schema")
++	}
++	return result, nil
++}
++
++func historyPolicyBinding(body historyPolicyResponse, state sm.State, anchor statesync.HistoryAnchor) error {
++	if body.Height != strconv.FormatInt(state.LastBlockHeight, 10) || body.AppHash != hex.EncodeToString(state.AppHash) || body.LastBlockNanos != exactHistoryNanos(anchor.Header.Time) {
++		return fmt.Errorf("committed evidence policy disagrees with trusted snapshot height/hash/time")
++	}
++	return nil
++}
++
++func historyEvidenceParams(body historyPolicyResponse) (types.EvidenceParams, error) {
++	blocks, err := historyDecimal(body.Evidence.MaxAgeNumBlocks, 1)
++	if err != nil {
++		return types.EvidenceParams{}, err
++	}
++	duration, err := historyDecimal(body.Evidence.MaxAgeDuration, 1)
++	if err != nil {
++		return types.EvidenceParams{}, err
++	}
++	maximum, err := historyDecimal(body.Evidence.MaxBytes, 0)
++	if err != nil {
++		return types.EvidenceParams{}, err
++	}
++	return types.EvidenceParams{MaxAgeNumBlocks: blocks, MaxAgeDuration: time.Duration(duration), MaxBytes: maximum}, nil
++}
++
++func validateHistoryCheckpoint(state sm.State, header *types.Header) error {
++	if header.Height != state.LastBlockHeight || header.ChainID != state.ChainID || !bytes.Equal(header.Hash(), state.LastBlockID.Hash) || !header.Time.Equal(state.LastBlockTime) {
++		return fmt.Errorf("history checkpoint disagrees with trusted state")
++	}
++	return nil
++}
++func validateHistorySuccessor(state sm.State, anchor statesync.HistoryAnchor) error {
++	next := anchor.NextHeader
++	if next.Height != state.LastBlockHeight+1 || next.ChainID != state.ChainID || !bytes.Equal(next.AppHash, state.AppHash) || !next.LastBlockID.Equals(state.LastBlockID) {
++		return fmt.Errorf("history next-header disagrees with trusted state")
++	}
++	return nil
++}
++func validateHistoryAnchorState(state sm.State, anchor statesync.HistoryAnchor) error {
++	if anchor.Header == nil || anchor.NextHeader == nil {
++		return fmt.Errorf("missing verified history anchor")
++	}
++	if err := validateHistoryCheckpoint(state, anchor.Header); err != nil {
++		return err
++	}
++	return validateHistorySuccessor(state, anchor)
++}
++
++// Only Block.MaxBytes/MaxGas are authenticated by Comet ConsensusHash. The
++// remaining groups must never be accepted from an unauthenticated RPC response.
++// Xian changes only Evidence; the local committed app supplies that triple.
++func validateHistoryAppInfo(info *abci.ResponseInfo, state sm.State, anchor statesync.HistoryAnchor) error {
++	if info == nil || info.LastBlockHeight != state.LastBlockHeight || !bytes.Equal(info.LastBlockAppHash, state.AppHash) || info.AppVersion != anchor.NextHeader.Version.App {
++		return fmt.Errorf("local app Info disagrees with trusted snapshot")
++	}
++	return nil
++}
++func committedHistoryPolicy(ctx context.Context, query historyQuery, state sm.State, anchor statesync.HistoryAnchor) (historyPolicyResponse, error) {
++	var empty historyPolicyResponse
++	info, err := query.Info(ctx, &abci.RequestInfo{})
++	if err != nil {
++		return empty, err
++	}
++	if err = validateHistoryAppInfo(info, state, anchor); err != nil {
++		return empty, err
++	}
++	response, err := query.Query(ctx, &abci.RequestQuery{Path: "/evidence_policy", Height: state.LastBlockHeight})
++	if err != nil {
++		return empty, err
++	}
++	if response == nil || response.Code != 0 || response.Height != state.LastBlockHeight {
++		return empty, fmt.Errorf("local committed evidence policy query failed")
++	}
++	body, err := decodeHistoryPolicy(response.Value)
++	if err != nil {
++		return empty, err
++	}
++	return body, historyPolicyBinding(body, state, anchor)
++}
++func authenticatedHistoryParams(ctx context.Context, query historyQuery, state sm.State, anchor statesync.HistoryAnchor, genesis types.ConsensusParams) (types.ConsensusParams, error) {
++	if err := validateHistoryAnchorState(state, anchor); err != nil {
++		return types.ConsensusParams{}, err
++	}
++	body, err := committedHistoryPolicy(ctx, query, state, anchor)
++	if err != nil {
++		return types.ConsensusParams{}, err
++	}
++	params := genesis
++	params.Validator.PubKeyTypes = append([]string(nil), genesis.Validator.PubKeyTypes...)
++	params.Block = state.ConsensusParams.Block
++	params.Version.App = anchor.NextHeader.Version.App
++	params.Evidence, err = historyEvidenceParams(body)
++	if err != nil {
++		return types.ConsensusParams{}, err
++	}
++	if !bytes.Equal(params.Hash(), anchor.NextHeader.ConsensusHash) {
++		return types.ConsensusParams{}, fmt.Errorf("block parameters disagree with trusted consensus hash")
++	}
++	if err = params.ValidateBasic(); err != nil {
++		return types.ConsensusParams{}, err
++	}
++	return params, nil
++}
++
++var historyRequiredKey = []byte("xian:evidence-history-required:v1")
++
++type historyRequirement struct {
++	Version    int    `json:"version"`
++	Pending    bool   `json:"pending"`
++	ChainID    string `json:"chain_id"`
++	Checkpoint int64  `json:"checkpoint"`
++	Digest     []byte `json:"digest"`
++}
++type historyCacheValidator interface{ Validate([]byte) error }
++
++func (r historyRequirement) validate() error {
++	if r.Version != 1 || r.ChainID == "" || r.Checkpoint < 0 {
++		return fmt.Errorf("invalid evidence history requirement")
++	}
++	if !r.Pending && (r.Checkpoint == 0 || len(r.Digest) != 32) {
++		return fmt.Errorf("invalid ready history requirement")
++	}
++	return nil
++}
++func readHistoryRequirement(db dbm.DB) (*historyRequirement, error) {
++	data, err := db.Get(historyRequiredKey)
++	if err != nil || len(data) == 0 {
++		return nil, err
++	}
++	var requirement historyRequirement
++	decoder := json.NewDecoder(bytes.NewReader(data))
++	decoder.DisallowUnknownFields()
++	if err = decoder.Decode(&requirement); err != nil {
++		return nil, fmt.Errorf("corrupt history requirement: %w", err)
++	}
++	if err = decoder.Decode(new(any)); err != io.EOF {
++		return nil, fmt.Errorf("trailing history journal data")
++	}
++	if err = requirement.validate(); err != nil {
++		return nil, err
++	}
++	return &requirement, nil
++}
++
++func writeHistoryPending(db dbm.DB, chainID string, checkpoint int64) error {
++	data, err := json.Marshal(historyRequirement{Version: 1, Pending: true, ChainID: chainID, Checkpoint: checkpoint})
++	if err != nil {
++		return err
++	}
++	return db.SetSync(historyRequiredKey, data)
++}
++func writeHistoryReady(db dbm.DB, chainID string, checkpoint int64, digest []byte) error {
++	if checkpoint < 1 || len(digest) != 32 {
++		return fmt.Errorf("invalid history publication")
++	}
++	data, err := json.Marshal(historyRequirement{Version: 1, ChainID: chainID, Checkpoint: checkpoint, Digest: digest})
++	if err != nil {
++		return err
++	}
++	return db.SetSync(historyRequiredKey, data)
++}
++func validateHistoryRequirement(db dbm.DB, cache historyCacheValidator, state sm.State, canRetry bool) error {
++	requirement, err := readHistoryRequirement(db)
++	if err != nil || requirement == nil {
++		return err
++	}
++	if requirement.ChainID != state.ChainID {
++		return fmt.Errorf("evidence history requirement chain mismatch")
++	}
++	if requirement.Pending {
++		if state.LastBlockHeight == 0 && canRetry {
++			return nil
++		}
++		return fmt.Errorf("evidence history bootstrap remains incomplete")
++	}
++	if state.LastBlockHeight < requirement.Checkpoint && !canRetry {
++		return fmt.Errorf("history checkpoint exceeds local state")
++	}
++	return cache.Validate(requirement.Digest)
++}
++
++type historyAnchorProvider interface {
++	EvidenceHistoryAnchor(context.Context, uint64) (statesync.HistoryAnchor, error)
++}
++
++func historyLimits(config *cfg.Config) statesync.HistoryLimits {
++	limits := statesync.DefaultHistoryLimits()
++	if config.StateSync.HistoryMaxRecords > 0 {
++		limits.MaxRecords = config.StateSync.HistoryMaxRecords
++	}
++	if config.StateSync.HistoryMaxBytes > 0 {
++		limits.MaxBytes = config.StateSync.HistoryMaxBytes
++	}
++	return limits
++}
++
++// The ready checkpoint is the durable bootstrap floor while there are no full
++// blocks. The upstream offline-height scratch key is reset during startup and
++// cannot be its authority across repeated interrupted restarts.
++func loadHistoryBlocksyncHeight(db dbm.DB, blocks *store.BlockStore, state sm.State) (int64, error) {
++	if blocks.Height() != 0 || state.LastBlockHeight == 0 {
++		return 0, nil
++	}
++	requirement, err := readHistoryRequirement(db)
++	if err != nil {
++		return 0, err
++	}
++	if requirement == nil || requirement.Pending || requirement.Checkpoint != state.LastBlockHeight {
++		return 0, fmt.Errorf("restored core state lacks a matching ready evidence history checkpoint")
++	}
++	return requirement.Checkpoint, nil
++}
++
++func historyProviders(config *cfg.Config, limits statesync.HistoryLimits) ([]statesync.HistoryProvider, error) {
++	providers := make([]statesync.HistoryProvider, 0, len(config.StateSync.RPCServers))
++	for _, server := range config.StateSync.RPCServers {
++		provider, err := statesync.NewHistoryRPCProvider(server, limits)
++		if err != nil {
++			return nil, err
++		}
++		providers = append(providers, provider)
++	}
++	return providers, nil
++}
++
++func prepareEvidenceHistory(ctx context.Context, config *cfg.Config, state sm.State, genesis *types.GenesisDoc, provider statesync.StateProvider, query historyQuery, cache *evidence.HistoryCache) (sm.State, []byte, error) {
++	verified, ok := provider.(historyAnchorProvider)
++	if !ok {
++		return state, nil, fmt.Errorf("state provider cannot supply verified evidence history anchors")
++	}
++	anchor, err := verified.EvidenceHistoryAnchor(ctx, uint64(state.LastBlockHeight))
++	if err != nil {
++		return state, nil, err
++	}
++	if genesis.ConsensusParams == nil {
++		return state, nil, fmt.Errorf("missing trusted genesis consensus parameters")
++	}
++	state.ConsensusParams, err = authenticatedHistoryParams(ctx, query, state, anchor, *genesis.ConsensusParams)
++	if err != nil {
++		return state, nil, err
++	}
++	limits := historyLimits(config)
++	providers, err := historyProviders(config, limits)
++	if err != nil {
++		return state, nil, err
++	}
++	if err = cache.Begin(anchor.Header, anchor.NextHeader, anchor.InitialHeight); err != nil {
++		return state, nil, err
++	}
++	result, err := statesync.FetchHistory(ctx, anchor, state.ConsensusParams.Evidence, providers, limits, func(record statesync.HistoryRecord) error {
++		return cache.Put(record.Header, record.Validators, record.Commit)
++	})
++	if err != nil {
++		return state, nil, err
++	}
++	digest, err := cache.Complete(result.LowestHeight, result.Count)
++	return state, digest, err
++}
++
++func newHistoryStateProvider(ctx context.Context, config *cfg.Config, state sm.State, logger log.Logger) (statesync.StateProvider, error) {
++	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
++	defer cancel()
++	return statesync.NewLightClientStateProvider(bounded, state.ChainID, state.Version, state.InitialHeight, config.StateSync.RPCServers, light.TrustOptions{Period: config.StateSync.TrustPeriod, Height: config.StateSync.TrustHeight, Hash: config.StateSync.TrustHashBytes()}, logger.With("module", "light"))
++}
++
++// Offline bootstrap and an online crash after core publication are resumed
++// before handshake, even when the operator toggled StateSync.Enable off.
++func resumeEvidenceHistory(ctx context.Context, config *cfg.Config, db dbm.DB, stateStore sm.Store, blocks *store.BlockStore, cache *evidence.HistoryCache, state sm.State, genesis *types.GenesisDoc, query historyQuery, logger log.Logger) (sm.State, error) {
++	return resumeEvidenceHistoryUsing(ctx, db, stateStore, blocks, state, query, func(ctx context.Context, height int64) (sm.State, []byte, *types.Commit, error) {
++		provider, err := newHistoryStateProvider(ctx, config, state, logger)
++		if err != nil {
++			return state, nil, nil, err
++		}
++		trusted, err := provider.State(ctx, uint64(height))
++		if err != nil {
++			return state, nil, nil, err
++		}
++		trusted, digest, err := prepareEvidenceHistory(ctx, config, trusted, genesis, provider, query, cache)
++		if err != nil {
++			return state, nil, nil, err
++		}
++		// A backwards light-client lookup authenticates the header, not all
++		// metadata of the RPC's associated commit. The cache's canonical commit
++		// is bound to H+1, including full BlockID and verified signatures.
++		commit, err := cache.Commit(height)
++		return trusted, digest, commit, err
++	})
++}
++
++type historyResumeBootstrap func(context.Context, int64) (sm.State, []byte, *types.Commit, error)
++
++func validateResumeAppHeight(info *abci.ResponseInfo, state sm.State, requirement *historyRequirement) error {
++	if state.LastBlockHeight > 0 && info.LastBlockHeight != state.LastBlockHeight {
++		return fmt.Errorf("app/core checkpoint mismatch during history resume")
++	}
++	if requirement.Checkpoint > 0 && info.LastBlockHeight != requirement.Checkpoint {
++		return fmt.Errorf("app/journal checkpoint mismatch during history resume")
++	}
++	return nil
++}
++func resumeHistoryInfo(ctx context.Context, query historyQuery, state sm.State, requirement *historyRequirement) (*abci.ResponseInfo, error) {
++	info, err := query.Info(ctx, &abci.RequestInfo{})
++	if err != nil {
++		return nil, err
++	}
++	if info == nil || info.LastBlockHeight < 0 {
++		return nil, fmt.Errorf("invalid local app height during history resume")
++	}
++	if err = validateResumeAppHeight(info, state, requirement); err != nil {
++		return nil, err
++	}
++	if info.LastBlockHeight > 0 && len(info.LastBlockAppHash) != 32 {
++		return nil, fmt.Errorf("invalid restored app hash during history resume")
++	}
++	return info, nil
++}
++
++func resumeHistoryBinding(old, trusted sm.State, info *abci.ResponseInfo) error {
++	if trusted.LastBlockHeight != info.LastBlockHeight || trusted.ChainID != old.ChainID || !bytes.Equal(trusted.AppHash, info.LastBlockAppHash) {
++		return fmt.Errorf("resumed light checkpoint disagrees with restored app")
++	}
++	if old.LastBlockHeight > 0 && (!trusted.LastBlockID.Equals(old.LastBlockID) || !bytes.Equal(trusted.AppHash, old.AppHash)) {
++		return fmt.Errorf("resumed history differs from committed core state")
++	}
++	return nil
++}
++
++func pendingHistoryRequirement(db dbm.DB, state sm.State) (*historyRequirement, error) {
++	requirement, err := readHistoryRequirement(db)
++	if err != nil {
++		return nil, err
++	}
++	if requirement == nil || !requirement.Pending {
++		return nil, nil
++	}
++	if requirement.ChainID != state.ChainID {
++		return nil, fmt.Errorf("pending history chain mismatch")
++	}
++	return requirement, nil
++}
++func publishHistoryCheckpoint(db dbm.DB, stateStore sm.Store, blocks *store.BlockStore, state sm.State, digest []byte, commit *types.Commit) error {
++	if err := stateStore.Bootstrap(state); err != nil {
++		return err
++	}
++	if err := blocks.SaveSeenCommit(state.LastBlockHeight, commit); err != nil {
++		return err
++	}
++	return writeHistoryReady(db, state.ChainID, state.LastBlockHeight, digest)
++}
++func resumeEvidenceHistoryUsing(ctx context.Context, db dbm.DB, stateStore sm.Store, blocks *store.BlockStore, state sm.State, query historyQuery, bootstrap historyResumeBootstrap) (sm.State, error) {
++	requirement, err := pendingHistoryRequirement(db, state)
++	if err != nil {
++		return state, err
++	}
++	if requirement == nil {
++		return state, nil
++	}
++	info, err := resumeHistoryInfo(ctx, query, state, requirement)
++	if err != nil {
++		return state, err
++	}
++	if info.LastBlockHeight == 0 {
++		return state, nil
++	}
++	trusted, digest, commit, err := bootstrap(ctx, info.LastBlockHeight)
++	if err != nil {
++		return state, err
++	}
++	if err = resumeHistoryBinding(state, trusted, info); err != nil {
++		return state, err
++	}
++	if err = publishHistoryCheckpoint(db, stateStore, blocks, trusted, digest, commit); err != nil {
++		return state, err
++	}
++	return trusted, nil
++}
++
++type historyWork struct {
++	mu       sync.Mutex
++	stopping bool
++	ctx      context.Context
++	cancel   context.CancelFunc
++	workers  sync.WaitGroup
++}
++
++// The returned finish function must run once. The gate serializes Add with
++// shutdown's Wait; a late legacy snapshot completion cannot publish into closed
++// stores. Snapshot discovery itself has a separate upstream lifecycle.
++func (n *Node) evidenceHistoryContext() (context.Context, func()) {
++	work := &n.historyWork
++	work.mu.Lock()
++	defer work.mu.Unlock()
++	if work.stopping {
++		ctx, cancel := context.WithCancel(context.Background())
++		cancel()
++		return ctx, func() {}
++	}
++	if work.ctx == nil {
++		work.ctx, work.cancel = context.WithCancel(context.Background())
++	}
++	work.workers.Add(1)
++	return work.ctx, work.workers.Done
++}
++
++func (n *Node) stopEvidenceHistory() {
++	work := &n.historyWork
++	work.mu.Lock()
++	work.stopping = true
++	if work.cancel != nil {
++		work.cancel()
++	}
++	work.mu.Unlock()
++	work.workers.Wait()
++}
++
++func (n *Node) journalEvidenceHistory(chainID string) error {
++	ctx, finish := n.evidenceHistoryContext()
++	defer finish()
++	if err := ctx.Err(); err != nil {
++		return err
++	}
++	return writeHistoryPending(n.stateDB, chainID, 0)
++}
+diff --git a/node/history_bootstrap_protocol_test.go b/node/history_bootstrap_protocol_test.go
+new file mode 100644
+index 0000000..c589a27
+--- /dev/null
++++ b/node/history_bootstrap_protocol_test.go
+@@ -0,0 +1,167 @@
++package node
++
++import (
++	"bytes"
++	"context"
++	"encoding/hex"
++	"encoding/json"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++	"time"
++
++	dbm "github.com/cometbft/cometbft-db"
++	abci "github.com/cometbft/cometbft/abci/types"
++	cfg "github.com/cometbft/cometbft/config"
++	"github.com/cometbft/cometbft/evidence"
++	cmttest "github.com/cometbft/cometbft/internal/test"
++	cmtjson "github.com/cometbft/cometbft/libs/json"
++	"github.com/cometbft/cometbft/libs/log"
++	cmtversion "github.com/cometbft/cometbft/proto/tendermint/version"
++	coretypes "github.com/cometbft/cometbft/rpc/core/types"
++	sm "github.com/cometbft/cometbft/state"
++	"github.com/cometbft/cometbft/statesync"
++	"github.com/cometbft/cometbft/store"
++	"github.com/cometbft/cometbft/types"
++	"github.com/cometbft/cometbft/version"
++	"github.com/stretchr/testify/require"
++)
++
++type historyVerifiedProvider struct {
++	statesync.StateProvider
++	anchor statesync.HistoryAnchor
++	err    error
++}
++
++func (p historyVerifiedProvider) EvidenceHistoryAnchor(context.Context, uint64) (statesync.HistoryAnchor, error) {
++	return p.anchor, p.err
++}
++
++func historyProtocolFixture(t *testing.T) (sm.State, statesync.HistoryAnchor, statesync.HistoryRecord, historyQueryStub, *types.GenesisDoc) {
++	t.Helper()
++	private := types.NewMockPV()
++	pub, err := private.GetPubKey()
++	require.NoError(t, err)
++	vals := types.NewValidatorSet([]*types.Validator{types.NewValidator(pub, 10)})
++	params := types.DefaultConsensusParams()
++	header := &types.Header{Version: cmtversion.Consensus{Block: version.BlockProtocol, App: 7}, ChainID: "protocol-history", Height: 1, Time: time.Date(2500, 1, 1, 0, 0, 0, 1, time.UTC), ValidatorsHash: vals.Hash(), NextValidatorsHash: vals.Hash(), ProposerAddress: pub.Address(), ConsensusHash: params.Hash()}
++	id := cmttest.MakeBlockIDWithHash(header.Hash())
++	commit, err := cmttest.MakeCommit(id, 1, 0, vals, []types.PrivValidator{private}, header.ChainID, header.Time)
++	require.NoError(t, err)
++	next := *header
++	next.Height = 2
++	next.Time = header.Time.Add(time.Nanosecond)
++	next.LastBlockID = id
++	next.LastCommitHash = commit.Hash()
++	next.AppHash = bytes.Repeat([]byte{2}, 32)
++	state := sm.State{ChainID: header.ChainID, InitialHeight: 1, LastBlockHeight: 1, LastBlockTime: header.Time, LastBlockID: id, AppHash: next.AppHash, ConsensusParams: *params}
++	state.ConsensusParams.Evidence.MaxAgeDuration = 1
++	body := map[string]any{"schema_version": 1, "height": "1", "app_hash": hex.EncodeToString(next.AppHash), "last_block_nanos": exactHistoryNanos(header.Time), "evidence": map[string]string{"max_age_num_blocks": "100000", "max_age_duration": "1296000000000000", "max_bytes": "1048576"}}
++	encoded, err := json.Marshal(body)
++	require.NoError(t, err)
++	query := historyQueryStub{info: &abci.ResponseInfo{LastBlockHeight: 1, LastBlockAppHash: next.AppHash, AppVersion: 7}, query: &abci.ResponseQuery{Height: 1, Value: encoded}}
++	return state, statesync.HistoryAnchor{Header: header, NextHeader: &next, InitialHeight: 1}, statesync.HistoryRecord{Header: header, Validators: vals, Commit: commit}, query, &types.GenesisDoc{ChainID: header.ChainID, ConsensusParams: params}
++}
++
++func TestHistoryPrepareAuthenticatesActualRPCRecordsAndPublishesCache(t *testing.T) {
++	state, anchor, record, query, genesis := historyProtocolFixture(t)
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		var result any
++		switch r.URL.Path {
++		case "/commit":
++			result = coretypes.NewResultCommit(record.Header, record.Commit, true)
++		case "/validators":
++			result = &coretypes.ResultValidators{BlockHeight: 1, Validators: record.Validators.Validators, Count: 1, Total: 1}
++		default:
++			http.NotFound(w, r)
++			return
++		}
++		encodedResult, err := cmtjson.Marshal(result)
++		if err != nil {
++			http.Error(w, err.Error(), 500)
++			return
++		}
++		encoded, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": -1, "result": json.RawMessage(encodedResult)})
++		if err != nil {
++			http.Error(w, err.Error(), 500)
++			return
++		}
++		w.Write(encoded)
++	}))
++	defer server.Close()
++	config := cfg.DefaultConfig()
++	config.StateSync.RPCServers = []string{server.URL}
++	cache := evidence.NewHistoryCache(dbm.NewMemDB())
++	prepared, digest, err := prepareEvidenceHistory(context.Background(), config, state, genesis, historyVerifiedProvider{anchor: anchor}, query, cache)
++	require.NoError(t, err)
++	require.Equal(t, 15*24*time.Hour, prepared.ConsensusParams.Evidence.MaxAgeDuration)
++	require.NoError(t, cache.Validate(digest))
++	meta, err := cache.BlockMeta(1)
++	require.NoError(t, err)
++	require.Equal(t, record.Header.Hash(), meta.Header.Hash())
++	config.StateSync.HistoryMaxBytes = 1
++	_, _, err = prepareEvidenceHistory(context.Background(), config, state, genesis, historyVerifiedProvider{anchor: anchor}, query, cache)
++	require.Error(t, err)
++	require.Error(t, cache.Validate(digest))
++}
++
++func TestHistoryPrepareRejectsUnsupportedAnchorsAndPolicyBeforePublication(t *testing.T) {
++	for _, kind := range []string{"unsupported", "anchor", "genesis", "policy", "provider"} {
++		t.Run(kind, func(t *testing.T) {
++			state, anchor, _, query, genesis := historyProtocolFixture(t)
++			config := cfg.DefaultConfig()
++			config.StateSync.RPCServers = []string{"ftp://invalid"}
++			var provider statesync.StateProvider = historyVerifiedProvider{anchor: anchor}
++			switch kind {
++			case "unsupported":
++				provider = nil
++			case "anchor":
++				provider = historyVerifiedProvider{anchor: anchor, err: fmt.Errorf("light verification failed")}
++			case "genesis":
++				genesis.ConsensusParams = nil
++			case "policy":
++				query.query.Code = 1
++			}
++			cache := evidence.NewHistoryCache(dbm.NewMemDB())
++			_, _, err := prepareEvidenceHistory(context.Background(), config, state, genesis, provider, query, cache)
++			require.Error(t, err)
++			require.Error(t, cache.Validate(nil))
++		})
++	}
++}
++
++func TestHistoryResourceOverridesAreExplicitAndBounded(t *testing.T) {
++	config := cfg.DefaultConfig()
++	require.Equal(t, statesync.DefaultHistoryLimits(), historyLimits(config))
++	config.StateSync.HistoryMaxRecords = 7
++	config.StateSync.HistoryMaxBytes = 42
++	require.Equal(t, int64(7), historyLimits(config).MaxRecords)
++	require.Equal(t, int64(42), historyLimits(config).MaxBytes)
++	config.StateSync.HistoryMaxRecords = 10000001
++	require.Error(t, config.StateSync.ValidateBasic())
++}
++
++func TestHistoryResumeInvalidProviderKeepsAppCheckpointPending(t *testing.T) {
++	state, _, _, query, genesis := historyProtocolFixture(t)
++	db := dbm.NewMemDB()
++	require.NoError(t, writeHistoryPending(db, state.ChainID, 0))
++	old := sm.State{ChainID: state.ChainID, InitialHeight: 1}
++	cache := evidence.NewHistoryCache(dbm.NewMemDB())
++	_, err := resumeEvidenceHistory(context.Background(), cfg.DefaultConfig(), db, sm.NewStore(db, sm.StoreOptions{}), store.NewBlockStore(dbm.NewMemDB()), cache, old, genesis, query, log.NewNopLogger())
++	require.Error(t, err)
++	journal, err := readHistoryRequirement(db)
++	require.NoError(t, err)
++	require.True(t, journal.Pending)
++	require.Error(t, cache.Validate(nil))
++}
++
++func TestHistoryMalformedJournalAndAppInfoCannotResume(t *testing.T) {
++	for _, journal := range []historyRequirement{{Version: 2, Pending: true, ChainID: "chain"}, {Version: 1, Pending: true}, {Version: 1, Pending: true, ChainID: "chain", Checkpoint: -1}, {Version: 1, ChainID: "chain"}} {
++		require.Error(t, journal.validate())
++	}
++	for _, info := range []*abci.ResponseInfo{nil, {LastBlockHeight: -1}, {LastBlockHeight: 2}, {LastBlockHeight: 1, LastBlockAppHash: []byte{1}}} {
++		_, err := resumeHistoryInfo(context.Background(), historyQueryStub{info: info}, sm.State{}, &historyRequirement{Checkpoint: 1})
++		require.Error(t, err)
++	}
++}
+diff --git a/node/history_bootstrap_test.go b/node/history_bootstrap_test.go
+new file mode 100644
+index 0000000..588919b
+--- /dev/null
++++ b/node/history_bootstrap_test.go
+@@ -0,0 +1,248 @@
++package node
++
++import (
++	"bytes"
++	"context"
++	"encoding/hex"
++	"encoding/json"
++	"fmt"
++	"testing"
++	"time"
++
++	dbm "github.com/cometbft/cometbft-db"
++	abci "github.com/cometbft/cometbft/abci/types"
++	bc "github.com/cometbft/cometbft/blocksync"
++	cfg "github.com/cometbft/cometbft/config"
++	cmttest "github.com/cometbft/cometbft/internal/test"
++	"github.com/cometbft/cometbft/libs/log"
++	sm "github.com/cometbft/cometbft/state"
++	"github.com/cometbft/cometbft/statesync"
++	"github.com/cometbft/cometbft/store"
++	"github.com/cometbft/cometbft/types"
++	"github.com/stretchr/testify/require"
++)
++
++type historyQueryStub struct {
++	info  *abci.ResponseInfo
++	query *abci.ResponseQuery
++}
++
++func (s historyQueryStub) Info(context.Context, *abci.RequestInfo) (*abci.ResponseInfo, error) {
++	return s.info, nil
++}
++func (s historyQueryStub) Query(context.Context, *abci.RequestQuery) (*abci.ResponseQuery, error) {
++	return s.query, nil
++}
++
++func historyPolicyFixture(t *testing.T) (historyQueryStub, sm.State, statesync.HistoryAnchor, types.ConsensusParams) {
++	t.Helper()
++	genesis := *types.DefaultConsensusParams()
++	h := &types.Header{ChainID: "history-test", Height: 42, Time: time.Date(2500, 1, 1, 0, 0, 0, 123456789, time.UTC), ValidatorsHash: bytes.Repeat([]byte{1}, 32)}
++	next := &types.Header{ChainID: h.ChainID, Height: 43, Time: h.Time.Add(time.Second), AppHash: bytes.Repeat([]byte{2}, 32), ConsensusHash: genesis.Hash(), LastBlockID: types.BlockID{Hash: h.Hash()}}
++	next.Version.App = 7
++	state := sm.State{ChainID: h.ChainID, LastBlockHeight: 42, LastBlockTime: h.Time, LastBlockID: types.BlockID{Hash: h.Hash()}, AppHash: next.AppHash, ConsensusParams: genesis}
++	state.ConsensusParams.Evidence.MaxAgeDuration = time.Nanosecond
++	state.ConsensusParams.Validator.PubKeyTypes = []string{"forged"}
++	state.ConsensusParams.ABCI.VoteExtensionsEnableHeight = 1
++	state.ConsensusParams.Authority.Authority = "forged"
++	state.ConsensusParams.Version.App = 999
++	body := map[string]any{"schema_version": 1, "height": "42", "app_hash": hex.EncodeToString(next.AppHash), "last_block_nanos": exactHistoryNanos(h.Time), "evidence": map[string]string{"max_age_num_blocks": "100000", "max_age_duration": "1296000000000000", "max_bytes": "1048576"}}
++	data, err := json.Marshal(body)
++	require.NoError(t, err)
++	query := historyQueryStub{info: &abci.ResponseInfo{LastBlockHeight: 42, LastBlockAppHash: next.AppHash, AppVersion: 7}, query: &abci.ResponseQuery{Height: 42, Value: data}}
++	return query, state, statesync.HistoryAnchor{Header: h, NextHeader: next, InitialHeight: 1}, genesis
++}
++
++func TestHistoryParamsReplaceUnhashedRPCFieldsFromAuthenticatedSources(t *testing.T) {
++	query, state, anchor, genesis := historyPolicyFixture(t)
++	got, err := authenticatedHistoryParams(context.Background(), query, state, anchor, genesis)
++	require.NoError(t, err)
++	require.Equal(t, 15*24*time.Hour, got.Evidence.MaxAgeDuration)
++	require.Equal(t, genesis.Validator, got.Validator)
++	require.Equal(t, genesis.ABCI, got.ABCI)
++	require.Equal(t, genesis.Authority, got.Authority)
++	require.Equal(t, uint64(7), got.Version.App)
++	require.Equal(t, state.ConsensusParams.Block, got.Block)
++}
++
++func TestHistoryPolicyRejectsEveryMismatchedBinding(t *testing.T) {
++	for _, kind := range []string{"code", "queryheight", "infoheight", "infohash", "infoversion", "schema", "height", "hash", "nanos", "duration", "blocks", "bytes", "extra"} {
++		t.Run(kind, func(t *testing.T) {
++			query, state, anchor, genesis := historyPolicyFixture(t)
++			var body map[string]any
++			require.NoError(t, json.Unmarshal(query.query.Value, &body))
++			switch kind {
++			case "code":
++				query.query.Code = 1
++			case "queryheight":
++				query.query.Height++
++			case "infoheight":
++				query.info.LastBlockHeight++
++			case "infohash":
++				query.info.LastBlockAppHash = []byte("bad")
++			case "infoversion":
++				query.info.AppVersion++
++			case "schema":
++				body["schema_version"] = 2
++			case "height":
++				body["height"] = "043"
++			case "hash":
++				body["app_hash"] = "00"
++			case "nanos":
++				body["last_block_nanos"] = "0"
++			case "duration":
++				body["evidence"].(map[string]any)["max_age_duration"] = "9223372036854775808"
++			case "blocks":
++				body["evidence"].(map[string]any)["max_age_num_blocks"] = "-1"
++			case "bytes":
++				body["evidence"].(map[string]any)["max_bytes"] = "01"
++			case "extra":
++				body["unexpected"] = true
++			}
++			query.query.Value, _ = json.Marshal(body)
++			_, err := authenticatedHistoryParams(context.Background(), query, state, anchor, genesis)
++			require.Error(t, err)
++		})
++	}
++}
++
++type historyCacheValidationStub struct{ err error }
++
++func (s historyCacheValidationStub) Validate([]byte) error { return s.err }
++func TestHistoryJournalCannotBypassIncompleteOrDeletedCache(t *testing.T) {
++	db := dbm.NewMemDB()
++	state := sm.State{ChainID: "history-test", LastBlockHeight: 42}
++	require.NoError(t, writeHistoryPending(db, state.ChainID, 42))
++	require.Error(t, validateHistoryRequirement(db, historyCacheValidationStub{}, state, false))
++	require.NoError(t, validateHistoryRequirement(db, historyCacheValidationStub{}, sm.State{ChainID: state.ChainID}, true))
++	require.NoError(t, writeHistoryReady(db, state.ChainID, 42, bytes.Repeat([]byte{1}, 32)))
++	require.Error(t, validateHistoryRequirement(db, historyCacheValidationStub{err: fmt.Errorf("missing")}, state, false))
++	require.NoError(t, validateHistoryRequirement(db, historyCacheValidationStub{}, state, false))
++}
++
++func TestHistoryBlocksyncFloorRejectsUnmarkedOrIncompleteRestore(t *testing.T) {
++	db := dbm.NewMemDB()
++	blocks := store.NewBlockStore(dbm.NewMemDB())
++	state := sm.State{ChainID: "floor-chain", LastBlockHeight: 42}
++	_, err := loadHistoryBlocksyncHeight(db, blocks, state)
++	require.Error(t, err)
++	require.NoError(t, writeHistoryPending(db, state.ChainID, 42))
++	_, err = loadHistoryBlocksyncHeight(db, blocks, state)
++	require.Error(t, err)
++	require.NoError(t, writeHistoryReady(db, state.ChainID, 41, bytes.Repeat([]byte{1}, 32)))
++	_, err = loadHistoryBlocksyncHeight(db, blocks, state)
++	require.Error(t, err)
++	require.NoError(t, db.SetSync(historyRequiredKey, []byte("{")))
++	_, err = loadHistoryBlocksyncHeight(db, blocks, state)
++	require.Error(t, err)
++	genesis := sm.State{ChainID: state.ChainID}
++	floor, err := loadHistoryBlocksyncHeight(db, blocks, genesis)
++	require.NoError(t, err)
++	require.Zero(t, floor)
++}
++
++func historyResumableState(t *testing.T) (sm.State, *types.Commit, historyQueryStub) {
++	t.Helper()
++	query, state, _, _ := historyPolicyFixture(t)
++	private := types.NewMockPV()
++	pub, err := private.GetPubKey()
++	require.NoError(t, err)
++	vals := types.NewValidatorSet([]*types.Validator{types.NewValidator(pub, 10)})
++	state.InitialHeight = 1
++	state.LastValidators = vals
++	state.Validators = vals.Copy()
++	state.NextValidators = vals.Copy()
++	state.LastHeightValidatorsChanged = state.LastBlockHeight + 2
++	state.LastHeightConsensusParamsChanged = state.LastBlockHeight + 1
++	state.LastBlockID = cmttest.MakeBlockIDWithHash(state.LastBlockID.Hash)
++	state.ConsensusParams = *types.DefaultConsensusParams()
++	commit, err := cmttest.MakeCommit(state.LastBlockID, state.LastBlockHeight, 0, vals, []types.PrivValidator{private}, state.ChainID, state.LastBlockTime)
++	require.NoError(t, err)
++	return state, commit, query
++}
++
++func TestHistoryResumeRestoredAppBeforeAnyCoreCheckpoint(t *testing.T) {
++	for _, corePublished := range []bool{false, true} {
++		t.Run(fmt.Sprint(corePublished), func(t *testing.T) {
++			trusted, commit, query := historyResumableState(t)
++			db := dbm.NewMemDB()
++			stateStore := sm.NewStore(db, sm.StoreOptions{})
++			blocks := store.NewBlockStore(dbm.NewMemDB())
++			old := sm.State{ChainID: trusted.ChainID, InitialHeight: 1}
++			if corePublished {
++				require.NoError(t, stateStore.Bootstrap(trusted))
++				old = trusted
++			}
++			require.NoError(t, writeHistoryPending(db, trusted.ChainID, 0))
++			calls := 0
++			resumed, err := resumeEvidenceHistoryUsing(context.Background(), db, stateStore, blocks, old, query, func(_ context.Context, height int64) (sm.State, []byte, *types.Commit, error) {
++				calls++
++				require.Equal(t, int64(42), height)
++				pending, err := readHistoryRequirement(db)
++				require.NoError(t, err)
++				require.True(t, pending.Pending)
++				return trusted, bytes.Repeat([]byte{3}, 32), commit, nil
++			})
++			require.NoError(t, err)
++			require.Equal(t, 1, calls)
++			require.Equal(t, int64(42), resumed.LastBlockHeight)
++			persisted, err := stateStore.Load()
++			require.NoError(t, err)
++			require.Equal(t, int64(42), persisted.LastBlockHeight)
++			require.Equal(t, commit.Hash(), blocks.LoadSeenCommit(42).Hash())
++			ready, err := readHistoryRequirement(db)
++			require.NoError(t, err)
++			require.False(t, ready.Pending)
++			for restart := 0; restart < 2; restart++ {
++				require.NoError(t, stateStore.SetOfflineStateSyncHeight(0))
++				floor, err := loadHistoryBlocksyncHeight(db, blocks, resumed)
++				require.NoError(t, err)
++				require.NotPanics(t, func() {
++					_, err := createBlocksyncReactor(true, cfg.DefaultConfig(), resumed, nil, blocks, nil, floor, log.NewNopLogger(), bc.NopMetrics())
++					require.NoError(t, err)
++				}, "a restored checkpoint must construct its real blocksync reactor after every legacy floor reset")
++				require.Equal(t, int64(42), floor)
++			}
++		})
++	}
++}
++
++func TestHistoryResumeFailureKeepsIndependentJournalPending(t *testing.T) {
++	trusted, commit, query := historyResumableState(t)
++	for _, failure := range []string{"fetch", "cancel", "wronghash", "corewrite"} {
++		t.Run(failure, func(t *testing.T) {
++			db := dbm.NewMemDB()
++			base := sm.NewStore(db, sm.StoreOptions{})
++			var stateStore sm.Store = base
++			if failure == "corewrite" {
++				stateStore = historyBootstrapFailureStore{Store: base}
++			}
++			require.NoError(t, writeHistoryPending(db, trusted.ChainID, 0))
++			old := sm.State{ChainID: trusted.ChainID, InitialHeight: 1}
++			_, err := resumeEvidenceHistoryUsing(context.Background(), db, stateStore, store.NewBlockStore(dbm.NewMemDB()), old, query, func(context.Context, int64) (sm.State, []byte, *types.Commit, error) {
++				result := trusted
++				if failure == "fetch" {
++					return result, nil, nil, fmt.Errorf("provider failed")
++				}
++				if failure == "cancel" {
++					return result, nil, nil, context.Canceled
++				}
++				if failure == "wronghash" {
++					result.AppHash = []byte("wrong")
++				}
++				return result, bytes.Repeat([]byte{3}, 32), commit, nil
++			})
++			require.Error(t, err)
++			pending, err := readHistoryRequirement(db)
++			require.NoError(t, err)
++			require.True(t, pending.Pending)
++			persisted, err := base.Load()
++			require.NoError(t, err)
++			require.True(t, persisted.IsEmpty())
++		})
++	}
++}
++
++type historyBootstrapFailureStore struct{ sm.Store }
++
++func (historyBootstrapFailureStore) Bootstrap(sm.State) error { return fmt.Errorf("core write failed") }
+diff --git a/node/history_shutdown_test.go b/node/history_shutdown_test.go
+new file mode 100644
+index 0000000..c609086
+--- /dev/null
++++ b/node/history_shutdown_test.go
+@@ -0,0 +1,72 @@
++package node
++
++import (
++	"context"
++	"sync"
++	"testing"
++	"time"
++
++	dbm "github.com/cometbft/cometbft-db"
++	cfg "github.com/cometbft/cometbft/config"
++	"github.com/cometbft/cometbft/libs/log"
++	"github.com/cometbft/cometbft/libs/service"
++	"github.com/cometbft/cometbft/p2p"
++	sm "github.com/cometbft/cometbft/state"
++	"github.com/cometbft/cometbft/types"
++	"github.com/stretchr/testify/require"
++)
++
++type historyClosingStore struct {
++	sm.Store
++	closed chan struct{}
++}
++
++func (s historyClosingStore) Close() error {
++	close(s.closed)
++	return s.Store.Close()
++}
++
++func TestHistoryRealNodeStopCancelsAndJoinsBeforeClosingStores(t *testing.T) {
++	db := dbm.NewMemDB()
++	closed := make(chan struct{})
++	n := &Node{stateDB: db, eventBus: types.NewEventBus(), sw: p2p.NewSwitch(cfg.DefaultP2PConfig(), nil), stateStore: historyClosingStore{Store: sm.NewStore(db, sm.StoreOptions{}), closed: closed}}
++	n.BaseService = *service.NewBaseService(log.NewNopLogger(), "history-shutdown", n)
++	require.NoError(t, n.journalEvidenceHistory("shutdown-chain"))
++	journal, err := readHistoryRequirement(db)
++	require.NoError(t, err)
++	require.True(t, journal.Pending)
++	ctx, finish := n.evidenceHistoryContext()
++	var once sync.Once
++	release := func() { once.Do(finish) }
++	defer release()
++	stopped := make(chan struct{})
++	go func() { n.OnStop(); close(stopped) }()
++	select {
++	case <-ctx.Done():
++	case <-time.After(time.Second):
++		t.Error("real OnStop did not cancel active history before waiting for Quit")
++	}
++	select {
++	case <-closed:
++		t.Error("store closed while history publication was still active")
++	default:
++	}
++	release()
++	select {
++	case <-stopped:
++	case <-time.After(time.Second):
++		t.Fatal("OnStop did not join completed history work")
++	}
++	require.Eventually(t, func() bool {
++		select {
++		case <-closed:
++			return true
++		default:
++			return false
++		}
++	}, time.Second, time.Millisecond)
++	late, lateFinish := n.evidenceHistoryContext()
++	defer lateFinish()
++	require.ErrorIs(t, late.Err(), context.Canceled, "late snapshot completion must not begin history work after stores close")
++	require.ErrorIs(t, n.journalEvidenceHistory("shutdown-chain"), context.Canceled)
++}
+diff --git a/node/node.go b/node/node.go
+index 896d412..8daae3f 100644
+--- a/node/node.go
++++ b/node/node.go
+@@ -10,6 +10,7 @@ import (
+ 	"os"
+ 	"time"
+ 
++	dbm "github.com/cometbft/cometbft-db"
+ 	"github.com/prometheus/client_golang/prometheus"
+ 	"github.com/prometheus/client_golang/prometheus/promhttp"
+ 	"github.com/rs/cors"
+@@ -64,6 +65,8 @@ type Node struct {
+ 	// services
+ 	eventBus          *types.EventBus // pub/sub for services
+ 	stateStore        sm.Store
++	stateDB           dbm.DB            // independent durable history requirement journal
++	historyWork       historyWork       // owned publication lifetime, joined before stores close
+ 	blockStore        *store.BlockStore // store the blockchain to disk
+ 	bcReactor         p2p.Reactor       // for block-syncing
+ 	mempoolReactor    waitSyncReactor   // for gossipping transactions
+@@ -184,6 +187,9 @@ func BootstrapStateWithGenProvider(ctx context.Context, config *cfg.Config, dbPr
+ 		dbProvider = cfg.DefaultDBProvider
+ 	}
+ 	blockStore, stateDB, err := initDBs(config, dbProvider)
++	if err != nil {
++		return err
++	}
+ 
+ 	defer func() {
+ 		if derr := blockStore.Close(); derr != nil {
+@@ -193,10 +199,6 @@ func BootstrapStateWithGenProvider(ctx context.Context, config *cfg.Config, dbPr
+ 		}
+ 	}()
+ 
+-	if err != nil {
+-		return err
+-	}
+-
+ 	if !blockStore.IsEmpty() {
+ 		return fmt.Errorf("blockstore not empty, trying to initialize non empty state")
+ 	}
+@@ -260,6 +262,11 @@ func BootstrapStateWithGenProvider(ctx context.Context, config *cfg.Config, dbPr
+ 		return err
+ 	}
+ 
++	// Offline state import must finish authenticated history on the next start,
++	// before handshake/catchup. This marker survives the legacy offline-height reset.
++	if err = writeHistoryPending(stateDB, state.ChainID, state.LastBlockHeight); err != nil {
++		return err
++	}
+ 	if err = stateStore.Bootstrap(state); err != nil {
+ 		return err
+ 	}
+@@ -326,6 +333,17 @@ func NewNodeWithContext(
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	evidenceDB, err := dbProvider(&cfg.DBContext{ID: "evidence", Config: config})
++	if err != nil {
++		return nil, err
++	}
++	evidenceDBOwned := true
++	defer func() {
++		if evidenceDBOwned {
++			_ = evidenceDB.Close()
++		}
++	}()
++	historyCache := evidence.NewHistoryCache(evidenceDB)
+ 
+ 	csMetrics, p2pMetrics, memplMetrics, smMetrics, abciMetrics, bsMetrics, ssMetrics := metricsProvider(genDoc.ChainID)
+ 
+@@ -373,6 +391,16 @@ func NewNodeWithContext(
+ 		logger.Info("Found local state with non-zero height, skipping state sync")
+ 		stateSync = false
+ 	}
++	state, err = resumeEvidenceHistory(ctx, config, stateDB, stateStore, blockStore, historyCache, state, genDoc, proxyApp.Query(), logger)
++	if err != nil {
++		return nil, err
++	}
++	if state.LastBlockHeight > 0 {
++		stateSync = false
++	}
++	if err = validateHistoryRequirement(stateDB, historyCache, state, stateSync); err != nil {
++		return nil, err
++	}
+ 
+ 	// Create the handshaker, which calls RequestInfo, sets the AppVersion on the state,
+ 	// and replays any blocks as necessary to sync CometBFT with the app.
+@@ -415,7 +443,7 @@ func NewNodeWithContext(
+ 	// create mempool with its reactor
+ 	mempool, mempoolReactor := createMempoolAndMempoolReactor(config, proxyApp, state, mempoolWaitForSync, memplMetrics, logger)
+ 
+-	evidenceReactor, evidencePool, err := createEvidenceReactor(config, dbProvider, stateStore, blockStore, logger)
++	evidenceReactor, evidencePool, err := createEvidenceReactorFromDB(evidenceDB, stateStore, blockStore, logger)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -432,12 +460,9 @@ func NewNodeWithContext(
+ 		sm.BlockExecutorWithBlockTimeTolerance(config.Consensus.BlockTimeTolerance),
+ 	)
+ 
+-	offlineStateSyncHeight := int64(0)
+-	if blockStore.Height() == 0 {
+-		offlineStateSyncHeight, err = blockExec.Store().GetOfflineStateSyncHeight()
+-		if err != nil && err.Error() != "value empty" {
+-			panic(fmt.Sprintf("failed to retrieve statesynced height from store %s; expected state store height to be %v", err, state.LastBlockHeight))
+-		}
++	offlineStateSyncHeight, err := loadHistoryBlocksyncHeight(stateDB, blockStore, state)
++	if err != nil {
++		return nil, fmt.Errorf("cannot restore history block-sync height: %w", err)
+ 	}
+ 
+ 	bcReactor, err := createBlocksyncReactor(
+@@ -589,6 +614,7 @@ func NewNodeWithContext(
+ 		nodeKey:  nodeKey,
+ 
+ 		stateStore:       stateStore,
++		stateDB:          stateDB,
+ 		blockStore:       blockStore,
+ 		bcReactor:        bcReactor,
+ 		mempoolReactor:   mempoolReactor,
+@@ -612,6 +638,7 @@ func NewNodeWithContext(
+ 		option(node)
+ 	}
+ 
++	evidenceDBOwned = false // the evidence pool now owns its lifetime
+ 	return node, nil
+ }
+ 
+@@ -732,6 +759,7 @@ func (n *Node) OnStart() error {
+ 
+ // OnStop stops the Node. It implements service.Service.
+ func (n *Node) OnStop() {
++	n.stopEvidenceHistory()
+ 	n.BaseService.OnStop()
+ 
+ 	n.Logger.Info("Stopping Node")
+@@ -823,13 +851,14 @@ func (n *Node) ConfigureRPC() (*rpccore.Environment, error) {
+ 		ProxyAppQuery:   n.proxyApp.Query(),
+ 		ProxyAppMempool: n.proxyApp.Mempool(),
+ 
+-		StateStore:     n.stateStore,
+-		BlockStore:     n.blockStore,
+-		EvidencePool:   n.evidencePool,
+-		ConsensusState: n.consensusState,
+-		P2PPeers:       n.sw,
+-		P2PTransport:   n,
+-		PubKey:         pubKey,
++		StateStore:      n.stateStore,
++		BlockStore:      n.blockStore,
++		EvidencePool:    n.evidencePool,
++		EvidenceHistory: n.evidencePool.HistoryCache(),
++		ConsensusState:  n.consensusState,
++		P2PPeers:        n.sw,
++		P2PTransport:    n,
++		PubKey:          pubKey,
+ 
+ 		GenDoc:           n.genesisDoc,
+ 		TxIndexer:        n.txIndexer,
+diff --git a/node/setup.go b/node/setup.go
+index b8e131e..049ed64 100644
+--- a/node/setup.go
++++ b/node/setup.go
+@@ -281,6 +281,10 @@ func createEvidenceReactor(config *cfg.Config, dbProvider cfg.DBProvider,
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
++	return createEvidenceReactorFromDB(evidenceDB, stateStore, blockStore, logger)
++}
++
++func createEvidenceReactorFromDB(evidenceDB dbm.DB, stateStore sm.Store, blockStore *store.BlockStore, logger log.Logger) (*evidence.Reactor, *evidence.Pool, error) {
+ 	evidenceLogger := logger.With("module", "evidence")
+ 	evidencePool, err := evidence.NewPool(evidenceDB, stateStore, blockStore)
+ 	if err != nil {
+@@ -614,24 +618,48 @@ func (n *Node) performStateSync() error {
+ 		}
+ 	}
+ 
++	// Journal synchronously before starting snapshot restoration. Shutdown joins
++	// this short write, but need not wait for legacy snapshot discovery to return.
++	if err := n.journalEvidenceHistory(state.ChainID); err != nil {
++		return fmt.Errorf("cannot journal evidence history requirement: %w", err)
++	}
+ 	go func() {
+ 		state, commit, err := n.stateSyncReactor.Sync(n.stateSyncProvider, config.DiscoveryTime)
+ 		if err != nil {
+ 			logger.Error("State sync failed", "err", err)
+ 			return
+ 		}
+-
+-		err = n.stateStore.Bootstrap(state)
++		ctx, finish := n.evidenceHistoryContext()
++		defer finish()
++		if ctx.Err() != nil {
++			return
++		}
++		state, digest, err := prepareEvidenceHistory(ctx, n.config, state, n.genesisDoc, n.stateSyncProvider, n.proxyApp.Query(), n.evidencePool.HistoryCache())
+ 		if err != nil {
+-			logger.Error("Failed to bootstrap node with new state", "err", err)
++			logger.Error("Cannot authenticate snapshot evidence history", "err", err)
++			return
++		}
++		if ctx.Err() != nil {
+ 			return
+ 		}
+ 
+-		err = n.blockStore.SaveSeenCommit(state.LastBlockHeight, commit)
++		// Use the history-verified canonical checkpoint commit. The earlier
++		// snapshot provider commit may have come from backwards header lookup.
++		commit, err = n.evidencePool.HistoryCache().Commit(state.LastBlockHeight)
+ 		if err != nil {
+-			logger.Error("Failed to store last seen commit", "err", err)
++			logger.Error("Cannot load canonical history checkpoint commit", "err", err)
++			return
++		}
++		if err = publishHistoryCheckpoint(n.stateDB, n.stateStore, n.blockStore, state, digest, commit); err != nil {
++			logger.Error("Cannot publish evidence history requirement", "err", err)
++			return
++		}
++		if ctx.Err() != nil {
+ 			return
+ 		}
++		// The pool existed while state sync was waiting. Align its expiry clock
++		// with the authenticated checkpoint before validating the first catchup block.
++		n.evidencePool.Update(state, nil)
+ 
+ 		// Adaptive sync ingests blocks through consensus internals, so consensus
+ 		// must be switched out of wait-sync mode before blocksync is enabled.
+diff --git a/rpc/core/env.go b/rpc/core/env.go
+index ff167a1..41ed799 100644
+--- a/rpc/core/env.go
++++ b/rpc/core/env.go
+@@ -74,6 +74,7 @@ type Environment struct {
+ 	StateStore       sm.Store
+ 	BlockStore       sm.BlockStore
+ 	EvidencePool     sm.EvidencePool
++	EvidenceHistory  EvidenceHistory
+ 	ConsensusState   Consensus
+ 	ConsensusReactor syncReactor
+ 	MempoolReactor   syncReactor
+diff --git a/rpc/core/evidence_history.go b/rpc/core/evidence_history.go
+new file mode 100644
+index 0000000..326747f
+--- /dev/null
++++ b/rpc/core/evidence_history.go
+@@ -0,0 +1,72 @@
++package core
++
++import (
++	"fmt"
++
++	ctypes "github.com/cometbft/cometbft/rpc/core/types"
++	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
++	"github.com/cometbft/cometbft/types"
++)
++
++// EvidenceHistory is a proof-only read interface. Its validators do not convey
++// current proposer priorities, and it never supplies block bodies.
++type EvidenceHistory interface {
++	BlockMeta(int64) (*types.BlockMeta, error)
++	Commit(int64) (*types.Commit, error)
++	Validators(int64) (*types.ValidatorSet, error)
++}
++
++func (env *Environment) retainedEvidenceHistory(height int64) (*ctypes.ResultEvidenceHistory, error) {
++	meta := env.BlockStore.LoadBlockMeta(height)
++	if meta == nil {
++		return nil, fmt.Errorf("historical header unavailable")
++	}
++	commit := env.BlockStore.LoadBlockCommit(height)
++	if commit == nil {
++		return nil, fmt.Errorf("canonical historical commit unavailable")
++	}
++	vals, err := env.StateStore.LoadValidators(height)
++	if err != nil {
++		return nil, err
++	}
++	return &ctypes.ResultEvidenceHistory{Header: &meta.Header, Commit: commit, Validators: vals}, nil
++}
++
++func (env *Environment) cachedEvidenceHistory(height int64) (*ctypes.ResultEvidenceHistory, error) {
++	if env.EvidenceHistory == nil {
++		return nil, fmt.Errorf("evidence history unavailable")
++	}
++	meta, err := env.EvidenceHistory.BlockMeta(height)
++	if err != nil {
++		return nil, err
++	}
++	commit, err := env.EvidenceHistory.Commit(height)
++	if err != nil {
++		return nil, err
++	}
++	vals, err := env.EvidenceHistory.Validators(height)
++	if err != nil {
++		return nil, err
++	}
++	return &ctypes.ResultEvidenceHistory{Header: &meta.Header, Commit: commit, Validators: vals}, nil
++}
++
++// EvidenceHistoryRecord serves the retained proof window even below the block
++// body pruning base. Ordinary /block and /validators keep their own semantics.
++// Clients must authenticate every returned record against a trusted header.
++func (env *Environment) EvidenceHistoryRecord(_ *rpctypes.Context, height int64) (*ctypes.ResultEvidenceHistory, error) {
++	if height <= 0 || height >= env.BlockStore.Height() {
++		return nil, fmt.Errorf("evidence history requires a positive historical height")
++	}
++	record, err := env.retainedEvidenceHistory(height)
++	if err != nil {
++		record, err = env.cachedEvidenceHistory(height)
++	}
++	if err != nil {
++		return nil, fmt.Errorf("evidence history unavailable at height %d", height)
++	}
++	if record.Header == nil || record.Commit == nil || record.Validators == nil || len(record.Validators.Validators) > 10000 {
++		return nil, fmt.Errorf("evidence history record incomplete or exceeds validator limit")
++	}
++	return record, nil
++}
+diff --git a/rpc/core/evidence_history_test.go b/rpc/core/evidence_history_test.go
+new file mode 100644
+index 0000000..265556f
+--- /dev/null
++++ b/rpc/core/evidence_history_test.go
+@@ -0,0 +1,70 @@
++package core
++
++import (
++	"fmt"
++	"testing"
++
++	dbm "github.com/cometbft/cometbft-db"
++	"github.com/stretchr/testify/require"
++
++	sm "github.com/cometbft/cometbft/state"
++	"github.com/cometbft/cometbft/state/mocks"
++	"github.com/cometbft/cometbft/types"
++)
++
++type proofHistoryFixture struct {
++	meta   *types.BlockMeta
++	commit *types.Commit
++	vals   *types.ValidatorSet
++	err    error
++}
++
++func (f proofHistoryFixture) BlockMeta(int64) (*types.BlockMeta, error)     { return f.meta, f.err }
++func (f proofHistoryFixture) Commit(int64) (*types.Commit, error)           { return f.commit, f.err }
++func (f proofHistoryFixture) Validators(int64) (*types.ValidatorSet, error) { return f.vals, f.err }
++
++func TestEvidenceHistoryRetainedProofBelowBodyBase(t *testing.T) {
++	for _, cached := range []bool{false, true} {
++		t.Run(fmt.Sprint(cached), func(t *testing.T) {
++			height := int64(4)
++			vals, _ := types.RandValidatorSet(2, 10)
++			meta := &types.BlockMeta{Header: types.Header{Height: height}}
++			commit := &types.Commit{Height: height}
++			blocks := &mocks.BlockStore{}
++			blocks.On("Height").Return(int64(10))
++			blocks.On("Base").Return(int64(8))
++			state := &mocks.Store{}
++			env := &Environment{BlockStore: blocks, StateStore: state}
++			if cached {
++				blocks.On("LoadBlockMeta", height).Return((*types.BlockMeta)(nil))
++				env.EvidenceHistory = proofHistoryFixture{meta: meta, commit: commit, vals: vals}
++			} else {
++				blocks.On("LoadBlockMeta", height).Return(meta)
++				blocks.On("LoadBlockCommit", height).Return(commit)
++				state.On("LoadValidators", height).Return(vals, nil)
++			}
++			proof, err := env.EvidenceHistoryRecord(nil, height)
++			require.NoError(t, err)
++			require.Equal(t, height, proof.Header.Height)
++			require.Equal(t, vals, proof.Validators)
++			require.Equal(t, commit, proof.Commit)
++			_, err = env.Block(nil, &height)
++			require.ErrorContains(t, err, "not available")
++			require.Contains(t, env.GetRoutes(), "evidence_history")
++		})
++	}
++}
++
++func TestEvidenceHistoryUnavailableAndInvalidHeight(t *testing.T) {
++	blocks := &mocks.BlockStore{}
++	blocks.On("Height").Return(int64(10))
++	blocks.On("LoadBlockMeta", int64(4)).Return((*types.BlockMeta)(nil))
++	env := &Environment{BlockStore: blocks, StateStore: sm.NewStore(dbm.NewMemDB(), sm.StoreOptions{})}
++	for _, height := range []int64{-1, 0, 4, 11} {
++		_, err := env.EvidenceHistoryRecord(nil, height)
++		require.Error(t, err)
++	}
++	env.EvidenceHistory = proofHistoryFixture{err: fmt.Errorf("missing")}
++	_, err := env.EvidenceHistoryRecord(nil, 4)
++	require.Error(t, err)
++}
+diff --git a/rpc/core/routes.go b/rpc/core/routes.go
+index c7c13a5..72b60b6 100644
+--- a/rpc/core/routes.go
++++ b/rpc/core/routes.go
+@@ -51,6 +51,7 @@ func (env *Environment) GetRoutes() RoutesMap {
+ 
+ 		// evidence API
+ 		"broadcast_evidence": rpc.NewRPCFunc(env.BroadcastEvidence, "evidence"),
++		"evidence_history":   rpc.NewRPCFunc(env.EvidenceHistoryRecord, "height"),
+ 	}
+ }
+ 
+diff --git a/rpc/core/types/evidence_history.go b/rpc/core/types/evidence_history.go
+new file mode 100644
+index 0000000..a8e39f7
+--- /dev/null
++++ b/rpc/core/types/evidence_history.go
+@@ -0,0 +1,11 @@
++package coretypes
++
++import "github.com/cometbft/cometbft/types"
++
++// ResultEvidenceHistory contains proof prerequisites only; no block body or
++// authenticated proposer-priority information is implied by this endpoint.
++type ResultEvidenceHistory struct {
++	Header     *types.Header       `json:"header"`
++	Validators *types.ValidatorSet `json:"validators"`
++	Commit     *types.Commit       `json:"commit"`
++}
+diff --git a/statesync/history_adversarial_test.go b/statesync/history_adversarial_test.go
+new file mode 100644
+index 0000000..4b074b1
+--- /dev/null
++++ b/statesync/history_adversarial_test.go
+@@ -0,0 +1,380 @@
++package statesync
++
++import (
++	"compress/gzip"
++	"context"
++	"encoding/json"
++	"errors"
++	"math"
++	"net/http"
++	"net/http/httptest"
++	"strconv"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/require"
++
++	"github.com/cometbft/cometbft/crypto/ed25519"
++	cmttest "github.com/cometbft/cometbft/internal/test"
++	cmtjson "github.com/cometbft/cometbft/libs/json"
++	cmtversion "github.com/cometbft/cometbft/proto/tendermint/version"
++	coretypes "github.com/cometbft/cometbft/rpc/core/types"
++	"github.com/cometbft/cometbft/types"
++	"github.com/cometbft/cometbft/version"
++)
++
++func TestHistoryAdversarialValidatorIdentity(t *testing.T) {
++	mutations := map[string]func(*testing.T, *HistoryRecord){
++		"unhashed address": func(t *testing.T, record *HistoryRecord) {
++			before := record.Validators.Hash()
++			record.Validators.Validators[0].Address[0] ^= 0xff
++			require.Equal(t, before, record.Validators.Hash())
++		},
++		"malformed key": func(_ *testing.T, record *HistoryRecord) {
++			record.Validators.Validators[0].PubKey = ed25519.PubKey{1}
++		},
++		"nil key": func(_ *testing.T, record *HistoryRecord) {
++			record.Validators.Validators[0].PubKey = nil
++		},
++		"nil validator": func(_ *testing.T, record *HistoryRecord) {
++			record.Validators.Validators[0] = nil
++		},
++		"duplicate validator": func(_ *testing.T, record *HistoryRecord) {
++			record.Validators.Validators = append(record.Validators.Validators, record.Validators.Validators[0])
++		},
++		"zero power": func(_ *testing.T, record *HistoryRecord) {
++			record.Validators.Validators[0].VotingPower = 0
++		},
++		"valid power with wrong hash": func(_ *testing.T, record *HistoryRecord) {
++			record.Validators.Validators[0].VotingPower++
++		},
++		"excessive power": func(_ *testing.T, record *HistoryRecord) {
++			record.Validators.Validators[0].VotingPower = types.MaxTotalVotingPower + 1
++		},
++		"nil header": func(_ *testing.T, record *HistoryRecord) { record.Header = nil },
++		"nil commit": func(_ *testing.T, record *HistoryRecord) { record.Commit = nil },
++		"nil set":    func(_ *testing.T, record *HistoryRecord) { record.Validators = nil },
++	}
++	for name, mutate := range mutations {
++		t.Run(name, func(t *testing.T) {
++			anchor, records := historyTestChain(t, 3)
++			bad := historyTestProvider(func(_ context.Context, height int64) (HistoryRecord, error) {
++				record := historyCopy(t, records[height])
++				mutate(t, &record)
++				return record, nil
++			})
++			_, err := FetchHistory(context.Background(), anchor,
++				types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour},
++				[]HistoryProvider{bad}, DefaultHistoryLimits(), func(HistoryRecord) error {
++					t.Fatal("unauthenticated validator data was published")
++					return nil
++				})
++			require.Error(t, err)
++			if name == "valid power with wrong hash" {
++				require.ErrorContains(t, err, "validator hash mismatch")
++			}
++		})
++	}
++}
++
++func TestHistoryAdversarialCommitMetadataIsNotCoveredByCommitHash(t *testing.T) {
++	mutations := map[string]func(*types.Commit){
++		"height": func(commit *types.Commit) { commit.Height++ },
++		"round":  func(commit *types.Commit) { commit.Round++ },
++		"part set": func(commit *types.Commit) {
++			commit.BlockID.PartSetHeader.Hash[0] ^= 0xff
++		},
++	}
++	for name, mutate := range mutations {
++		t.Run(name, func(t *testing.T) {
++			anchor, records := historyTestChain(t, 3)
++			bad := historyTestProvider(func(_ context.Context, height int64) (HistoryRecord, error) {
++				record := historyCopy(t, records[height])
++				before := record.Commit.Hash()
++				mutate(record.Commit)
++				// Model a freshly decoded response, without Commit's cached hash.
++				record.Commit = &types.Commit{
++					Height: record.Commit.Height, Round: record.Commit.Round,
++					BlockID: record.Commit.BlockID, Signatures: record.Commit.Signatures,
++				}
++				// LastCommitHash alone cannot authenticate these metadata fields.
++				require.Equal(t, before, record.Commit.Hash())
++				return record, nil
++			})
++			_, err := FetchHistory(context.Background(), anchor,
++				types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour},
++				[]HistoryProvider{bad}, DefaultHistoryLimits(), func(HistoryRecord) error {
++					t.Fatal("forged commit metadata was published")
++					return nil
++				})
++			require.Error(t, err)
++		})
++	}
++}
++
++func TestHistoryAdversarialPrioritiesStayOutsideCurrentState(t *testing.T) {
++	anchor, records := historyTestChain(t, 3)
++	anchor.InitialHeight = 3
++	source := historyCopy(t, records[3])
++	source.Validators.Validators[0].ProposerPriority = math.MaxInt64
++	source.Validators.Proposer.ProposerPriority = math.MaxInt64
++	originalPriority := records[3].Validators.Validators[0].ProposerPriority
++	provider := historyTestProvider(func(context.Context, int64) (HistoryRecord, error) { return source, nil })
++	result, err := FetchHistory(context.Background(), anchor,
++		types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour},
++		[]HistoryProvider{provider}, DefaultHistoryLimits(), func(record HistoryRecord) error {
++			require.NotSame(t, source.Validators, record.Validators)
++			require.Equal(t, []byte(records[3].Header.ValidatorsHash), record.Validators.Hash())
++			require.NotEqual(t, int64(math.MaxInt64), record.Validators.Validators[0].ProposerPriority)
++			record.Validators.Validators[0].VotingPower = 1
++			return nil
++		})
++	require.NoError(t, err)
++	require.Equal(t, int64(1), result.Count)
++	require.Equal(t, int64(math.MaxInt64), source.Validators.Validators[0].ProposerPriority)
++	require.Equal(t, int64(10), source.Validators.Validators[0].VotingPower)
++	require.Equal(t, originalPriority, records[3].Validators.Validators[0].ProposerPriority)
++}
++
++func TestHistoryAdversarialCommitTimestampCannotPanic(t *testing.T) {
++	for _, year := range []int{0, 10000} {
++		t.Run(strconv.Itoa(year), func(t *testing.T) {
++			anchor, records := historyTestChain(t, 3)
++			provider := historyTestProvider(func(_ context.Context, height int64) (HistoryRecord, error) {
++				record := historyCopy(t, records[height])
++				record.Commit.Signatures[0].Timestamp = time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
++				return record, nil
++			})
++			var err error
++			require.NotPanics(t, func() {
++				_, err = FetchHistory(context.Background(), anchor,
++					types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour},
++					[]HistoryProvider{provider}, DefaultHistoryLimits(), func(HistoryRecord) error {
++						t.Fatal("invalid timestamp was published")
++						return nil
++					})
++			})
++			require.Error(t, err)
++		})
++	}
++}
++
++func historyAdversarialLargeRecord(t *testing.T) (HistoryAnchor, HistoryRecord) {
++	t.Helper()
++	validators, signers := cmttest.ValidatorSet(context.Background(), t, 201, 10)
++	header := &types.Header{
++		Version: cmtversion.Consensus{Block: version.BlockProtocol},
++		ChainID: "history-pagination", Height: 1,
++		Time:           time.Date(2026, 1, 1, 0, 0, 0, 1, time.UTC),
++		ValidatorsHash: validators.Hash(), NextValidatorsHash: validators.Hash(),
++		ProposerAddress: validators.Validators[0].Address,
++	}
++	id := cmttest.MakeBlockIDWithHash(header.Hash())
++	commit, err := cmttest.MakeCommit(id, 1, 0, validators, signers, header.ChainID, header.Time)
++	require.NoError(t, err)
++	next := *header
++	next.Height = 2
++	next.Time = header.Time.Add(time.Nanosecond)
++	next.LastBlockID = id
++	next.LastCommitHash = commit.Hash()
++	return HistoryAnchor{Header: header, NextHeader: &next, InitialHeight: 1},
++		HistoryRecord{Header: header, Validators: validators, Commit: commit}
++}
++
++func historyAdversarialRPCBody(t *testing.T, result any) []byte {
++	t.Helper()
++	raw, err := cmtjson.Marshal(result)
++	require.NoError(t, err)
++	body, err := json.Marshal(struct {
++		JSONRPC string          `json:"jsonrpc"`
++		Result  json.RawMessage `json:"result"`
++	}{JSONRPC: "2.0", Result: raw})
++	require.NoError(t, err)
++	return body
++}
++
++type historyAdversarialRPC struct {
++	record HistoryRecord
++	alter  func(int, *coretypes.ResultValidators)
++	mu     sync.Mutex
++	pages  []int
++}
++
++func (s *historyAdversarialRPC) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
++	if r.URL.Query().Get("height") != strconv.FormatInt(s.record.Header.Height, 10) {
++		http.Error(w, "unexpected height", http.StatusBadRequest)
++		return
++	}
++	if r.URL.Path == "/rpc/commit" {
++		_, _ = w.Write(historyAdversarialRPCBody(t, coretypes.NewResultCommit(s.record.Header, s.record.Commit, true)))
++		return
++	}
++	if r.URL.Path == "/rpc/evidence_history" {
++		http.Error(w, "dedicated history unavailable", http.StatusNotFound)
++		return
++	}
++	page, err := strconv.Atoi(r.URL.Query().Get("page"))
++	if r.URL.Path != "/rpc/validators" || err != nil || page < 1 || r.URL.Query().Get("per_page") != "100" {
++		http.Error(w, "unexpected page request", http.StatusBadRequest)
++		return
++	}
++	s.mu.Lock()
++	s.pages = append(s.pages, page)
++	s.mu.Unlock()
++	response, ok := s.validatorPage(page)
++	if !ok {
++		http.Error(w, "unexpected extra page", http.StatusBadRequest)
++		return
++	}
++	_, _ = w.Write(historyAdversarialRPCBody(t, response))
++}
++
++func (s *historyAdversarialRPC) validatorPage(page int) (coretypes.ResultValidators, bool) {
++	first := (page - 1) * 100
++	last := min(first+100, len(s.record.Validators.Validators))
++	if first >= last {
++		return coretypes.ResultValidators{}, false
++	}
++	response := coretypes.ResultValidators{
++		BlockHeight: s.record.Header.Height,
++		Validators:  s.record.Validators.Validators[first:last],
++		Count:       last - first, Total: len(s.record.Validators.Validators),
++	}
++	if s.alter != nil {
++		s.alter(page, &response)
++	}
++	return response, true
++}
++
++func TestHistoryAdversarialHTTPPaginationAuthenticatesAllPages(t *testing.T) {
++	anchor, record := historyAdversarialLargeRecord(t)
++	rpc := &historyAdversarialRPC{record: record}
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { rpc.serve(t, w, r) }))
++	defer server.Close()
++	provider, err := NewHistoryRPCProvider(server.URL+"/rpc", DefaultHistoryLimits())
++	require.NoError(t, err)
++	result, err := FetchHistory(context.Background(), anchor,
++		types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour},
++		[]HistoryProvider{provider}, DefaultHistoryLimits(), func(record HistoryRecord) error {
++			require.Len(t, record.Validators.Validators, 201)
++			require.Equal(t, []byte(anchor.Header.ValidatorsHash), record.Validators.Hash())
++			return nil
++		})
++	require.NoError(t, err)
++	require.Equal(t, int64(1), result.Count)
++	rpc.mu.Lock()
++	defer rpc.mu.Unlock()
++	require.Equal(t, []int{1, 2, 3}, rpc.pages)
++}
++
++func TestHistoryAdversarialHTTPRejectsInconsistentPages(t *testing.T) {
++	anchor, record := historyAdversarialLargeRecord(t)
++	mutations := map[string]func(*coretypes.ResultValidators){
++		"height": func(response *coretypes.ResultValidators) { response.BlockHeight++ },
++		"total":  func(response *coretypes.ResultValidators) { response.Total++ },
++		"count":  func(response *coretypes.ResultValidators) { response.Count-- },
++		"empty": func(response *coretypes.ResultValidators) {
++			response.Validators = nil
++			response.Count = 0
++		},
++		"repeated page": func(response *coretypes.ResultValidators) {
++			response.Validators = record.Validators.Validators[:100]
++		},
++	}
++	for name, mutate := range mutations {
++		t.Run(name, func(t *testing.T) {
++			rpc := &historyAdversarialRPC{record: record, alter: func(page int, response *coretypes.ResultValidators) {
++				if page == 2 {
++					mutate(response)
++				}
++			}}
++			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { rpc.serve(t, w, r) }))
++			defer server.Close()
++			provider, err := NewHistoryRPCProvider(server.URL+"/rpc", DefaultHistoryLimits())
++			require.NoError(t, err)
++			_, err = FetchHistory(context.Background(), anchor,
++				types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour},
++				[]HistoryProvider{provider}, DefaultHistoryLimits(), func(HistoryRecord) error {
++					t.Fatal("inconsistent validator pages were published")
++					return nil
++				})
++			require.Error(t, err)
++		})
++	}
++}
++
++func TestHistoryAdversarialHTTPGzipCountsExpandedBytes(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		w.Header().Set("Content-Encoding", "gzip")
++		body := gzip.NewWriter(w)
++		_, _ = body.Write([]byte(strings.Repeat(" ", 4096)))
++		_ = body.Close()
++	}))
++	defer server.Close()
++	limits := DefaultHistoryLimits()
++	limits.MaxResponseBytes = 128
++	provider, err := NewHistoryRPCProvider(server.URL, limits)
++	require.NoError(t, err)
++	_, err = provider.Fetch(context.Background(), 1)
++	require.ErrorContains(t, err, "byte limit")
++}
++
++func TestHistoryAdversarialHTTPRecordBudgetIncludesEveryPage(t *testing.T) {
++	_, record := historyAdversarialLargeRecord(t)
++	commitBody := historyAdversarialRPCBody(t, coretypes.NewResultCommit(record.Header, record.Commit, true))
++	firstPage := historyAdversarialRPCBody(t, coretypes.ResultValidators{
++		BlockHeight: 1, Validators: record.Validators.Validators[:100], Count: 100, Total: 201,
++	})
++	limits := DefaultHistoryLimits()
++	limits.MaxResponseBytes = int64(len(commitBody) + len(firstPage) - 1)
++	require.Less(t, int64(len(commitBody)), limits.MaxResponseBytes)
++	require.Less(t, int64(len(firstPage)), limits.MaxResponseBytes)
++	rpc := &historyAdversarialRPC{record: record}
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { rpc.serve(t, w, r) }))
++	defer server.Close()
++	provider, err := NewHistoryRPCProvider(server.URL+"/rpc", limits)
++	require.NoError(t, err)
++	_, err = provider.Fetch(context.Background(), 1)
++	require.ErrorContains(t, err, "byte limit")
++}
++
++func TestHistoryAdversarialHTTPDoesNotFollowRedirects(t *testing.T) {
++	var mu sync.Mutex
++	requests := 0
++	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		mu.Lock()
++		requests++
++		mu.Unlock()
++		_, _ = w.Write([]byte("unexpected redirect target"))
++	}))
++	defer target.Close()
++	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		http.Redirect(w, r, target.URL, http.StatusFound)
++	}))
++	defer source.Close()
++	provider, err := NewHistoryRPCProvider(source.URL, DefaultHistoryLimits())
++	require.NoError(t, err)
++	_, err = provider.Fetch(context.Background(), 1)
++	require.ErrorContains(t, err, "status 302")
++	mu.Lock()
++	defer mu.Unlock()
++	require.Zero(t, requests)
++}
++
++func TestHistoryAdversarialSinkFailureStopsBeforeNextFetch(t *testing.T) {
++	anchor, records := historyTestChain(t, 3)
++	var requested []int64
++	provider := historyTestProvider(func(_ context.Context, height int64) (HistoryRecord, error) {
++		requested = append(requested, height)
++		return historyCopy(t, records[height]), nil
++	})
++	diskError := errors.New("history disk full")
++	result, err := FetchHistory(context.Background(), anchor,
++		types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour},
++		[]HistoryProvider{provider}, DefaultHistoryLimits(), func(HistoryRecord) error { return diskError })
++	require.ErrorIs(t, err, diskError)
++	require.Zero(t, result.Count)
++	require.Equal(t, []int64{3}, requested)
++}
+diff --git a/statesync/history_fetch.go b/statesync/history_fetch.go
+new file mode 100644
+index 0000000..7f04cf7
+--- /dev/null
++++ b/statesync/history_fetch.go
+@@ -0,0 +1,508 @@
++package statesync
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"fmt"
++	"io"
++	"math"
++	"net/http"
++	"net/url"
++	"strconv"
++	"strings"
++	"time"
++
++	cryptoenc "github.com/cometbft/cometbft/crypto/encoding"
++	cmtjson "github.com/cometbft/cometbft/libs/json"
++	coretypes "github.com/cometbft/cometbft/rpc/core/types"
++	"github.com/cometbft/cometbft/types"
++)
++
++// HistoryRecord is evidence-only historical data, never current consensus state.
++type HistoryRecord struct {
++	Header     *types.Header       `json:"header"`
++	Validators *types.ValidatorSet `json:"validators"`
++	Commit     *types.Commit       `json:"commit"`
++}
++
++// HistoryAnchor must come from the existing light client's verified H/H+1.
++type HistoryAnchor struct {
++	Header        *types.Header
++	NextHeader    *types.Header
++	InitialHeight int64
++}
++
++type HistoryProvider interface {
++	// Fetch must honor context cancellation. Returned data is untrusted.
++	Fetch(context.Context, int64) (HistoryRecord, error)
++}
++
++type HistoryLimits struct {
++	MaxRecords       int64
++	MaxBytes         int64
++	MaxResponseBytes int64
++	MaxValidators    int
++	MaxProviders     int
++	RetryRounds      int
++	RequestTimeout   time.Duration
++}
++
++type HistoryResult struct {
++	LowestHeight int64
++	Count        int64
++	Bytes        int64
++}
++
++func DefaultHistoryLimits() HistoryLimits {
++	return HistoryLimits{MaxRecords: 1000000, MaxBytes: 2 << 30, MaxResponseBytes: 8 << 20, MaxValidators: 10000, MaxProviders: 8, RetryRounds: 2, RequestTimeout: 10 * time.Second}
++}
++
++func (l HistoryLimits) validate() error {
++	for _, bound := range []struct {
++		name           string
++		value, maximum int64
++	}{
++		{"records", l.MaxRecords, 10000000},
++		{"bytes", l.MaxBytes, 1 << 40},
++		{"response", l.MaxResponseBytes, 64 << 20},
++		{"validators", int64(l.MaxValidators), 10000},
++		{"providers", int64(l.MaxProviders), 16},
++		{"retries", int64(l.RetryRounds), 4},
++		{"timeout", int64(l.RequestTimeout), int64(time.Minute)},
++	} {
++		if bound.value <= 0 || bound.value > bound.maximum {
++			return fmt.Errorf("invalid history %s limit", bound.name)
++		}
++	}
++	return nil
++}
++
++type historyRPCProvider struct {
++	base   *url.URL
++	client *http.Client
++	limits HistoryLimits
++}
++
++// NewHistoryRPCProvider accepts operator-selected HTTP(S) endpoints only. Bodies
++// are bounded after transport decompression, redirects are refused, and one
++// connection and one request deadline bound the entire record fetch.
++func NewHistoryRPCProvider(server string, limits HistoryLimits) (HistoryProvider, error) {
++	if err := limits.validate(); err != nil {
++		return nil, err
++	}
++	u, err := historyRPCURL(server)
++	if err != nil {
++		return nil, err
++	}
++	transport := http.DefaultTransport.(*http.Transport).Clone()
++	transport.MaxConnsPerHost = 1
++	transport.MaxIdleConnsPerHost = 1
++	transport.ResponseHeaderTimeout = limits.RequestTimeout
++	client := &http.Client{Transport: transport, Timeout: limits.RequestTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
++	return &historyRPCProvider{base: u, client: client, limits: limits}, nil
++}
++
++func historyRPCURL(server string) (*url.URL, error) {
++	if !strings.Contains(server, "://") {
++		server = "http://" + server
++	}
++	u, err := url.Parse(server)
++	if err != nil {
++		return nil, fmt.Errorf("history RPC URL syntax invalid")
++	}
++	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
++		return nil, fmt.Errorf("history RPC requires an HTTP(S) URL without credentials/query/fragment")
++	}
++	return u, nil
++}
++
++func (p *historyRPCProvider) request(ctx context.Context, method string, query url.Values, result any, remaining *int64) error {
++	if *remaining <= 0 {
++		return fmt.Errorf("history RPC response byte limit exhausted")
++	}
++	u := *p.base
++	u.Path = strings.TrimRight(u.Path, "/") + "/" + method
++	u.RawQuery = query.Encode()
++	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
++	if err != nil {
++		return historyRPCFailure(ctx, "request setup")
++	}
++	response, err := p.client.Do(req)
++	if err != nil {
++		return historyRPCFailure(ctx, "request")
++	}
++	defer response.Body.Close()
++	if response.StatusCode != http.StatusOK {
++		return fmt.Errorf("history RPC status %d", response.StatusCode)
++	}
++	available := *remaining
++	body, err := io.ReadAll(io.LimitReader(response.Body, available+1))
++	*remaining -= min(int64(len(body)), available)
++	if int64(len(body)) > available {
++		return fmt.Errorf("history RPC response exceeds byte limit")
++	}
++	if err != nil {
++		return historyRPCFailure(ctx, "response read")
++	}
++	return decodeHistoryRPC(body, result)
++}
++
++func decodeHistoryRPC(body []byte, result any) error {
++	var envelope struct {
++		JSONRPC string          `json:"jsonrpc"`
++		Result  json.RawMessage `json:"result"`
++		Error   json.RawMessage `json:"error"`
++	}
++	if err := json.Unmarshal(body, &envelope); err != nil {
++		return fmt.Errorf("history RPC response JSON invalid")
++	}
++	if envelope.JSONRPC != "2.0" || len(envelope.Result) == 0 || (len(envelope.Error) > 0 && string(envelope.Error) != "null") {
++		return fmt.Errorf("history RPC invalid/error response")
++	}
++	if err := cmtjson.Unmarshal(envelope.Result, result); err != nil {
++		return fmt.Errorf("history RPC result decode failed")
++	}
++	return nil
++}
++
++// Network/codec errors may quote raw responses or credential-bearing URL paths.
++// Keep cancellation semantics, while exposing only fixed diagnostic phases.
++func historyRPCFailure(ctx context.Context, phase string) error {
++	if err := ctx.Err(); err != nil {
++		return err
++	}
++	return fmt.Errorf("history RPC %s failed", phase)
++}
++
++func (p *historyRPCProvider) Fetch(ctx context.Context, height int64) (HistoryRecord, error) {
++	ctx, cancel := context.WithTimeout(ctx, p.limits.RequestTimeout)
++	defer cancel()
++	if height <= 0 {
++		return HistoryRecord{}, fmt.Errorf("invalid history RPC height")
++	}
++	remaining := p.limits.MaxResponseBytes
++	record, err := p.standard(ctx, height, &remaining)
++	record, err = historyRPCResult(ctx, record, err)
++	if err == nil {
++		return record, nil
++	}
++	if contextErr := ctx.Err(); contextErr != nil {
++		return HistoryRecord{}, contextErr
++	}
++	if remaining <= 0 {
++		return HistoryRecord{}, fmt.Errorf("history RPC response byte limit exhausted")
++	}
++	query := url.Values{"height": []string{strconv.FormatInt(height, 10)}}
++	var dedicated HistoryRecord
++	err = p.request(ctx, "evidence_history", query, &dedicated, &remaining)
++	return historyRPCResult(ctx, dedicated, err)
++}
++
++func historyRPCResult(ctx context.Context, record HistoryRecord, err error) (HistoryRecord, error) {
++	if contextErr := ctx.Err(); contextErr != nil {
++		return HistoryRecord{}, contextErr
++	}
++	if err != nil {
++		return HistoryRecord{}, err
++	}
++	if record.Header == nil || record.Commit == nil || record.Validators == nil {
++		return HistoryRecord{}, fmt.Errorf("history RPC proof incomplete")
++	}
++	return record, nil
++}
++
++func (p *historyRPCProvider) standard(ctx context.Context, height int64, remaining *int64) (HistoryRecord, error) {
++	query := url.Values{"height": []string{strconv.FormatInt(height, 10)}}
++	var committed coretypes.ResultCommit
++	if err := p.request(ctx, "commit", query, &committed, remaining); err != nil {
++		return HistoryRecord{}, err
++	}
++	validators, err := p.validators(ctx, height, remaining)
++	if err != nil {
++		return HistoryRecord{}, err
++	}
++	return HistoryRecord{Header: committed.Header, Commit: committed.Commit, Validators: validators}, nil
++}
++
++func (p *historyRPCProvider) validators(ctx context.Context, height int64, remainingBytes *int64) (*types.ValidatorSet, error) {
++	const perPage = 100
++	var members []*types.Validator
++	total := -1
++	for page := 1; ; page++ {
++		query := url.Values{"height": []string{strconv.FormatInt(height, 10)}, "page": []string{strconv.Itoa(page)}, "per_page": []string{strconv.Itoa(perPage)}}
++		var response coretypes.ResultValidators
++		if err := p.request(ctx, "validators", query, &response, remainingBytes); err != nil {
++			return nil, err
++		}
++		if total < 0 {
++			total = response.Total
++		}
++		if err := validateHistoryPage(response, height, total, len(members), p.limits.MaxValidators); err != nil {
++			return nil, err
++		}
++		members = append(members, response.Validators...)
++		if len(members) == total {
++			return historyValidatorSet(members, p.limits.MaxValidators)
++		}
++	}
++}
++
++func validateHistoryPage(response coretypes.ResultValidators, height int64, total, collected, maximum int) error {
++	if response.BlockHeight != height || response.Total <= 0 || response.Total > maximum {
++		return fmt.Errorf("history RPC invalid validator height/total")
++	}
++	want := min(100, total-collected)
++	if response.Total != total || response.Count != len(response.Validators) || response.Count != want {
++		return fmt.Errorf("history RPC inconsistent validator page")
++	}
++	return nil
++}
++
++// RPC priorities/proposer are unauthenticated and irrelevant to evidence. Build
++// a new canonical historical copy, leaving every caller/current set untouched.
++func historyValidatorSet(members []*types.Validator, maximum int) (*types.ValidatorSet, error) {
++	if len(members) == 0 || len(members) > maximum {
++		return nil, fmt.Errorf("history validator count exceeds limit")
++	}
++	clean := make([]*types.Validator, 0, len(members))
++	seen := make(map[string]bool, len(members))
++	var power int64
++	for _, member := range members {
++		validator, err := historyValidator(member)
++		if err != nil {
++			return nil, err
++		}
++		if seen[string(validator.Address)] || validator.VotingPower > types.MaxTotalVotingPower-power {
++			return nil, fmt.Errorf("history duplicate validator or excessive total power")
++		}
++		seen[string(validator.Address)] = true
++		power += validator.VotingPower
++		clean = append(clean, validator)
++	}
++	return types.NewValidatorSet(clean), nil
++}
++
++func historyValidator(member *types.Validator) (*types.Validator, error) {
++	if member == nil || member.PubKey == nil || member.VotingPower <= 0 {
++		return nil, fmt.Errorf("history requires nonnil validators with positive power")
++	}
++	encoded, err := cryptoenc.PubKeyToProto(member.PubKey)
++	if err != nil {
++		return nil, err
++	}
++	key, err := cryptoenc.PubKeyFromProto(encoded)
++	if err != nil {
++		return nil, err
++	}
++	if !bytes.Equal(key.Address(), member.Address) {
++		return nil, fmt.Errorf("history validator address does not match public key")
++	}
++	return types.NewValidator(key, member.VotingPower), nil
++}
++
++func (a HistoryAnchor) validate() error {
++	if a.Header == nil || a.NextHeader == nil || a.InitialHeight <= 0 {
++		return fmt.Errorf("history requires light-verified H/H+1 and initial height")
++	}
++	if err := a.NextHeader.ValidateBasic(); err != nil {
++		return err
++	}
++	if a.Header.Height < a.InitialHeight || a.Header.Height == math.MaxInt64 {
++		return fmt.Errorf("history anchor height mismatch")
++	}
++	return validateHistoryHeader(a.Header, historyLinkFrom(a.NextHeader))
++}
++
++// A sink owns its emitted objects. Keep traversal authentication independent of
++// those mutable objects, including byte slices inside the previous BlockID.
++type historyLink struct {
++	Height         int64
++	ChainID        string
++	Time           time.Time
++	LastBlockID    types.BlockID
++	LastCommitHash []byte
++}
++
++func historyLinkFrom(header *types.Header) historyLink {
++	id := header.LastBlockID
++	id.Hash = bytes.Clone(id.Hash)
++	id.PartSetHeader.Hash = bytes.Clone(id.PartSetHeader.Hash)
++	return historyLink{header.Height, header.ChainID, header.Time, id, bytes.Clone(header.LastCommitHash)}
++}
++
++func authenticateHistory(record HistoryRecord, next historyLink, maximum int) (HistoryRecord, error) {
++	if record.Header == nil || record.Validators == nil || record.Commit == nil {
++		return HistoryRecord{}, fmt.Errorf("incomplete history record")
++	}
++	if err := validateHistoryHeader(record.Header, next); err != nil {
++		return HistoryRecord{}, err
++	}
++	if err := validateHistoryCommit(record.Commit, record.Header.Height, next); err != nil {
++		return HistoryRecord{}, err
++	}
++	validators, err := historyValidatorSet(record.Validators.Validators, maximum)
++	if err != nil {
++		return HistoryRecord{}, err
++	}
++	if !bytes.Equal(validators.Hash(), record.Header.ValidatorsHash) {
++		return HistoryRecord{}, fmt.Errorf("history validator hash mismatch")
++	}
++	if err := validators.VerifyCommitLightAllSignatures(record.Header.ChainID, next.LastBlockID, record.Header.Height, record.Commit); err != nil {
++		return HistoryRecord{}, err
++	}
++	record.Validators = validators
++	return record, nil
++}
++
++func validateHistoryHeader(header *types.Header, next historyLink) error {
++	if err := header.ValidateBasic(); err != nil {
++		return err
++	}
++	if header.Height != next.Height-1 || header.ChainID == "" || header.ChainID != next.ChainID || !header.Time.Before(next.Time) {
++		return fmt.Errorf("history header chain/height/time mismatch")
++	}
++	if !bytes.Equal(header.Hash(), next.LastBlockID.Hash) {
++		return fmt.Errorf("history header hash mismatch")
++	}
++	return nil
++}
++
++func validateHistoryCommit(commit *types.Commit, height int64, next historyLink) error {
++	if err := commit.ValidateBasic(); err != nil {
++		return err
++	}
++	if commit.Height != height || !commit.BlockID.Equals(next.LastBlockID) || !bytes.Equal(commit.Hash(), next.LastCommitHash) {
++		return fmt.Errorf("history canonical commit mismatch")
++	}
++	return nil
++}
++
++func fetchHistoryRecord(ctx context.Context, height int64, next historyLink, providers []HistoryProvider, limits HistoryLimits) (HistoryRecord, error) {
++	var last error
++	for round := 0; round < limits.RetryRounds; round++ {
++		for _, provider := range providers {
++			if err := ctx.Err(); err != nil {
++				return HistoryRecord{}, err
++			}
++			requestCtx, cancel := context.WithTimeout(ctx, limits.RequestTimeout)
++			record, err := provider.Fetch(requestCtx, height)
++			cancel()
++			if err == nil {
++				record, err = authenticateHistory(record, next, limits.MaxValidators)
++			}
++			if err == nil {
++				return record, nil
++			}
++			last = err
++		}
++	}
++	return HistoryRecord{}, fmt.Errorf("cannot authenticate history height %d: %w", height, last)
++}
++
++// Budget canonical payload bytes, charging repeated validator sets only once,
++// as the evidence cache does. Its binary encoding is smaller than this JSON.
++func historyRecordBytes(record HistoryRecord, seen map[string]bool) (int64, error) {
++	body := struct {
++		Header *types.Header `json:"header"`
++		Commit *types.Commit `json:"commit"`
++	}{record.Header, record.Commit}
++	encoded, err := cmtjson.Marshal(body)
++	if err != nil {
++		return 0, err
++	}
++	count := int64(len(encoded))
++	if !seen[string(record.Header.ValidatorsHash)] {
++		validators, err := cmtjson.Marshal(record.Validators)
++		if err != nil {
++			return 0, err
++		}
++		count += int64(len(validators))
++	}
++	return count, nil
++}
++
++func validateHistoryInputs(anchor HistoryAnchor, params types.EvidenceParams, providers []HistoryProvider, limits HistoryLimits, emit func(HistoryRecord) error) error {
++	if err := limits.validate(); err != nil {
++		return err
++	}
++	if err := anchor.validate(); err != nil {
++		return err
++	}
++	if params.MaxAgeNumBlocks <= 0 || params.MaxAgeDuration <= 0 || params.MaxBytes < 0 {
++		return fmt.Errorf("invalid history evidence policy")
++	}
++	return validateHistoryProviders(providers, limits.MaxProviders, emit)
++}
++
++func validateHistoryProviders(providers []HistoryProvider, maximum int, emit func(HistoryRecord) error) error {
++	if emit == nil || len(providers) == 0 || len(providers) > maximum {
++		return fmt.Errorf("invalid history providers/callback")
++	}
++	for _, provider := range providers {
++		if provider == nil {
++			return fmt.Errorf("nil history provider")
++		}
++	}
++	return nil
++}
++
++type historyRetention struct {
++	limits     HistoryLimits
++	result     HistoryResult
++	validators map[string]bool
++}
++
++func (r *historyRetention) retain(ctx context.Context, record HistoryRecord, emit func(HistoryRecord) error) error {
++	encodedBytes, err := historyRecordBytes(record, r.validators)
++	if err != nil {
++		return err
++	}
++	if r.result.Count >= r.limits.MaxRecords || encodedBytes > r.limits.MaxBytes-r.result.Bytes {
++		return fmt.Errorf("history retained record/byte limit exceeded")
++	}
++	if err := ctx.Err(); err != nil {
++		return err
++	}
++	validatorHash := string(record.Header.ValidatorsHash)
++	height := record.Header.Height
++	if err := emit(record); err != nil {
++		return err
++	}
++	r.result.LowestHeight, r.result.Count, r.result.Bytes = height, r.result.Count+1, r.result.Bytes+encodedBytes
++	r.validators[validatorHash] = true
++	return nil
++}
++
++func historyExpired(height, checkpoint, maxAge int64, timestamp, cutoff time.Time) bool {
++	return height < checkpoint-maxAge && timestamp.Before(cutoff)
++}
++
++// FetchHistory streams only authenticated records. Evidence params MUST already
++// be authenticated by restored application state: ConsensusParams.Hash does not
++// authenticate evidence fields. emit must durably stage records idempotently;
++// callers may mark the staging cache ready only on a nil final error.
++func FetchHistory(ctx context.Context, anchor HistoryAnchor, params types.EvidenceParams, providers []HistoryProvider, limits HistoryLimits, emit func(HistoryRecord) error) (HistoryResult, error) {
++	retained := historyRetention{limits: limits, validators: make(map[string]bool)}
++	if err := validateHistoryInputs(anchor, params, providers, limits, emit); err != nil {
++		return retained.result, err
++	}
++	next := historyLinkFrom(anchor.NextHeader)
++	checkpointHeight := anchor.Header.Height
++	cutoffTime := anchor.Header.Time.Add(-params.MaxAgeDuration)
++	for height := checkpointHeight; height >= anchor.InitialHeight; height-- {
++		record, err := fetchHistoryRecord(ctx, height, next, providers, limits)
++		if err != nil {
++			return retained.result, err
++		}
++		if historyExpired(height, checkpointHeight, params.MaxAgeNumBlocks, record.Header.Time, cutoffTime) {
++			return retained.result, nil
++		}
++		nextLink := historyLinkFrom(record.Header)
++		if err := retained.retain(ctx, record, emit); err != nil {
++			return retained.result, err
++		}
++		next = nextLink
++	}
++	return retained.result, nil
++}
+diff --git a/statesync/history_fetch_test.go b/statesync/history_fetch_test.go
+new file mode 100644
+index 0000000..3ae01a7
+--- /dev/null
++++ b/statesync/history_fetch_test.go
+@@ -0,0 +1,357 @@
++package statesync
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"math"
++	"net/http"
++	"net/http/httptest"
++	"strconv"
++	"strings"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/require"
++
++	cmttest "github.com/cometbft/cometbft/internal/test"
++	cmtjson "github.com/cometbft/cometbft/libs/json"
++	cmtversion "github.com/cometbft/cometbft/proto/tendermint/version"
++	"github.com/cometbft/cometbft/types"
++	"github.com/cometbft/cometbft/version"
++)
++
++type historyTestProvider func(context.Context, int64) (HistoryRecord, error)
++
++func (p historyTestProvider) Fetch(ctx context.Context, height int64) (HistoryRecord, error) {
++	return p(ctx, height)
++}
++
++func historyTestChain(t *testing.T, height int64) (HistoryAnchor, map[int64]HistoryRecord) {
++	return historyTestChainAt(t, height, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
++}
++
++func historyTestChainAt(t *testing.T, height int64, start time.Time) (HistoryAnchor, map[int64]HistoryRecord) {
++	t.Helper()
++	pv := types.NewMockPV()
++	pub, err := pv.GetPubKey()
++	require.NoError(t, err)
++	vals := types.NewValidatorSet([]*types.Validator{types.NewValidator(pub, 10)})
++	records := make(map[int64]HistoryRecord)
++	var previous types.BlockID
++	var previousCommit *types.Commit
++	for h := int64(1); h <= height+1; h++ {
++		header := &types.Header{
++			Version: cmtversion.Consensus{Block: version.BlockProtocol},
++			ChainID: "history-test", Height: h,
++			Time:        start.Add(time.Duration(h) * time.Nanosecond),
++			LastBlockID: previous, LastCommitHash: previousCommit.Hash(),
++			ValidatorsHash: vals.Hash(), NextValidatorsHash: vals.Hash(),
++			ProposerAddress: pub.Address(),
++		}
++		id := cmttest.MakeBlockIDWithHash(header.Hash())
++		commit, err := cmttest.MakeCommit(id, h, 0, vals, []types.PrivValidator{pv}, header.ChainID, header.Time)
++		require.NoError(t, err)
++		records[h] = HistoryRecord{Header: header, Validators: vals, Commit: commit}
++		previous, previousCommit = id, commit
++	}
++	return HistoryAnchor{Header: records[height].Header, NextHeader: records[height+1].Header, InitialHeight: 1}, records
++}
++
++func historyCopy(t *testing.T, record HistoryRecord) HistoryRecord {
++	t.Helper()
++	encoded, err := cmtjson.Marshal(record)
++	require.NoError(t, err)
++	var result HistoryRecord
++	require.NoError(t, cmtjson.Unmarshal(encoded, &result))
++	return result
++}
++
++func historyProvider(t *testing.T, records map[int64]HistoryRecord) HistoryProvider {
++	return historyTestProvider(func(_ context.Context, height int64) (HistoryRecord, error) {
++		record, ok := records[height]
++		if !ok {
++			return HistoryRecord{}, errors.New("missing height")
++		}
++		return historyCopy(t, record), nil
++	})
++}
++
++func TestHistoryRetainsUntilBothAgeBoundsExpire(t *testing.T) {
++	for _, ages := range []struct {
++		blocks   int64
++		duration time.Duration
++	}{{2, 5 * time.Nanosecond}, {5, 2 * time.Nanosecond}, {2, 2 * time.Nanosecond}} {
++		t.Run(ages.duration.String(), func(t *testing.T) {
++			anchor, records := historyTestChain(t, 8)
++			var retained []int64
++			result, err := FetchHistory(context.Background(), anchor, types.EvidenceParams{MaxAgeNumBlocks: ages.blocks, MaxAgeDuration: ages.duration}, []HistoryProvider{historyProvider(t, records)}, DefaultHistoryLimits(), func(record HistoryRecord) error {
++				retained = append(retained, record.Header.Height)
++				return nil
++			})
++			require.NoError(t, err)
++			age := ages.blocks
++			if int64(ages.duration) > age {
++				age = int64(ages.duration)
++			}
++			require.Equal(t, 8-age, result.LowestHeight)
++			require.Len(t, retained, int(age+1))
++			require.Equal(t, int64(len(retained)), result.Count)
++			require.Positive(t, result.Bytes)
++		})
++	}
++}
++
++func TestHistoryRejectsUnauthenticatedProviderBeforePublicationAndRetries(t *testing.T) {
++	anchor, records := historyTestChain(t, 5)
++	bad := historyTestProvider(func(_ context.Context, height int64) (HistoryRecord, error) {
++		record := historyCopy(t, records[height])
++		record.Header.AppHash = []byte("forged")
++		return record, nil
++	})
++	var published []int64
++	result, err := FetchHistory(context.Background(), anchor, types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour}, []HistoryProvider{bad, historyProvider(t, records)}, DefaultHistoryLimits(), func(record HistoryRecord) error {
++		require.Equal(t, records[record.Header.Height].Header.Hash(), record.Header.Hash())
++		published = append(published, record.Header.Height)
++		return nil
++	})
++	require.NoError(t, err)
++	require.Equal(t, int64(1), result.LowestHeight)
++	require.Equal(t, []int64{5, 4, 3, 2, 1}, published)
++	_, err = FetchHistory(context.Background(), anchor, types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour}, []HistoryProvider{bad}, DefaultHistoryLimits(), func(HistoryRecord) error { t.Fatal("published unverified record"); return nil })
++	require.Error(t, err)
++}
++
++func TestHistoryRequiresDurableNextHeaderCommitHash(t *testing.T) {
++	anchor, records := historyTestChain(t, 5)
++	bad := historyTestProvider(func(_ context.Context, height int64) (HistoryRecord, error) {
++		record := historyCopy(t, records[height])
++		record.Commit.Signatures[0].Timestamp = record.Commit.Signatures[0].Timestamp.Add(time.Nanosecond)
++		return record, nil
++	})
++	_, err := FetchHistory(context.Background(), anchor, types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour}, []HistoryProvider{bad}, DefaultHistoryLimits(), func(HistoryRecord) error { t.Fatal("published forged commit"); return nil })
++	require.Error(t, err)
++}
++
++func TestHistoryFailsRatherThanTruncatingAndCanResumeIdempotently(t *testing.T) {
++	anchor, records := historyTestChain(t, 5)
++	params := types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour}
++	stored := make(map[int64][]byte)
++	emit := func(record HistoryRecord) error {
++		encoded, err := cmtjson.Marshal(record)
++		if previous, exists := stored[record.Header.Height]; exists {
++			require.Equal(t, previous, encoded)
++		}
++		stored[record.Header.Height] = encoded
++		return err
++	}
++	limits := DefaultHistoryLimits()
++	limits.MaxRecords = 2
++	_, err := FetchHistory(context.Background(), anchor, params, []HistoryProvider{historyProvider(t, records)}, limits, emit)
++	require.Error(t, err)
++	require.Len(t, stored, 2)
++	result, err := FetchHistory(context.Background(), anchor, params, []HistoryProvider{historyProvider(t, records)}, DefaultHistoryLimits(), emit)
++	require.NoError(t, err)
++	require.Equal(t, int64(1), result.LowestHeight)
++	require.Len(t, stored, 5)
++	limits = DefaultHistoryLimits()
++	limits.MaxBytes = result.Bytes
++	exact, err := FetchHistory(context.Background(), anchor, params, []HistoryProvider{historyProvider(t, records)}, limits, emit)
++	require.NoError(t, err)
++	require.Equal(t, result, exact)
++	limits.MaxBytes--
++	_, err = FetchHistory(context.Background(), anchor, params, []HistoryProvider{historyProvider(t, records)}, limits, emit)
++	require.Error(t, err)
++	limits = DefaultHistoryLimits()
++	limits.MaxBytes = 1
++	_, err = FetchHistory(context.Background(), anchor, params, []HistoryProvider{historyProvider(t, records)}, limits, func(HistoryRecord) error { t.Fatal("exceeded byte budget"); return nil })
++	require.Error(t, err)
++}
++
++func TestHistoryAcceptsTimestampsBeyondUnixNanoRange(t *testing.T) {
++	for _, year := range []int{1, 2500, 9999} {
++		anchor, records := historyTestChainAt(t, 3, time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC))
++		result, err := FetchHistory(context.Background(), anchor, types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour}, []HistoryProvider{historyProvider(t, records)}, DefaultHistoryLimits(), func(record HistoryRecord) error {
++			require.Equal(t, year, record.Header.Time.Year())
++			return nil
++		})
++		require.NoError(t, err)
++		require.Equal(t, int64(3), result.Count)
++	}
++}
++
++func TestHistoryRPCBoundsResponseAndTime(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(strings.Repeat(" ", 4096))) }))
++	defer server.Close()
++	limits := DefaultHistoryLimits()
++	limits.MaxResponseBytes = 128
++	provider, err := NewHistoryRPCProvider(server.URL, limits)
++	require.NoError(t, err)
++	_, err = provider.Fetch(context.Background(), 3)
++	require.ErrorContains(t, err, "response")
++	slow := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
++	defer slow.Close()
++	limits.RequestTimeout = 20 * time.Millisecond
++	provider, err = NewHistoryRPCProvider(slow.URL, limits)
++	require.NoError(t, err)
++	started := time.Now()
++	_, err = provider.Fetch(context.Background(), 3)
++	require.Error(t, err)
++	require.Less(t, time.Since(started), time.Second)
++}
++
++func TestHistoryTraversalDoesNotShareMutableHeaderWithSink(t *testing.T) {
++	anchor, records := historyTestChain(t, 5)
++	result, err := FetchHistory(context.Background(), anchor, types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour}, []HistoryProvider{historyProvider(t, records)}, DefaultHistoryLimits(), func(record HistoryRecord) error {
++		if record.Header.Height > 1 {
++			record.Header.LastBlockID.Hash[0] ^= 0xff
++			record.Header.LastCommitHash[0] ^= 0xff
++		}
++		return nil
++	})
++	require.NoError(t, err)
++	require.Equal(t, int64(1), result.LowestHeight)
++	require.Equal(t, int64(5), result.Count)
++}
++
++func TestHistoryRPCRejectsAmbiguousOrCredentialBearingEndpoints(t *testing.T) {
++	for _, server := range []string{"", "://bad", "ftp://localhost", "http:///missing", "http://user:secret@localhost", "http://localhost?height=2", "http://localhost#fragment"} {
++		_, err := NewHistoryRPCProvider(server, DefaultHistoryLimits())
++		require.Error(t, err, server)
++	}
++	for _, server := range []string{"localhost:26657", "http://127.0.0.1:26657/rpc", "https://example.invalid/rpc"} {
++		_, err := NewHistoryRPCProvider(server, DefaultHistoryLimits())
++		require.NoError(t, err, server)
++	}
++}
++
++func TestHistoryRejectsInvalidAnchorBeforeRPCOrPublication(t *testing.T) {
++	mutations := map[string]func(*HistoryAnchor){
++		"missing header":           func(a *HistoryAnchor) { a.Header = nil },
++		"missing next":             func(a *HistoryAnchor) { a.NextHeader = nil },
++		"zero initial height":      func(a *HistoryAnchor) { a.InitialHeight = 0 },
++		"initial above checkpoint": func(a *HistoryAnchor) { a.InitialHeight = 4 },
++		"height overflow":          func(a *HistoryAnchor) { a.Header.Height = math.MaxInt64 },
++		"invalid next header":      func(a *HistoryAnchor) { a.NextHeader.Version.Block = 0 },
++		"next wrong height":        func(a *HistoryAnchor) { a.NextHeader.Height++ },
++		"next foreign chain":       func(a *HistoryAnchor) { a.NextHeader.ChainID = "foreign" },
++		"broken link":              func(a *HistoryAnchor) { a.Header.AppHash = []byte("changed") },
++	}
++	for name, mutate := range mutations {
++		t.Run(name, func(t *testing.T) {
++			anchor, records := historyTestChain(t, 3)
++			anchor.Header = historyCopy(t, records[3]).Header
++			anchor.NextHeader = historyCopy(t, records[4]).Header
++			mutate(&anchor)
++			provider := historyTestProvider(func(context.Context, int64) (HistoryRecord, error) {
++				t.Fatal("queried RPC with invalid anchor")
++				return HistoryRecord{}, nil
++			})
++			_, err := FetchHistory(context.Background(), anchor, types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour}, []HistoryProvider{provider}, DefaultHistoryLimits(), func(HistoryRecord) error { t.Fatal("published invalid anchor"); return nil })
++			require.Error(t, err)
++		})
++	}
++}
++
++func historyRPCBody(t *testing.T, result any) []byte {
++	t.Helper()
++	payload, err := cmtjson.Marshal(result)
++	require.NoError(t, err)
++	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "result": json.RawMessage(payload)})
++	require.NoError(t, err)
++	return body
++}
++
++func TestHistoryDedicatedFallbackIsAuthenticated(t *testing.T) {
++	for _, forged := range []bool{false, true} {
++		anchor, records := historyTestChain(t, 3)
++		var standard, dedicated atomic.Int64
++		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++			if strings.HasSuffix(r.URL.Path, "/commit") {
++				standard.Add(1)
++				w.WriteHeader(http.StatusNotFound)
++				return
++			}
++			require.Equal(t, "/rpc/evidence_history", r.URL.Path)
++			dedicated.Add(1)
++			height, err := strconv.ParseInt(r.URL.Query().Get("height"), 10, 64)
++			require.NoError(t, err)
++			record := historyCopy(t, records[height])
++			if forged {
++				record.Header.AppHash = []byte("forged")
++			}
++			_, _ = w.Write(historyRPCBody(t, record))
++		}))
++		limits := DefaultHistoryLimits()
++		provider, err := NewHistoryRPCProvider(server.URL+"/rpc", limits)
++		require.NoError(t, err)
++		var emitted int
++		result, err := FetchHistory(context.Background(), anchor, types.EvidenceParams{MaxAgeNumBlocks: 8, MaxAgeDuration: time.Hour}, []HistoryProvider{provider}, limits, func(HistoryRecord) error { emitted++; return nil })
++		if forged {
++			require.Error(t, err)
++			require.Zero(t, emitted)
++		} else {
++			require.NoError(t, err)
++			require.Equal(t, int64(3), result.Count)
++			require.Equal(t, 3, emitted)
++		}
++		require.Positive(t, standard.Load())
++		require.Positive(t, dedicated.Load())
++		server.Close()
++	}
++}
++
++func TestHistoryDedicatedFallbackSharesTheRecordByteBudget(t *testing.T) {
++	_, records := historyTestChain(t, 3)
++	standard := []byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"not retained"}}`)
++	dedicated := historyRPCBody(t, records[3])
++	var requests atomic.Int64
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		requests.Add(1)
++		if strings.HasSuffix(r.URL.Path, "/commit") {
++			_, _ = w.Write(standard)
++		} else {
++			_, _ = w.Write(dedicated)
++		}
++	}))
++	defer server.Close()
++	limits := DefaultHistoryLimits()
++	limits.MaxResponseBytes = int64(len(standard) + len(dedicated) - 1)
++	provider, err := NewHistoryRPCProvider(server.URL, limits)
++	require.NoError(t, err)
++	_, err = provider.Fetch(context.Background(), 3)
++	require.ErrorContains(t, err, "byte limit")
++	require.Equal(t, int64(2), requests.Load())
++}
++
++func TestHistoryRPCErrorsDoNotExposeResponseOrURLSecrets(t *testing.T) {
++	const marker = "DUMMY_PRIVATE_RPC_MARKER"
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		body := `{"jsonrpc":"2.0","id":1,"result":{"signed_header":{"header":{"height":{"private":"` + marker + `"}}}}}`
++		if strings.HasSuffix(r.URL.Path, "/evidence_history") {
++			body = `{"jsonrpc":"2.0","id":1,"result":{"header":{"height":{"private":"` + marker + `"}}}}`
++		}
++		_, _ = w.Write([]byte(body))
++	}))
++	defer server.Close()
++	provider, err := NewHistoryRPCProvider(server.URL, DefaultHistoryLimits())
++	require.NoError(t, err)
++	_, err = provider.Fetch(context.Background(), 3)
++	require.Error(t, err)
++	require.NotContains(t, err.Error(), marker)
++	closed := httptest.NewServer(http.NotFoundHandler())
++	closed.Close()
++	provider, err = NewHistoryRPCProvider(closed.URL+"/"+marker, DefaultHistoryLimits())
++	require.NoError(t, err)
++	_, err = provider.Fetch(context.Background(), 3)
++	require.Error(t, err)
++	require.NotContains(t, err.Error(), marker)
++	_, err = NewHistoryRPCProvider("http://dummy:"+marker+"@%zz", DefaultHistoryLimits())
++	require.Error(t, err)
++	require.NotContains(t, err.Error(), marker)
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	_, err = provider.Fetch(ctx, 3)
++	require.ErrorIs(t, err, context.Canceled)
++}
+diff --git a/statesync/history_offer.go b/statesync/history_offer.go
+new file mode 100644
+index 0000000..fcdc895
+--- /dev/null
++++ b/statesync/history_offer.go
+@@ -0,0 +1,48 @@
++package statesync
++
++import (
++	"context"
++	"crypto/rand"
++	"encoding/base64"
++	"encoding/hex"
++	"encoding/json"
++	"fmt"
++
++	abci "github.com/cometbft/cometbft/abci/types"
++)
++
++type historyEcho interface {
++	Echo(context.Context, string) (*abci.ResponseEcho, error)
++}
++
++// Pair only the local ABCI Offer. The peer-visible snapshot identity and
++// advertised metadata remain untouched. A fresh nonce is consumed per offer.
++func historyOfferMetadata(ctx context.Context, query historyEcho, metadata []byte) ([]byte, error) {
++	if len(metadata) > snapshotMsgSize {
++		return nil, fmt.Errorf("snapshot metadata exceeds network limit")
++	}
++	var random [32]byte
++	if _, err := rand.Read(random[:]); err != nil {
++		return nil, fmt.Errorf("cannot generate local history pairing nonce: %w", err)
++	}
++	nonce := hex.EncodeToString(random[:])
++	ctx, cancel := context.WithTimeout(ctx, DefaultHistoryLimits().RequestTimeout)
++	defer cancel()
++	response, err := query.Echo(ctx, "xian-evidence-history/1:"+nonce)
++	if err != nil {
++		// The local server may quote its request in an error. Never propagate
++		// the per-offer private nonce into state-sync logs.
++		if ctx.Err() != nil {
++			return nil, ctx.Err()
++		}
++		return nil, fmt.Errorf("local history-aware ABCI pairing failed")
++	}
++	if response == nil || response.Message != "xian-evidence-history/1:registered:"+nonce {
++		return nil, fmt.Errorf("history-aware ABCI pairing is required before snapshot restore")
++	}
++	return json.Marshal(struct {
++		SchemaVersion int    `json:"schema_version"`
++		Nonce         string `json:"xian_evidence_history_nonce"`
++		Metadata      string `json:"metadata"`
++	}{SchemaVersion: 1, Nonce: nonce, Metadata: base64.StdEncoding.EncodeToString(metadata)})
++}
+diff --git a/statesync/history_offer_mock_test.go b/statesync/history_offer_mock_test.go
+new file mode 100644
+index 0000000..ecb7cb2
+--- /dev/null
++++ b/statesync/history_offer_mock_test.go
+@@ -0,0 +1,74 @@
++package statesync
++
++import (
++	"context"
++	"encoding/base64"
++	"encoding/json"
++	"fmt"
++	"strings"
++	"sync"
++
++	abci "github.com/cometbft/cometbft/abci/types"
++	proxymocks "github.com/cometbft/cometbft/proxy/mocks"
++	"github.com/stretchr/testify/mock"
++)
++
++// Keep the upstream syncer expectations about original snapshot metadata. This
++// app-side test double enforces the private, single-use local pairing first.
++type historyOfferPairing struct {
++	mu    sync.Mutex
++	nonce string
++}
++type historySnapshotMock struct {
++	*proxymocks.AppConnSnapshot
++	pair *historyOfferPairing
++}
++
++func historyPairedMockConnections() (*proxymocks.AppConnQuery, *historySnapshotMock) {
++	pair := &historyOfferPairing{}
++	query := &proxymocks.AppConnQuery{}
++	query.On("Echo", mock.Anything, mock.AnythingOfType("string")).Maybe().Return(func(_ context.Context, message string) (*abci.ResponseEcho, error) {
++		nonce := strings.TrimPrefix(message, "xian-evidence-history/1:")
++		if len(nonce) != 64 || nonce == message {
++			return nil, fmt.Errorf("invalid private pairing")
++		}
++		pair.mu.Lock()
++		pair.nonce = nonce
++		pair.mu.Unlock()
++		return &abci.ResponseEcho{Message: "xian-evidence-history/1:registered:" + nonce}, nil
++	})
++	return query, &historySnapshotMock{AppConnSnapshot: &proxymocks.AppConnSnapshot{}, pair: pair}
++}
++
++func (m *historySnapshotMock) OfferSnapshot(ctx context.Context, request *abci.RequestOfferSnapshot) (*abci.ResponseOfferSnapshot, error) {
++	m.pair.mu.Lock()
++	nonce := m.pair.nonce
++	m.pair.nonce = ""
++	m.pair.mu.Unlock()
++	var wrapper struct {
++		SchemaVersion int    `json:"schema_version"`
++		Nonce         string `json:"xian_evidence_history_nonce"`
++		Metadata      string `json:"metadata"`
++	}
++	if request.Snapshot == nil {
++		return nil, fmt.Errorf("missing snapshot")
++	}
++	if err := json.Unmarshal(request.Snapshot.Metadata, &wrapper); err != nil {
++		return nil, err
++	}
++	if wrapper.SchemaVersion != 1 || nonce == "" || wrapper.Nonce != nonce {
++		return nil, fmt.Errorf("unpaired offer")
++	}
++	metadata, err := base64.StdEncoding.DecodeString(wrapper.Metadata)
++	if err != nil {
++		return nil, err
++	}
++	if len(metadata) == 0 {
++		metadata = nil
++	}
++	copyRequest := *request
++	copySnapshot := *request.Snapshot
++	copySnapshot.Metadata = metadata
++	copyRequest.Snapshot = &copySnapshot
++	return m.AppConnSnapshot.OfferSnapshot(ctx, &copyRequest)
++}
+diff --git a/statesync/history_offer_test.go b/statesync/history_offer_test.go
+new file mode 100644
+index 0000000..938fa31
+--- /dev/null
++++ b/statesync/history_offer_test.go
+@@ -0,0 +1,68 @@
++package statesync
++
++import (
++	"context"
++	"encoding/base64"
++	"encoding/json"
++	"errors"
++	"strings"
++	"testing"
++
++	abci "github.com/cometbft/cometbft/abci/types"
++	"github.com/stretchr/testify/require"
++)
++
++type historyEchoStub func(context.Context, string) (*abci.ResponseEcho, error)
++
++func (f historyEchoStub) Echo(ctx context.Context, message string) (*abci.ResponseEcho, error) {
++	return f(ctx, message)
++}
++
++func TestHistoryOfferPrivatePairingKeepsNetworkMetadataOriginal(t *testing.T) {
++	original := []byte("network snapshot metadata")
++	var nonces []string
++	echo := historyEchoStub(func(_ context.Context, message string) (*abci.ResponseEcho, error) {
++		require.True(t, strings.HasPrefix(message, "xian-evidence-history/1:"))
++		nonce := strings.TrimPrefix(message, "xian-evidence-history/1:")
++		require.Len(t, nonce, 64)
++		nonces = append(nonces, nonce)
++		return &abci.ResponseEcho{Message: "xian-evidence-history/1:registered:" + nonce}, nil
++	})
++	for i := 0; i < 2; i++ {
++		wrapped, err := historyOfferMetadata(context.Background(), echo, original)
++		require.NoError(t, err)
++		var payload struct {
++			SchemaVersion int    `json:"schema_version"`
++			Nonce         string `json:"xian_evidence_history_nonce"`
++			Metadata      string `json:"metadata"`
++		}
++		require.NoError(t, json.Unmarshal(wrapped, &payload))
++		require.Equal(t, 1, payload.SchemaVersion)
++		require.Equal(t, nonces[i], payload.Nonce)
++		decoded, err := base64.StdEncoding.DecodeString(payload.Metadata)
++		require.NoError(t, err)
++		require.Equal(t, original, decoded)
++	}
++	require.NotEqual(t, nonces[0], nonces[1])
++	require.Equal(t, []byte("network snapshot metadata"), original)
++}
++
++func TestHistoryOfferRefusesStockEchoOrWrongAcknowledgement(t *testing.T) {
++	for _, reply := range []string{"stock", "xian-evidence-history/1:registered:wrong"} {
++		_, err := historyOfferMetadata(context.Background(), historyEchoStub(func(_ context.Context, msg string) (*abci.ResponseEcho, error) {
++			if reply == "stock" {
++				reply = msg
++			}
++			return &abci.ResponseEcho{Message: reply}, nil
++		}), nil)
++		require.Error(t, err)
++	}
++}
++
++func TestHistoryOfferErrorCannotExposePrivateCapability(t *testing.T) {
++	_, err := historyOfferMetadata(context.Background(), historyEchoStub(func(_ context.Context, message string) (*abci.ResponseEcho, error) {
++		return nil, errors.New(message)
++	}), nil)
++	require.Error(t, err)
++	require.NotContains(t, err.Error(), "xian-evidence-history/1:")
++}
+diff --git a/statesync/history_transport.go b/statesync/history_transport.go
+new file mode 100644
+index 0000000..777fe59
+--- /dev/null
++++ b/statesync/history_transport.go
+@@ -0,0 +1,67 @@
++package statesync
++
++import (
++	"fmt"
++	"io"
++	"net/http"
++
++	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
++	jsonrpcclient "github.com/cometbft/cometbft/rpc/jsonrpc/client"
++)
++
++// The trusted light-anchor fetch is a network boundary too. Its existing RPC
++// decoder otherwise reads an unbounded body before verifying the response.
++type historyBoundedTransport struct {
++	base    http.RoundTripper
++	maximum int64
++}
++
++func (t historyBoundedTransport) RoundTrip(request *http.Request) (*http.Response, error) {
++	response, err := t.base.RoundTrip(request)
++	if err != nil {
++		return nil, err
++	}
++	if response.ContentLength > t.maximum {
++		response.Body.Close()
++		return nil, fmt.Errorf("light RPC response exceeds history byte limit")
++	}
++	response.Body = &historyBoundedBody{ReadCloser: response.Body, remaining: t.maximum}
++	return response, nil
++}
++
++type historyBoundedBody struct {
++	io.ReadCloser
++	remaining int64
++}
++
++func (b *historyBoundedBody) Read(target []byte) (int, error) {
++	if len(target) == 0 {
++		return 0, nil
++	}
++	if b.remaining == 0 {
++		var probe [1]byte
++		n, err := b.ReadCloser.Read(probe[:])
++		if n > 0 {
++			return 0, fmt.Errorf("light RPC response exceeds history byte limit")
++		}
++		return 0, err
++	}
++	if int64(len(target)) > b.remaining {
++		target = target[:b.remaining]
++	}
++	n, err := b.ReadCloser.Read(target)
++	b.remaining -= int64(n)
++	return n, err
++}
++
++func boundedHistoryLightRPC(server string) (*rpchttp.HTTP, error) {
++	client, err := jsonrpcclient.DefaultHTTPClient(server)
++	if err != nil {
++		return nil, err
++	}
++	limits := DefaultHistoryLimits()
++	client.Timeout = limits.RequestTimeout
++	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
++	client.Transport = historyBoundedTransport{base: client.Transport, maximum: limits.MaxResponseBytes}
++	return rpchttp.NewWithClient(server, "/websocket", client)
++}
+diff --git a/statesync/history_transport_test.go b/statesync/history_transport_test.go
+new file mode 100644
+index 0000000..035c68c
+--- /dev/null
++++ b/statesync/history_transport_test.go
+@@ -0,0 +1,39 @@
++package statesync
++
++import (
++	"context"
++	"fmt"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestHistoryLightRPCTransportRejectsOversizedAnchorResponse(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		w.Header().Set("Content-Type", "application/json")
++		fmt.Fprint(w, `{"jsonrpc":"2.0","id":0,"result":{}}`)
++		io.WriteString(w, strings.Repeat(" ", int(DefaultHistoryLimits().MaxResponseBytes)))
++	}))
++	defer server.Close()
++	client, err := rpcClient(server.URL)
++	require.NoError(t, err)
++	_, err = client.Status(context.Background())
++	require.ErrorContains(t, err, "byte limit")
++}
++
++func TestHistoryLightBodyAcceptsExactBudgetAndRefusesExtraByte(t *testing.T) {
++	for _, size := range []int{4, 5} {
++		body := &historyBoundedBody{ReadCloser: io.NopCloser(strings.NewReader(strings.Repeat("x", size))), remaining: 4}
++		data, err := io.ReadAll(body)
++		require.Len(t, data, 4)
++		if size == 4 {
++			require.NoError(t, err)
++		} else {
++			require.ErrorContains(t, err, "byte limit")
++		}
++	}
++}
+diff --git a/statesync/stateprovider.go b/statesync/stateprovider.go
+index 25bfcb3..0c65231 100644
+--- a/statesync/stateprovider.go
++++ b/statesync/stateprovider.go
+@@ -191,12 +191,34 @@ func (s *lightClientStateProvider) State(ctx context.Context, height uint64) (sm
+ 	return state, nil
+ }
+ 
++// EvidenceHistoryAnchor exposes only the existing light client's verified
++// checkpoint and successor. Ordinary RPC history can never supply this root.
++func (s *lightClientStateProvider) EvidenceHistoryAnchor(ctx context.Context, height uint64) (HistoryAnchor, error) {
++	s.Lock()
++	defer s.Unlock()
++	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
++	defer cancel()
++	header, err := s.lc.VerifyLightBlockAtHeight(ctx, int64(height), time.Now())
++	if err != nil {
++		return HistoryAnchor{}, err
++	}
++	next, err := s.lc.VerifyLightBlockAtHeight(ctx, int64(height+1), time.Now())
++	if err != nil {
++		return HistoryAnchor{}, err
++	}
++	initial := s.initialHeight
++	if initial == 0 {
++		initial = 1
++	}
++	return HistoryAnchor{Header: header.Header, NextHeader: next.Header, InitialHeight: initial}, nil
++}
++
+ // rpcClient sets up a new RPC client
+ func rpcClient(server string) (*rpchttp.HTTP, error) {
+ 	if !strings.Contains(server, "://") {
+ 		server = "http://" + server
+ 	}
+-	c, err := rpchttp.New(server, "/websocket")
++	c, err := boundedHistoryLightRPC(server)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+diff --git a/statesync/syncer.go b/statesync/syncer.go
+index e1e6682..9f077ae 100644
+--- a/statesync/syncer.go
++++ b/statesync/syncer.go
+@@ -327,13 +327,17 @@ func (s *syncer) Sync(snapshot *snapshot, chunks *chunkQueue) (sm.State, *types.
+ func (s *syncer) offerSnapshot(snapshot *snapshot) error {
+ 	s.logger.Info("Offering snapshot to ABCI app", "height", snapshot.Height,
+ 		"format", snapshot.Format, "hash", log.NewLazySprintf("%X", snapshot.Hash))
++	metadata, err := historyOfferMetadata(context.TODO(), s.connQuery, snapshot.Metadata)
++	if err != nil {
++		return err
++	}
+ 	resp, err := s.conn.OfferSnapshot(context.TODO(), &abci.RequestOfferSnapshot{
+ 		Snapshot: &abci.Snapshot{
+ 			Height:   snapshot.Height,
+ 			Format:   snapshot.Format,
+ 			Chunks:   snapshot.Chunks,
+ 			Hash:     snapshot.Hash,
+-			Metadata: snapshot.Metadata,
++			Metadata: metadata,
+ 		},
+ 		AppHash: snapshot.trustedAppHash,
+ 	})
+diff --git a/statesync/syncer_test.go b/statesync/syncer_test.go
+index 8979414..aff07e1 100644
+--- a/statesync/syncer_test.go
++++ b/statesync/syncer_test.go
+@@ -19,7 +19,6 @@ import (
+ 	ssproto "github.com/cometbft/cometbft/proto/tendermint/statesync"
+ 	cmtversion "github.com/cometbft/cometbft/proto/tendermint/version"
+ 	"github.com/cometbft/cometbft/proxy"
+-	proxymocks "github.com/cometbft/cometbft/proxy/mocks"
+ 	sm "github.com/cometbft/cometbft/state"
+ 	"github.com/cometbft/cometbft/statesync/mocks"
+ 	"github.com/cometbft/cometbft/types"
+@@ -29,9 +28,8 @@ import (
+ const testAppVersion = 9
+ 
+ // Sets up a basic syncer that can be used to test OfferSnapshot requests
+-func setupOfferSyncer() (*syncer, *proxymocks.AppConnSnapshot) {
+-	connQuery := &proxymocks.AppConnQuery{}
+-	connSnapshot := &proxymocks.AppConnSnapshot{}
++func setupOfferSyncer() (*syncer, *historySnapshotMock) {
++	connQuery, connSnapshot := historyPairedMockConnections()
+ 	stateProvider := &mocks.StateProvider{}
+ 	stateProvider.On("AppHash", mock.Anything, mock.Anything).Return([]byte("app_hash"), nil)
+ 	cfg := config.DefaultStateSyncConfig()
+@@ -85,8 +83,7 @@ func TestSyncer_SyncAny(t *testing.T) {
+ 	stateProvider.On("AppHash", mock.Anything, uint64(2)).Return([]byte("app_hash_2"), nil)
+ 	stateProvider.On("Commit", mock.Anything, uint64(1)).Return(commit, nil)
+ 	stateProvider.On("State", mock.Anything, uint64(1)).Return(state, nil)
+-	connSnapshot := &proxymocks.AppConnSnapshot{}
+-	connQuery := &proxymocks.AppConnQuery{}
++	connQuery, connSnapshot := historyPairedMockConnections()
+ 
+ 	cfg := config.DefaultStateSyncConfig()
+ 	syncer := newSyncer(*cfg, log.NewNopLogger(), connSnapshot, connQuery, stateProvider, "")
+@@ -426,8 +423,7 @@ func TestSyncer_applyChunks_Results(t *testing.T) {
+ 	for name, tc := range testcases {
+ 
+ 		t.Run(name, func(t *testing.T) {
+-			connQuery := &proxymocks.AppConnQuery{}
+-			connSnapshot := &proxymocks.AppConnSnapshot{}
++			connQuery, connSnapshot := historyPairedMockConnections()
+ 			stateProvider := &mocks.StateProvider{}
+ 			stateProvider.On("AppHash", mock.Anything, mock.Anything).Return([]byte("app_hash"), nil)
+ 
+@@ -480,8 +476,7 @@ func TestSyncer_applyChunks_RefetchChunks(t *testing.T) {
+ 	for name, tc := range testcases {
+ 
+ 		t.Run(name, func(t *testing.T) {
+-			connQuery := &proxymocks.AppConnQuery{}
+-			connSnapshot := &proxymocks.AppConnSnapshot{}
++			connQuery, connSnapshot := historyPairedMockConnections()
+ 			stateProvider := &mocks.StateProvider{}
+ 			stateProvider.On("AppHash", mock.Anything, mock.Anything).Return([]byte("app_hash"), nil)
+ 
+@@ -545,8 +540,7 @@ func TestSyncer_applyChunks_RejectSenders(t *testing.T) {
+ 	for name, tc := range testcases {
+ 
+ 		t.Run(name, func(t *testing.T) {
+-			connQuery := &proxymocks.AppConnQuery{}
+-			connSnapshot := &proxymocks.AppConnSnapshot{}
++			connQuery, connSnapshot := historyPairedMockConnections()
+ 			stateProvider := &mocks.StateProvider{}
+ 			stateProvider.On("AppHash", mock.Anything, mock.Anything).Return([]byte("app_hash"), nil)
+ 
+@@ -668,8 +662,7 @@ func TestSyncer_verifyApp(t *testing.T) {
+ 	for name, tc := range testcases {
+ 
+ 		t.Run(name, func(t *testing.T) {
+-			connQuery := &proxymocks.AppConnQuery{}
+-			connSnapshot := &proxymocks.AppConnSnapshot{}
++			connQuery, connSnapshot := historyPairedMockConnections()
+ 			stateProvider := &mocks.StateProvider{}
+ 
+ 			cfg := config.DefaultStateSyncConfig()
+diff --git a/types/block.go b/types/block.go
+index efdd4b6..5130b03 100644
+--- a/types/block.go
++++ b/types/block.go
+@@ -664,39 +664,41 @@ func (cs CommitSig) BlockID(commitBlockID BlockID) BlockID {
+ func (cs CommitSig) ValidateBasic() error {
+ 	switch cs.BlockIDFlag {
+ 	case BlockIDFlagAbsent:
+-	case BlockIDFlagCommit:
+-	case BlockIDFlagNil:
++		return cs.validateAbsent()
++	case BlockIDFlagCommit, BlockIDFlagNil:
++		return cs.validatePresent()
+ 	default:
+ 		return fmt.Errorf("unknown BlockIDFlag: %v", cs.BlockIDFlag)
+ 	}
++}
+ 
+-	switch cs.BlockIDFlag {
+-	case BlockIDFlagAbsent:
+-		if len(cs.ValidatorAddress) != 0 {
+-			return errors.New("validator address is present")
+-		}
+-		if !cs.Timestamp.IsZero() {
+-			return errors.New("time is present")
+-		}
+-		if len(cs.Signature) != 0 {
+-			return errors.New("signature is present")
+-		}
+-	default:
+-		if len(cs.ValidatorAddress) != crypto.AddressSize {
+-			return fmt.Errorf("expected ValidatorAddress size to be %d bytes, got %d bytes",
+-				crypto.AddressSize,
+-				len(cs.ValidatorAddress),
+-			)
+-		}
+-		// NOTE: Timestamp validation is subtle and handled elsewhere.
+-		if len(cs.Signature) == 0 {
+-			return errors.New("signature is missing")
+-		}
+-		if len(cs.Signature) > MaxSignatureSize {
+-			return fmt.Errorf("signature is too big (max: %d)", MaxSignatureSize)
+-		}
++func (cs CommitSig) validateAbsent() error {
++	if len(cs.ValidatorAddress) != 0 {
++		return errors.New("validator address is present")
++	}
++	if !cs.Timestamp.IsZero() {
++		return errors.New("time is present")
+ 	}
++	if len(cs.Signature) != 0 {
++		return errors.New("signature is present")
++	}
++	return nil
++}
+ 
++func (cs CommitSig) validatePresent() error {
++	if len(cs.ValidatorAddress) != crypto.AddressSize {
++		return fmt.Errorf("expected ValidatorAddress size to be %d bytes, got %d bytes", crypto.AddressSize, len(cs.ValidatorAddress))
++	}
++	// Validate the protocol timestamp before Hash or VoteSignBytes can panic.
++	if _, err := gogotypes.TimestampProto(cs.Timestamp); err != nil {
++		return fmt.Errorf("invalid commit signature timestamp: %w", err)
++	}
++	if len(cs.Signature) == 0 {
++		return errors.New("signature is missing")
++	}
++	if len(cs.Signature) > MaxSignatureSize {
++		return fmt.Errorf("signature is too big (max: %d)", MaxSignatureSize)
++	}
+ 	return nil
+ }
+ 
+diff --git a/types/history_validator_boundary_test.go b/types/history_validator_boundary_test.go
+new file mode 100644
+index 0000000..25fc3f0
+--- /dev/null
++++ b/types/history_validator_boundary_test.go
+@@ -0,0 +1,170 @@
++package types_test
++
++import (
++	"context"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"strconv"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/require"
++
++	"github.com/cometbft/cometbft/crypto/ed25519"
++	cmttest "github.com/cometbft/cometbft/internal/test"
++	cmtjson "github.com/cometbft/cometbft/libs/json"
++	lighthttp "github.com/cometbft/cometbft/light/provider/http"
++	cmtversion "github.com/cometbft/cometbft/proto/tendermint/version"
++	coretypes "github.com/cometbft/cometbft/rpc/core/types"
++	"github.com/cometbft/cometbft/types"
++	"github.com/cometbft/cometbft/version"
++)
++
++func TestHistoryValidatorBoundaryRejectsMalformedKeysWithoutPanic(t *testing.T) {
++	for _, size := range []int{0, 1, 31, 33} {
++		t.Run(strconv.Itoa(size), func(t *testing.T) {
++			validator := &types.Validator{
++				Address: make([]byte, 20), PubKey: ed25519.PubKey(make([]byte, size)), VotingPower: 10,
++			}
++			require.NotPanics(t, func() { require.Error(t, validator.ValidateBasic()) })
++			require.NotPanics(t, func() {
++				_, err := types.ValidatorSetFromExistingValidators([]*types.Validator{validator})
++				require.Error(t, err)
++			})
++		})
++	}
++}
++
++func validatorBoundaryFixture(t *testing.T) (*coretypes.ResultCommit, *types.Validator) {
++	t.Helper()
++	private := types.NewMockPV()
++	pub, err := private.GetPubKey()
++	require.NoError(t, err)
++	validator := types.NewValidator(pub, 10)
++	validators := types.NewValidatorSet([]*types.Validator{validator})
++	header := &types.Header{
++		Version: cmtversion.Consensus{Block: version.BlockProtocol},
++		ChainID: "history-key-boundary", Height: 1,
++		Time:           time.Date(2026, 1, 1, 0, 0, 0, 1, time.UTC),
++		ValidatorsHash: validators.Hash(), NextValidatorsHash: validators.Hash(),
++		ProposerAddress: validator.Address,
++	}
++	id := cmttest.MakeBlockIDWithHash(header.Hash())
++	commit, err := cmttest.MakeCommit(id, 1, 0, validators, []types.PrivValidator{private}, header.ChainID, header.Time)
++	require.NoError(t, err)
++	return coretypes.NewResultCommit(header, commit, true), validator
++}
++
++func validatorBoundaryRPC(t *testing.T, w http.ResponseWriter, r *http.Request, committed *coretypes.ResultCommit, page func(int32) *coretypes.ResultValidators, requests *atomic.Int32) {
++	var request struct {
++		ID     json.RawMessage `json:"id"`
++		Method string          `json:"method"`
++	}
++	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
++		http.Error(w, "invalid JSON-RPC request", http.StatusBadRequest)
++		return
++	}
++	var result any
++	switch request.Method {
++	case "commit":
++		result = committed
++	case "validators":
++		result = page(requests.Add(1))
++	default:
++		http.Error(w, "unexpected RPC method", http.StatusBadRequest)
++		return
++	}
++	raw, err := cmtjson.Marshal(result)
++	require.NoError(t, err)
++	body, err := json.Marshal(struct {
++		JSONRPC string          `json:"jsonrpc"`
++		ID      json.RawMessage `json:"id"`
++		Result  json.RawMessage `json:"result"`
++	}{JSONRPC: "2.0", ID: request.ID, Result: raw})
++	require.NoError(t, err)
++	w.Header().Set("Content-Type", "application/json")
++	_, _ = w.Write(body)
++}
++
++func TestHistoryValidatorBoundaryRealLightRPC(t *testing.T) {
++	for _, size := range []int{-1, 0, 1, 31, 33} {
++		t.Run(strconv.Itoa(size), func(t *testing.T) {
++			committed, member := validatorBoundaryFixture(t)
++			if size >= 0 {
++				member.PubKey = ed25519.PubKey(make([]byte, size))
++			}
++			var requests atomic.Int32
++			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				validatorBoundaryRPC(t, w, r, committed, func(int32) *coretypes.ResultValidators {
++					return &coretypes.ResultValidators{BlockHeight: 1, Validators: []*types.Validator{member}, Count: 1, Total: 1}
++				}, &requests)
++			}))
++			defer server.Close()
++			provider, err := lighthttp.New("history-key-boundary", server.URL)
++			require.NoError(t, err)
++			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++			defer cancel()
++			require.NotPanics(t, func() {
++				block, err := provider.LightBlock(ctx, 1)
++				if size < 0 {
++					require.NoError(t, err, "the identical valid RPC fixture must work")
++					require.Equal(t, int64(1), block.Height)
++				} else {
++					require.Error(t, err)
++				}
++			})
++			require.Positive(t, requests.Load(), "must reach the actual validator RPC decoder")
++		})
++	}
++}
++
++func TestHistoryValidatorBoundaryLightRPCPaginationBounds(t *testing.T) {
++	cases := []struct {
++		name                                         string
++		firstSize, firstTotal, laterSize, laterTotal int
++		requests                                     int32
++	}{
++		{"oversized page", 101, 10000, 101, 10000, 1},
++		{"oversized total", 100, 10001, 100, 10001, 1},
++		{"changing total", 100, 101, 1, 102, 2},
++		{"cumulative over total", 100, 101, 2, 101, 2},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			committed, member := validatorBoundaryFixture(t)
++			var requests atomic.Int32
++			page := func(call int32) *coretypes.ResultValidators {
++				size, total := tc.firstSize, tc.firstTotal
++				if call > 1 {
++					size, total = tc.laterSize, tc.laterTotal
++				}
++				members := make([]*types.Validator, size)
++				for i := range members {
++					members[i] = member.Copy()
++				}
++				return &coretypes.ResultValidators{BlockHeight: 1, Validators: members, Count: size, Total: total}
++			}
++			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				validatorBoundaryRPC(t, w, r, committed, page, &requests)
++			}))
++			defer server.Close()
++			provider, err := lighthttp.New("history-key-boundary", server.URL)
++			require.NoError(t, err)
++			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++			defer cancel()
++			_, err = provider.LightBlock(ctx, 1)
++			require.Error(t, err)
++			require.Equal(t, tc.requests, requests.Load(), "reject the first invalid page before fetching or retaining more validators")
++		})
++	}
++}
++
++func TestHistoryValidatorBoundaryDuplicateMembersReturnError(t *testing.T) {
++	_, member := validatorBoundaryFixture(t)
++	require.NotPanics(t, func() {
++		_, err := types.ValidatorSetFromExistingValidators([]*types.Validator{member, member.Copy()})
++		require.Error(t, err)
++	})
++}
+diff --git a/types/validator.go b/types/validator.go
+index 77d6272..0caf789 100644
+--- a/types/validator.go
++++ b/types/validator.go
+@@ -42,6 +42,15 @@ func (v *Validator) ValidateBasic() error {
+ 	if v.PubKey == nil {
+ 		return errors.New("validator does not have a public key")
+ 	}
++	// Public-key address derivation may panic on malformed encodings. Validate
++	// the protocol encoding before light-client/RPC input reaches Address().
++	encoded, err := ce.PubKeyToProto(v.PubKey)
++	if err != nil {
++		return fmt.Errorf("invalid validator public key: %w", err)
++	}
++	if _, err = ce.PubKeyFromProto(encoded); err != nil {
++		return fmt.Errorf("invalid validator public key encoding: %w", err)
++	}
+ 
+ 	if v.VotingPower < 0 {
+ 		return errors.New("validator has negative voting power")
+diff --git a/types/validator_set.go b/types/validator_set.go
+index 5d85afe..cf30caa 100644
+--- a/types/validator_set.go
++++ b/types/validator_set.go
+@@ -1053,11 +1053,16 @@ func ValidatorSetFromExistingValidators(valz []*Validator) (*ValidatorSet, error
+ 	if len(valz) == 0 {
+ 		return nil, errors.New("validator set is empty")
+ 	}
++	seen := make(map[string]bool, len(valz))
+ 	for _, val := range valz {
+ 		err := val.ValidateBasic()
+ 		if err != nil {
+ 			return nil, fmt.Errorf("can't create validator set: %w", err)
+ 		}
++		if seen[string(val.Address)] {
++			return nil, errors.New("duplicate validator address")
++		}
++		seen[string(val.Address)] = true
+ 	}
+ 
+ 	vals := &ValidatorSet{

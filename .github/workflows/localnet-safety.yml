@@ -10,6 +10,10 @@ on:
   schedule:
     - cron: "17 2 * * *"
 
+concurrency:
+  group: xian-stack-network-safety
+  cancel-in-progress: false
+
 jobs:
   protocol-safety-localnet:
     if: ${{ !inputs.replay_run_id }}
@@ -39,17 +43,25 @@ jobs:
           LOCALNET_PROTOCOL_SAFETY_BUILD: "1"
         run: make localnet-protocol-safety
 
+      - name: Export public protocol proof
+        if: always()
+        working-directory: xian-stack
+        run: >-
+          python3 scripts/export_localnet_public_proof.py --kind protocol
+          --input .artifacts/localnet-protocol-safety
+          --output .artifacts/public-localnet-protocol
+          --network .localnet/network.json
+
       - name: Upload protocol safety artifacts
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: xian-stack-protocol-safety-localnet
-          path: |
-            xian-stack/.artifacts/localnet-protocol-safety
-            xian-stack/.localnet/network.json
+          path: xian-stack/.artifacts/public-localnet-protocol
           if-no-files-found: warn
 
   release-safety-localnet:
+    needs: protocol-safety-localnet
     if: ${{ !inputs.replay_run_id }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -77,14 +89,21 @@ jobs:
         working-directory: xian-stack
         run: ./scripts/release-safety.sh --skip-repo-validation --skip-protocol-safety
 
+      - name: Export public localnet proof
+        if: always()
+        working-directory: xian-stack
+        run: >-
+          python3 scripts/export_localnet_public_proof.py --kind e2e
+          --input .artifacts/localnet-e2e
+          --output .artifacts/public-localnet-e2e
+          --network .localnet/network.json
+
       - name: Upload localnet safety artifacts
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: xian-stack-release-safety-localnet
-          path: |
-            xian-stack/.artifacts/localnet-e2e
-            xian-stack/.localnet/network.json
+          path: xian-stack/.artifacts/public-localnet-e2e
           if-no-files-found: warn
 
       - name: Upload corpus for native architecture replay

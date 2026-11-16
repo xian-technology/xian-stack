@@ -63,7 +63,7 @@ COMPOSE_DEFAULTS = {
     "XIAN_CONFIGS_DIR": "../xian-configs",
     "XIAN_CONTRACTING_DIR": "../xian-contracting",
     "XIAN_PY_DIR": "../xian-py",
-    "XIAN_COMETBFT_VERSION": "0.39.3",
+    "XIAN_COMETBFT_VERSION": "0.40.0",
     "XIAN_S6_OVERLAY_VERSION": "3.2.3.0",
     "XIAN_S6_VERBOSITY": "1",
     "XIAN_DOCKER_POSTGRES_MEMORY_LIMIT": "1024m",
