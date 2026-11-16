@@ -6832,6 +6832,38 @@ class E2ERunner:
             "restored_active_validators": normalize_value(restored_active),
         }
 
+    def stop_patch_peer_consensus(self, service: LocalnetNode) -> None:
+        # Stop the other Comet runtimes together before Compose teardown so
+        # a quorum cannot advance toward activation while apps load the bundle.
+        peer_containers = list(
+            dict.fromkeys(
+                node.cometbft_container for node in self.nodes if node.index != service.index
+            )
+        )
+        run_cmd(["docker", "stop", *peer_containers], cwd=STACK_DIR)
+
+    async def prepare_patch_voters(self, session, stack):
+        clients = [
+            await stack.enter_async_context(self.client(wallet, index, session))
+            for index, wallet in enumerate(self.validator_wallets)
+        ]
+        for client in clients:
+            await client.refresh_nonce()
+        return clients
+
+    async def resumable_state_patch(self, session, patch_id):
+        async with self.client(self.founder_wallet, self.bds_node.index, session) as client:
+            try:
+                patch = await client.call("governance", "get_patch", {"patch_id": patch_id})
+            except SimulationError:
+                return None
+        if patch.get("status") not in {"approved", "applied"}:
+            raise E2EError(
+                f"state patch {patch_id} has status {patch.get('status')!r}; "
+                "complete governance approval before resuming"
+            )
+        return patch
+
     async def arm_state_patch(
         self,
         session: aiohttp.ClientSession,
@@ -6841,86 +6873,69 @@ class E2ERunner:
         changes: list[dict[str, Any]],
         label_prefix: str,
     ) -> dict[str, Any]:
-        """Write a governed state patch bundle to every node, load it, and approve it.
+        """Write bundles, approve on warm runtimes, then load before activation.
 
-        A resumed run finds the patch already proposed and adopts its activation
-        height; the bundle must still hash to the governed bundle hash.
+        Complete RPC/nonce preparation before sampling the governed height. A
+        restart can replay arbitrarily many blocks, so it must follow approval.
+        Resumed runs adopt the existing activation height and verify its hash.
         """
         service = self.bds_node
-        founder = self.founder_wallet
-        current_height = int(
-            (
-                await fetch_json(
-                    session,
-                    f"{service.rpc_url}/status",
-                    timeout=5.0,
-                )
-            )["result"]["sync_info"]["latest_block_height"]
-        )
-        governance_min_patch_delay = await fetch_abci_query(
-            session,
-            service.rpc_url,
-            "/get/governance.metadata:min_patch_delay_blocks",
-        )
-        if governance_min_patch_delay is None:
-            governance_min_patch_delay = STATE_PATCH_DELAY_BLOCKS
-        activation_height = current_height + max(
-            int(governance_min_patch_delay) + STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS,
-            STATE_PATCH_DELAY_BLOCKS,
-        )
-        bundle_payload = {
-            "version": 1,
-            "patch_id": patch_id,
-            "activation_height": activation_height,
-            "governance_contract": "governance",
-            "summary": summary,
-            "uri": "local://localnet-e2e",
-            "chain_id": self.network["chain_id"],
-            "changes": changes,
-        }
-        bundle_payload["bundle_hash"] = compute_patch_bundle_hash(bundle_payload)
+        existing_patch = await self.resumable_state_patch(session, patch_id)
 
-        existing_patch: dict[str, Any] | None = None
-        async with self.client(founder, service.index, session) as client:
-            try:
-                existing_patch = await client.call(
-                    "governance",
-                    "get_patch",
-                    {"patch_id": patch_id},
-                )
-            except SimulationError:
-                existing_patch = None
-
-        if existing_patch is not None:
-            activation_height = int(existing_patch["activation_height"])
-            bundle_payload["activation_height"] = activation_height
+        async with contextlib.AsyncExitStack() as stack:
+            clients = await self.prepare_patch_voters(session, stack)
+            governance_min_patch_delay = await fetch_abci_query(
+                session, service.rpc_url, "/get/governance.metadata:min_patch_delay_blocks"
+            )
+            if governance_min_patch_delay is None:
+                governance_min_patch_delay = STATE_PATCH_DELAY_BLOCKS
+            current_height = int(
+                (await fetch_json(session, f"{service.rpc_url}/status", timeout=5.0))["result"][
+                    "sync_info"
+                ]["latest_block_height"]
+            )
+            activation_height = current_height + max(
+                int(governance_min_patch_delay) + STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS,
+                STATE_PATCH_DELAY_BLOCKS,
+            )
+            bundle_payload = {
+                "version": 1,
+                "patch_id": patch_id,
+                "activation_height": activation_height,
+                "governance_contract": "governance",
+                "summary": summary,
+                "uri": "local://localnet-e2e",
+                "chain_id": self.network["chain_id"],
+                "changes": changes,
+            }
+            if existing_patch is not None:
+                activation_height = int(existing_patch["activation_height"])
+                bundle_payload["activation_height"] = activation_height
             bundle_payload["bundle_hash"] = compute_patch_bundle_hash(bundle_payload)
-            if bundle_payload["bundle_hash"] != existing_patch["bundle_hash"]:
+            if (
+                existing_patch is not None
+                and bundle_payload["bundle_hash"] != existing_patch["bundle_hash"]
+            ):
                 raise E2EError(
                     "existing state patch bundle hash does not match the harness payload"
                 )
 
-        for node in self.nodes:
-            patch_dir = (
-                STACK_DIR / ".localnet" / node.moniker / ".cometbft" / "config" / "state-patches"
-            )
-            patch_dir.mkdir(parents=True, exist_ok=True)
-            (patch_dir / f"{patch_id}.json").write_text(
-                json.dumps(bundle_payload, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-        await self.restart_localnet_and_wait_ready(session)
-
-        proposal_vote: dict[str, Any] | None = None
-        if existing_patch is None:
-            wallets = self.validator_wallets
-            async with contextlib.AsyncExitStack() as stack:
-                clients = [
-                    await stack.enter_async_context(self.client(wallet, index, session))
-                    for index, wallet in enumerate(wallets)
-                ]
-                for client in clients:
-                    await client.refresh_nonce()
+            for node in self.nodes:
+                patch_dir = (
+                    STACK_DIR
+                    / ".localnet"
+                    / node.moniker
+                    / ".cometbft"
+                    / "config"
+                    / "state-patches"
+                )
+                patch_dir.mkdir(parents=True, exist_ok=True)
+                (patch_dir / f"{patch_id}.json").write_text(
+                    json.dumps(bundle_payload, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+            proposal_vote: dict[str, Any] | None = None
+            if existing_patch is None:
                 proposal_vote = await self.approve_governance_proposal(
                     clients[0],
                     [(f"node{index}", client) for index, client in enumerate(clients)][1:],
@@ -6936,6 +6951,12 @@ class E2ERunner:
                     expected_final_status="approved",
                     label_prefix=label_prefix,
                 )
+
+        try:
+            self.stop_patch_peer_consensus(service)
+        finally:
+            # A partial stop failure must still restore every validator.
+            await self.restart_localnet_and_wait_ready(session)
         return {
             "bundle": bundle_payload,
             "activation_height": activation_height,
