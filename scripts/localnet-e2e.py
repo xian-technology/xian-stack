@@ -27,6 +27,7 @@ import aiohttp
 from governance_vote_helpers import (
     cast_votes_until_status,
     read_freshest_status,
+    wait_for_policy_effects,
     wait_for_readable_status,
     wait_for_status,
 )
@@ -287,6 +288,11 @@ PY
 def make_localnet_env(args: argparse.Namespace) -> dict[str, str]:
     env = os.environ.copy()
     env.update(load_stack_env())
+    # Lifecycle, quorum and state-sync checks wait for later idle heights.
+    if env.get("XIAN_LOCALNET_BLOCK_POLICY_MODE", "periodic") != "periodic":
+        raise E2EError("The full E2E suite requires periodic block production.")
+    env["XIAN_LOCALNET_BLOCK_POLICY_MODE"] = "periodic"
+    env.setdefault("XIAN_LOCALNET_BLOCK_POLICY_INTERVAL", "1s")
     env["XIAN_LOCALNET_GENESIS_NETWORK"] = args.genesis_network
     env["XIAN_LOCALNET_ENABLE_BDS"] = "1"
     env["XIAN_LOCALNET_BDS_NODE_INDEX"] = str(args.bds_node_index)
@@ -1733,6 +1739,35 @@ def write_bds_table(xian_toml: Path, settings: dict[str, str | int]) -> None:
     xian_toml.write_text(f"{head}{marker}" + "\n".join(lines) + "\n", encoding="utf-8")
 
 
+def members_proposal_id(receipt, label):
+    ids = [
+        (event.get("data_indexed") or {}).get("proposal_id")
+        for event in receipt["events"]
+        if event.get("contract") == "validators"
+        and event.get("event") == "ValidatorProposalSubmitted"
+    ]
+    if len(ids) != 1 or type(ids[0]) is not int or ids[0] < 1:
+        raise E2EError(
+            f"{label}: expected one positive proposal ID in receipt "
+            f"{receipt.get('tx_hash')}; got {ids!r}"
+        )
+    return ids[0]
+
+
+def resume_smoke_contracts(deployments: list[dict[str, Any]]) -> dict[str, str]:
+    prefixes = {
+        "conflict": "deploy con_e2e_conflict_",
+        "patch_target": "deploy con_e2e_patch_",
+        "allocation_guards": "deploy con_e2e_alloc_",
+    }
+    return {
+        key: label.removeprefix("deploy ")
+        for deployment in deployments
+        for key, prefix in prefixes.items()
+        if (label := deployment.get("label", "")).startswith(prefix)
+    }
+
+
 class E2ERunner:
     def __init__(self, args: argparse.Namespace):
         self.args = args
@@ -1839,6 +1874,12 @@ class E2ERunner:
             )
         selected_phases = phase_names(getattr(self.args, "suite", "full"))
         prior_phase_names = selected_phases[: selected_phases.index(self.args.start_phase)]
+        self._load_resume_phase_results(prior_phase_names)
+        completed_phase_names = set(prior_phase_names)
+        self._load_resume_contracts(completed_phase_names)
+        self._load_resume_event_hashes(completed_phase_names)
+
+    def _load_resume_phase_results(self, prior_phase_names: list[str]) -> None:
         self.phase_results = []
         for phase_name in prior_phase_names:
             path = self.output_dir / json_file_name(phase_name)
@@ -1855,16 +1896,10 @@ class E2ERunner:
                 )
             )
 
-        completed_phase_names = set(prior_phase_names)
-
+    def _load_resume_contracts(self, completed_phase_names: set[str]) -> None:
         if "02-xian-py-smoke" in completed_phase_names:
             smoke = self._load_resume_json("02-xian-py-smoke")
-            for deployment in smoke["details"]["deployments"]:
-                label = deployment.get("label", "")
-                if label.startswith("deploy con_e2e_conflict_"):
-                    self.contracts["conflict"] = label.removeprefix("deploy ")
-                elif label.startswith("deploy con_e2e_patch_"):
-                    self.contracts["patch_target"] = label.removeprefix("deploy ")
+            self.contracts.update(resume_smoke_contracts(smoke["details"]["deployments"]))
 
         if "03-contract-orchestration" in completed_phase_names:
             orchestration = self._load_resume_json("03-contract-orchestration")
@@ -1881,7 +1916,6 @@ class E2ERunner:
         if "06-conflict-invalid" in completed_phase_names:
             conflict = self._load_resume_json("06-conflict-invalid")
             self.contracts["conflict"] = conflict["details"]["conflict_contract"]
-            self.sample_event_tx_hash = conflict["details"]["winning_tx_hash"]
 
         if "07-dex-mixed" in completed_phase_names:
             dex = self._load_resume_json("07-dex-mixed")
@@ -1891,6 +1925,11 @@ class E2ERunner:
             self.contracts["dex_pairs"] = contracts["pairs"]
             self.contracts["dex_router"] = contracts["dex"]
             self.contracts["dex_pair_id"] = dex["details"]["scenario_summary"]["pair_id"]
+
+    def _load_resume_event_hashes(self, completed_phase_names: set[str]) -> None:
+        if "06-conflict-invalid" in completed_phase_names:
+            conflict = self._load_resume_json("06-conflict-invalid")
+            self.sample_event_tx_hash = conflict["details"]["winning_tx_hash"]
 
         if "09-bds-catchup" in completed_phase_names:
             catchup = self._load_resume_json("09-bds-catchup")
@@ -2412,18 +2451,7 @@ class E2ERunner:
             chi=GOVERNANCE_TX_CHI,
             mode="async",
         )
-        proposal_ids = [
-            (event.get("data_indexed") or {}).get("proposal_id")
-            for event in proposal_receipt["events"]
-            if event.get("contract") == "validators"
-            and event.get("event") == "ValidatorProposalSubmitted"
-        ]
-        if len(proposal_ids) != 1 or type(proposal_ids[0]) is not int or proposal_ids[0] < 1:
-            raise E2EError(
-                f"{label_prefix}: expected one positive proposal ID in receipt "
-                f"{proposal_receipt.get('tx_hash')}; got {proposal_ids!r}"
-            )
-        proposal_id = proposal_ids[0]
+        proposal_id = members_proposal_id(proposal_receipt, label_prefix)
         status_readers = [proposer, *[voter for _name, voter in voters]]
 
         async def fetch_vote_status() -> dict[str, Any]:
@@ -2482,12 +2510,21 @@ class E2ERunner:
             except RuntimeError as exc:
                 raise E2EError(str(exc)) from exc
 
+        policy_effects = None
+        if type_of_vote == "update_policy":
+            policy_effects = await wait_for_policy_effects(
+                status_readers,
+                arg,
+                label=f"members vote {proposal_id}",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+            )
         return {
             "proposal_id": proposal_id,
             "proposal_receipt": proposal_receipt,
             "proposal_pending": proposal_pending,
             "vote_receipts": vote_receipts,
             "proposal_final": proposal_final,
+            "policy_effects": policy_effects,
         }
 
     def restart_localnet(self) -> None:

@@ -13,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, create_autospec, patch
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "localnet-e2e.py"
+MODULE_PATH = Path(__file__).absolute().parents[1] / "scripts" / "localnet-e2e.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
 
 localnet_e2e_phases = importlib.import_module("localnet_e2e_phases")
@@ -30,6 +30,40 @@ else:
 
 
 class LocalnetE2EExpansionTests(unittest.TestCase):
+    def test_members_vote_rejects_missing_or_ambiguous_receipt_ids(self):
+        args = localnet_e2e.build_parser().parse_args([])
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch.object(localnet_e2e, "OUTPUT_ROOT", Path(tmpdir)),
+        ):
+            runner = localnet_e2e.E2ERunner(args)
+        event = {
+            "contract": "validators",
+            "event": "ValidatorProposalSubmitted",
+            "data_indexed": {"proposal_id": 1},
+        }
+        for events in (
+            [],
+            [event, event],
+            [dict(event, data_indexed={"proposal_id": 0})],
+            [dict(event, data_indexed={"proposal_id": True})],
+            [dict(event, data_indexed={"proposal_id": "1"})],
+        ):
+            runner.submit_tx = AsyncMock(return_value={"events": events})
+            with (
+                self.subTest(events=events),
+                self.assertRaisesRegex(localnet_e2e.E2EError, "expected one positive proposal ID"),
+            ):
+                asyncio.run(
+                    runner.approve_members_vote(
+                        object(),
+                        [],
+                        type_of_vote="update_policy",
+                        arg={},
+                        label_prefix="invalid receipt",
+                    )
+                )
+
     def test_signed_admission_fixture_reaches_native_depth_rejection(self):
         # The node's native transaction admission, from the locked environment.
         from xian_vm_core import decode_and_validate_transaction
@@ -1503,10 +1537,16 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             def __init__(self, name: str, *, stale_after_approval: bool = False):
                 self.name = name
                 self.stale_after_approval = stale_after_approval
+                self.policy_reads = 0
 
             async def get_state(self, contract, variable, *keys):
                 if (contract, variable) == ("validators", "total_votes"):
                     return 4
+                if (contract, variable) == ("validators", "config"):
+                    self.policy_reads += 1
+                    if self.stale_after_approval and self.policy_reads == 1:
+                        return "manual"
+                    return "auto_top_n"
                 if (contract, variable) != ("validators", "votes"):
                     raise AssertionError((contract, variable, keys))
                 if self.stale_after_approval and state["status"] == "approved":
@@ -1580,6 +1620,7 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         )
 
         self.assertEqual("approved", result["proposal_final"]["status"])
+        self.assertGreaterEqual(proposer.policy_reads, 2)
         self.assertEqual(3, len(result["vote_receipts"]))
         self.assertEqual(
             [

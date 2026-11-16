@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 import tempfile
@@ -26,6 +27,43 @@ else:
 
 
 class LocalnetProtocolSafetyTests(unittest.TestCase):
+    def test_policy_approval_waits_for_effects_on_stale_primary(self):
+        args = localnet_protocol_safety.build_parser().parse_args([])
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch.object(localnet_protocol_safety, "OUTPUT_ROOT", Path(tmpdir)),
+        ):
+            runner = localnet_protocol_safety.ProtocolSafetyRunner(args)
+
+        class Reader:
+            def __init__(self, stale=False):
+                self.reads = 0
+                self.stale = stale
+
+            async def get_state(self, *_args):
+                self.reads += 1
+                return "manual" if self.stale and self.reads == 1 else "auto_top_n"
+
+        primary, peer = Reader(True), Reader()
+        runner.submit_tx = AsyncMock(return_value={})
+        runner.read_contract_state = AsyncMock(return_value=1)
+        runner.read_members_vote = AsyncMock(
+            side_effect=[{"status": "pending"}, {"status": "pending"}]
+        )
+        runner.wait_for_members_vote_progress = AsyncMock(return_value={"status": "approved"})
+        result = asyncio.run(
+            runner.approve_members_vote(
+                primary,
+                [("peer", peer)],
+                type_of_vote="update_policy",
+                arg={"selection_mode": "auto_top_n"},
+                label_prefix="policy",
+            )
+        )
+        self.assertEqual(result["proposal_final"]["status"], "approved")
+        self.assertGreaterEqual(primary.reads, 2)
+        self.assertGreaterEqual(peer.reads, 2)
+
     def test_receipt_keeps_the_commit_height_for_cross_node_reads(self):
         submission = SimpleNamespace(
             receipt=SimpleNamespace(

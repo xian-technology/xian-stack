@@ -85,6 +85,29 @@ def test_default_profile_summary(run_init, tmp_path):
     assert (tmp_path / "docker-compose-localnet.yml").is_file()
 
 
+@pytest.mark.parametrize(
+    ("topology", "image_variable"),
+    [("integrated", "XIAN_NODE_INTEGRATED_IMAGE"), ("fidelity", "XIAN_NODE_SPLIT_IMAGE")],
+)
+def test_image_override_reaches_every_generated_node_service(
+    tmp_path, monkeypatch, topology, image_variable
+):
+    image = "xian-review-current-source:isolated"
+    monkeypatch.setenv(image_variable, image)
+    spec = importlib.util.spec_from_file_location("image_override_localnet", SPEC.origin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "STACK_DIR", tmp_path)
+    monkeypatch.setattr(module, "LOCALNET_DIR", tmp_path / ".localnet")
+    monkeypatch.setattr(sys, "argv", ["localnet-init.py", "--topology", topology])
+
+    module.main()
+
+    services = json.loads((tmp_path / "docker-compose-localnet.yml").read_text())["services"]
+    assert services
+    assert {service["image"] for service in services.values()} == {image}
+
+
 def test_throughput_profile_fills_unset_consensus_and_mempool(run_init):
     summary = run_init(
         "--nodes",

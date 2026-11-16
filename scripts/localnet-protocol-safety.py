@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
-from governance_vote_helpers import read_freshest_status
+from governance_vote_helpers import read_freshest_status, wait_for_policy_effects
 from localnet_common import GOVERNANCE_TX_CHI, REBALANCE_TX_CHI, E2EClient, fetch_json
 from localnet_diagnostics import collect_failure_diagnostics
 
@@ -1312,6 +1312,13 @@ class ProtocolSafetyRunner:
                 proposal_id,
                 expected_status="approved",
                 fallback_clients=status_readers,
+            )
+        if type_of_vote == "update_policy":
+            await wait_for_policy_effects(
+                [proposer, *status_readers],
+                arg,
+                label=f"members vote {proposal_id}",
+                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
             )
         return {
             "proposal_id": proposal_id,

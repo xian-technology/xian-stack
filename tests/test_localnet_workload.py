@@ -7,7 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "localnet-workload.py"
+import pytest
+
+MODULE_PATH = Path(__file__).absolute().parents[1] / "scripts" / "localnet-workload.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
 
 if "localnet_workload" in sys.modules:
@@ -432,7 +434,44 @@ def test_broadcast_tx_retries_transport_timeout_on_next_healthy_node() -> None:
     ]
 
 
-def test_broadcast_tx_reuses_sticky_node_for_explicit_nonce_stream() -> None:
+@pytest.mark.parametrize("supplied,expected", [(None, 125), (20, 20)])
+def test_broadcast_preserves_explicit_chi_and_adds_headroom_only_to_estimates(supplied, expected):
+    context = localnet_workload.WorkloadContext(
+        _network(), sample_nodes=3, submit_node_index=0, round_robin_submission=True
+    )
+    context._session = object()
+    context.healthy_submission_index = AsyncMock(return_value=0)
+    context.next_nonce = AsyncMock(return_value=7)
+    client = SimpleNamespace(
+        send_tx=AsyncMock(
+            return_value=SimpleNamespace(
+                submitted=True, accepted=True, message=None, tx_hash="tx-hash"
+            )
+        )
+    )
+    context.client = lambda *_args: client
+    wallet = localnet_workload.Wallet()
+    estimate = AsyncMock(return_value=123)
+    with patch.object(localnet_workload, "simulated_chi_supply", estimate):
+        asyncio.run(
+            context.broadcast_tx(
+                label="chi policy",
+                wallet=wallet,
+                rpc_index=0,
+                contract="currency",
+                function="approve",
+                kwargs={"amount": 0, "to": wallet.public_key},
+                chi=supplied,
+                extra_chi=2,
+                expected_success=True,
+            )
+        )
+    assert client.send_tx.await_args.kwargs["chi"] == expected
+    assert estimate.await_count == (1 if supplied is None else 0)
+
+
+@pytest.mark.parametrize("explicit", [True, False])
+def test_broadcast_tx_reuses_sticky_node_for_every_nonce_stream(explicit) -> None:
     context = localnet_workload.WorkloadContext(
         _network(),
         sample_nodes=3,
@@ -440,7 +479,8 @@ def test_broadcast_tx_reuses_sticky_node_for_explicit_nonce_stream() -> None:
         round_robin_submission=True,
     )
     context._session = object()
-    context.healthy_submission_index = AsyncMock(side_effect=[2, 1])
+    context.healthy_submission_index = AsyncMock(side_effect=[2, 1, 2, 1])
+    context.next_nonce = AsyncMock(side_effect=[4, 5])
     sends = []
 
     class FakeClient:
@@ -469,7 +509,7 @@ def test_broadcast_tx_reuses_sticky_node_for_explicit_nonce_stream() -> None:
             kwargs={"amount": "1", "to": wallet.public_key},
             chi=1_500,
             expected_success=True,
-            nonce=4,
+            nonce=4 if explicit else None,
         )
     )
     second = asyncio.run(
@@ -482,7 +522,7 @@ def test_broadcast_tx_reuses_sticky_node_for_explicit_nonce_stream() -> None:
             kwargs={"amount": "1", "to": wallet.public_key},
             chi=1_500,
             expected_success=True,
-            nonce=5,
+            nonce=5 if explicit else None,
         )
     )
 

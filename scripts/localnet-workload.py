@@ -409,6 +409,12 @@ class WorkloadContext:
             self._next_nonce[public_key] += count
         return list(range(start_nonce, start_nonce + count))
 
+    async def _broadcast_chi(self, payload, preferred_index, supplied_chi, extra_chi):
+        if supplied_chi is not None:
+            return supplied_chi
+        node = self.nodes[preferred_index % len(self.nodes)]
+        return await simulated_chi_supply(self.session, node.rpc_url, payload) + extra_chi
+
     async def broadcast_tx(
         self,
         *,
@@ -427,7 +433,7 @@ class WorkloadContext:
     ) -> BroadcastRecord:
         preferred_index = self.submission_index(rpc_index)
         if nonce is None:
-            nonce_index = await self.healthy_submission_index(preferred_index)
+            nonce_index = await self.sticky_submission_index(wallet, preferred_index)
             reserved_nonce = await self.next_nonce(wallet, nonce_index)
         else:
             reserved_nonce = nonce
@@ -439,9 +445,7 @@ class WorkloadContext:
             "nonce": reserved_nonce,
             "sender": wallet.public_key,
         }
-        if chi is None:
-            node = self.nodes[preferred_index % len(self.nodes)]
-            chi = await simulated_chi_supply(self.session, node.rpc_url, payload) + extra_chi
+        chi = await self._broadcast_chi(payload, preferred_index, chi, extra_chi)
         payload["chi_supplied"] = chi
         tx = tr.create_tx(payload, wallet, vm_profile="xian_vm_v2")
         prepared_tx = tr.prepare_transaction(tx)
@@ -451,7 +455,7 @@ class WorkloadContext:
 
         tried: set[int] = set()
         for attempt in range(max(1, len(self.nodes))):
-            if nonce is not None and attempt == 0:
+            if attempt == 0:
                 submission_index = await self.sticky_submission_index(wallet, preferred_index)
             else:
                 submission_index = await self.healthy_submission_index(preferred_index + attempt)
@@ -470,8 +474,7 @@ class WorkloadContext:
                     mode=mode,
                     wait_for_tx=False,
                 )
-                if nonce is not None:
-                    self._submission_affinity[wallet.public_key] = submission_index
+                self._submission_affinity[wallet.public_key] = submission_index
                 break
             except TransportError as exc:
                 last_error = exc

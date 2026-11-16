@@ -50,7 +50,7 @@ BASE_METRICS_PORT = 26660
 BASE_XIAN_METRICS_PORT = 9108
 PORT_STRIDE = 100  # node-0: 266xx, node-1: 267xx, node-2: 268xx, ...
 NODE_IMAGE_INTEGRATED = os.environ.get("XIAN_NODE_INTEGRATED_IMAGE", "xian-node-integrated:local")
-NODE_IMAGE_SPLIT = "xian-node-split:local"
+NODE_IMAGE_SPLIT = os.environ.get("XIAN_NODE_SPLIT_IMAGE", "xian-node-split:local")
 LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
 # One fresh owner-only file per generated localnet holds the BDS password; the
 # compose secret mounts it into Postgres and the BDS node.

@@ -140,6 +140,10 @@ The generated `docker-compose-localnet.yml` names its own Compose project,
 localnet validators as orphans. A compose file generated before this change
 keeps the directory project; regenerate it with `localnet-init --clean`.
 
+To select an isolated image tag before generating a localnet, set
+`XIAN_NODE_INTEGRATED_IMAGE` for integrated nodes or `XIAN_NODE_SPLIT_IMAGE`
+for the fidelity topology. Every generated node service uses the selected tag.
+
 Bootstrap DEX contracts on a running local node for stack validation. General
 DEX installs should use the repo-owned bootstrap script in `xian-dex`; this
 make target is a stack validation convenience:
@@ -370,6 +374,13 @@ uv run python scripts/localnet_replay_corpus.py \
 Use a fresh output directory for each replay. See the
 [public E2E guide](../xian-docs-web/node/localnet-e2e.md) for the coverage and
 interpretation of these checks.
+
+`localnet-e2e` uses periodic blocks with a one-second interval, including when
+throughput tuning is selected. Its lifecycle, quorum, and state-sync checks
+need later idle heights. Set `XIAN_LOCALNET_BLOCK_POLICY_INTERVAL` to choose
+another periodic interval; an explicit `on_demand` mode is refused before
+bootstrap. On-demand production remains available in localnet workload and
+performance flows.
 
 `localnet-e2e` prints `[localnet-e2e] starting ...` and `completed ...` phase
 markers. Per-phase JSON, the final node report, and the summary live under

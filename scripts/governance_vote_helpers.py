@@ -7,8 +7,48 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
+from state_convergence_helpers import wait_for_uniform_state
+
 StatusFetcher = Callable[[], Awaitable[dict[str, Any]]]
 VoteSender = Callable[[], Awaitable[dict[str, Any]]]
+
+
+async def wait_for_policy_effects(
+    readers,
+    updates: dict[str, Any],
+    *,
+    label: str,
+    timeout_seconds: float = 30.0,
+    poll_interval_seconds: float = 0.25,
+) -> dict[str, str]:
+    """Approval on one peer does not imply the others committed its effects yet."""
+    fields = [
+        (index, key, value, reader)
+        for index, reader in enumerate(readers)
+        for key, value in updates.items()
+    ]
+    if not fields:
+        return {}
+
+    async def fetch_matches():
+        observed = await asyncio.gather(
+            *(
+                reader.get_state("validators", "config", key)
+                for _index, key, _value, reader in fields
+            )
+        )
+        return {
+            f"reader-{index}:{key}": actual == expected
+            for (index, key, expected, _reader), actual in zip(fields, observed)
+        }
+
+    return await wait_for_uniform_state(
+        fetch_values=fetch_matches,
+        expected=True,
+        label=f"{label} policy fields {updates!r}",
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+    )
 
 
 def vote_status_progress(status: dict[str, Any]) -> tuple[int, int, int]:

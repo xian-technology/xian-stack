@@ -29,9 +29,11 @@ from localnet_sync_checks import set_config
 
 # Leave enough for a 25-native admission reserve after paying both execution
 # fees, while the second 70-native transfer still exceeds the remaining balance.
-# Each 500-chi transfer pays its use plus half of the rest (revision 14's
-# unused-chi charge): the two fees take ~34.6, leaving ~30.4 for the third.
-NONCE_INITIAL_BALANCE = 140
+# On execution revision 15 the first two fees total about 44.35 XIAN. Starting
+# with 140 leaves only 0.65 after reserving 25 for the third call, too little for
+# its 1 XIAN transfer. 160 permits recovery while the second 70 XIAN transfer
+# still exceeds the balance available after reserving its fee.
+NONCE_INITIAL_BALANCE = 160
 
 
 async def nonce_phase(runner, session):

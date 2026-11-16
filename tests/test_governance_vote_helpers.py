@@ -5,11 +5,12 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).absolute().parents[1] / "scripts"))
 
 from governance_vote_helpers import (
     cast_votes_until_status,
     read_freshest_status,
+    wait_for_policy_effects,
     wait_for_readable_status,
     wait_for_status,
 )
@@ -35,6 +36,32 @@ class ProposalHarness:
 
 
 class GovernanceVoteHelpersTests(unittest.IsolatedAsyncioTestCase):
+    async def test_policy_effects_wait_for_all_fields_on_every_peer(self):
+        class Reader:
+            def __init__(self, stale=False):
+                self.stale = stale
+                self.reads = 0
+
+            async def get_state(self, contract, variable, key):
+                self.reads += 1
+                if key == "selection_mode":
+                    return "auto_top_n"
+                return 4 if self.stale and self.reads <= 2 else 5
+
+        primary, peer = Reader(stale=True), Reader()
+        await wait_for_policy_effects(
+            [primary, peer],
+            {"selection_mode": "auto_top_n", "max_validators": 5},
+            label="policy",
+            timeout_seconds=0.05,
+            poll_interval_seconds=0,
+        )
+        self.assertGreaterEqual(primary.reads, 4)
+        self.assertGreaterEqual(peer.reads, 4)
+
+    async def test_empty_policy_update_needs_no_read(self):
+        self.assertEqual(await wait_for_policy_effects([], {}, label="no effect"), {})
+
     async def test_readable_status_retries_missing_committed_state(self) -> None:
         reads = 0
 
