@@ -7162,13 +7162,17 @@ class E2ERunner:
             receipt_prefix="trace-log-trigger",
         )
 
+        # CheckTx refusals are logged one by one only at DEBUG, from the raw
+        # bytes (anyone can send them, so no decoding): raw_tx_hash is the
+        # CometBFT transaction hash the SDK reports.
+        rejected_raw_hash = str(rejected_submission.tx_hash).lower()
         checktx_lines = collect_log_matches(
             self.nodes,
             debug_log_positions,
-            lambda line: rejected_wallet.public_key in line and "stage=check_tx" in line,
+            lambda line: rejected_raw_hash in line and "stage=check_tx" in line,
         )
         if not any(checktx_lines.values()):
-            raise E2EError("WARNING logs missing stage=check_tx rejection probe")
+            raise E2EError("DEBUG logs missing stage=check_tx rejection probe")
 
         trace_hashes = {receipt["execution_hash"] for receipt in trace_receipts}
         trace_records = {

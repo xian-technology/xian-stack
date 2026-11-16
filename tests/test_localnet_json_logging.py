@@ -125,12 +125,20 @@ def test_phase_runs_debug_plain_trace_json_then_info_plain(monkeypatch):
     monkeypatch.setattr(e2e, "update_logging_config", lambda **kw: modes.append(kw))
     monkeypatch.setattr(e2e, "log_positions_by_node", lambda nodes: {})
     monkeypatch.setattr(e2e, "derive_wallet", lambda seed, label: SimpleNamespace(public_key=label))
-    monkeypatch.setattr(e2e, "collect_log_matches", lambda *a, **kw: {"node-0": ["stage=check_tx"]})
+    # The node logs a CheckTx refusal at DEBUG with the raw transaction hash.
+    rejection_line = "Rejected transaction during CheckTx | stage=check_tx raw_tx_hash=" + "c" * 64
+    monkeypatch.setattr(
+        e2e,
+        "collect_log_matches",
+        lambda nodes, positions, matcher: {
+            "node-0": [line for line in [rejection_line] if matcher(line)]
+        },
+    )
 
     @asynccontextmanager
     async def client(wallet, *args):
         if wallet.public_key == "logging-checktx-reject":
-            submission = SimpleNamespace(accepted=False)
+            submission = SimpleNamespace(accepted=False, tx_hash="C" * 64)
         else:
             submission = SimpleNamespace(
                 submitted=True,
