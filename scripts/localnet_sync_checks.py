@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tarfile
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 from localnet_chain_checks import (
@@ -149,11 +150,97 @@ def write_snapshot_profiles(base, source_home, target_home, image, publisher, ch
         write_json(base / "nodes" / (name + ".json"), normalize_node_profile(profile))
 
 
+PUBLIC_PATCH_FIELDS = {
+    "version",
+    "patch_id",
+    "activation_height",
+    "governance_contract",
+    "summary",
+    "uri",
+    "chain_id",
+    "changes",
+    "bundle_hash",
+}
+
+
+def public_state_patch_files(directory):
+    require(not directory.is_symlink(), "Public state-patch inventory must not be a link")
+    require(directory.is_dir(), "Public state-patch inventory must be a directory")
+    files = []
+    for path in sorted(directory.iterdir()):
+        require(
+            not path.is_symlink() and path.is_file(),
+            "Public state-patch entries must be regular files",
+        )
+        if path.suffix == ".json":
+            require(
+                path.name not in {Path(name).name for name in IDENTITY_FILES},
+                "Node identity is not a public state-patch bundle",
+            )
+            files.append(path)
+    return files
+
+
+def validated_public_state_patch_inventory(directory, chain_id):
+    from xian.utils.state_patches import StatePatchManager
+
+    files = public_state_patch_files(directory)
+    manager = StatePatchManager(None, chain_id=chain_id)
+    manager.load_patches(directory)
+    inventory = []
+    for path in files:
+        raw = path.read_bytes()
+        payload = json.loads(raw)
+        require(not set(payload) - PUBLIC_PATCH_FIELDS, "State-patch bundle has unrelated metadata")
+        bundle = manager.local_bundles[payload["patch_id"]]
+        require(bundle.chain_id in {None, chain_id}, "State-patch bundle targets another chain")
+        require(
+            payload.get("bundle_hash", bundle.bundle_hash) == bundle.bundle_hash,
+            "State-patch bundle declares an incorrect hash",
+        )
+        inventory.append(
+            {
+                "filename": path.name,
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "patch_id": bundle.patch_id,
+                "bundle_hash": bundle.bundle_hash,
+                "activation_height": bundle.activation_height,
+            }
+        )
+    return inventory
+
+
+def copy_public_state_patch_inventory(source_home, home):
+    source = source_home / "config/state-patches"
+    require(not source.is_symlink(), "Public state-patch inventory must not be a link")
+    if not source.exists():
+        return []
+    chain_id = json.loads((source_home / "config/genesis.json").read_text())["chain_id"]
+    expected = validated_public_state_patch_inventory(source, chain_id)
+    destination = home / "config/state-patches"
+    destination.mkdir()
+    try:
+        for record in expected:
+            raw = (source / record["filename"]).read_bytes()
+            require(
+                hashlib.sha256(raw).hexdigest() == record["sha256"],
+                "Public state-patch inventory changed while copying",
+            )
+            (destination / record["filename"]).write_bytes(raw)
+        installed = validated_public_state_patch_inventory(destination, chain_id)
+        require(installed == expected, "Copied public state-patch inventory does not match")
+    except BaseException:
+        shutil.rmtree(destination)
+        raise
+    return installed
+
+
 async def prepare_home(source_home, home, image, peers):
     require(not home.exists(), f"Observer home already exists: {home}")
     (home / "config").mkdir(parents=True)
     for name in ("config.toml", "genesis.json", "xian.toml"):
         shutil.copy2(source_home / "config" / name, home / "config" / name)
+    inventory = copy_public_state_patch_inventory(source_home, home)
     await command(
         "docker",
         "run",
@@ -178,6 +265,7 @@ async def prepare_home(source_home, home, image, peers):
             r"^bds_enabled\s*=.*$", "bds_enabled = false", runtime.read_text(), flags=re.MULTILINE
         ),
     )
+    return inventory
 
 
 async def observer_address(container, mode):
@@ -661,8 +749,12 @@ async def restore_snapshot(runner, target_home, manifest_path, negatives):
 async def full_store_rehearsal(runner, session, image, network, source_home, peers):
     replay_home = runner.output_dir / "observers/replay"
     target_home = runner.output_dir / "observers/full_node_store"
-    await prepare_home(source_home, replay_home, image, peers)
-    await prepare_home(source_home, target_home, image, peers)
+    replay_inventory = await prepare_home(source_home, replay_home, image, peers)
+    target_inventory = await prepare_home(source_home, target_home, image, peers)
+    require(
+        replay_inventory and replay_inventory == target_inventory,
+        "Replay requires matching historical public state-patch inventories",
+    )
     replay_container = f"xian-e2e-{runner.run_id.lower()}-replay"
     restored_container = f"xian-e2e-{runner.run_id.lower()}-full-store"
     created = []
@@ -689,6 +781,10 @@ async def full_store_rehearsal(runner, session, image, network, source_home, pee
         restarts = await repeated_restart(runner, session, restored_container, restored, retention)
         return {
             "snapshot": manifest,
+            "public_state_patch_bundles": {
+                "replay": replay_inventory,
+                "full_node_store": target_inventory,
+            },
             "observers": [
                 {"mode": "replay", **replay_proof},
                 {"mode": "full_node_store", **restored_proof},

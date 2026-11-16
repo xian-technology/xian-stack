@@ -354,7 +354,8 @@
       "negative_restores",
       "retention",
       "historical_evidence",
-      "restarts"
+      "restarts",
+      "public_state_patch_bundles"
     ],
     "23-nonce-recovery": [
       "checks",

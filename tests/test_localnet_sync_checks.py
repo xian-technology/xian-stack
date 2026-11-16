@@ -110,7 +110,11 @@ def test_full_store_stage_orders_stop_export_verification_restore_and_evidence(
         events.append(name)
         return value
 
-    monkeypatch.setattr(sync, "prepare_home", lambda *args: record("prepare"))
+    monkeypatch.setattr(
+        sync,
+        "prepare_home",
+        lambda *args: record("prepare", [{"filename": "historical.json", "sha256": "a" * 64}]),
+    )
     monkeypatch.setattr(
         sync,
         "create_observer",
@@ -162,6 +166,10 @@ def test_full_store_stage_orders_stop_export_verification_restore_and_evidence(
         < events.index("restart-twice")
     )
     assert proof["snapshot"] == manifest and proof["historical_evidence"]["included_height"] == 30
+    assert (
+        proof["public_state_patch_bundles"]["replay"]
+        == proof["public_state_patch_bundles"]["full_node_store"]
+    )
     assert cleanup.await_count == 2
 
 
@@ -175,6 +183,11 @@ def test_failed_export_still_removes_stopped_replay_observer(tmp_path, monkeypat
         "stop_backup_source",
     ]:
         monkeypatch.setattr(sync, name, AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        sync,
+        "prepare_home",
+        AsyncMock(return_value=[{"filename": "historical.json", "sha256": "a" * 64}]),
+    )
     monkeypatch.setattr(sync, "create_observer", AsyncMock(return_value=object()))
     monkeypatch.setattr(
         sync, "snapshot_export", AsyncMock(side_effect=ValueError("bad native checkpoint"))
@@ -1048,3 +1061,245 @@ def test_evidence_scan_skips_an_item_missing_its_vote_height(monkeypatch):
     monkeypatch.setattr(sync, "rpc", AsyncMock(side_effect=blocks))
     monkeypatch.setattr(sync.asyncio, "sleep", AsyncMock())
     assert asyncio.run(sync.find_evidence_block(object(), object(), 10, 1)) == 11
+
+
+def public_patch_source(tmp_path):
+    source = tmp_path / "source"
+    (source / "config/state-patches").mkdir(parents=True)
+    (source / "config/config.toml").write_text(
+        'proxy_app = "old"\n[p2p]\npersistent_peers = ""\n[statesync]\nenable = false\n'
+    )
+    (source / "config/genesis.json").write_text('{"chain_id":"bundle-replay-test"}')
+    (source / "config/xian.toml").write_text("bds_enabled = false\n")
+    (source / "config/node_key.json").write_text("do not copy source identity")
+    payload = {
+        "version": 1,
+        "patch_id": "historical-replay-patch",
+        "activation_height": 20,
+        "governance_contract": "governance",
+        "summary": "Replay needs the historical public bundle",
+        "uri": "local://bundle-replay-test",
+        "chain_id": "bundle-replay-test",
+        "changes": [{"key": "con_fixture.mode", "value": "patched", "comment": "historical"}],
+    }
+    path = source / "config/state-patches/historical.json"
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+    return source, path
+
+
+@pytest.mark.parametrize("role", ["replay", "full_node_store"])
+def test_observers_receive_the_public_inventory_needed_to_execute_historical_patch(
+    tmp_path, monkeypatch, role
+):
+    from xian.utils.state_patches import ScheduledPatchRecord, StatePatchManager
+
+    source, bundle_file = public_patch_source(tmp_path)
+    target = tmp_path / role
+    monkeypatch.setattr(sync, "command", AsyncMock(return_value=""))
+    inventory = asyncio.run(sync.prepare_home(source, target, "image", "peers"))
+    manager = StatePatchManager(None, chain_id="bundle-replay-test")
+    manager.load_patches(target / "config/state-patches")
+    source_manager = StatePatchManager(None, chain_id="bundle-replay-test")
+    source_manager.load_patches(source / "config/state-patches")
+    bundle = source_manager.local_bundles["historical-replay-patch"]
+    record = ScheduledPatchRecord(
+        patch_id=bundle.patch_id,
+        proposal_id=1,
+        bundle_hash=bundle.bundle_hash,
+        activation_height=20,
+        governance_contract="governance",
+        summary=bundle.summary,
+        uri=bundle.uri,
+        emergency=False,
+        status="approved",
+    )
+    monkeypatch.setattr(manager, "_read_scheduled_patch_records", lambda **kwargs: [record])
+    executions = manager._build_executions(height=20, include_applied=False)
+    assert len(executions) == 1
+    assert executions[0].applied_changes[0]["value"] == "patched"
+    assert (
+        target / "config/state-patches/historical.json"
+    ).read_bytes() == bundle_file.read_bytes()
+    assert inventory[0]["filename"] == "historical.json"
+    assert inventory[0]["sha256"] == sync.hashlib.sha256(bundle_file.read_bytes()).hexdigest()
+    assert not (target / "config/node_key.json").exists()
+
+
+@pytest.mark.parametrize("kind", ["directory-link", "file-link", "non-regular", "identity-json"])
+def test_public_bundle_copy_refuses_links_nonfiles_and_identity_names(tmp_path, kind):
+    source, bundle = public_patch_source(tmp_path)
+    directory = bundle.parent
+    if kind == "directory-link":
+        renamed = source / "config/real-patches"
+        directory.rename(renamed)
+        directory.symlink_to(renamed, target_is_directory=True)
+    elif kind == "file-link":
+        external = tmp_path / "external.json"
+        bundle.rename(external)
+        bundle.symlink_to(external)
+    elif kind == "non-regular":
+        (directory / "nested.json").mkdir()
+    else:
+        (directory / "node_key.json").write_bytes(bundle.read_bytes())
+    home = tmp_path / "observer"
+    (home / "config").mkdir(parents=True)
+    with pytest.raises(Exception, match="link|regular|identity"):
+        sync.copy_public_state_patch_inventory(source, home)
+    assert not (home / "config/state-patches").exists()
+
+
+@pytest.mark.parametrize(
+    "changes,reason",
+    [
+        ({"chain_id": "different-chain"}, "another chain"),
+        ({"bundle_hash": "incorrect"}, "incorrect hash"),
+        ({"private_key": "unrelated operator key"}, "unrelated metadata"),
+        ({"version": 99}, "unsupported"),
+    ],
+)
+def test_public_bundle_copy_uses_canonical_validation_and_rejects_unrelated_metadata(
+    tmp_path, changes, reason
+):
+    source, bundle = public_patch_source(tmp_path)
+    payload = json.loads(bundle.read_text())
+    bundle.write_text(json.dumps({**payload, **changes}))
+    home = tmp_path / "observer"
+    (home / "config").mkdir(parents=True)
+    with pytest.raises(Exception, match=reason):
+        sync.copy_public_state_patch_inventory(source, home)
+    assert not (home / "config/state-patches").exists()
+
+
+def test_public_bundle_copy_ignores_non_json_notes_without_copying_them(tmp_path):
+    source, bundle = public_patch_source(tmp_path)
+    (bundle.parent / "operator-notes.txt").write_text("not a public runtime bundle")
+    home = tmp_path / "observer"
+    (home / "config").mkdir(parents=True)
+    inventory = sync.copy_public_state_patch_inventory(source, home)
+    assert [item["filename"] for item in inventory] == ["historical.json"]
+    assert not (home / "config/state-patches/operator-notes.txt").exists()
+
+
+def test_public_bundle_copy_detects_source_change_and_removes_partial_destination(
+    tmp_path, monkeypatch
+):
+    source, bundle = public_patch_source(tmp_path)
+    original = sync.validated_public_state_patch_inventory
+
+    def changing(directory, chain_id):
+        result = original(directory, chain_id)
+        if directory == bundle.parent:
+            payload = json.loads(bundle.read_text())
+            payload["summary"] = "changed after validation"
+            bundle.write_text(json.dumps(payload))
+        return result
+
+    monkeypatch.setattr(sync, "validated_public_state_patch_inventory", changing)
+    home = tmp_path / "observer"
+    (home / "config").mkdir(parents=True)
+    with pytest.raises(Exception, match="changed while copying"):
+        sync.copy_public_state_patch_inventory(source, home)
+    assert not (home / "config/state-patches").exists()
+
+
+def test_public_bundle_destination_is_revalidated_before_it_is_accepted(tmp_path, monkeypatch):
+    source, bundle = public_patch_source(tmp_path)
+    home = tmp_path / "observer"
+    (home / "config").mkdir(parents=True)
+    original = sync.validated_public_state_patch_inventory
+
+    def changed_destination(directory, chain_id):
+        result = original(directory, chain_id)
+        if directory == home / "config/state-patches":
+            result[0]["sha256"] = "changed destination"
+        return result
+
+    monkeypatch.setattr(sync, "validated_public_state_patch_inventory", changed_destination)
+    with pytest.raises(Exception, match="does not match"):
+        sync.copy_public_state_patch_inventory(source, home)
+    assert not (home / "config/state-patches").exists()
+
+
+def test_missing_historical_inventory_prevents_starting_either_observer(tmp_path, monkeypatch):
+    runner = SimpleNamespace(output_dir=tmp_path, run_id="unit")
+    monkeypatch.setattr(sync, "prepare_home", AsyncMock(return_value=[]))
+    start = AsyncMock()
+    monkeypatch.setattr(sync, "create_observer", start)
+    with pytest.raises(Exception, match="historical public state-patch inventories"):
+        asyncio.run(
+            sync.full_store_rehearsal(runner, object(), "image", "network", tmp_path, "peers")
+        )
+    start.assert_not_called()
+
+
+def test_public_stage_export_includes_explicit_public_bundle_hashes_for_both_roles(tmp_path):
+    import export_localnet_public_proof as public
+
+    fields = json.loads((sync.STACK / "scripts/localnet_public_fields.json").read_text())["e2e"][
+        "21-fresh-node-sync"
+    ]
+    inventory = [{"filename": "historical.json", "sha256": "a" * 64}]
+    phase = {
+        "name": "21-fresh-node-sync",
+        "ok": True,
+        "started_at": "start",
+        "ended_at": "end",
+        "details": {
+            "public_state_patch_bundles": {"replay": inventory, "full_node_store": inventory}
+        },
+    }
+    exported = public.phase_payload(phase, phase["name"], fields, "e2e")
+    assert (
+        exported["details"]["public_state_patch_bundles"]
+        == phase["details"]["public_state_patch_bundles"]
+    )
+
+
+def test_observer_inventory_must_match_between_replay_and_restore_roles(tmp_path, monkeypatch):
+    runner = SimpleNamespace(output_dir=tmp_path, run_id="unit")
+    monkeypatch.setattr(
+        sync,
+        "prepare_home",
+        AsyncMock(
+            side_effect=[
+                [{"filename": "patch.json", "sha256": "first"}],
+                [{"filename": "patch.json", "sha256": "different"}],
+            ]
+        ),
+    )
+    start = AsyncMock()
+    monkeypatch.setattr(sync, "create_observer", start)
+    with pytest.raises(Exception, match="matching historical"):
+        asyncio.run(
+            sync.full_store_rehearsal(runner, object(), "image", "network", tmp_path, "peers")
+        )
+    start.assert_not_called()
+
+
+def test_public_bundle_copy_accepts_correct_declared_hash_and_optional_unscoped_bundle(tmp_path):
+    from xian.utils.state_patches import StatePatchManager
+
+    source, bundle = public_patch_source(tmp_path)
+    payload = json.loads(bundle.read_text())
+    payload.pop("chain_id")
+    bundle.write_text(json.dumps(payload))
+    manager = StatePatchManager(None, chain_id="bundle-replay-test")
+    manager.load_patches(bundle.parent)
+    payload["bundle_hash"] = manager.local_bundles[payload["patch_id"]].bundle_hash
+    bundle.write_text(json.dumps(payload))
+    home = tmp_path / "observer"
+    (home / "config").mkdir(parents=True)
+    inventory = sync.copy_public_state_patch_inventory(source, home)
+    assert inventory[0]["bundle_hash"] == payload["bundle_hash"]
+    assert inventory[0]["sha256"] == sync.hashlib.sha256(bundle.read_bytes()).hexdigest()
+
+
+def test_state_patch_inventory_path_cannot_be_an_unrelated_regular_config_file(tmp_path):
+    source = tmp_path / "source"
+    (source / "config").mkdir(parents=True)
+    (source / "config/genesis.json").write_text('{"chain_id":"test"}')
+    (source / "config/state-patches").write_text("unrelated config")
+    home = tmp_path / "observer"
+    (home / "config").mkdir(parents=True)
+    with pytest.raises(Exception, match="directory"):
+        sync.copy_public_state_patch_inventory(source, home)
