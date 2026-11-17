@@ -233,11 +233,30 @@ class PositiveChain:
         self.zero_failure = zero_failure
         self.actions = []
         self.governance = []
+        self.events = []
+        self.funding_custody = 0
+        self.voters_visible = False
+        wallets = [SimpleNamespace(public_key=str(index) * 64) for index in range(5)]
+        self.voter_balances = {wallet.public_key: 1250 for wallet in wallets[1:4]}
         self.runner = SimpleNamespace(
             nodes=[object()],
             founder_wallet=SimpleNamespace(public_key=self.owner),
+            validator_wallets=wallets,
+            fund_wallets=self.fund,
             submit_contract_call=self.send,
         )
+
+    async def fund(self, session, wallets, *, amount):
+        assert wallets == self.runner.validator_wallets[1:4]
+        assert amount == 100_000
+        self.events.append("fund-voters-and-await-peer-visibility")
+        for wallet in wallets:
+            self.voter_balances[wallet.public_key] = amount
+        # Model the shared fund_wallets contract: it returns only after every
+        # peer serves the funded balances. Funding fees affect custody first.
+        self.funding_custody = 3
+        self.voters_visible = True
+        return []
 
     async def send(self, session, **kwargs):
         function = kwargs["function"]
@@ -264,6 +283,7 @@ class PositiveChain:
         if "pending_unbonds:" in path:
             return self.record
         state = finances(locked=self.locked)
+        state["custody"] = str(int(state["custody"]) + self.funding_custody)
         for field, part in [
             ("self_bond", "self_bond:"),
             ("custody", "balances:validators"),
@@ -271,10 +291,14 @@ class PositiveChain:
             ("heap_size", "unbond_heap_sizes:"),
         ]:
             if part in path:
+                self.events.append("financial-snapshot")
                 return state[field]
         raise AssertionError("unexpected public query")
 
     async def vote(self, runner, session, kind, arg, label):
+        assert min(self.voter_balances.values()) >= 2500, "Governance voters are underfunded"
+        assert self.voters_visible, "Voter funding is not committed across all peers"
+        self.events.append("governance-vote")
         days = arg["unbonding_period_days"]
         self.governance.append(days)
         if days == 0 and self.zero_failure:
@@ -313,6 +337,13 @@ def test_positive_period_harness_generates_real_anchor_work_and_restores_policy(
     proof = asyncio.run(checks.positive_unbond_rehearsal(chain.runner, object()))
     assert chain.actions == ["approve", "bond_self", "unbond_self", "claim_unbond", "claim_unbond"]
     assert chain.governance == [0, 14] and chain.days == 14
+    assert (
+        chain.events.index("fund-voters-and-await-peer-visibility")
+        < chain.events.index("financial-snapshot")
+        < chain.events.index("governance-vote")
+    )
+    assert proof["financial"]["before"]["custody"] == "3"
+    assert proof["financial"]["after"]["custody"] == "4"
     assert proof["record"]["unbonding_period_days"] == 14
     assert proof["anchor"]["anchor_height"] == 11
     assert proof["financial"]["after"]["heap_size"] == 1

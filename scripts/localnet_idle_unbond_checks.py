@@ -287,6 +287,7 @@ async def positive_unbond_rehearsal(runner, session):
     node, owner = runner.nodes[0], runner.founder_wallet.public_key
     days = int(await query(session, node, "/get/validators.config:unbonding_period_days"))
     require(days > 0, "Positive unbond rehearsal requires the original positive period")
+    await runner.fund_wallets(session, runner.validator_wallets[1:4], amount=100_000)
     before = await financial_state(session, node, owner)
     receipts = []
     for contract, function, kwargs in [
