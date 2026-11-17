@@ -55,7 +55,7 @@ runs:
       uses: actions/checkout@v7
       with:
         repository: xian-technology/xian-dex
-        ref: 1f02d9910264567e3494450768acdd59de421d85
+        ref: 44cead07832f95a89af2757f3cac7b00f48a915a
         path: xian-dex
     - name: Check out xian-dex-automation
       if: inputs.products == 'true'
