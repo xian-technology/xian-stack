@@ -79,6 +79,20 @@ def validate_replay_policy(manifest, image, *, legacy_image_id=None):
     )
 
 
+def offline_p2p_config(text):
+    return set_config(
+        text,
+        "p2p",
+        {"persistent_peers": "", "seeds": "", "pex": False, "external_address": ""},
+    )
+
+
+async def running_replay_container(container):
+    info = json.loads(await command("docker", "inspect", container))[0]
+    require(info["State"]["Running"], "Offline replay container exited before replay completed")
+    return info
+
+
 async def export_corpus(runner, session, *, node=None, home=None):
     node = runner.nodes[-1] if node is None else node
     output = runner.output_dir / "replay-corpus"
@@ -115,18 +129,7 @@ async def export_corpus(runner, session, *, node=None, home=None):
                 ),
             )
             config = staging / "config/config.toml"
-            write_config(
-                config,
-                set_config(
-                    config.read_text(),
-                    "p2p",
-                    {
-                        "persistent_peers": "",
-                        "seeds": "",
-                        "pex": False,
-                    },
-                ),
-            )
+            write_config(config, offline_p2p_config(config.read_text()))
             write_config(
                 config,
                 re.sub(
@@ -214,6 +217,8 @@ async def verify_corpus(corpus, image, output, *, legacy_image_id=None):
         not (home / "config/priv_validator_key.json").exists(),
         "Replay corpus must not contain a validator private key",
     )
+    config = home / "config/config.toml"
+    write_config(config, offline_p2p_config(config.read_text()))
     await command(
         "docker",
         "run",
@@ -258,13 +263,14 @@ async def verify_corpus(corpus, image, output, *, legacy_image_id=None):
             "-c",
             OBSERVER_COMMAND,
         )
-        info = json.loads(await command("docker", "inspect", container))[0]
+        info = await running_replay_container(container)
         port = info["NetworkSettings"]["Ports"]["26657/tcp"][0]["HostPort"]
         node = SimpleNamespace(moniker="offline-replay", rpc_url=f"http://127.0.0.1:{port}")
         deadline = time.monotonic() + 600
         final = None
         async with aiohttp.ClientSession() as session:
             while time.monotonic() < deadline:
+                await running_replay_container(container)
                 try:
                     final = (await rpc(session, node, "abci_info"))["response"]
                     if int(final["last_block_height"]) == int(manifest["height"]):
@@ -309,7 +315,9 @@ async def verify_corpus(corpus, image, output, *, legacy_image_id=None):
         return result
     finally:
         logs = await command("docker", "logs", container, combine_output=True)
-        (output / "container.log").write_text(logs)
+        log = output / "container.log"
+        log.write_text(logs)
+        log.chmod(0o600)
         await command("docker", "rm", "-f", "-v", container)
 
 

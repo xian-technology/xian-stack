@@ -372,8 +372,14 @@ For a CI retry of an ordinary unencrypted artifact, manually dispatch
 **Localnet Safety** with `replay_run_id` set to the prior run that uploaded
 `xian-stack-replay-corpus`.
 This skips network generation and runs only the two architecture jobs, checking
-out the exact commits recorded in that corpus. It does not validate later code
-changes; leave the input empty for a fresh full safety run.
+out the exact runtime commits recorded in that corpus. The image is built from
+those inputs; portable replay tooling and hooks come from the reviewed workflow
+revision. Both Stack revisions are recorded separately in the result. Replay
+clears peer discovery and host-specific advertised addresses only in its
+disposable config, without changing the archive, genesis or ledger data. An
+exited replay process fails promptly and retains its local private diagnostic
+log. This does not validate later application changes; leave the input empty
+for a fresh full safety run.
 
 To replay a sensitive local capture on those same native runners, first create
 a private key directory and encrypt the exact archive with the maintained helper:
@@ -402,8 +408,8 @@ The import job verifies both digests and keeps its artifact encrypted. The
 reviewed helper at the workflow revision authenticates and decrypts only inside
 each native replay job, using the scoped secret. ARM64 and x86-64 replays run
 sequentially. Their public results bind the ciphertext, original archive and
-manifest digests; private plaintext and raw diagnostics are cleaned on success
-or failure. Retain both proofs before deleting the temporary secret, key and
+manifest digests; private plaintext and raw diagnostic cleanup steps run on
+success or failure. Retain both proofs before deleting the temporary secret, key and
 evidence Git ref. Repository source-cleanliness checks remain strict.
 
 To replay a retained corpus with another locally built image:

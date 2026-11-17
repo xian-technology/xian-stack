@@ -1,5 +1,8 @@
 import re
+import textwrap
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).absolute().parents[1]
 
@@ -164,3 +167,61 @@ def test_current_replay_keeps_v2_block_verification_without_invoking_archival_v1
     paths = uploaded_paths(body)
     assert "xian-stack/.artifacts/architecture-replay/result.json" in paths
     assert "replay-transport-proof.json" in paths
+
+
+def replay_step():
+    text = (ROOT / ".github/workflows/localnet-safety.yml").read_text()
+    return (
+        job(text, "replay-architecture")
+        .split("      - name: Re-execute every source block and compare outcomes", 1)[1]
+        .split("      - name:", 1)[0]
+    )
+
+
+def test_native_runtime_uses_capture_refs_but_portable_replay_uses_workflow_revision():
+    text = (ROOT / ".github/workflows/localnet-safety.yml").read_text()
+    body = job(text, "replay-architecture")
+    checkout = body.split("          path: workflow-tools", 1)[0].rsplit("      - name:", 1)[1]
+    assert "if:" not in checkout, "Ordinary and encrypted archives both need portable tooling"
+    assert "--file xian-stack/docker/xian-node.Dockerfile xian-stack" in body
+    assert "ref: ${{ steps.corpus.outputs.xian_stack }}" in body
+    assert "uv run python ../workflow-tools/scripts/localnet_replay_corpus.py" in replay_step()
+    assert "XIAN_REPLAY_HARNESS_REVISION: ${{ github.sha }}" in replay_step()
+    assert (
+        "XIAN_REPLAY_RUNTIME_STACK_REVISION: ${{ steps.corpus.outputs.xian_stack }}"
+        in replay_step()
+    )
+
+
+@pytest.mark.parametrize("invalid", [None, "harness", "runtime"])
+def test_replay_result_records_distinct_validated_harness_and_runtime_refs(
+    tmp_path, monkeypatch, invalid
+):
+    step = replay_step()
+    marker = "python - <<'PY_PROVENANCE'\n"
+    assert marker in step, "Public results must distinguish runtime and portable harness revisions"
+    program = textwrap.dedent(step.split(marker, 1)[1].split("          PY_PROVENANCE", 1)[0])
+    monkeypatch.chdir(tmp_path)
+    result = tmp_path / ".artifacts/architecture-replay/result.json"
+    result.parent.mkdir(parents=True)
+    result.write_text('{"ok":true,"height":14,"app_hash":"untouched"}\n')
+    harness, runtime = "1" * 40, "2" * 40
+    monkeypatch.setenv("XIAN_REPLAY_HARNESS_REVISION", "bad" if invalid == "harness" else harness)
+    monkeypatch.setenv(
+        "XIAN_REPLAY_RUNTIME_STACK_REVISION", "bad" if invalid == "runtime" else runtime
+    )
+    if invalid:
+        with pytest.raises(ValueError, match="revision"):
+            exec(compile(program, "workflow-provenance", "exec"), {})
+        assert result.read_text() == '{"ok":true,"height":14,"app_hash":"untouched"}\n'
+    else:
+        import json
+
+        exec(compile(program, "workflow-provenance", "exec"), {})
+        assert json.loads(result.read_text()) == {
+            "ok": True,
+            "height": 14,
+            "app_hash": "untouched",
+            "replay_harness_revision": harness,
+            "runtime_stack_revision": runtime,
+        }

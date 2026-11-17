@@ -262,8 +262,7 @@ jobs:
             --build-context xian-py=./xian-py \
             --build-context xian-configs=./xian-configs \
             --tag xian-replay:local --file xian-stack/docker/xian-node.Dockerfile xian-stack
-      - name: Check out the trusted transport helper from this workflow revision
-        if: ${{ inputs.replay_corpus_ref }}
+      - name: Check out trusted replay and transport tools from this workflow revision
         uses: actions/checkout@v7
         with:
           path: workflow-tools
@@ -290,10 +289,27 @@ jobs:
         working-directory: xian-stack
         env:
           XIAN_REPLAY_CORPUS: ${{ inputs.replay_corpus_ref && format('{0}/xian-replay-private', runner.temp) || steps.corpus.outputs.path }}
+          XIAN_REPLAY_HARNESS_REVISION: ${{ github.sha }}
+          XIAN_REPLAY_RUNTIME_STACK_REVISION: ${{ steps.corpus.outputs.xian_stack }}
         run: |
-          uv run python scripts/localnet_replay_corpus.py \
+          uv run python ../workflow-tools/scripts/localnet_replay_corpus.py \
             --corpus "$XIAN_REPLAY_CORPUS" --image xian-replay:local \
             --output .artifacts/architecture-replay
+          python - <<'PY_PROVENANCE'
+          import json, os, re
+          from pathlib import Path
+          path = Path('.artifacts/architecture-replay/result.json')
+          result = json.loads(path.read_text())
+          for field, variable in (
+              ('replay_harness_revision', 'XIAN_REPLAY_HARNESS_REVISION'),
+              ('runtime_stack_revision', 'XIAN_REPLAY_RUNTIME_STACK_REVISION'),
+          ):
+              revision = os.environ[variable]
+              if not re.fullmatch(r'[0-9a-f]{40}', revision):
+                  raise ValueError('invalid replay provenance revision')
+              result[field] = revision
+          path.write_text(json.dumps(result, indent=2) + '\n')
+          PY_PROVENANCE
       - name: Upload replay results
         if: always()
         uses: actions/upload-artifact@v7
