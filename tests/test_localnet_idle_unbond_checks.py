@@ -702,12 +702,32 @@ def test_startup_records_the_owned_container_before_rpc_ready_checks(tmp_path, m
     assert live.abci_container == "owned"
 
 
-def test_initial_rpc_asserts_actual_fee_caps_and_actual_native_application_powers(monkeypatch):
+@pytest.mark.parametrize("wrong", [None, "native-power", "proposer", "vote", "app-power"])
+def test_initial_rpc_asserts_actual_fee_caps_and_actual_native_application_powers(
+    monkeypatch, wrong
+):
     import asyncio
     from types import SimpleNamespace
 
     consensus, native, powers, nodes, low = initial_fixture()
+    dump = {
+        "round_state": {
+            "height": "1",
+            "round": 0,
+            "step": 4,
+            "validators": {**native, "proposer": native["validators"][0]},
+            "votes": consensus["round_state"]["height_vote_set"],
+        }
+    }
     policy = {"max_tx_chi": 200000, "max_block_chi": 500000, "tx_fee_mode": "paid_metered"}
+    if wrong == "native-power":
+        dump["round_state"]["validators"]["validators"][0]["voting_power"] = "20"
+    elif wrong == "proposer":
+        dump["round_state"]["validators"]["proposer"] = native["validators"][2]
+    elif wrong == "vote":
+        dump["round_state"]["votes"][0]["prevotes"][1] = "nil-Vote"
+    elif wrong == "app-power":
+        powers[nodes[0]["account"]] = 20
 
     async def query(session, node, path):
         if path == "/get/__fee_policy":
@@ -715,11 +735,17 @@ def test_initial_rpc_asserts_actual_fee_caps_and_actual_native_application_power
         return powers[path.rsplit(":", 1)[1]]
 
     async def rpc(session, node, method, **kwargs):
-        return native if method == "validators" else consensus
+        assert method == "dump_consensus_state", "Pre-H1 validators RPC requests a future height"
+        assert kwargs == {}
+        return dump
 
     monkeypatch.setattr(checks, "query", query)
     monkeypatch.setattr(checks, "rpc", rpc)
     fixture = SimpleNamespace(fee_policy=policy, nodes=nodes, low=low, session=object())
+    if wrong is not None:
+        with pytest.raises(Exception, match="powers|proposer|NIL"):
+            asyncio.run(checks.initial_precondition(fixture, object()))
+        return
     result = asyncio.run(checks.initial_precondition(fixture, object()))
     assert result["nil_prevote_verified"]
     fixture.fee_policy = {**policy, "max_block_chi": 200000}
@@ -728,6 +754,15 @@ def test_initial_rpc_asserts_actual_fee_caps_and_actual_native_application_power
     policy["max_block_chi"] = 200000
     with pytest.raises(Exception, match="chi caps"):
         asyncio.run(checks.initial_precondition(fixture, object()))
+
+
+def test_stock_full_round_state_normalizes_integer_wire_forms_without_faking_the_step():
+    dump = {"round_state": {"height": "1", "round": 0, "step": 4}}
+    assert checks.dump_round_step(dump) == "1/0/4"
+    dump["round_state"]["step"] = 3
+    assert checks.dump_round_step(dump) == "1/0/3"
+    dump["round_state"].update(height="2", round=1, step="4")
+    assert checks.dump_round_step(dump) == "2/1/4"
 
 
 def test_three_native_peers_must_agree_on_post_claim_header_root_and_exact_results(monkeypatch):

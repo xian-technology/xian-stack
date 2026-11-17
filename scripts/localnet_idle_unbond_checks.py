@@ -541,6 +541,11 @@ async def start_fixture_node(fixture, node, created):
     return running
 
 
+def dump_round_step(dump):
+    state = dump["round_state"]
+    return "/".join(str(int(state[key])) for key in ("height", "round", "step"))
+
+
 async def initial_precondition(fixture, low):
     actual_policy = await query(fixture.session, low, "/get/__fee_policy")
     require(actual_policy == fixture.fee_policy, "Actual InitChain fee caps differ from genesis")
@@ -549,18 +554,28 @@ async def initial_precondition(fixture, low):
         and 3 * PREFLIGHT_TX_CHI <= int(actual_policy["max_block_chi"]),
         "The three H1 transactions exceed actual chain chi caps",
     )
-    native = await rpc(fixture.session, low, "validators", height=1, per_page=100)
     powers = {
         node["account"]: int(
             await query(fixture.session, low, "/get/validators.powers:" + node["account"])
         )
         for node in fixture.nodes
     }
-    consensus = await poll(
-        lambda: rpc(fixture.session, low, "consensus_state"),
-        lambda result: result["round_state"]["height/round/step"] == INITIAL_PREVOTE_STEP,
+    # /validators is restricted to committed heights and cannot serve H1 yet.
+    # Stock's full RoundState gives the current set, proposer and votes atomically.
+    dump = await poll(
+        lambda: rpc(fixture.session, low, "dump_consensus_state"),
+        lambda result: dump_round_step(result) == INITIAL_PREVOTE_STEP,
         "Actual LOW round0 prevote",
     )
+    state = dump["round_state"]
+    native = state["validators"]
+    consensus = {
+        "round_state": {
+            "height/round/step": dump_round_step(dump),
+            "proposer": native["proposer"],
+            "height_vote_set": state["votes"],
+        }
+    }
     return validate_initial_state(consensus, native, powers, fixture.nodes, fixture.low)
 
 
