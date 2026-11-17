@@ -362,19 +362,18 @@ corpus before sharing it. Use the encrypted transport below for a sensitive
 local capture. The harness rebuilds application state by replaying every block and compares the
 application root, transaction outcomes, chi usage, and events for every block. The scheduled
 Localnet Safety workflow repeats this replay on native ARM64 and x86-64 runners.
-Each architecture also runs four published-application workflows (68 observations)
-through the metered native VM in the same built image, with network access disabled.
-Its public replay artifact includes application results, image ID and runtime
-source revision. Encrypted replay never uploads raw replay logs or homes. These workflows use historical contract sources with controlled inputs;
-they do not replay historical public-chain transactions.
+The current V2 application workflows are exercised by the five-node suite and
+included in its captured block replay. The separate historical V1 application
+observer in `xian-contracting` requires its pinned older release and is not run
+against current V2 images. The public replay artifact records the image,
+architecture, execution policy and result; encrypted replay also records the
+authenticated transport digests. It never uploads raw replay logs or homes.
 For a CI retry of an ordinary unencrypted artifact, manually dispatch
 **Localnet Safety** with `replay_run_id` set to the prior run that uploaded
 `xian-stack-replay-corpus`.
 This skips network generation and runs only the two architecture jobs, checking
 out the exact commits recorded in that corpus. It does not validate later code
-changes; leave the input empty for a fresh full safety run. Application containers
-use the runner's UID/GID so their restricted process can save results without
-loosening directory permissions or restoring Linux capabilities.
+changes; leave the input empty for a fresh full safety run.
 
 To replay a sensitive local capture on those same native runners, first create
 a private key directory and encrypt the exact archive with the maintained helper:

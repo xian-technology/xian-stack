@@ -151,3 +151,16 @@ def test_encrypted_results_never_upload_plaintext_or_raw_diagnostics_and_always_
     assert "always() && inputs.replay_corpus_ref" in cleanup
     assert "shutil.rmtree(os.environ['PRIVATE_CORPUS']" in cleanup
     assert "('home', 'hooks')" in cleanup and "'container.log'" in cleanup
+
+
+def test_current_replay_keeps_v2_block_verification_without_invoking_archival_v1_observers():
+    text = (ROOT / ".github/workflows/localnet-safety.yml").read_text()
+    body = job(text, "replay-architecture")
+    assert "localnet_replay_corpus.py" in body
+    assert '--corpus "$XIAN_REPLAY_CORPUS" --image xian-replay:local' in body
+    assert "application_runner.py" not in body
+    assert "architecture-applications" not in body
+    assert "native-metered" not in body
+    paths = uploaded_paths(body)
+    assert "xian-stack/.artifacts/architecture-replay/result.json" in paths
+    assert "replay-transport-proof.json" in paths
