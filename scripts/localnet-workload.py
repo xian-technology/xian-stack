@@ -2877,7 +2877,9 @@ async def run_contract_heavy(
                     "function": "crunch",
                     "kwargs": {
                         "slot": slot,
-                        "payload": f"{seed}-{slot}",
+                        "payload": hashlib.sha256(
+                            f"xian-localnet-contract-heavy-payload-v1:{seed}:{slot}".encode("utf-8")
+                        ).hexdigest(),
                         "rounds": rounds,
                     },
                     "expected_success": True,

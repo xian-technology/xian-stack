@@ -836,3 +836,111 @@ def test_wait_for_mempool_drain_flushes_stale_pending_tx() -> None:
     context.broadcast_tx.assert_awaited_once()
     context.resolve_records.assert_awaited_once_with([flush_record], timeout_seconds=2.0)
     assert 27657 not in polls_by_port
+
+
+def _contract_heavy_signed_transactions(seed: str, *, operations: int = 4) -> list:
+    signed = []
+
+    async def broadcast_tx(**plan):
+        payload = {
+            "chain_id": "test-chain",
+            "contract": plan["contract"],
+            "function": plan["function"],
+            "kwargs": plan["kwargs"],
+            "nonce": plan.get("nonce") or 0,
+            "sender": plan["wallet"].public_key,
+            "chi_supplied": 100,
+        }
+        tx = localnet_workload.tr.prepare_transaction(
+            localnet_workload.tr.create_tx(payload, plan["wallet"], vm_profile="xian_vm_v2")
+        )
+        signed.append(tx)
+        return SimpleNamespace(
+            response=SimpleNamespace(submitted=True, accepted=True, message=None),
+            final_success=True,
+            tx_hash=tx.tx_hash,
+        )
+
+    async def reserve_nonces(_wallet, _index, *, count):
+        return list(range(count))
+
+    context = SimpleNamespace(
+        founder_wallet=localnet_workload.Wallet(),
+        broadcast_tx=broadcast_tx,
+        contract_submission_kwargs=lambda **kwargs: kwargs,
+        resolve_records=AsyncMock(),
+        submission_index=lambda index: index,
+        reserve_nonces=reserve_nonces,
+        compare_state=AsyncMock(return_value={"ok": True, "queries": []}),
+    )
+    with (
+        patch.object(localnet_workload, "wait_for_contract_visibility", AsyncMock()),
+        patch.object(localnet_workload, "fund_wallets", AsyncMock(return_value=[])),
+        patch.object(localnet_workload, "latest_block_height", AsyncMock(return_value=12)),
+        patch.object(localnet_workload, "wait_for_query_predicate", AsyncMock()),
+        patch.object(localnet_workload, "wait_for_mempool_drain", AsyncMock()),
+        patch.object(
+            localnet_workload, "summarize_committed_window_for_range", AsyncMock(return_value={})
+        ),
+    ):
+        result = asyncio.run(
+            localnet_workload.run_contract_heavy(
+                context,
+                seed=seed,
+                operations=operations,
+                wallet_count=3,
+                submit_workers=2,
+                receipt_resolution="concurrent",
+                receipt_workers=2,
+                receipt_timeout_seconds=1,
+                broadcast_mode="checktx",
+                rounds=8,
+            )
+        )
+    assert result["successful_transactions"] == operations
+    return [tx for tx in signed if b'"function":"crunch"' in tx.json_bytes]
+
+
+@pytest.mark.parametrize("operations", [2, 4])
+def test_contract_heavy_signed_payloads_keep_wallet_derivation_seed_private(operations) -> None:
+    import base64
+    import hashlib
+    import json
+    import secrets
+
+    seed = secrets.token_urlsafe(32)
+    transactions = _contract_heavy_signed_transactions(seed, operations=operations)
+    assert len(transactions) == operations
+    public_payloads = []
+    for tx in transactions:
+        serialized = tx.json_bytes
+        seed_encodings = (
+            seed.encode(),
+            seed.encode().hex().encode(),
+            base64.b64encode(seed.encode()),
+        )
+        leaked = any(encoded in serialized for encoded in seed_encodings)
+        assert not leaked, "wallet derivation input leaked into the signed transaction"
+        kwargs = json.loads(serialized)["payload"]["kwargs"]
+        wallet_keys = [
+            localnet_workload.derive_wallet(seed, f"contract-heavy-worker-{index}").private_key
+            for index in range(3)
+        ]
+        key_reused = kwargs["payload"] in wallet_keys
+        assert not key_reused, "public payload reused a wallet private key"
+        expected = hashlib.sha256(
+            f"xian-localnet-contract-heavy-payload-v1:{seed}:{kwargs['slot']}".encode()
+        ).hexdigest()
+        public_domain_matches = kwargs["payload"] == expected
+        assert public_domain_matches, "public payload must use its distinct derivation domain"
+        unprefixed_hash_reused = (
+            kwargs["payload"] == hashlib.sha256(f"{seed}:{kwargs['slot']}".encode()).hexdigest()
+        )
+        assert not unprefixed_hash_reused, (
+            "public payload must not reuse the wallet derivation domain"
+        )
+        public_payloads.append(kwargs["payload"])
+    assert len(set(public_payloads)) == operations
+    repeated = _contract_heavy_signed_transactions(seed, operations=operations)
+    repeat_matches = [tx.json_bytes for tx in repeated] == [tx.json_bytes for tx in transactions]
+    assert repeat_matches, "same seed and slots must produce identical signed workload transactions"
