@@ -231,3 +231,26 @@ arrival above indexing capacity, spool storage keeps growing; chain progress
 does not prove the index is caught up. Recovery needs retained local/remote
 block history or a trusted BDS snapshot. Preserve independent full node-store
 backups; Postgres snapshots alone do not bootstrap consensus.
+
+## Release handoff checkpoint
+
+Package/app publication completed in this release train; full evidence and
+infrastructure recovery details are in [the release audit](RELEASE_2026_11_17.md).
+The image build is triggered as stack `v0.3.4`, source
+`04ca692c9e8fef104fdaa8aea45a911234f474bf`:
+[image workflow; user monitors publication](https://github.com/xian-technology/xian-stack/actions/runs/44195170932). No build
+status or immutable digest is asserted; the run is intentionally not watched.
+
+The tag's release-manifest.json pins:
+
+- ABCI 0.9.4: `620056eda8c97d5031baca75d92af045c855ce1c`
+- Configs: `0c440cf65b0de407262b2c86cdd6484fb8db05cd`
+- Contracting 1.1.4 and shared packages: `1534394452451267397286f8083b220dcfbb4717`
+- Python SDK 0.5.3: `f1b4cbc0ac5efcad400aabf0e62b05cdbf14dc57`
+
+The later ABCI/contracting workflow-repair commits did not change shipped runtime
+code and were not substituted for these release source pins. After the user
+confirms image publication, select its digest and this matching manifest before
+creating the isolated fresh execution-15/gas-7 network. No saturation workload
+has been run as part of this release; the live-light-load observations and
+short-burst results above still do not establish sustained chain/BDS capacity.
