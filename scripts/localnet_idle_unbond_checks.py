@@ -69,11 +69,15 @@ def number(value):
 
 
 def contract_time_nanos(value):
-    value = normalize_value(value)
     if isinstance(value, str):
-        return timestamp_nanoseconds(value)
-    fields = value["__time__"]
-    instant = datetime(*fields, tzinfo=UTC)
+        # Public state queries format contract datetimes as ISO calendar strings.
+        value = datetime.fromisoformat(value)
+    if isinstance(value, datetime):
+        # The contract ABI's naive calendar value is UTC, not the host timezone.
+        instant = value.replace(tzinfo=UTC) if value.tzinfo is None else value
+    else:
+        value = normalize_value(value)
+        instant = datetime(*value["__time__"], tzinfo=UTC)
     elapsed = instant - datetime(1970, 1, 1, tzinfo=UTC)
     return (elapsed.days * 86400 + elapsed.seconds) * 1_000_000_000 + elapsed.microseconds * 1000
 

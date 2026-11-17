@@ -765,6 +765,101 @@ def test_stock_full_round_state_normalizes_integer_wire_forms_without_faking_the
     assert checks.dump_round_step(dump) == "2/1/4"
 
 
+@pytest.mark.parametrize(
+    "representation",
+    ["sdk", "naive", "aware", "tagged", "native", "iso-space", "iso-t", "iso-aware"],
+)
+def test_contract_clock_decodes_real_sdk_wire_and_stdlib_forms_exactly(representation):
+    from datetime import UTC, datetime, timedelta, timezone
+
+    from xian_py.xian_async import decode_wire_numbers
+    from xian_runtime_types.time import Datetime
+
+    tag = {"__time__": [2026, 1, 1, 0, 0, 1, 123456]}
+    decoded = decode_wire_numbers(tag)
+    values = {
+        "sdk": decoded,
+        "naive": datetime(2026, 1, 1, 0, 0, 1, 123456),
+        "aware": datetime(2026, 1, 1, 2, 0, 1, 123456, tzinfo=timezone(timedelta(hours=2))),
+        "tagged": tag,
+        "native": Datetime(2026, 1, 1, 0, 0, 1, 123456),
+        "iso-space": "2026-01-01 00:00:01.123456",
+        "iso-t": "2026-01-01T00:00:01.123456",
+        "iso-aware": "2026-01-01T02:00:01.123456+02:00",
+    }
+    expected = 1767225601123456000
+    assert checks.contract_time_nanos(values[representation]) == expected
+    header = {"height": "2", "time": "2025-12-18T00:00:01.123456789Z"}
+    record = locked_record(anchor="2025-12-18T00:00:01.123456Z")
+    record["unlock_at"] = values[representation]
+    assert checks.validate_anchor(record, 1, header, 14)["unlock_nanos"] == expected
+    with pytest.raises(ValueError, match="RFC3339"):
+        checks.timestamp_nanoseconds(
+            datetime(2026, 1, 1, tzinfo=UTC).replace(tzinfo=None).isoformat()
+        )
+
+
+def test_naive_contract_datetime_is_utc_even_in_a_non_utc_host_subprocess():
+    import os
+    import subprocess
+
+    code = """import time
+time.tzset()
+from datetime import datetime
+from localnet_idle_unbond_checks import contract_time_nanos
+assert contract_time_nanos(datetime(2026,1,1,0,0,1,123456)) == 1767225601123456000
+assert contract_time_nanos('2026-01-01 00:00:01.123456') == 1767225601123456000
+assert contract_time_nanos('2026-01-01T00:00:01.123456') == 1767225601123456000
+"""
+    env = dict(os.environ, TZ="Pacific/Auckland")
+    env["PYTHONPATH"] = str(Path(checks.__file__).parent) + os.pathsep + env.get("PYTHONPATH", "")
+    result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_actual_node_query_encoder_roundtrip_preserves_exact_contract_clock(monkeypatch):
+    import asyncio
+    import base64
+    import json
+    from unittest.mock import AsyncMock
+
+    import localnet_chain_checks
+    from xian.methods.query import _encode_query_value
+    from xian_runtime_types.time import Datetime
+
+    stored = locked_record(anchor="2025-12-18T00:00:01.123456Z")
+    stored["unlock_at"] = Datetime(2026, 1, 1, 0, 0, 1, 123456)
+    encoded, kind = _encode_query_value(stored)
+    assert kind == "dict"
+    assert json.loads(encoded)["unlock_at"] == "2026-01-01 00:00:01.123456"
+    response = {
+        "code": 0,
+        "info": kind,
+        "value": base64.b64encode(encoded).decode(),
+    }
+    rpc = AsyncMock(return_value={"response": response})
+    monkeypatch.setattr(localnet_chain_checks, "rpc", rpc)
+    record = asyncio.run(
+        localnet_chain_checks.query("session", "node", "/get/validators.pending_unbonds:1")
+    )
+    assert checks.contract_time_nanos(record["unlock_at"]) == 1767225601123456000
+    proof = checks.validate_anchor(
+        record, 1, {"height": "2", "time": "2025-12-18T00:00:01.123456789Z"}, 14
+    )
+    assert proof["unlock_nanos"] == 1767225601123456000
+    rpc.assert_awaited_once_with(
+        "session", "node", "abci_query", path=json.dumps("/get/validators.pending_unbonds:1")
+    )
+
+
+@pytest.mark.parametrize("microseconds", [1, 123457, 999999])
+def test_contract_datetime_microseconds_never_round_through_binary_float(microseconds):
+    from datetime import datetime
+
+    value = datetime(2026, 1, 1, 0, 0, 1, microseconds)
+    assert checks.contract_time_nanos(value) == 1767225601000000000 + microseconds * 1000
+
+
 def test_three_native_peers_must_agree_on_post_claim_header_root_and_exact_results(monkeypatch):
     import asyncio
     from unittest.mock import AsyncMock
