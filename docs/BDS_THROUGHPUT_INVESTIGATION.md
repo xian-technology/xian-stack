@@ -141,6 +141,35 @@ Paths are relative to the sibling workspace:
 - `xian-stack/scripts/localnet-e2e.py`: burst, mixed-load, BDS outage/recovery
   and query-pressure phases.
 
+## Existing harness constraints
+
+`make localnet-vm-tps-bench` initializes, **builds**, starts and finally stops
+its localnet. It defaults to five validators, port offset 1000, profile
+`throughput`, scenarios `transfer_fanout` and `contract_heavy`, operation counts
+4000/8000/12000/16000, 64 sender wallets, 128 submit/receipt workers and a
+90-second receipt timeout. The script defaults to CheckTx broadcasts and
+64 heavy rounds. These are finite batch sweeps, not an offered-rate-controlled
+steady-state indexer saturation test.
+
+The throughput profile changes consensus to on-demand blocks, 500 ms propose,
+200 ms prevote/precommit/commit, skip-timeout-commit enabled, and mempool/cache
+sizes 50000/100000. This differs from the observed development node. Record
+these choices and run the intended production-policy arm separately.
+
+`XIAN_LOCALNET_ENABLE_BDS` defaults to false. With it enabled, localnet-init
+selects one BDS validator through `XIAN_LOCALNET_BDS_NODE_INDEX` (default 0),
+not every validator. Explicitly record which validator indexes and receives
+read pressure. No BDS result may be inferred from the default VM sweep.
+
+The benchmark and performance-reader paths are hardcoded under this checkout's
+`.localnet/`; summaries default to `.artifacts/tps-bench/`. Use an isolated
+stack checkout/project and fresh homes. After image publication, prepare that
+network with the selected immutable image explicitly and run the Python sweep
+against it; do not invoke the Make wrapper and accidentally rebuild a different
+image. Verify the resulting container image IDs/digests and network metadata.
+The harness needs extensions for steady-state arrival control, BDS backlog/rate
+sampling, SQL/storage measurements and the full workload matrix described below.
+
 ## Campaign to run after image publication
 
 1. Record the image digest, release manifest, component SHAs, execution/gas/
