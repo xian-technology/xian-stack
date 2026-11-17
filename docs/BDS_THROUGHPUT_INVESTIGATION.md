@@ -254,3 +254,14 @@ confirms image publication, select its digest and this matching manifest before
 creating the isolated fresh execution-15/gas-7 network. No saturation workload
 has been run as part of this release; the live-light-load observations and
 short-burst results above still do not establish sustained chain/BDS capacity.
+
+### Image attempt reported failed: 2026-11-18
+
+The user reported the v0.3.4 image workflow failed. It stopped in the full-E2E
+bootstrap because empty Make-exported policy options were mistaken for an
+explicit incompatible policy; publish-images never ran. Do not use that run
+as evidence of an available image or a BDS workload result. The harness fix
+uses its intended periodic/1s E2E defaults for empty options and retains the
+on-demand rejection. Replacement stack v0.3.5 keeps the same component refs;
+its source/run checkpoint is to be recorded after triggering. Wait for the user
+to report successful image publication before resuming this investigation.

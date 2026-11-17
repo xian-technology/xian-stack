@@ -37,6 +37,12 @@ checks out sibling `xian-js` sources. `xian-stack` stays last because its releas
 manifest pins exact component refs and should be updated after upstream release
 commits exist on `main`.
 
+The full release E2E suite requires periodic block production so lifecycle and
+state-sync checks can advance during idle periods. Its optional localnet mode
+and interval accept both absent and empty Make-exported values, using periodic
+blocks every 1s. An explicit on-demand mode remains incompatible with this suite.
+These harness defaults do not change ordinary node block-policy defaults.
+
 ## Release Orchestrator
 
 Use the local orchestrator in `xian-stack` when you want one command to release

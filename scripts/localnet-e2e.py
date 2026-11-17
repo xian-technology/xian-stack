@@ -289,10 +289,13 @@ def make_localnet_env(args: argparse.Namespace) -> dict[str, str]:
     env = os.environ.copy()
     env.update(load_stack_env())
     # Lifecycle, quorum and state-sync checks wait for later idle heights.
-    if env.get("XIAN_LOCALNET_BLOCK_POLICY_MODE", "periodic") != "periodic":
+    mode = env.get("XIAN_LOCALNET_BLOCK_POLICY_MODE") or "periodic"
+    if mode != "periodic":
         raise E2EError("The full E2E suite requires periodic block production.")
-    env["XIAN_LOCALNET_BLOCK_POLICY_MODE"] = "periodic"
-    env.setdefault("XIAN_LOCALNET_BLOCK_POLICY_INTERVAL", "1s")
+    env["XIAN_LOCALNET_BLOCK_POLICY_MODE"] = mode
+    env["XIAN_LOCALNET_BLOCK_POLICY_INTERVAL"] = (
+        env.get("XIAN_LOCALNET_BLOCK_POLICY_INTERVAL") or "1s"
+    )
     env["XIAN_LOCALNET_GENESIS_NETWORK"] = args.genesis_network
     env["XIAN_LOCALNET_ENABLE_BDS"] = "1"
     env["XIAN_LOCALNET_BDS_NODE_INDEX"] = str(args.bds_node_index)

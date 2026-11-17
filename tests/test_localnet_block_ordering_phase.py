@@ -66,6 +66,29 @@ class LocalnetBlockOrderingPhaseTests(unittest.TestCase):
             with self.assertRaisesRegex(localnet_e2e.E2EError, "requires periodic"):
                 localnet_e2e.make_localnet_env(args)
 
+    def test_full_suite_uses_defaults_for_make_exported_empty_policy_values(self):
+        args = localnet_e2e.build_parser().parse_args([])
+        for mode, interval, expected_interval in (
+            ("", "", "1s"),
+            ("periodic", "", "1s"),
+            ("", "2s", "2s"),
+        ):
+            with (
+                self.subTest(mode=mode, interval=interval),
+                patch.dict(
+                    "os.environ",
+                    {
+                        "XIAN_LOCALNET_BLOCK_POLICY_MODE": mode,
+                        "XIAN_LOCALNET_BLOCK_POLICY_INTERVAL": interval,
+                    },
+                    clear=True,
+                ),
+                patch.object(localnet_e2e, "load_stack_env", return_value={}),
+            ):
+                env = localnet_e2e.make_localnet_env(args)
+                self.assertEqual(env["XIAN_LOCALNET_BLOCK_POLICY_MODE"], "periodic")
+                self.assertEqual(env["XIAN_LOCALNET_BLOCK_POLICY_INTERVAL"], expected_interval)
+
     def test_full_suite_preserves_an_explicit_periodic_interval(self):
         args = localnet_e2e.build_parser().parse_args([])
         with (
