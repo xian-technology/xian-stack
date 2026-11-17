@@ -356,22 +356,56 @@ ordinary replay and verified full-store restore are the bootstrap paths.
 
 Each successful run also exports `replay-corpus/`: public configuration,
 CometBFT block databases, expected transaction-result digests, and source
-revisions. It excludes application state and validator private keys. The
-harness rebuilds application state by replaying every block and compares the
+revisions. It excludes application state and node identity/signing files.
+Transactions can still contain sensitive test inputs, so audit the complete
+corpus before sharing it. Use the encrypted transport below for a sensitive
+local capture. The harness rebuilds application state by replaying every block and compares the
 application root, transaction outcomes, chi usage, and events for every block. The scheduled
 Localnet Safety workflow repeats this replay on native ARM64 and x86-64 runners.
 Each architecture also runs four published-application workflows (68 observations)
 through the metered native VM in the same built image, with network access disabled.
-Its replay artifact includes application results, logs, image ID and runtime source
-revision. These workflows use historical contract sources with controlled inputs;
+Its public replay artifact includes application results, image ID and runtime
+source revision. Encrypted replay never uploads raw replay logs or homes. These workflows use historical contract sources with controlled inputs;
 they do not replay historical public-chain transactions.
-For a CI retry of the same evidence, manually dispatch **Localnet Safety** with
-`replay_run_id` set to the prior run that uploaded `xian-stack-replay-corpus`.
+For a CI retry of an ordinary unencrypted artifact, manually dispatch
+**Localnet Safety** with `replay_run_id` set to the prior run that uploaded
+`xian-stack-replay-corpus`.
 This skips network generation and runs only the two architecture jobs, checking
 out the exact commits recorded in that corpus. It does not validate later code
 changes; leave the input empty for a fresh full safety run. Application containers
 use the runner's UID/GID so their restricted process can save results without
 loosening directory permissions or restoring Linux capabilities.
+
+To replay a sensitive local capture on those same native runners, first create
+a private key directory and encrypt the exact archive with the maintained helper:
+
+```bash
+mkdir -m 700 /tmp/xian-replay-key
+uv run python scripts/replay_corpus_bridge.py encrypt \
+  --input .artifacts/localnet-e2e/<run-id>/replay-corpus \
+  --output .artifacts/replay-ciphertext \
+  --key-file /tmp/xian-replay-key/key
+```
+
+The helper creates a fresh mode-0600 key file and refuses existing outputs.
+Publish only `blocks.tar.gz.enc` and the public `manifest.json` on a temporary
+evidence Git commit. Never commit the key or a raw home/config directory. Verify
+that the fixed repository secret `XIAN_REPLAY_CORPUS_TEST_KEY` does not already
+exist, then set it through stdin from the key file; stop if the query fails or
+the name is already in use. Dispatch **Localnet Safety** with the immutable
+40-hex `replay_corpus_ref`, ciphertext `replay_archive_sha256`, and public
+`replay_manifest_sha256` printed by the helper. These inputs cannot be combined
+with `replay_run_id`; any replay input suppresses both network-generation jobs.
+Retry encrypted evidence with the same three ref/digest inputs while the scoped
+key and evidence ref remain available; `replay_run_id` alone does not decrypt it.
+
+The import job verifies both digests and keeps its artifact encrypted. The
+reviewed helper at the workflow revision authenticates and decrypts only inside
+each native replay job, using the scoped secret. ARM64 and x86-64 replays run
+sequentially. Their public results bind the ciphertext, original archive and
+manifest digests; private plaintext and raw diagnostics are cleaned on success
+or failure. Retain both proofs before deleting the temporary secret, key and
+evidence Git ref. Repository source-cleanliness checks remain strict.
 
 To replay a retained corpus with another locally built image:
 

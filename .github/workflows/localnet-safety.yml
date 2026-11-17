@@ -7,6 +7,18 @@ on:
         description: 'Optional prior Localnet Safety run ID: replay its exact corpus without creating a new network'
         required: false
         type: string
+      replay_corpus_ref:
+        description: 'Optional immutable 40-hex evidence Git commit containing encrypted corpus only'
+        required: false
+        type: string
+      replay_archive_sha256:
+        description: 'Required ciphertext archive SHA256 when replay_corpus_ref is set'
+        required: false
+        type: string
+      replay_manifest_sha256:
+        description: 'Required public manifest SHA256 when replay_corpus_ref is set'
+        required: false
+        type: string
   schedule:
     - cron: "17 2 * * *"
 
@@ -15,8 +27,56 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  import-replay-corpus:
+    if: ${{ inputs.replay_corpus_ref || inputs.replay_archive_sha256 || inputs.replay_manifest_sha256 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out reviewed workflow tools
+        uses: actions/checkout@v7
+        with:
+          path: xian-stack
+          persist-credentials: false
+      - name: Validate the replay-only selection before checking out data
+        env:
+          REPLAY_RUN_ID: ${{ inputs.replay_run_id }}
+          REPLAY_CORPUS_REF: ${{ inputs.replay_corpus_ref }}
+          REPLAY_ARCHIVE_SHA256: ${{ inputs.replay_archive_sha256 }}
+          REPLAY_MANIFEST_SHA256: ${{ inputs.replay_manifest_sha256 }}
+        run: python3 xian-stack/scripts/replay_corpus_bridge.py validate-inputs
+      - name: Check out only the immutable encrypted evidence commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.replay_corpus_ref }}
+          path: incoming-corpus
+          persist-credentials: false
+      - name: Validate and import ciphertext only
+        env:
+          REPLAY_RUN_ID: ${{ inputs.replay_run_id }}
+          REPLAY_CORPUS_REF: ${{ inputs.replay_corpus_ref }}
+          REPLAY_ARCHIVE_SHA256: ${{ inputs.replay_archive_sha256 }}
+          REPLAY_MANIFEST_SHA256: ${{ inputs.replay_manifest_sha256 }}
+        run: >-
+          python3 xian-stack/scripts/replay_corpus_bridge.py import
+          --input incoming-corpus --output corpus
+          --proof-output replay-import-proof.json
+      - name: Upload the authenticated encrypted corpus
+        uses: actions/upload-artifact@v7
+        with:
+          name: xian-stack-replay-corpus
+          path: corpus/
+          if-no-files-found: error
+      - name: Upload public import provenance
+        uses: actions/upload-artifact@v7
+        with:
+          name: replay-import-proof
+          path: replay-import-proof.json
+          if-no-files-found: error
+
   protocol-safety-localnet:
-    if: ${{ !inputs.replay_run_id }}
+    if: ${{ !inputs.replay_run_id && !inputs.replay_corpus_ref && !inputs.replay_archive_sha256 && !inputs.replay_manifest_sha256 }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -62,7 +122,7 @@ jobs:
 
   release-safety-localnet:
     needs: protocol-safety-localnet
-    if: ${{ !inputs.replay_run_id }}
+    if: ${{ !inputs.replay_run_id && !inputs.replay_corpus_ref && !inputs.replay_archive_sha256 && !inputs.replay_manifest_sha256 }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -116,13 +176,14 @@ jobs:
 
   replay-architecture:
     name: Replay corpus (${{ matrix.runner }})
-    needs: release-safety-localnet
-    if: ${{ always() && !cancelled() && (needs.release-safety-localnet.result == 'success' || inputs.replay_run_id != '') }}
+    needs: [release-safety-localnet, import-replay-corpus]
+    if: ${{ always() && !cancelled() && (needs.release-safety-localnet.result == 'success' || (inputs.replay_run_id != '' && !inputs.replay_corpus_ref && !inputs.replay_archive_sha256 && !inputs.replay_manifest_sha256) || needs.import-replay-corpus.result == 'success') }}
     permissions:
       actions: read
       contents: read
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
@@ -201,10 +262,34 @@ jobs:
             --build-context xian-py=./xian-py \
             --build-context xian-configs=./xian-configs \
             --tag xian-replay:local --file xian-stack/docker/xian-node.Dockerfile xian-stack
+      - name: Check out the trusted transport helper from this workflow revision
+        if: ${{ inputs.replay_corpus_ref }}
+        uses: actions/checkout@v7
+        with:
+          path: workflow-tools
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install the pinned authenticated decryption dependency
+        if: ${{ inputs.replay_corpus_ref }}
+        run: python -m pip install PyNaCl==1.6.2
+      - name: Decrypt privately with the scoped temporary test key
+        if: ${{ inputs.replay_corpus_ref }}
+        env:
+          INPUT_CORPUS: ${{ steps.corpus.outputs.path }}
+          PRIVATE_CORPUS: ${{ runner.temp }}/xian-replay-private
+          REPLAY_RUN_ID: ${{ inputs.replay_run_id }}
+          REPLAY_CORPUS_REF: ${{ inputs.replay_corpus_ref }}
+          REPLAY_ARCHIVE_SHA256: ${{ inputs.replay_archive_sha256 }}
+          REPLAY_MANIFEST_SHA256: ${{ inputs.replay_manifest_sha256 }}
+          REPLAY_TRANSPORT_KEY: ${{ secrets.XIAN_REPLAY_CORPUS_TEST_KEY }}
+        run: >-
+          python3 workflow-tools/scripts/replay_corpus_bridge.py decrypt
+          --input "$INPUT_CORPUS" --output "$PRIVATE_CORPUS"
+          --proof-output "$GITHUB_WORKSPACE/replay-transport-proof.json"
       - name: Re-execute every source block and compare outcomes
         working-directory: xian-stack
         env:
-          XIAN_REPLAY_CORPUS: ${{ steps.corpus.outputs.path }}
+          XIAN_REPLAY_CORPUS: ${{ inputs.replay_corpus_ref && format('{0}/xian-replay-private', runner.temp) || steps.corpus.outputs.path }}
         run: |
           uv run python scripts/localnet_replay_corpus.py \
             --corpus "$XIAN_REPLAY_CORPUS" --image xian-replay:local \
@@ -247,6 +332,34 @@ jobs:
           name: replay-${{ matrix.runner }}
           path: |
             xian-stack/.artifacts/architecture-replay/result.json
-            xian-stack/.artifacts/architecture-replay/container.log
-            xian-stack/.artifacts/architecture-applications
+            replay-transport-proof.json
+            xian-stack/.artifacts/architecture-applications/native-metered.json
+            xian-stack/.artifacts/architecture-applications/source-run-id.txt
+            xian-stack/.artifacts/architecture-applications/workflow-revision.txt
+            xian-stack/.artifacts/architecture-applications/image-id.txt
+            xian-stack/.artifacts/architecture-applications/runtime-source-revision.txt
           if-no-files-found: warn
+      - name: Upload ordinary replay diagnostics only
+        if: ${{ always() && !inputs.replay_corpus_ref }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: replay-diagnostics-${{ matrix.runner }}
+          path: |
+            xian-stack/.artifacts/architecture-replay/container.log
+            xian-stack/.artifacts/architecture-applications/native-metered.log
+          if-no-files-found: warn
+      - name: Remove private plaintext and raw replay diagnostics
+        if: ${{ always() && inputs.replay_corpus_ref }}
+        env:
+          PRIVATE_CORPUS: ${{ runner.temp }}/xian-replay-private
+          PRIVATE_REPLAY: ${{ github.workspace }}/xian-stack/.artifacts/architecture-replay
+        run: |
+          python3 - <<'PYCODE'
+          import os, shutil
+          from pathlib import Path
+          shutil.rmtree(os.environ['PRIVATE_CORPUS'], ignore_errors=True)
+          replay = Path(os.environ['PRIVATE_REPLAY'])
+          for name in ('home', 'hooks'):
+              shutil.rmtree(replay / name, ignore_errors=True)
+          (replay / 'container.log').unlink(missing_ok=True)
+          PYCODE
