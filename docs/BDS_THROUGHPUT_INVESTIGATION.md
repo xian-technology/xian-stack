@@ -2,6 +2,12 @@
 
 ## Resume point
 
+Latest handoff, 2026-11-18: stack `v0.3.5`, source
+`ec3f43152328b8c7933c89f34a7203ccd6b27e58`, replaces the failed v0.3.4 attempt.
+[Replacement image workflow](https://github.com/xian-technology/xian-stack/actions/runs/44202339923) was triggered and is deliberately
+not monitored. Wait for the user to report successful publication, then resolve
+the immutable digest. Component pins below remain unchanged.
+
 Recorded 2026-11-17. The user requested package releases and an image build
 before continuing this investigation. Do not run a saturation workload against
 the existing development node or replace its state as part of release work.
@@ -232,7 +238,7 @@ does not prove the index is caught up. Recovery needs retained local/remote
 block history or a trusted BDS snapshot. Preserve independent full node-store
 backups; Postgres snapshots alone do not bootstrap consensus.
 
-## Release handoff checkpoint
+## Original release handoff checkpoint (v0.3.4; failed)
 
 Package/app publication completed in this release train; full evidence and
 infrastructure recovery details are in [the release audit](RELEASE_2026_11_17.md).
@@ -263,5 +269,6 @@ explicit incompatible policy; publish-images never ran. Do not use that run
 as evidence of an available image or a BDS workload result. The harness fix
 uses its intended periodic/1s E2E defaults for empty options and retains the
 on-demand rejection. Replacement stack v0.3.5 keeps the same component refs;
-its source/run checkpoint is to be recorded after triggering. Wait for the user
-to report successful image publication before resuming this investigation.
+the replacement source is `ec3f43152328b8c7933c89f34a7203ccd6b27e58` and the
+workflow is linked at the resume point above. Wait for the user to report
+successful image publication before resuming this investigation.
