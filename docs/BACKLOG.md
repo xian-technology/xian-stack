@@ -6,6 +6,8 @@ Primary deeper notes:
 
 - `LOCALNET_WORKLOAD_BACKLOG.md`
 - `RUNTIME_RELEASE_BACKLOG.md`
+- [BDS throughput investigation](BDS_THROUGHPUT_INVESTIGATION.md): measured
+  evidence, source paths and the post-release saturation/recovery campaign
 
 Current themes:
 
