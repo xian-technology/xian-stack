@@ -65,17 +65,14 @@ def parse_policy(value: object) -> PolicyView:
     )
 
 
-def validate_evidence_update(results: dict, expected: Mapping[str, str], *, grew: bool) -> None:
+def validate_evidence_update(results: dict, expected: Mapping[str, str]) -> None:
     updates = results.get("consensus_param_updates")
     if updates is None:
         updates = {}
     if not isinstance(updates, dict):
         raise ValueError("Malformed consensus parameter update")
-    if grew:
-        if set(updates) != {"evidence"} or updates["evidence"] != expected:
-            raise ValueError("Evidence growth must emit its complete triple only")
-    elif updates:
-        raise ValueError("Unchanged evidence policy emitted a spurious update")
+    if set(updates) != {"evidence"} or updates["evidence"] != expected:
+        raise ValueError("Evidence updates must emit the complete evidence triple only")
 
 
 def validate_policy_link(
@@ -96,14 +93,17 @@ def validate_policy_link(
     for actual, expected, label in checks:
         if actual != expected:
             raise ValueError(f"Mismatched {label}")
-    for name in ("max_age_num_blocks", "max_bytes"):
-        if previous[name] != current[name]:
-            raise ValueError(f"Unchanged configured evidence field drifted: {name}")
+    if previous["max_bytes"] != current["max_bytes"]:
+        raise ValueError("Unchanged configured evidence byte limit drifted")
+    old_blocks = decimal_string(previous["max_age_num_blocks"], minimum=1, maximum=MAX_INT64)
+    new_blocks = int(view.evidence["max_age_num_blocks"])
+    if view.height - new_blocks < view.height - 1 - old_blocks:
+        raise ValueError("Evidence block cutoff moved backward")
     before = decimal_string(previous["max_age_duration"], minimum=1, maximum=MAX_INT64)
     after = int(view.evidence["max_age_duration"])
     if after < before:
         raise ValueError("Evidence retention shrank")
-    validate_evidence_update(results, view.evidence, grew=after > before)
+    validate_evidence_update(results, view.evidence)
 
 
 def policy_response_body(response: dict) -> dict:

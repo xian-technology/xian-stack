@@ -3,7 +3,8 @@
   "e2e": {
     "00-bootstrap": [
       "network",
-      "network_addresses"
+      "network_addresses",
+      "idle_unbond_preflight"
     ],
     "01-health": [
       "consensus",
@@ -33,6 +34,10 @@
       "patch_status",
       "simulate_balance",
       "wallets"
+    ],
+    "02-block-cadence": [
+      "cadence",
+      "positive_unbond"
     ],
     "03-atomic-rollback": [
       "baseline",
@@ -355,7 +360,9 @@
       "retention",
       "historical_evidence",
       "restarts",
-      "public_state_patch_bundles"
+      "public_state_patch_bundles",
+      "retention_checkpoint",
+      "restored_retention"
     ],
     "23-nonce-recovery": [
       "checks",
@@ -384,7 +391,8 @@
     ],
     "26-replay-determinism": [
       "corpus",
-      "replay"
+      "replay",
+      "positive_unbond_retained"
     ]
   },
   "protocol": {

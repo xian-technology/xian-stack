@@ -111,7 +111,7 @@ def test_policy_and_nextheight_params_are_linked_to_exact_committed_header():
         "wrong_hash",
         "wrong_time",
         "wrong_params",
-        "changed_blocks",
+        "reopened_blocks",
         "changed_bytes",
         "missing_growth",
         "partial_growth",
@@ -131,8 +131,8 @@ def test_policy_link_rejects_divergent_commit_or_param_updates(change):
         values[1]["time"] = "1970-01-01T00:00:11Z"
     elif change == "wrong_params":
         values[4]["max_age_duration"] = "101"
-    elif change == "changed_blocks":
-        values[3]["max_age_num_blocks"] = "99999"
+    elif change == "reopened_blocks":
+        values[3]["max_age_num_blocks"] = "99998"
     elif change == "changed_bytes":
         values[3]["max_bytes"] = "0"
     elif change == "missing_growth":
@@ -147,21 +147,28 @@ def test_policy_link_rejects_divergent_commit_or_param_updates(change):
         history.validate_policy_link(history.parse_policy(values[0]), *values[1:])
 
 
-def test_unchanged_duration_has_no_spurious_updates():
+def test_unchanged_duration_accepts_only_an_exact_idempotent_evidence_update():
     data, header, next_header, previous, current, _ = link_values()
     previous["max_age_duration"] = "100"
-    history.validate_policy_link(
-        history.parse_policy(data), header, next_header, previous, current, {}
-    )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="complete evidence triple"):
         history.validate_policy_link(
-            history.parse_policy(data),
-            header,
-            next_header,
-            previous,
-            current,
-            {"consensus_param_updates": {"evidence": current}},
+            history.parse_policy(data), header, next_header, previous, current, {}
         )
+    history.validate_policy_link(
+        history.parse_policy(data),
+        header,
+        next_header,
+        previous,
+        current,
+        {"consensus_param_updates": {"evidence": current}},
+    )
+    for updates in (
+        {"evidence": {"max_age_duration": current["max_age_duration"]}},
+        {"evidence": {**current, "max_bytes": "0"}},
+        {"evidence": current, "block": {"max_bytes": "10"}},
+    ):
+        with pytest.raises(ValueError):
+            history.validate_evidence_update({"consensus_param_updates": updates}, current)
 
 
 def test_committed_query_height_and_body_agree(monkeypatch):
@@ -260,4 +267,72 @@ def test_parsed_policy_snapshot_cannot_be_changed_by_source_writer():
 
 def test_malformed_parameter_update_is_never_treated_as_no_change():
     with pytest.raises(ValueError):
-        history.validate_evidence_update({"consensus_param_updates": []}, {}, grew=False)
+        history.validate_evidence_update({"consensus_param_updates": []}, {})
+
+
+def test_derived_block_retention_may_grow_one_per_height_or_drop_at_safe_rotation():
+    for previous_blocks, current_blocks in (("100000", "100001"), ("100001", "100000")):
+        data, header, next_header, previous, current, _ = link_values()
+        previous["max_age_num_blocks"] = previous_blocks
+        previous["max_age_duration"] = current["max_age_duration"]
+        current["max_age_num_blocks"] = current_blocks
+        data["evidence"]["max_age_num_blocks"] = current_blocks
+        update = {"consensus_param_updates": {"evidence": dict(current)}}
+        history.validate_policy_link(
+            history.parse_policy(data), header, next_header, previous, current, update
+        )
+        with pytest.raises(ValueError, match="complete evidence"):
+            history.validate_policy_link(
+                history.parse_policy(data), header, next_header, previous, current, {}
+            )
+
+
+def test_committed_wire_accepts_the_exact_comet_int64_boundary():
+    data = body()
+    data["evidence"] = {name: str(2**63 - 1) for name in data["evidence"]}
+    assert dict(history.parse_policy(data).evidence) == data["evidence"]
+
+
+def test_query_body_default_zero_code_and_exact_payload_budget_are_valid():
+    encoded = json.dumps(body()).encode()
+    padded = encoded + b" " * (8192 - len(encoded))
+    response = {
+        "info": "dict",
+        "key": base64.b64encode(b"evidence_policy").decode(),
+        "value": base64.b64encode(padded).decode(),
+    }
+    assert len(response["value"]) == 10924
+    assert history.policy_response_body(response) == body()
+
+
+@pytest.mark.parametrize("field", ["key", "value"])
+def test_query_body_refuses_noncanonical_base64_with_ignored_characters(field):
+    response = {
+        "code": 0,
+        "info": "dict",
+        "key": base64.b64encode(b"evidence_policy").decode(),
+        "value": base64.b64encode(json.dumps(body()).encode()).decode(),
+    }
+    response[field] = "!" + response[field]
+    with pytest.raises(ValueError):
+        history.policy_response_body(response)
+
+
+def test_query_body_refuses_bytes_even_when_they_encode_valid_json():
+    response = {
+        "code": 0,
+        "info": "dict",
+        "key": base64.b64encode(b"evidence_policy").decode(),
+        "value": base64.b64encode(json.dumps(body()).encode()),
+    }
+    with pytest.raises(ValueError):
+        history.policy_response_body(response)
+
+
+def test_policy_link_refuses_an_invalid_zero_previous_duration():
+    data, header, next_header, previous, current, updates = link_values()
+    previous["max_age_duration"] = "0"
+    with pytest.raises(ValueError):
+        history.validate_policy_link(
+            history.parse_policy(data), header, next_header, previous, current, updates
+        )

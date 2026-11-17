@@ -1,8 +1,9 @@
-"""Export a public localnet block corpus and verify it on a native node image.
+"""Export a localnet block corpus and verify it on a native node image.
 
 The corpus contains CometBFT block/state databases and public configuration,
-never application LMDB or validator private keys. Verification executes every
-block again and compares the resulting state root and transaction outputs.
+never application LMDB or validator private keys. Transactions may still carry
+sensitive workload inputs: audit or encrypt the corpus before sharing it.
+Verification executes every block again and compares state roots and outputs.
 """
 
 from __future__ import annotations
@@ -52,9 +53,8 @@ async def inspect_replay_image(image):
     return {"image_id": image_id.strip(), "execution_policy": json.loads(policy)}
 
 
-# Every revision persists these; xvm-execution-10 and later (the current
-# xvm-execution-14) add compiler and transaction admission revisions, which must
-# then match the replay image as well.
+# Every revision persists these. Compiler and transaction admission revisions
+# must also match whenever the recorded policy includes them.
 CORE_EXECUTION_POLICY_KEYS = frozenset(
     {"execution_revision", "gas_schedule", "bytecode_version", "set_codec"}
 )
@@ -79,11 +79,11 @@ def validate_replay_policy(manifest, image, *, legacy_image_id=None):
     )
 
 
-async def export_corpus(runner, session):
-    node = runner.nodes[4]
+async def export_corpus(runner, session, *, node=None, home=None):
+    node = runner.nodes[-1] if node is None else node
     output = runner.output_dir / "replay-corpus"
     output.mkdir(exist_ok=True)
-    home = STACK / ".localnet" / node.moniker / ".cometbft"
+    home = STACK / ".localnet" / node.moniker / ".cometbft" if home is None else Path(home)
     await runner.stop_node_runtime(node)
     try:
         with tempfile.TemporaryDirectory(dir=output) as directory:

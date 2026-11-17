@@ -131,6 +131,10 @@ def test_full_store_stage_orders_stop_export_verification_restore_and_evidence(
     monkeypatch.setattr(sync, "command", lambda *args: record(" ".join(map(str, args[:3]))))
     monkeypatch.setattr(sync, "advance_recipient_signing_state", lambda *args: None)
     monkeypatch.setattr(sync, "stop_backup_source", lambda *args: record("stop-source"))
+    monkeypatch.setattr(
+        sync, "checkpoint_retention", AsyncMock(return_value={"state": {"pending": True}})
+    )
+    monkeypatch.setattr(sync, "restored_retention_state", AsyncMock(return_value={"pending": True}))
     manifest = {"height": 20, "manifest_version": 2, "snapshot_kind": "full_node_store"}
     monkeypatch.setattr(
         sync,
@@ -206,82 +210,35 @@ def test_failed_export_still_removes_stopped_replay_observer(tmp_path, monkeypat
 def test_retention_rehearsal_raises_above_existing_highwater_then_restores_original_days(
     monkeypatch,
 ):
-    class Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-        async def get_state(self, *args):
-            return 0
-
-    runner = SimpleNamespace(
-        nodes=[object()], validator_wallets=[object()], client=lambda *args: Client()
-    )
     day = sync.DAY_NS
-    policies = [
-        {"target_max_age_duration": 8 * day, "max_age_duration": 8 * day},
-        {"target_max_age_duration": 10 * day, "max_age_duration": 8 * day + 1},
-        {"target_max_age_duration": 10 * day, "max_age_duration": 8 * day + 2},
-    ]
-    monkeypatch.setattr(sync, "query", AsyncMock(side_effect=policies))
+    before = clock_schedule(base=8 * day, target=8 * day, start=100)
+    raised = clock_schedule(base=8 * day, target=10 * day, start=200)
+    mock_clock_samples(monkeypatch, [before, raised, raised], [100, 210, 220])
     votes = AsyncMock(return_value={"approved": True})
     monkeypatch.setattr(sync, "governance_vote", votes)
-    monkeypatch.setattr(sync, "collect_policy_proof", AsyncMock(return_value={"linked": True}))
-    result = asyncio.run(sync.retention_rehearsal(runner, object()))
+    result = asyncio.run(sync.retention_rehearsal(retention_runner(), object()))
     assert votes.await_args_list[0].args[3] == {"unbonding_period_days": 9}
     assert votes.await_args_list[1].args[3] == {"unbonding_period_days": 0}
     assert result["target_after"] == 10 * day
 
 
 def test_target_highwater_cannot_shrink_after_governed_reduction(monkeypatch):
-    class Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-        async def get_state(self, *args):
-            return 0
-
-    runner = SimpleNamespace(
-        nodes=[object()], validator_wallets=[object()], client=lambda *args: Client()
-    )
-    policies = [
-        {"target_max_age_duration": 8 * sync.DAY_NS, "max_age_duration": 8 * sync.DAY_NS},
-        {"target_max_age_duration": 10 * sync.DAY_NS, "max_age_duration": 8 * sync.DAY_NS + 1},
-        {"target_max_age_duration": 8 * sync.DAY_NS, "max_age_duration": 8 * sync.DAY_NS},
-    ]
-    monkeypatch.setattr(sync, "query", AsyncMock(side_effect=policies))
-    monkeypatch.setattr(sync, "governance_vote", AsyncMock(return_value={}))
-    monkeypatch.setattr(sync, "collect_policy_proof", AsyncMock(return_value={}))
-    with pytest.raises(Exception, match="high-water shrank"):
-        asyncio.run(sync.retention_rehearsal(runner, object()))
+    day = sync.DAY_NS
+    before = clock_schedule(base=8 * day, target=8 * day, start=100)
+    raised = clock_schedule(base=8 * day, target=10 * day, start=200)
+    reduced = clock_schedule(base=8 * day, target=8 * day, start=200)
+    mock_clock_samples(monkeypatch, [before, raised, reduced], [100, 210, 220])
+    with pytest.raises(Exception, match="schedule changed"):
+        asyncio.run(sync.retention_rehearsal(retention_runner(), object()))
 
 
 def test_growth_proof_requires_actual_effective_retention_to_increase(monkeypatch):
-    class Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-        async def get_state(self, *args):
-            return 0
-
-    runner = SimpleNamespace(
-        nodes=[object()], validator_wallets=[object()], client=lambda *args: Client()
-    )
-    before = {"target_max_age_duration": 8 * sync.DAY_NS, "max_age_duration": 8 * sync.DAY_NS}
-    raised = {**before, "target_max_age_duration": 10 * sync.DAY_NS}
-    monkeypatch.setattr(sync, "query", AsyncMock(side_effect=[before, raised, raised]))
-    monkeypatch.setattr(sync, "governance_vote", AsyncMock(return_value={}))
-    monkeypatch.setattr(sync, "collect_policy_proof", AsyncMock(return_value={}))
+    day = sync.DAY_NS
+    before = clock_schedule(base=8 * day, target=8 * day, start=100)
+    raised = clock_schedule(base=8 * day, target=10 * day, start=200)
+    mock_clock_samples(monkeypatch, [before, raised, raised], [100, 200, 210])
     with pytest.raises(Exception, match="Effective retention did not grow"):
-        asyncio.run(sync.retention_rehearsal(runner, object()))
+        asyncio.run(sync.retention_rehearsal(retention_runner(), object()))
 
 
 def test_consensus_check_also_requires_identical_block_ids(monkeypatch):
@@ -481,45 +438,41 @@ def test_validator_recovery_does_not_readd_an_automatically_restored_member(monk
 
 
 def test_restarts_refresh_endpoint_and_keep_retention_highwater(monkeypatch):
-    runner = SimpleNamespace(nodes=[])
-    policies = [
-        {"target_max_age_duration": 10, "max_age_duration": 8},
-        {"target_max_age_duration": 10, "max_age_duration": 9},
-        {"target_max_age_duration": 10, "max_age_duration": 9},
-        {"target_max_age_duration": 10, "max_age_duration": 10},
-    ]
-    monkeypatch.setattr(sync, "query", AsyncMock(side_effect=policies))
+    schedule = clock_schedule(base=8, target=10, start=200)
+    mock_clock_samples(monkeypatch, [schedule] * 4, [200, 201, 201, 202])
     commands = AsyncMock()
     monkeypatch.setattr(sync, "command", commands)
     addresses = AsyncMock(side_effect=[object(), object()])
     monkeypatch.setattr(sync, "observer_address", addresses)
     monkeypatch.setattr(sync, "observer_agreement", AsyncMock(return_value={"ok": True}))
-    monkeypatch.setattr(sync, "collect_policy_proof", AsyncMock(return_value={"linked": True}))
     result = asyncio.run(
-        sync.repeated_restart(runner, object(), "own-container", object(), {"target_after": 10})
+        sync.repeated_restart(
+            object(),
+            object(),
+            "own-container",
+            object(),
+            {"target_after": 10, "schedule_after": schedule},
+        )
     )
     assert len(result) == 2 and addresses.await_count == 2
     assert commands.await_args.args == ("docker", "restart", "--time", "30", "own-container")
 
 
 def test_restart_cannot_erase_retention_target(monkeypatch):
-    monkeypatch.setattr(
-        sync,
-        "query",
-        AsyncMock(
-            side_effect=[
-                {"max_age_duration": 8},
-                {"target_max_age_duration": 9, "max_age_duration": 9},
-            ]
-        ),
-    )
+    schedule = clock_schedule(base=8, target=10, start=200)
+    erased = clock_schedule(base=8, target=9, start=200)
+    mock_clock_samples(monkeypatch, [schedule, erased], [200, 201])
     monkeypatch.setattr(sync, "command", AsyncMock())
     monkeypatch.setattr(sync, "observer_address", AsyncMock(return_value=object()))
     monkeypatch.setattr(sync, "observer_agreement", AsyncMock(return_value={}))
     with pytest.raises(Exception, match="retention target changed"):
         asyncio.run(
             sync.repeated_restart(
-                object(), object(), "own-container", object(), {"target_after": 10}
+                object(),
+                object(),
+                "own-container",
+                object(),
+                {"target_after": 10, "schedule_after": schedule},
             )
         )
 
@@ -937,66 +890,29 @@ def test_backup_source_must_be_stopped_without_oom(monkeypatch, state):
 
 
 def test_retention_target_must_increase_even_when_effective_duration_grows(monkeypatch):
-    class Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-        async def get_state(self, *args):
-            return 0
-
-    runner = SimpleNamespace(
-        nodes=[object()], validator_wallets=[object()], client=lambda *args: Client()
-    )
-    policies = [
-        {"target_max_age_duration": 8 * sync.DAY_NS, "max_age_duration": 8 * sync.DAY_NS},
-        {"target_max_age_duration": 8 * sync.DAY_NS, "max_age_duration": 8 * sync.DAY_NS + 1},
-    ]
-    monkeypatch.setattr(sync, "query", AsyncMock(side_effect=policies))
-    monkeypatch.setattr(sync, "governance_vote", AsyncMock(return_value={}))
-    monkeypatch.setattr(sync, "collect_policy_proof", AsyncMock(return_value={}))
+    day = sync.DAY_NS
+    schedule = clock_schedule(base=7 * day, target=8 * day, start=100)
+    mock_clock_samples(monkeypatch, [schedule, schedule, schedule], [100, 101, 102])
     with pytest.raises(Exception, match="target did not increase"):
-        asyncio.run(sync.retention_rehearsal(runner, object()))
+        asyncio.run(sync.retention_rehearsal(retention_runner(), object()))
 
 
 def test_restart_accepts_unchanged_effective_duration_at_retention_target(monkeypatch):
-    policy = {"target_max_age_duration": 10, "max_age_duration": 10}
-    monkeypatch.setattr(sync, "query", AsyncMock(return_value=policy))
+    schedule = clock_schedule(base=8, target=10, start=200)
+    mock_clock_samples(monkeypatch, [schedule] * 4, [202] * 4)
     monkeypatch.setattr(sync, "command", AsyncMock())
     monkeypatch.setattr(sync, "observer_address", AsyncMock(return_value=object()))
     monkeypatch.setattr(sync, "observer_agreement", AsyncMock(return_value={}))
-    monkeypatch.setattr(sync, "collect_policy_proof", AsyncMock(return_value={}))
     result = asyncio.run(
-        sync.repeated_restart(object(), object(), "own-container", object(), {"target_after": 10})
+        sync.repeated_restart(
+            object(),
+            object(),
+            "own-container",
+            object(),
+            {"target_after": 10, "schedule_after": schedule},
+        )
     )
     assert len(result) == 2
-
-
-@pytest.mark.parametrize(
-    "manifest",
-    [
-        {"manifest_version": 1, "snapshot_kind": "full_node_store"},
-        {"manifest_version": 2, "snapshot_kind": "application_only"},
-    ],
-)
-def test_snapshot_export_requires_both_fullstore_kind_and_v2(tmp_path, monkeypatch, manifest):
-    runner = SimpleNamespace(output_dir=tmp_path, network={"chain_id": "unit-chain"})
-    backup = tmp_path / "backup"
-    backup.mkdir()
-    monkeypatch.setattr(sync, "write_snapshot_profiles", lambda *args: None)
-
-    async def export(runner, base, *args, **kwargs):
-        path = Path(args[args.index("--manifest-output") + 1])
-        path.write_text(json.dumps(manifest))
-        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
-
-    monkeypatch.setattr(sync, "snapshot_cli", export)
-    with pytest.raises(Exception, match="did not export a verified"):
-        asyncio.run(
-            sync.snapshot_export(runner, tmp_path / "source", tmp_path / "target", "image", backup)
-        )
 
 
 def test_validator_recovery_does_not_assume_missing_pending_job_diagnostics_mean_zero(monkeypatch):
@@ -1303,3 +1219,602 @@ def test_state_patch_inventory_path_cannot_be_an_unrelated_regular_config_file(t
     (home / "config").mkdir(parents=True)
     with pytest.raises(Exception, match="directory"):
         sync.copy_public_state_patch_inventory(source, home)
+
+
+def clock_schedule(*, base, target, start):
+    return {
+        "version": 2,
+        "max_age_num_blocks": 100000,
+        "base_max_age_duration": base,
+        "max_bytes": 1048576,
+        "target_max_age_duration": target,
+        "growth_start_nanos": start,
+        "security_checkpoint_height": 0,
+        "security_checkpoint_nanos": 0,
+        "previous_security_checkpoint_height": None,
+    }
+
+
+def clock_view(schedule, *, height, nanos):
+    duration = min(
+        schedule["target_max_age_duration"],
+        schedule["base_max_age_duration"] + nanos - schedule["growth_start_nanos"],
+    )
+    return SimpleNamespace(
+        height=height,
+        app_hash="a" * 64,
+        last_block_nanos=nanos,
+        evidence={
+            "max_age_num_blocks": str(
+                max(
+                    schedule["max_age_num_blocks"],
+                    height
+                    - (
+                        schedule["previous_security_checkpoint_height"]
+                        if schedule["previous_security_checkpoint_height"] is not None
+                        else schedule["security_checkpoint_height"]
+                    ),
+                )
+            ),
+            "max_age_duration": str(duration),
+            "max_bytes": str(schedule["max_bytes"]),
+        },
+    )
+
+
+def test_retention_uses_committed_effective_duration_with_immutable_v2_schedule(monkeypatch):
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get_state(self, *args):
+            return 0
+
+    runner = SimpleNamespace(
+        nodes=[object()], validator_wallets=[object()], client=lambda *args: Client()
+    )
+    day = sync.DAY_NS
+    before = clock_schedule(base=8 * day, target=8 * day, start=100)
+    raised = clock_schedule(base=8 * day, target=10 * day, start=200)
+    monkeypatch.setattr(sync, "query", AsyncMock(side_effect=[before, raised, raised]))
+    views = [
+        clock_view(before, height=5, nanos=100),
+        clock_view(raised, height=7, nanos=210),
+        clock_view(raised, height=9, nanos=220),
+    ]
+    monkeypatch.setattr(
+        sync,
+        "committed_policy",
+        AsyncMock(side_effect=[(view, {}) for view in views]),
+        raising=False,
+    )
+    votes = AsyncMock(return_value={"approved": True})
+    monkeypatch.setattr(sync, "governance_vote", votes)
+    monkeypatch.setattr(sync, "collect_policy_proof", AsyncMock(return_value={"linked": True}))
+    monkeypatch.setattr(sync, "growth_start_proof", AsyncMock(return_value={"linked": True}))
+    cadence = AsyncMock(return_value={"pending": True})
+    monkeypatch.setattr(sync, "cadence_rehearsal", cadence, raising=False)
+    result = asyncio.run(sync.retention_rehearsal(runner, object()))
+    assert result["growth_state"]["effective_duration"] == 8 * day + 10
+    assert result["restored_state"]["effective_duration"] == 8 * day + 20
+    assert result["restored_state"]["schedule"] == raised
+    assert result["cadence"] == {"pending": True}
+    assert cadence.await_args.kwargs == {
+        "label": "pending-retention",
+        "expected_pending": True,
+    }
+    assert votes.await_args_list[0].args[3] == {"unbonding_period_days": 9}
+    assert votes.await_args_list[1].args[3] == {"unbonding_period_days": 0}
+
+
+def test_restarts_preserve_exact_pending_schedule_and_derived_cutoff(monkeypatch):
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    views = [
+        clock_view(schedule, height=h, nanos=t) for h, t in [(5, 210), (6, 220), (7, 230), (8, 240)]
+    ]
+    monkeypatch.setattr(sync, "query", AsyncMock(return_value=schedule))
+    monkeypatch.setattr(
+        sync,
+        "committed_policy",
+        AsyncMock(side_effect=[(view, {}) for view in views]),
+        raising=False,
+    )
+    monkeypatch.setattr(sync, "command", AsyncMock())
+    monkeypatch.setattr(sync, "observer_address", AsyncMock(return_value=object()))
+    monkeypatch.setattr(sync, "observer_agreement", AsyncMock(return_value={"ok": True}))
+    monkeypatch.setattr(sync, "collect_policy_proof", AsyncMock(return_value={"linked": True}))
+    result = asyncio.run(
+        sync.repeated_restart(
+            object(),
+            object(),
+            "own-container",
+            object(),
+            {"target_after": 1000, "schedule_after": schedule},
+        )
+    )
+    assert len(result) == 2
+    assert all(item["after"]["schedule"] == schedule for item in result)
+    assert all(item["after"]["cutoff_nanos"] == 120 for item in result)
+    assert result[-1]["after"]["effective_duration"] == 120
+
+
+class RetentionClient:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    async def get_state(self, *args):
+        return 0
+
+
+def retention_runner():
+    return SimpleNamespace(
+        nodes=[object()], validator_wallets=[object()], client=lambda *args: RetentionClient()
+    )
+
+
+def mock_clock_samples(monkeypatch, schedules, nanos, *, growth_proof=True):
+    monkeypatch.setattr(sync, "query", AsyncMock(side_effect=schedules))
+    views = [
+        clock_view(schedule, height=index + 5, nanos=n)
+        for index, (schedule, n) in enumerate(zip(schedules, nanos, strict=True))
+    ]
+    monkeypatch.setattr(
+        sync, "committed_policy", AsyncMock(side_effect=[(view, {}) for view in views])
+    )
+    monkeypatch.setattr(sync, "governance_vote", AsyncMock(return_value={}))
+    monkeypatch.setattr(sync, "collect_policy_proof", AsyncMock(return_value={"linked": True}))
+    monkeypatch.setattr(sync, "cadence_rehearsal", AsyncMock(return_value={"pending": True}))
+    if growth_proof:
+        monkeypatch.setattr(sync, "growth_start_proof", AsyncMock(return_value={"linked": True}))
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        {"manifest_version": 1, "snapshot_kind": "full_node_store"},
+        {"manifest_version": 2, "snapshot_kind": "application_only"},
+    ],
+)
+def test_snapshot_export_requires_both_fullstore_kind_and_v2(tmp_path, monkeypatch, manifest):
+    runner = SimpleNamespace(output_dir=tmp_path, network={"chain_id": "unit-chain"})
+    backup = tmp_path / "backup"
+    backup.mkdir()
+    monkeypatch.setattr(sync, "write_snapshot_profiles", lambda *args: None)
+
+    async def export(runner, base, *args, **kwargs):
+        path = Path(args[args.index("--manifest-output") + 1])
+        path.write_text(json.dumps(manifest))
+        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(sync, "snapshot_cli", export)
+    with pytest.raises(Exception, match="did not export a verified"):
+        asyncio.run(
+            sync.snapshot_export(runner, tmp_path / "source", tmp_path / "target", "image", backup)
+        )
+
+
+def policy_approval_receipt():
+    return {
+        "proposal_id": 7,
+        "proposal_receipt": {"height": 5, "events": []},
+        "vote_receipts": [
+            {
+                "height": 6,
+                "events": [
+                    {
+                        "contract": "validators",
+                        "event": "ValidatorProposalApproved",
+                        "data_indexed": {"proposal_id": 7},
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_retention_raise_anchor_is_exact_approving_block_time(monkeypatch):
+    day = sync.DAY_NS
+    before = clock_schedule(base=8 * day, target=8 * day, start=100)
+    raised = clock_schedule(base=8 * day, target=10 * day, start=199)
+    mock_clock_samples(monkeypatch, [before, raised, raised], [100, 210, 220], growth_proof=False)
+    monkeypatch.setattr(sync, "governance_vote", AsyncMock(return_value=policy_approval_receipt()))
+    monkeypatch.setattr(
+        sync,
+        "rpc",
+        AsyncMock(
+            return_value={
+                "block": {"header": {"height": "6", "time": "1970-01-01T00:00:00.000000200Z"}}
+            }
+        ),
+    )
+    with pytest.raises(Exception, match="approving block"):
+        asyncio.run(sync.retention_rehearsal(retention_runner(), object()))
+
+
+def checkpoint_responses():
+    return [
+        {
+            "block_id": {"hash": "b" * 64},
+            "block": {"header": {"height": "10", "time": "1970-01-01T00:00:00.000000210Z"}},
+        },
+        {"block": {"header": {"height": "11", "app_hash": "a" * 64}}},
+        {
+            "block_height": "11",
+            "consensus_params": {
+                "evidence": {
+                    "max_age_num_blocks": "100000",
+                    "max_age_duration": "90",
+                    "max_bytes": "1048576",
+                }
+            },
+        },
+    ]
+
+
+@pytest.mark.parametrize("wrong", ["checkpoint", "next-header", "parameters"])
+def test_checkpoint_retention_rejects_misaligned_native_response_heights(monkeypatch, wrong):
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    responses = checkpoint_responses()
+    if wrong == "checkpoint":
+        responses[0]["block"]["header"]["height"] = "9"
+    elif wrong == "next-header":
+        responses[1]["block"]["header"]["height"] = "12"
+    else:
+        responses[2]["block_height"] = "10"
+    monkeypatch.setattr(sync, "wait_height", AsyncMock())
+    monkeypatch.setattr(sync, "rpc", AsyncMock(side_effect=responses))
+    manifest = {"height": 10, "app_hash": "a" * 64, "block_hash": "b" * 64}
+    with pytest.raises(Exception, match="checkpoint.*height"):
+        asyncio.run(
+            sync.checkpoint_retention(
+                SimpleNamespace(nodes=[object()]), object(), manifest, {"schedule_after": schedule}
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"version": 1}, {"version": True}, {"last_block_nanos": 210}, {"base_max_age_duration": 80.0}],
+)
+def test_retention_schedule_requires_only_canonical_v2_fields(change):
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    view = clock_view(schedule, height=10, nanos=210)
+    with pytest.raises(Exception, match="schedule"):
+        sync.retention_state({**schedule, **change}, view)
+
+
+@pytest.mark.parametrize("name", ["max_age_duration", "max_age_num_blocks", "max_bytes"])
+def test_retention_view_must_match_the_entire_derived_evidence_triple(name):
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    view = clock_view(schedule, height=10, nanos=210)
+    view.evidence[name] = "9999"
+    with pytest.raises(Exception, match="differs from authenticated"):
+        sync.retention_state(schedule, view)
+
+
+def test_retention_clock_cannot_precede_authenticated_growth_start():
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    with pytest.raises(Exception, match="precedes growth start"):
+        sync.retention_state(schedule, clock_view(schedule, height=10, nanos=199))
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["height", "last_block_nanos", "effective_duration", "cutoff_nanos", "block_cutoff_height"],
+)
+def test_retention_progress_rejects_any_clock_duration_or_cutoff_regression(field):
+    before = {
+        "height": 10,
+        "last_block_nanos": 210,
+        "effective_duration": 90,
+        "cutoff_nanos": 120,
+        "block_cutoff_height": -99990,
+    }
+    after = {**before, field: before[field] - 1}
+    with pytest.raises(Exception, match="backward|shrank"):
+        sync.require_retention_progress(before, after)
+
+
+def test_new_target_cannot_bank_time_spent_at_old_saturated_target():
+    old = clock_schedule(base=8, target=8, start=100)
+    new = clock_schedule(base=908, target=1000, start=1000)
+    before = sync.retention_state(old, clock_view(old, height=10, nanos=1000))
+    after = sync.retention_state(new, clock_view(new, height=11, nanos=1010))
+    with pytest.raises(Exception, match="banked idle time"):
+        sync.require_growth_schedule(before, after)
+
+
+def test_new_target_preserves_only_elapsed_time_already_authorized_by_pending_schedule():
+    old = clock_schedule(base=8, target=1000, start=100)
+    new = clock_schedule(base=128, target=2000, start=220)
+    before = sync.retention_state(old, clock_view(old, height=10, nanos=200))
+    after = sync.retention_state(new, clock_view(new, height=11, nanos=240))
+    sync.require_growth_schedule(before, after)
+    sync.require_retention_progress(before, after)
+    assert after["cutoff_nanos"] == before["cutoff_nanos"] == 92
+
+
+@pytest.mark.parametrize("field", ["max_age_num_blocks", "max_bytes"])
+def test_retention_raise_preserves_configured_evidence_limits(field):
+    old = clock_schedule(base=8, target=8, start=100)
+    new = {**clock_schedule(base=8, target=1000, start=200), field: 9999}
+    before = sync.retention_state(old, clock_view(old, height=10, nanos=100))
+    after = sync.retention_state(new, clock_view(new, height=11, nanos=210))
+    with pytest.raises(Exception, match="Configured evidence limit changed"):
+        sync.require_growth_schedule(before, after)
+
+
+def test_retention_raise_anchor_cannot_predate_observed_committed_clock():
+    old = clock_schedule(base=8, target=8, start=100)
+    new = clock_schedule(base=8, target=1000, start=150)
+    before = sync.retention_state(old, clock_view(old, height=10, nanos=200))
+    after = sync.retention_state(new, clock_view(new, height=11, nanos=210))
+    with pytest.raises(Exception, match="started before"):
+        sync.require_growth_schedule(before, after)
+
+
+@pytest.mark.parametrize("change", ["missing", "duplicate", "other-contract", "other-proposal"])
+def test_growth_start_requires_one_exact_validators_policy_approval(change):
+    vote = policy_approval_receipt()
+    receipt = vote["vote_receipts"][0]
+    if change == "missing":
+        receipt["events"] = []
+    elif change == "duplicate":
+        vote["vote_receipts"].append(receipt.copy())
+    elif change == "other-contract":
+        receipt["events"][0]["contract"] = "con_unrelated"
+    else:
+        receipt["events"][0]["data_indexed"]["proposal_id"] = 8
+    with pytest.raises(Exception, match="one exact policy approval"):
+        sync.policy_approval_height(vote)
+
+
+def test_growth_start_proof_links_authenticated_anchor_to_exact_approval_header(monkeypatch):
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    state = sync.retention_state(schedule, clock_view(schedule, height=7, nanos=210))
+    header = {"height": "6", "time": "1970-01-01T00:00:00.000000200Z"}
+    monkeypatch.setattr(sync, "rpc", AsyncMock(return_value={"block": {"header": header}}))
+    result = asyncio.run(
+        sync.growth_start_proof(object(), object(), policy_approval_receipt(), state)
+    )
+    assert result == {"height": 6, "header": header}
+
+
+def test_pending_cadence_dispatches_only_the_parent_owned_helper(monkeypatch):
+    helper = AsyncMock(return_value={"proof": True})
+    monkeypatch.setitem(
+        sys.modules, "localnet_cadence_checks", SimpleNamespace(cadence_rehearsal=helper)
+    )
+    result = asyncio.run(
+        sync.cadence_rehearsal(
+            "runner", "session", label="pending-retention", expected_pending=True
+        )
+    )
+    assert result == {"proof": True}
+    helper.assert_awaited_once_with(
+        "runner", "session", label="pending-retention", expected_pending=True
+    )
+
+
+def test_mid_ramp_checkpoint_links_native_history_signed_root_and_pending_schedule(monkeypatch):
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    responses = checkpoint_responses()
+    monkeypatch.setattr(sync, "wait_height", AsyncMock())
+    monkeypatch.setattr(sync, "rpc", AsyncMock(side_effect=responses))
+    result = asyncio.run(
+        sync.checkpoint_retention(
+            SimpleNamespace(nodes=[object()]),
+            object(),
+            {"height": 10, "app_hash": "a" * 64, "block_hash": "b" * 64},
+            {"schedule_after": schedule},
+        )
+    )
+    assert result["state"]["pending"] is True
+    assert result["state"]["effective_duration"] == 90
+    assert result["state"]["cutoff_nanos"] == 120
+    assert result["state"]["schedule"] == schedule
+
+
+@pytest.mark.parametrize("wrong", ["block", "root", "duration", "saturated"])
+def test_checkpoint_rejects_wrong_history_roots_or_inactive_ramp(monkeypatch, wrong):
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    responses = checkpoint_responses()
+    if wrong == "block":
+        responses[0]["block_id"]["hash"] = "c" * 64
+    elif wrong == "root":
+        responses[1]["block"]["header"]["app_hash"] = "c" * 64
+    elif wrong == "duration":
+        responses[2]["consensus_params"]["evidence"]["max_age_duration"] = "91"
+    else:
+        schedule["target_max_age_duration"] = 90
+    monkeypatch.setattr(sync, "wait_height", AsyncMock())
+    monkeypatch.setattr(sync, "rpc", AsyncMock(side_effect=responses))
+    with pytest.raises(Exception, match="checkpoint|retention|schedule"):
+        asyncio.run(
+            sync.checkpoint_retention(
+                SimpleNamespace(nodes=[object()]),
+                object(),
+                {"height": 10, "app_hash": "a" * 64, "block_hash": "b" * 64},
+                {"schedule_after": schedule},
+            )
+        )
+
+
+def test_fullstore_restore_keeps_exact_pending_schedule_and_safe_cutoff(monkeypatch):
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    before = sync.retention_state(schedule, clock_view(schedule, height=10, nanos=210))
+    mock_clock_samples(monkeypatch, [schedule], [220])
+    # The restored node has caught up beyond the checkpoint.
+    monkeypatch.setattr(
+        sync,
+        "committed_policy",
+        AsyncMock(return_value=(clock_view(schedule, height=11, nanos=220), {})),
+    )
+    result = asyncio.run(sync.restored_retention_state(object(), object(), {"state": before}))
+    assert result["pending"] and result["cutoff_nanos"] == before["cutoff_nanos"]
+
+
+@pytest.mark.parametrize("wrong", ["reanchor", "saturated"])
+def test_restored_pending_schedule_must_not_change_or_saturate(monkeypatch, wrong):
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    before = sync.retention_state(schedule, clock_view(schedule, height=10, nanos=210))
+    after = (
+        {**schedule, "base_max_age_duration": 84, "growth_start_nanos": 204}
+        if wrong == "reanchor"
+        else schedule
+    )
+    nanos = 220 if wrong == "reanchor" else 1200
+    monkeypatch.setattr(sync, "query", AsyncMock(return_value=after))
+    monkeypatch.setattr(
+        sync,
+        "committed_policy",
+        AsyncMock(return_value=(clock_view(after, height=11, nanos=nanos), {})),
+    )
+    with pytest.raises(Exception, match="schedule|mid-ramp"):
+        asyncio.run(sync.restored_retention_state(object(), object(), {"state": before}))
+
+
+def test_restart_cannot_reanchor_schedule_even_if_target_duration_and_cutoff_agree(monkeypatch):
+    old = clock_schedule(base=80, target=1000, start=200)
+    reanchored = clock_schedule(base=84, target=1000, start=204)
+    mock_clock_samples(monkeypatch, [old, reanchored], [210, 220])
+    monkeypatch.setattr(sync, "command", AsyncMock())
+    monkeypatch.setattr(sync, "observer_address", AsyncMock(return_value=object()))
+    monkeypatch.setattr(sync, "observer_agreement", AsyncMock(return_value={}))
+    with pytest.raises(Exception, match="Authenticated retention schedule changed"):
+        asyncio.run(
+            sync.repeated_restart(
+                object(),
+                object(),
+                "own-container",
+                object(),
+                {"target_after": 1000, "schedule_after": old},
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "previous,expected_blocks,expected_cutoff", [(0, 100002, 0), (None, 100000, 2)]
+)
+def test_security_previous_zero_is_distinct_from_an_absent_floor(
+    previous, expected_blocks, expected_cutoff
+):
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    schedule.update(
+        security_checkpoint_height=2,
+        security_checkpoint_nanos=200,
+        previous_security_checkpoint_height=previous,
+    )
+    view = clock_view(schedule, height=100002, nanos=210)
+    state = sync.retention_state(schedule, view)
+    assert state["evidence"]["max_age_num_blocks"] == str(expected_blocks)
+    assert state["block_cutoff_height"] == expected_cutoff
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"security_checkpoint_height": -1},
+        {"security_checkpoint_height": 11},
+        {"previous_security_checkpoint_height": -1},
+        {"previous_security_checkpoint_height": 1},
+        {"previous_security_checkpoint_height": False},
+        {"security_checkpoint_nanos": 211},
+        {"security_checkpoint_nanos": 200.0},
+        {"max_age_num_blocks": 0},
+        {"max_age_num_blocks": 2**63},
+    ],
+)
+def test_authenticated_security_epoch_bounds_are_not_relaxed(change):
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    view = clock_view(schedule, height=10, nanos=210)
+    with pytest.raises(Exception, match="checkpoint|schedule|block window"):
+        sync.retention_state({**schedule, **change}, view)
+
+
+def test_security_window_rejects_height_beyond_native_int64():
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    with pytest.raises(Exception, match="checkpoint height"):
+        sync.retention_state(schedule, clock_view(schedule, height=2**63, nanos=210))
+
+
+def test_security_epoch_rotation_can_reduce_effective_blocks_without_reopening_history():
+    before_schedule = clock_schedule(base=80, target=1000, start=0)
+    before_schedule.update(
+        max_age_num_blocks=2,
+        security_checkpoint_height=5,
+        security_checkpoint_nanos=1000,
+        previous_security_checkpoint_height=0,
+    )
+    after_schedule = {
+        **before_schedule,
+        "security_checkpoint_height": 11,
+        "security_checkpoint_nanos": 2100,
+        "previous_security_checkpoint_height": 5,
+    }
+    before = sync.retention_state(
+        before_schedule, clock_view(before_schedule, height=10, nanos=1500)
+    )
+    after = sync.retention_state(after_schedule, clock_view(after_schedule, height=12, nanos=2200))
+    assert before["evidence"]["max_age_num_blocks"] == "10"
+    assert after["evidence"]["max_age_num_blocks"] == "7"
+    assert (before["block_cutoff_height"], after["block_cutoff_height"]) == (0, 5)
+    sync.require_retention_progress(before, after)
+
+
+def test_security_checkpoint_accepts_signed_timestamp_domain_without_int64_ns_assumption():
+    schedule = clock_schedule(base=80, target=1000, start=-62135596800000000000)
+    schedule["security_checkpoint_nanos"] = schedule["growth_start_nanos"]
+    state = sync.retention_state(
+        schedule, clock_view(schedule, height=1, nanos=schedule["growth_start_nanos"] + 10)
+    )
+    assert state["effective_duration"] == 90
+
+
+@pytest.mark.parametrize(
+    "height,configured,checkpoint,previous,nanos",
+    [
+        (1, 1, 1, 0, 210),
+        (2**63 - 1, 2**63 - 1, 2**63 - 1, 2**63 - 1, 210),
+    ],
+)
+def test_security_window_accepts_all_inclusive_native_boundaries(
+    height, configured, checkpoint, previous, nanos
+):
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    schedule.update(
+        max_age_num_blocks=configured,
+        security_checkpoint_height=checkpoint,
+        previous_security_checkpoint_height=previous,
+        security_checkpoint_nanos=nanos,
+    )
+    state = sync.retention_state(schedule, clock_view(schedule, height=height, nanos=nanos))
+    assert int(state["evidence"]["max_age_num_blocks"]) >= configured
+
+
+@pytest.mark.parametrize("configured", [0, 2**63])
+def test_invalid_configured_security_window_cannot_hide_behind_derived_effective_value(configured):
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    schedule["max_age_num_blocks"] = configured
+    view = clock_view(schedule, height=10, nanos=210)
+    with pytest.raises(Exception, match="Invalid configured evidence block window"):
+        sync.retention_state(schedule, view)
+
+
+def test_coupled_window_growth_permits_an_unchanged_block_cutoff():
+    schedule = clock_schedule(base=80, target=1000, start=200)
+    schedule.update(
+        security_checkpoint_height=2,
+        security_checkpoint_nanos=200,
+        previous_security_checkpoint_height=0,
+    )
+    before = sync.retention_state(schedule, clock_view(schedule, height=100001, nanos=210))
+    after = sync.retention_state(schedule, clock_view(schedule, height=100002, nanos=220))
+    assert before["block_cutoff_height"] == after["block_cutoff_height"] == 0
+    sync.require_retention_progress(before, after)

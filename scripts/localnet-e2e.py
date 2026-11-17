@@ -3072,6 +3072,13 @@ class E2ERunner:
             )
             if self.args.build:
                 outputs["localnet_build"] = run_make("localnet-build", env=env).stdout
+            if self.args.suite == "full":
+                image_key = (
+                    "XIAN_NODE_SPLIT_IMAGE"
+                    if self.args.topology == "fidelity"
+                    else "XIAN_NODE_INTEGRATED_IMAGE"
+                )
+                outputs["idle_unbond_preflight"] = await self.idle_unbond_preflight(env[image_key])
             outputs["localnet_up"] = run_make("localnet-up", env=env).stdout
 
         self.network = load_network()
@@ -5130,6 +5137,24 @@ class E2ERunner:
             "allowance_state": allowance_state,
             "buyer_balance": buyer_balance,
             "seller_balance": seller_balance,
+        }
+
+    async def idle_unbond_preflight(self, image: str) -> dict[str, Any]:
+        from localnet_idle_unbond_checks import stale_unbond_preflight
+
+        return await stale_unbond_preflight(
+            image=image, output_dir=self.output_dir / "idle-unbond-private"
+        )
+
+    async def block_cadence_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
+        from localnet_cadence_checks import cadence_rehearsal
+        from localnet_idle_unbond_checks import positive_unbond_rehearsal
+
+        return {
+            "cadence": await cadence_rehearsal(
+                self, session, label="saturated-retention", expected_pending=False
+            ),
+            "positive_unbond": await positive_unbond_rehearsal(self, session),
         }
 
     async def periodic_load(self, session: aiohttp.ClientSession) -> dict[str, Any]:
@@ -10481,9 +10506,18 @@ class E2ERunner:
         return await limits_phase(self, session)
 
     async def replay_corpus_phase(self, session):
+        from localnet_idle_unbond_checks import verify_positive_record
         from localnet_replay_corpus import corpus_phase
 
-        return await corpus_phase(self, session)
+        proofs = [
+            phase.details.get("positive_unbond")
+            for phase in self.phase_results
+            if phase.name == "02-block-cadence" and phase.ok
+        ]
+        if len(proofs) != 1 or not isinstance(proofs[0], dict):
+            raise E2EError("Final replay requires one successful positive-unbond proof")
+        retained = await verify_positive_record(self, session, proofs[0])
+        return {**await corpus_phase(self, session), "positive_unbond_retained": retained}
 
     async def finalize_summary(self) -> dict[str, Any]:
         summary = {

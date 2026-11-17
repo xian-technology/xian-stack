@@ -14,8 +14,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from abci import __version__
-from cometbft.abci.v1beta3.types_pb2 import RequestPrepareProposal, RequestProcessProposal
 from nacl.signing import SigningKey
+from tendermint.abci.types_pb2 import RequestPrepareProposal, RequestProcessProposal
 from xian.fee_policy import TxFeePolicy, resolve_chain_fee_policy
 from xian.methods.prepare_proposal import prepare_proposal
 from xian.methods.process_proposal import process_proposal

@@ -425,6 +425,23 @@ another periodic interval; an explicit `on_demand` mode is refused before
 bootstrap. On-demand production remains available in localnet workload and
 performance flows.
 
+The maintained `02-block-cadence` phase temporarily measures `on_demand`,
+`idle_interval` and `periodic` modes, including recovery after a brief validator
+absence. Stage21 repeats those measurements while evidence-retention growth is
+pending, then verifies full-store restore and restart continuity. Every rehearsal
+restores the exact prior configuration before later phases. Observation windows
+contain no probe transactions; real consensus work such as liveness recovery or
+pending slash processing can still require blocks.
+
+Fresh full-suite bootstrap first runs a separate three-validator stale-time
+preflight, then stops it before starting the five-validator chain. Its genesis
+time is deliberately old; the proof records actual H1 transactions and the
+successor's clock jump, rather than claiming a real multi-day wall-clock wait.
+Resuming later phases does not repeat that extra chain. The five-node cadence phase also checks
+one positive-period unbond, its automatic successor anchor, early claim denial,
+and preservation of that captured lock after temporarily setting the period to
+zero. It restores the original policy and retains the test token as locked stake.
+
 `localnet-e2e` prints `[localnet-e2e] starting ...` and `completed ...` phase
 markers. Per-phase JSON, the final node report, and the summary live under
 `.artifacts/localnet-e2e/<run-id>/`; use those files to resume or debug a long

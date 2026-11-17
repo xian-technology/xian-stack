@@ -35,7 +35,7 @@ def test_integration_suite_runs_only_prerequisites_and_payment_checks():
         asyncio.run(operation())
     for method in vars(runner).values():
         method.assert_awaited_once_with(session)
-    assert len(phase_names()) == 36
+    assert len(phase_names()) == 37
 
 
 @pytest.mark.parametrize("suite", ["unknown", ""])

@@ -43,8 +43,12 @@ def test_fixed_localnet_chi_budgets_fit_the_default_tx_cap():
 
 # Fixed budgets kept on purpose. Every other submission supplies the simulated
 # chi plus the SDK margin: a paid transaction pays half of the chi it leaves
-# unused (revision 14), so a generous fixed budget drains the test wallets.
+# unused, so a generous fixed budget drains the test wallets.
 DELIBERATE_BUDGETS = {
+    # Dependent approve/bond/unbond calls are signed before any H1 execution;
+    # their future state cannot be simulated. The raw preflight checks the
+    # per-transaction and combined block caps; ordinary SDK calls still estimate.
+    ("localnet_idle_unbond_checks.py", "PREFLIGHT_TX_CHI"),
     # rebalance's work depends on the epoch of the block it lands in
     ("localnet_common.py", "REBALANCE_TX_CHI"),
     # a vote that reaches the threshold executes the proposal

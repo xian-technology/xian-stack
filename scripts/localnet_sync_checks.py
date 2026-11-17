@@ -36,7 +36,8 @@ from localnet_chain_checks import (
     wait_height,
     write_config,
 )
-from localnet_history_checks import collect_policy_proof
+from localnet_history_checks import PolicyView, collect_policy_proof, committed_policy
+from localnet_rng_checks import timestamp_nanoseconds
 from xian_py.wallet import Wallet
 
 DAY_NS = 86_400_000_000_000
@@ -609,11 +610,167 @@ async def find_evidence_block(session, node, start, infraction):
     raise RuntimeError("Accepted historical evidence was not committed")
 
 
+SCHEDULE_FIELDS = {
+    "version",
+    "max_age_num_blocks",
+    "base_max_age_duration",
+    "max_bytes",
+    "target_max_age_duration",
+    "growth_start_nanos",
+    "security_checkpoint_height",
+    "security_checkpoint_nanos",
+    "previous_security_checkpoint_height",
+}
+
+
+def security_window(schedule, view):
+    current = schedule["security_checkpoint_height"]
+    previous = schedule["previous_security_checkpoint_height"]
+    require(
+        type(view.height) is int and 0 <= current <= view.height <= 2**63 - 1,
+        "Invalid authenticated security checkpoint height",
+    )
+    require(
+        previous is None or (type(previous) is int and 0 <= previous <= current),
+        "Invalid previous security checkpoint height",
+    )
+    require(
+        schedule["security_checkpoint_nanos"] <= view.last_block_nanos,
+        "Security checkpoint time exceeds committed time",
+    )
+    configured = schedule["max_age_num_blocks"]
+    require(0 < configured <= 2**63 - 1, "Invalid configured evidence block window")
+    floor = previous if previous is not None else current
+    effective = max(configured, view.height - floor)
+    return effective, view.height - effective
+
+
+def retention_state(schedule, view):
+    require(
+        isinstance(schedule, dict) and set(schedule) == SCHEDULE_FIELDS,
+        "Snapshot retention requires the exact authenticated schedule fields",
+    )
+    require(
+        all(
+            type(schedule[key]) is int
+            for key in SCHEDULE_FIELDS - {"previous_security_checkpoint_height"}
+        )
+        and schedule["version"] == 2,
+        "Snapshot retention requires canonical schema2 schedule integers",
+    )
+    nanos = view.last_block_nanos
+    start = schedule["growth_start_nanos"]
+    require(nanos >= start, "Committed retention time precedes growth start")
+    duration = min(
+        schedule["target_max_age_duration"], schedule["base_max_age_duration"] + nanos - start
+    )
+    blocks, block_cutoff = security_window(schedule, view)
+    expected = {
+        "max_age_num_blocks": str(blocks),
+        "max_age_duration": str(duration),
+        "max_bytes": str(schedule["max_bytes"]),
+    }
+    require(
+        dict(view.evidence) == expected, "Committed retention differs from authenticated schedule"
+    )
+    return {
+        "schedule": dict(schedule),
+        "height": view.height,
+        "app_hash": view.app_hash,
+        "last_block_nanos": nanos,
+        "evidence": dict(view.evidence),
+        "effective_duration": duration,
+        "cutoff_nanos": nanos - duration,
+        "block_cutoff_height": block_cutoff,
+        "pending": duration < schedule["target_max_age_duration"],
+    }
+
+
+async def retention_sample(session, node):
+    schedule = await query(session, node, "/get/__evidence_policy")
+    view, _response = await committed_policy(session, node)
+    return retention_state(schedule, view)
+
+
+def require_retention_progress(before, after):
+    require(
+        after["height"] >= before["height"]
+        and after["last_block_nanos"] >= before["last_block_nanos"],
+        "Committed retention clock moved backward",
+    )
+    require(
+        after["effective_duration"] >= before["effective_duration"],
+        "Effective retention shrank after restart or policy change",
+    )
+    require(after["cutoff_nanos"] >= before["cutoff_nanos"], "Evidence cutoff moved backward")
+    require(
+        after["block_cutoff_height"] >= before["block_cutoff_height"],
+        "Block evidence cutoff moved backward",
+    )
+
+
+def require_growth_schedule(before, after):
+    old, new = before["schedule"], after["schedule"]
+    require(
+        new["target_max_age_duration"] > old["target_max_age_duration"],
+        "Snapshot retention target did not increase",
+    )
+    require(
+        new["growth_start_nanos"] >= before["last_block_nanos"],
+        "New retention growth started before the observed committed clock",
+    )
+    old_at_start = min(
+        old["target_max_age_duration"],
+        old["base_max_age_duration"] + new["growth_start_nanos"] - old["growth_start_nanos"],
+    )
+    require(
+        new["base_max_age_duration"] == old_at_start,
+        "Retention raise banked idle time toward a new target",
+    )
+    for name in ("max_age_num_blocks", "max_bytes"):
+        require(new[name] == old[name], "Configured evidence limit changed during retention raise")
+
+
+def policy_approval_height(vote):
+    receipts = [vote["proposal_receipt"], *vote["vote_receipts"]]
+    heights = [
+        int(receipt["height"])
+        for receipt in receipts
+        if any(
+            event.get("contract") == "validators"
+            and event.get("event") == "ValidatorProposalApproved"
+            and event.get("data_indexed", {}).get("proposal_id") == vote["proposal_id"]
+            for event in receipt.get("events", [])
+        )
+    ]
+    require(len(heights) == 1, "Retention raise requires one exact policy approval receipt")
+    return heights[0]
+
+
+async def growth_start_proof(session, node, increase, state):
+    height = policy_approval_height(increase)
+    block = await rpc(session, node, "block", height=height)
+    header = block["block"]["header"]
+    require(
+        header["height"] == str(height)
+        and state["schedule"]["growth_start_nanos"] == timestamp_nanoseconds(header["time"]),
+        "Retention growth anchor differs from the approving block timestamp",
+    )
+    return {"height": height, "header": header}
+
+
+async def cadence_rehearsal(runner, session, **options):
+    # Parent-owned cadence helper is imported only for its actual live substage.
+    from localnet_cadence_checks import cadence_rehearsal as rehearse
+
+    return await rehearse(runner, session, **options)
+
+
 async def retention_rehearsal(runner, session):
     async with runner.client(runner.validator_wallets[0], 0, session) as client:
         old_days = await client.get_state("validators", "config", "unbonding_period_days")
-    policy = await query(session, runner.nodes[0], "/get/__evidence_policy")
-    target = int(policy["target_max_age_duration"])
+    before = await retention_sample(session, runner.nodes[0])
+    target = before["schedule"]["target_max_age_duration"]
     new_days = target // DAY_NS + 1
     require(
         new_days <= 106750, "Snapshot retention rehearsal cannot exceed the supported policy range"
@@ -626,14 +783,17 @@ async def retention_rehearsal(runner, session):
         "snapshot-retention-increase",
     )
     grown = await collect_policy_proof(session, runner.nodes[0])
-    current = await query(session, runner.nodes[0], "/get/__evidence_policy")
+    current = await retention_sample(session, runner.nodes[0])
+    require_growth_schedule(before, current)
+    require_retention_progress(before, current)
     require(
-        int(current["target_max_age_duration"]) > target,
-        "Snapshot retention target did not increase",
-    )
-    require(
-        int(current["max_age_duration"]) > int(policy["max_age_duration"]),
+        current["effective_duration"] > before["effective_duration"],
         "Effective retention did not grow after the policy increase",
+    )
+    start_proof = await growth_start_proof(session, runner.nodes[0], increase, current)
+    require(current["pending"], "Retention rehearsal must remain mid-ramp")
+    cadence = await cadence_rehearsal(
+        runner, session, label="pending-retention", expected_pending=True
     )
     decrease = await governance_vote(
         runner,
@@ -642,46 +802,111 @@ async def retention_rehearsal(runner, session):
         {"unbonding_period_days": old_days},
         "snapshot-retention-restore",
     )
-    reduced = await query(session, runner.nodes[0], "/get/__evidence_policy")
+    reduced = await retention_sample(session, runner.nodes[0])
     require(
-        reduced["target_max_age_duration"] == current["target_max_age_duration"],
-        "Retention high-water shrank after policy reduction",
+        reduced["schedule"] == current["schedule"],
+        "Retention high-water or authenticated schedule changed after policy reduction",
     )
+    require_retention_progress(current, reduced)
+    require(reduced["pending"], "Full-store backup must retain a pending growth schedule")
     return {
         "original_days": old_days,
         "raised_days": new_days,
         "target_before": target,
-        "target_after": int(reduced["target_max_age_duration"]),
+        "target_after": reduced["schedule"]["target_max_age_duration"],
+        "schedule_after": reduced["schedule"],
+        "initial_state": before,
+        "growth_state": current,
+        "restored_state": reduced,
         "increase_vote": increase,
         "restore_vote": decrease,
         "growth_proof": grown,
+        "growth_start_proof": start_proof,
+        "reduction_proof": await collect_policy_proof(session, runner.nodes[0]),
+        "cadence": cadence,
     }
 
 
 async def repeated_restart(runner, session, container, observer, retention):
     proof = []
     for attempt in range(2):
-        before = await query(session, observer, "/get/__evidence_policy")
+        before = await retention_sample(session, observer)
         await command("docker", "restart", "--time", "30", container)
         observer = await observer_address(container, "full-node-store")
         consensus = await observer_agreement(runner, session, observer)
-        after = await query(session, observer, "/get/__evidence_policy")
+        after = await retention_sample(session, observer)
         require(
-            int(after["target_max_age_duration"]) == retention["target_after"],
+            after["schedule"]["target_max_age_duration"] == retention["target_after"],
             "Restored retention target changed after restart",
         )
         require(
-            int(after["max_age_duration"]) >= int(before["max_age_duration"]),
-            "Effective retention shrank after restart",
+            before["schedule"] == after["schedule"] == retention["schedule_after"],
+            "Authenticated retention schedule changed after restart",
         )
+        require_retention_progress(before, after)
         proof.append(
             {
                 "attempt": attempt + 1,
                 "consensus": consensus,
+                "before": before,
+                "after": after,
                 "evidence_policy": await collect_policy_proof(session, observer),
             }
         )
     return proof
+
+
+async def checkpoint_retention(runner, session, manifest, retention):
+    node = runner.nodes[0]
+    height = manifest["height"]
+    await wait_height(session, node, height + 1)
+    block, next_block, parameters = await asyncio.gather(
+        rpc(session, node, "block", height=height),
+        rpc(session, node, "block", height=height + 1),
+        rpc(session, node, "consensus_params", height=height + 1),
+    )
+    header, next_header = block["block"]["header"], next_block["block"]["header"]
+    require(
+        header["height"] == str(height)
+        and next_header["height"] == str(height + 1)
+        and int(parameters["block_height"]) == height + 1,
+        "Snapshot checkpoint response heights do not match the signed checkpoint height",
+    )
+    require(
+        block["block_id"]["hash"].lower() == manifest["block_hash"].lower(),
+        "Snapshot checkpoint block differs from live canonical history",
+    )
+    require(
+        next_header["app_hash"].lower() == manifest["app_hash"].lower(),
+        "Snapshot checkpoint application root differs from the next header",
+    )
+    state = retention_state(
+        retention["schedule_after"],
+        PolicyView(
+            height=height,
+            app_hash=manifest["app_hash"],
+            last_block_nanos=timestamp_nanoseconds(header["time"]),
+            evidence=parameters["consensus_params"]["evidence"],
+        ),
+    )
+    require(state["pending"], "Full-store checkpoint must be mid-ramp")
+    return {
+        "state": state,
+        "header": header,
+        "next_header": next_header,
+        "consensus_params": parameters,
+    }
+
+
+async def restored_retention_state(session, observer, checkpoint):
+    state = await retention_sample(session, observer)
+    before = checkpoint["state"]
+    require(
+        state["schedule"] == before["schedule"], "Full-store restore changed retention schedule"
+    )
+    require_retention_progress(before, state)
+    require(state["pending"], "Full-store restored peer must remain mid-ramp")
+    return state
 
 
 async def snapshot_export(runner, source_home, target_home, image, backup):
@@ -770,6 +995,7 @@ async def full_store_rehearsal(runner, session, image, network, source_home, pee
         manifest_path, manifest, negatives = await snapshot_export(
             runner, replay_home, target_home, image, backup
         )
+        checkpoint = await checkpoint_retention(runner, session, manifest, retention)
         advance_recipient_signing_state(target_home, manifest["height"])
         rejected = await restore_snapshot(runner, target_home, manifest_path, negatives)
         restored = await create_observer(
@@ -777,6 +1003,7 @@ async def full_store_rehearsal(runner, session, image, network, source_home, pee
         )
         created.append((restored_container, "full-node-store"))
         restored_proof = await observer_agreement(runner, session, restored)
+        restored_retention = await restored_retention_state(session, restored, checkpoint)
         evidence = await historical_evidence(runner, session, restored, manifest["height"])
         restarts = await repeated_restart(runner, session, restored_container, restored, retention)
         return {
@@ -791,6 +1018,8 @@ async def full_store_rehearsal(runner, session, image, network, source_home, pee
             ],
             "negative_restores": rejected,
             "retention": retention,
+            "retention_checkpoint": checkpoint,
+            "restored_retention": restored_retention,
             "historical_evidence": evidence,
             "restarts": restarts,
         }

@@ -44,8 +44,8 @@ LOCALNET_IMAGE_BY_TOPOLOGY = {
 
 sys.path.append(str(XIAN_ABCI_SRC))
 import nacl.signing  # noqa: E402
-from cometbft.types.v1 import canonical_pb2  # noqa: E402
 from google.protobuf.timestamp_pb2 import Timestamp  # noqa: E402
+from tendermint.types import canonical_pb2  # noqa: E402
 from xian_py.config import RetryPolicy, SubmissionConfig, XianClientConfig  # noqa: E402
 from xian_py.wallet import Wallet  # noqa: E402
 from xian_py.xian_async import XianAsync  # noqa: E402

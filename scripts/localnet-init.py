@@ -317,7 +317,7 @@ def build_localnet_genesis(
         }
         for n in nodes
     ]
-    return build_local_network_genesis(
+    genesis = build_local_network_genesis(
         chain_id=chain_id,
         founder_private_key=nodes[0]["validator_material"]["validator_private_key_hex"],
         validators=validators,
@@ -326,6 +326,10 @@ def build_localnet_genesis(
         runtime_features={"zk": runtime_feature_zk},
         fee_policy=fee_policy,
     )
+    # A nonempty official0.40 field6 exercises the real Go InitChain wire.
+    # This opaque sentinel belongs only to disposable localnet test genesis.
+    genesis["consensus_params"]["authority"] = {"authority": "xian-localnet-e2e"}
+    return genesis
 
 
 PROFILE_CONSENSUS_DEFAULTS = {

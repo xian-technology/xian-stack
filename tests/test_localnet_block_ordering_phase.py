@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 MODULE_PATH = Path(__file__).absolute().parents[1] / "scripts" / "localnet-e2e.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
@@ -21,6 +22,31 @@ else:
 
 
 class LocalnetBlockOrderingPhaseTests(unittest.TestCase):
+    def test_full_suite_measures_idle_cadence_before_contract_workloads(self):
+        names = localnet_e2e.E2ERunner.phase_names()
+        self.assertLess(names.index("02-xian-py-smoke"), names.index("02-block-cadence"))
+        self.assertLess(names.index("02-block-cadence"), names.index("03-contract-orchestration"))
+        import localnet_cadence_checks
+        import localnet_idle_unbond_checks
+
+        runner, session = object(), object()
+        with (
+            patch.object(
+                localnet_cadence_checks, "cadence_rehearsal", AsyncMock(return_value={"cases": [1]})
+            ) as check,
+            patch.object(
+                localnet_idle_unbond_checks,
+                "positive_unbond_rehearsal",
+                AsyncMock(return_value={"anchored": True}),
+            ) as unbond,
+        ):
+            result = asyncio.run(localnet_e2e.E2ERunner.block_cadence_phase(runner, session))
+        self.assertEqual(result, {"cadence": {"cases": [1]}, "positive_unbond": {"anchored": True}})
+        check.assert_awaited_once_with(
+            runner, session, label="saturated-retention", expected_pending=False
+        )
+        unbond.assert_awaited_once_with(runner, session)
+
     def test_full_suite_selects_periodic_blocks_even_with_throughput_tuning(self):
         args = localnet_e2e.build_parser().parse_args([])
         with (

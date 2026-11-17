@@ -85,6 +85,17 @@ def test_default_profile_summary(run_init, tmp_path):
     assert (tmp_path / "docker-compose-localnet.yml").is_file()
 
 
+def test_localnet_genesis_exercises_official_040_authority_in_every_init_chain(run_init, tmp_path):
+    run_init("--nodes", "5", "--topology", "fidelity", "--chain-id", "xian-authority-test")
+    genesis = [
+        json.loads((tmp_path / f".localnet/node-{i}/.cometbft/config/genesis.json").read_text())
+        for i in range(5)
+    ]
+    assert all(value == genesis[0] for value in genesis)
+    assert genesis[0]["consensus_params"]["authority"] == {"authority": "xian-localnet-e2e"}
+    assert len(genesis[0]["app_hash"]) == 64
+
+
 @pytest.mark.parametrize(
     ("topology", "image_variable"),
     [("integrated", "XIAN_NODE_INTEGRATED_IMAGE"), ("fidelity", "XIAN_NODE_SPLIT_IMAGE")],
