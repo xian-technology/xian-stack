@@ -396,7 +396,7 @@ async def rejected_restore(runner, target, manifest_url, label):
 
 
 def sign_manifest(manifest, wallet, path):
-    from xian.node_admin import full_node_store_manifest_payload
+    from xian.full_node_store import full_node_store_manifest_payload
 
     manifest = {**manifest, "signing_public_key": wallet.public_key}
     manifest["signature"] = wallet.sign_msg(full_node_store_manifest_payload(manifest))

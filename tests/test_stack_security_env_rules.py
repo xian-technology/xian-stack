@@ -63,10 +63,10 @@ def test_explicit_values_are_kept(tmp_path):
     assert result["XIAN_BDS_PASSWORD_FILE"] == str(password_file)
 
 
-def test_removed_bds_settings_are_refused_by_name(tmp_path):
-    with pytest.raises(ValueError, match="XIAN_BDS_PASSWORD.*xian.toml"):
+def test_unknown_bds_settings_are_refused_by_name(tmp_path):
+    with pytest.raises(ValueError, match="unknown stack BDS variable"):
         backend.ensure_stack_security_env(
-            {"XIAN_STACK_SECRETS_ENV": str(tmp_path / "secrets.env"), "XIAN_BDS_PASSWORD": "x"}
+            {"XIAN_STACK_SECRETS_ENV": str(tmp_path / "secrets.env"), "XIAN_BDS_UNKNOWN": "x"}
         )
 
 

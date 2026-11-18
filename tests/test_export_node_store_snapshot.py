@@ -403,7 +403,7 @@ def test_locked_native_and_staged_checkpoint_must_match_each_dimension(
 ):
     import contextlib
 
-    import xian.node_admin as protocol
+    import xian.full_node_store as protocol
 
     root = home(tmp_path)
     (root / "config/genesis.json").write_text("{}")

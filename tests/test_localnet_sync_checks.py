@@ -485,7 +485,7 @@ def test_negative_archives_are_independently_signed_but_fail_distinct_integrity_
     import io
     import tarfile
 
-    from xian.node_admin import verify_full_node_store_manifest
+    from xian.full_node_store import verify_full_node_store_manifest
 
     wallet = sync.Wallet()
     archive = tmp_path / "store.tar.gz"

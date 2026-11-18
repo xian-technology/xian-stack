@@ -111,9 +111,9 @@ def test_make_node_configure_never_handles_the_bds_password(configuration_probe,
     assert password not in result.stdout
 
 
-@pytest.mark.parametrize("variable", ["XIAN_BDS_PASSWORD", "XIAN_BDS_HOST", "XIAN_BDS_DSN"])
+@pytest.mark.parametrize("variable", ["XIAN_BDS_UNKNOWN", "XIAN_BDS_TYPO"])
 @pytest.mark.parametrize("source", ["environment", "make"])
-def test_removed_bds_settings_fail_configuration_by_name(configuration_probe, variable, source):
+def test_unknown_bds_settings_fail_configuration_by_name(configuration_probe, variable, source):
     if source == "make":
         result, observed = configuration_probe(make_arguments=[f"{variable}=old-value"])
     else:
@@ -121,7 +121,7 @@ def test_removed_bds_settings_fail_configuration_by_name(configuration_probe, va
 
     assert result.returncode != 0
     assert variable in result.stderr
-    assert "xian.toml" in result.stderr
+    assert "unknown stack BDS variable" in result.stderr
     assert "old-value" not in result.stderr
     assert observed is None
 

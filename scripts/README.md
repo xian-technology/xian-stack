@@ -74,7 +74,7 @@ tooling behind `xian-stack`.
 
 ## Notes
 
-The credentials file contains only `XIAN_POSTGRAPHILE_PASSWORD`. New writes
+The credentials file contains only `XIAN_POSTGRAPHILE_PASSWORD`. Values
 use JSON strings after an explicit version marker, preserving quotes,
 backslashes, dollar text, and newlines:
 
@@ -89,17 +89,14 @@ trailing newlines are ignored, as Postgres' `POSTGRES_PASSWORD_FILE` does):
 credentials file. It is generated on first use, must differ from the
 PostGraphile password and must not be `xian`. Consumers only ever receive its
 path: Compose mounts it as `/run/secrets/xian_bds_password` for Postgres, the
-PostGraphile role setup and the node. A credentials file that still contains
-`XIAN_BDS_PASSWORD` fails with an error naming it; move the value into the BDS
-password file and delete the line.
+PostGraphile role setup and the node.
 
-The shared reader also accepts unmarked legacy assignments, removing enclosing
-quotes literally while preserving backslashes. Shell expressions are literal
-values. Malformed or duplicate entries fail before commands run. Complete legacy
-files retain their original bytes; nonempty environment values override the
-stored values. Credentials are created with mode `0600`, and a private sibling
-lock serializes first use. Compose receives decoded environment values rather
-than reading this file as dotenv syntax. `CONFIGURE_ARGS` uses shell-style
+The reader requires the version marker and JSON-quoted strings. Unknown keys,
+malformed values and duplicate entries fail before commands run. Shell
+expressions are literal values. Nonempty environment values override stored
+values. Credentials are created with mode `0600`, and a private sibling lock
+serializes first use. Compose receives decoded environment values.
+`CONFIGURE_ARGS` uses shell-style
 quoting to group arguments, with no command or variable expansion.
 
 - Prefer stable script entrypoints over ad hoc shell fragments in CI or

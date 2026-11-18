@@ -113,9 +113,9 @@ The stack defaults to fail-closed host bindings:
 - BDS node settings (connection, pool, catch-up, spool) live only in the node's
   `xian.toml` `[bds]` table. Change them with `xian-configure-node` flags, for
   example `make node-configure CONFIGURE_ARGS="--bds-pool-max-size 20"`, or in
-  the xian-cli profile; the stack no longer reads `XIAN_BDS_*` setting
-  variables and refuses to run while one (such as `XIAN_BDS_PASSWORD` or
-  `XIAN_BDS_HOST`) is set.
+  the xian-cli profile. Stack BDS variables select service enablement, persistent
+  storage, the password-file path and snapshot operations; unknown variables
+  in that namespace are rejected.
 - BDS uses a dedicated read-only PostgreSQL role for PostGraphile rather than
   the BDS owner account.
 - PostGraphile uses the standard v5 Amber preset, connection filtering and
@@ -135,15 +135,6 @@ The stack defaults to fail-closed host bindings:
 BDS, localnet, and database CI use PostgreSQL 18.7. The database volume mounts
 at `/var/lib/postgresql`; the image stores its cluster in `18/docker` below
 that directory. `XIAN_POSTGRES_IMAGE` overrides the single-node image.
-
-An existing PostgreSQL 17 BDS directory requires a major-version migration
-before starting with this image. Stop the node and its query services, take a
-logical database dump and a roles backup with the PostgreSQL 17 tools, and
-retain the original data directory. Restore into a fresh PostgreSQL 18.7
-directory and verify indexed height, database contents and GraphQL reads before
-resuming writes. Do not copy PostgreSQL 17 data files into `18/docker` or delete
-the original directory to make startup succeed. See the
-[operator guidance](../xian-docs-web/node/configuration.md#postgresql-version-and-storage).
 
 ### Localnet
 

@@ -6,46 +6,7 @@ from pathlib import Path
 
 STACK_ROOT = Path(__file__).absolute().parents[1]
 
-# BDS node settings live only in the node's xian.toml [bds] table; these
-# variables were a second, silently merged source and are gone everywhere.
-REMOVED_BDS_SETTING_VARIABLES = tuple(
-    f"XIAN_BDS_{name}"
-    for name in (
-        "DSN",
-        "HOST",
-        "PORT",
-        "DATABASE",
-        "USER",
-        "PASSWORD",
-        "POOL_MIN_SIZE",
-        "POOL_MAX_SIZE",
-        "STATEMENT_TIMEOUT_MS",
-        "ACQUIRE_TIMEOUT_MS",
-        "APPLICATION_NAME",
-        "QUEUE_MAX_SIZE",
-        "CATCHUP_ENABLED",
-        "CATCHUP_POLL_SECONDS",
-        "RPC_URL",
-        "SPOOL_DIR",
-        "SPOOL_WARN_ENTRIES",
-        "SPOOL_WARN_BYTES",
-        "DISK_FREE_WARN_BYTES",
-    )
-)
 SECRET = "/run/secrets/xian_bds_password"
-CONFIGURATION_SURFACES = (
-    "Makefile",
-    "docker-compose-abci.yml",
-    "docker-compose-abci-bds.yml",
-    "docker-compose-abci-dev.yml",
-    "scripts/stack-env.sh",
-    "scripts/configure_node.py",
-    "scripts/backend.py",
-    "scripts/localnet-init.py",
-    "scripts/localnet-e2e.py",
-    "scripts/storage-report.py",
-    "docker/postgres/init-postgraphile-role.sh",
-)
 
 
 def service_block(compose: str, name: str) -> str:
@@ -65,13 +26,6 @@ POSTGRAPHILE_HARDENING_ENV_KEYS = {
 
 
 class StackBdsWiringTests(unittest.TestCase):
-    def test_no_configuration_surface_carries_removed_bds_settings(self) -> None:
-        for relative in CONFIGURATION_SURFACES:
-            text = (STACK_ROOT / relative).read_text(encoding="utf-8")
-            for name in REMOVED_BDS_SETTING_VARIABLES:
-                with self.subTest(file=relative, name=name):
-                    self.assertIsNone(re.search(rf"\b{name}\b", text))
-
     def test_node_and_postgres_read_one_mounted_password_secret(self) -> None:
         compose = (STACK_ROOT / "docker-compose-abci-bds.yml").read_text(encoding="utf-8")
         abci = service_block(compose, "abci")

@@ -27,44 +27,29 @@ FORMAT_HEADER = "# xian-stack-credentials-v1"
 BDS_PASSWORD_FILE_KEY = "XIAN_BDS_PASSWORD_FILE"
 BDS_PASSWORD_FILE_NAME = ".stack-bds-password"
 BDS_DATABASE_USER = "xian"
-# BDS node settings live only in the node's xian.toml [bds] table and its
-# password only in the BDS password file. These variables were a second,
-# silently merged source; setting one now fails instead of being ignored.
-REMOVED_BDS_VARIABLES = tuple(
-    f"XIAN_BDS_{name}"
+# Stack operations consume these variables; node settings come from xian.toml.
+BDS_ENVIRONMENT_KEYS = frozenset(
+    "XIAN_BDS_" + name
     for name in (
-        "DSN",
-        "HOST",
-        "PORT",
-        "DATABASE",
-        "USER",
-        "PASSWORD",
-        "POOL_MIN_SIZE",
-        "POOL_MAX_SIZE",
-        "STATEMENT_TIMEOUT_MS",
-        "ACQUIRE_TIMEOUT_MS",
-        "APPLICATION_NAME",
-        "QUEUE_MAX_SIZE",
-        "CATCHUP_ENABLED",
-        "CATCHUP_POLL_SECONDS",
-        "RPC_URL",
-        "SPOOL_DIR",
-        "SPOOL_WARN_ENTRIES",
-        "SPOOL_WARN_BYTES",
-        "DISK_FREE_WARN_BYTES",
+        "ENABLED",
+        "DATA_DIR",
+        "PASSWORD_FILE",
+        "SNAPSHOT_PATH",
+        "SNAPSHOT_CONTAINER_PATH",
+        "SNAPSHOT_FORCE",
+        "SNAPSHOT_CLEAR_SPOOL",
     )
 )
 
 
-def reject_removed_bds_variables(environment: Mapping[str, str]) -> None:
-    removed = [name for name in REMOVED_BDS_VARIABLES if name in environment]
-    if removed:
-        raise ValueError(
-            f"no longer read: {', '.join(removed)}. BDS node settings live only in the "
-            "node's xian.toml [bds] table (change them with xian-configure-node flags in "
-            "CONFIGURE_ARGS or the xian-cli profile) and the BDS password only in the "
-            f"{BDS_PASSWORD_FILE_KEY} file; unset these variables"
-        )
+def validate_bds_environment(environment: Mapping[str, str]) -> None:
+    unknown = sorted(
+        key
+        for key in environment
+        if key.startswith("XIAN_BDS_") and key not in BDS_ENVIRONMENT_KEYS
+    )
+    if unknown:
+        raise ValueError(f"unknown stack BDS variable(s): {', '.join(unknown)}")
 
 
 def _literal_value(value: object) -> str:
@@ -77,49 +62,33 @@ def _literal_value(value: object) -> str:
     return value
 
 
-def _parse_value(raw: str, line_number: int, *, json_strings: bool) -> str:
-    if json_strings:
-        try:
-            return _literal_value(json.loads(raw))
-        except (ValueError, TypeError) as exc:
-            raise ValueError(f"invalid credential value on line {line_number}") from exc
-    if raw.startswith(("'", '"')):
-        if len(raw) < 2 or not raw.endswith(raw[0]):
-            raise ValueError(f"invalid credential value on line {line_number}")
-        raw = raw[1:-1]
-    return _literal_value(raw)
+def _parse_value(raw: str, line_number: int) -> str:
+    try:
+        return _literal_value(json.loads(raw))
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"invalid credential value on line {line_number}") from exc
 
 
 def _parse_credentials(source: str) -> dict[str, str]:
     values: dict[str, str] = {}
     lines = source.splitlines()
-    json_strings = _uses_json_values(lines)
+    _validate_format_header(lines)
     for line_number, raw in enumerate(lines, 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         key, separator, value = line.partition("=")
         key = key.strip()
-        if key == "XIAN_BDS_PASSWORD":
-            raise ValueError(
-                f"XIAN_BDS_PASSWORD on line {line_number} is no longer read from the "
-                "credentials file: the BDS password lives only in the "
-                f"{BDS_PASSWORD_FILE_KEY} file (default {BDS_PASSWORD_FILE_NAME} beside "
-                "this file, mode 0600); move the value there and delete the line"
-            )
         if not separator or key not in CREDENTIAL_KEYS or key in values:
             raise ValueError(f"invalid credential assignment on line {line_number}")
-        values[key] = _parse_value(value.strip(), line_number, json_strings=json_strings)
+        values[key] = _parse_value(value.strip(), line_number)
     return values
 
 
-def _uses_json_values(lines: list[str]) -> bool:
+def _validate_format_header(lines: list[str]) -> None:
     headers = [line for line in lines if line.startswith("# xian-stack-credentials-")]
-    if not headers:
-        return False
-    if headers != [FORMAT_HEADER] or lines[0] != FORMAT_HEADER:
+    if not lines or lines[0] != FORMAT_HEADER or headers != [FORMAT_HEADER]:
         raise ValueError("unsupported or misplaced credential format header")
-    return True
 
 
 def _open_regular(path: Path, flags: int) -> int:
@@ -238,7 +207,7 @@ def bds_password_errors(bds_password: str, postgraphile_password: str) -> list[s
 def ensure_credentials(path: Path, environment: Mapping[str, str]) -> dict[str, str]:
     """The PostGraphile password and the BDS password file's path, creating
     whichever is missing."""
-    reject_removed_bds_variables(environment)
+    validate_bds_environment(environment)
     password_path = bds_password_path(path, environment)
     with _credential_lock(path):
         stored = read_credentials(path)
