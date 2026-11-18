@@ -426,7 +426,7 @@ def run_make_target(
     else:
         kwargs["capture_output"] = capture_output
     return subprocess.run(
-        ["make", target],
+        ["make", "--no-print-directory", target],
         **kwargs,
     )
 

@@ -2,11 +2,12 @@
 
 ## Resume point
 
-Latest handoff, 2026-11-18: stack `v0.3.5`, source
-`ec3f43152328b8c7933c89f34a7203ccd6b27e58`, replaces the failed v0.3.4 attempt.
-[Replacement image workflow](https://github.com/xian-technology/xian-stack/actions/runs/44202339923) was triggered and is deliberately
-not monitored. Wait for the user to report successful publication, then resolve
-the immutable digest. Component pins below remain unchanged.
+Latest checkpoint, 2026-11-18: stack v0.3.5 also failed before image publication
+in [run 44202339923](https://github.com/xian-technology/xian-stack/actions/runs/44202339923).
+The fresh-node snapshot test hit nested Make directory banners in backend
+status JSON. Stack v0.3.6 is being prepared with that output-contract fix;
+component pins below remain unchanged. Wait for the replacement handoff and
+the user's publication confirmation before selecting an immutable image digest.
 
 Recorded 2026-11-17. The user requested package releases and an image build
 before continuing this investigation. Do not run a saturation workload against
@@ -272,3 +273,27 @@ on-demand rejection. Replacement stack v0.3.5 keeps the same component refs;
 the replacement source is `ec3f43152328b8c7933c89f34a7203ccd6b27e58` and the
 workflow is linked at the resume point above. Wait for the user to report
 successful image publication before resuming this investigation.
+
+### Useful evidence from the failed v0.3.5 attempt
+
+Run 44202339923 passed phases 00–20 before the unrelated snapshot/status
+failure in phase 21. Its `xian-stack-release-safety-artifacts` artifact
+(ID 14385965423) contains public E2E evidence under
+`public-localnet-e2e/20261118T000146Z/`.
+
+- `09-bds-catchup.json`: baseline height 469, zero lag/queue/spool. During the
+  deliberate PostgreSQL outage, the chain reached 480 and queued/spooled 11
+  blocks without an enqueue error. After recovery, height 488 had zero lag,
+  empty queue/spool and healthy database status. Ten catchup transactions and
+  the last transaction's event/eight state writes were checked. A second BDS
+  instance also resumed indexing after its outage.
+- `08-throughput-mix.json`: 289 transactions across transfer-fanout and
+  contract-heavy scenarios, 48.134 seconds, reported aggregate 6.004 TPS.
+  This is the periodic full-E2E workload and its measurement window, not a
+  saturation run or a chain/BDS capacity estimate. Do not substitute it for
+  the isolated campaign planned above.
+
+Local inspection copies: `/tmp/xian-image-v035-artifacts` and
+`/tmp/xian-image-v035-failed.log`; GitHub artifact retention is finite. No image
+was published by this attempt. The recovery changes only stack Make output;
+it does not change the frozen ABCI, contracting, configs or SDK source pins.

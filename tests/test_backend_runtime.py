@@ -1,14 +1,47 @@
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import pytest
+
+sys.path.insert(0, str(Path(__file__).absolute().parents[1] / "scripts"))
 
 import backend
+
+
+@pytest.mark.parametrize("makeflags", ["", "w"])
+def test_run_make_target_preserves_json_inside_parent_make(tmp_path, makeflags):
+    (tmp_path / "Makefile").write_text(
+        "node-status:\n\t@printf '%s\\n' '{\"backend_running\": false}'\n"
+    )
+    # The release gate invokes the CLI from `make localnet-e2e`, which exports
+    # MAKELEVEL. GNU Make 4 prints directory banners automatically; `w` also
+    # exercises that behavior on macOS's older Make. Do not mock Make's output.
+    with patch.object(backend, "STACK_DIR", tmp_path):
+        result = backend.run_make_target(
+            "node-status", env={**os.environ, "MAKELEVEL": "1", "MAKEFLAGS": makeflags}
+        )
+    assert json.loads(result.stdout) == {"backend_running": False}
+
+
+def test_run_make_target_propagates_failure_and_diagnostics(tmp_path):
+    (tmp_path / "Makefile").write_text(
+        "node-status:\n\t@echo partial-output; echo status-failed >&2; exit 1\n"
+    )
+    with (
+        patch.object(backend, "STACK_DIR", tmp_path),
+        pytest.raises(subprocess.CalledProcessError) as failure,
+    ):
+        backend.run_make_target("node-status")
+    assert failure.value.returncode != 0
+    assert "partial-output" in failure.value.stdout
+    assert "status-failed" in failure.value.stderr
 
 
 class BackendRuntimeTests(unittest.TestCase):
@@ -24,7 +57,7 @@ class BackendRuntimeTests(unittest.TestCase):
 
         self.assertEqual(result, completed)
         args, kwargs = run_mock.call_args
-        self.assertEqual(args[0], ["make", "node-start-bds"])
+        self.assertEqual(args[0], ["make", "--no-print-directory", "node-start-bds"])
         self.assertIs(kwargs["stdout"], sys.stderr)
         self.assertIs(kwargs["stderr"], sys.stderr)
         self.assertNotIn("capture_output", kwargs)
