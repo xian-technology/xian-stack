@@ -199,10 +199,10 @@ python3 ./scripts/backend.py start --no-bds-enabled --shielded-relayer
 
 Defaults to `127.0.0.1`. Binding to a non-loopback host requires
 `XIAN_SHIELDED_RELAYER_AUTH_TOKEN`. When enabled, exposes Prometheus metrics
-at `/metrics`. Relayer timeout, polling interval, and chi-margin environment
-values must be finite numbers. See `docs/` and the relayer environment variables in this
-repo's history for the full policy surface
-(`XIAN_SHIELDED_RELAYER_*`).
+at `/metrics`. Relayer timeout and polling-interval values must be finite. Automatic
+submissions use the SDK's simulated chi plus its 2-chi margin. See
+[the service configuration](scripts/shielded_relayer_service.py) for the
+`XIAN_SHIELDED_RELAYER_*` environment variables.
 
 Deterministic DEX automation:
 
@@ -310,8 +310,7 @@ ledgers, escrow, batch payments, foreign storage, signatures and time/random
 bridges. It checks explicit outcomes and state on all five validators, including
 rollback and recovery after expected failures. Canonical deployment also covers
 f-strings with nested quoted lookups and dictionary-literal interpolation,
-checking their returned values and persisted state. Numeric checks pin portable
-float-power bits; two final RNG calls verify exact transaction-context seeding
+checking their returned values and persisted state. Numeric checks pin exact V2 decimal arithmetic and rounding; two final RNG calls verify exact transaction-context seeding
 and agreement across validators. See the
 [contract coverage matrix](workloads/e2e/contract_suite/README.md) for scenarios
 and limits. The same sources run in a fast native test before network execution.
@@ -335,7 +334,7 @@ The validator phase rejects registration through an intermediary contract while
 retaining the valid validator removal and re-registration flow.
 
 The storage phase also verifies dictionary key equality and duplicate replacement,
-large integer/float distinctions, nested list removal, and rollback of writes and
+bounded large-integer comparisons, nested list removal, and rollback of writes and
 events after an unhashable key. All five validators must agree on receipts and
 persisted results, and a follow-up transaction must succeed after the failure.
 It also exercises shared references and shallow copies, receiver evaluation order,
@@ -539,13 +538,30 @@ shell access. Use `xian-cli` for human-facing operator workflows.
 
 ```bash
 make validate
-make smoke
 make smoke-cli
 ```
 
-`make smoke` is the main repo safety net. `make smoke-cli` is the cross-repo
-operator-flow gate. `make release-safety` runs the full release-grade gate
-before tagging this repo.
+`make smoke` configures a node home and starts/stops its Compose project. Make
+exports the normal home path, so `XIAN_SMOKE_ROOT` alone does not isolate it.
+Use an explicit disposable home, data directory and project; select unused ports:
+
+```bash
+smoke_dir=$(mktemp -d)
+COMPOSE_PROJECT_NAME=xian-stack-smoke \
+XIAN_NODE_INTEGRATED_IMAGE=xian-node-smoke:local \
+XIAN_COMETBFT_HOME="$smoke_dir/cometbft" \
+XIAN_BDS_DATA_DIR="$smoke_dir/bds" \
+XIAN_STACK_SECRETS_ENV="$smoke_dir/secrets.env" \
+XIAN_SMOKE_COMETBFT_RPC_PORT=42657 \
+XIAN_SMOKE_COMETBFT_P2P_PORT=42656 \
+XIAN_SMOKE_COMETBFT_METRICS_PORT=42660 \
+XIAN_SMOKE_APP_METRICS_PORT=43108 \
+XIAN_SMOKE_DASHBOARD_PORT=42080 make smoke
+```
+
+The smoke check builds the node image, checks startup/RPC availability, and
+shuts its project down. `make smoke-cli` checks the CLI operator flow;
+`make release-safety` runs the full release gate before tagging.
 
 ## Related Docs
 
