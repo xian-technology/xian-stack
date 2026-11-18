@@ -153,3 +153,14 @@ configured absolute identity exclusions through the shared Node path rules.
 Unavailable absolute identity files are refused before copying. Use relative
 identity paths within the node home, or an accessible configured home alias;
 never remove keys or signing state to make a backup proceed.
+
+## Performance campaigns
+
+`localnet-tps-bench.py` runs repeated transfer/contract-heavy workloads with
+explicit nonce/chi (`manual`) or persistent SDK nonce/simulation (`automatic`).
+`localnet_benchmark_checks.py` validates successful samples and compares medians
+against an explicitly accepted, compatible baseline. `localnet-workload.py`
+keeps its `simulated` default for existing E2E consumers. See the public
+[performance guide](../../xian-docs-web/node/performance.md) for invocation,
+measurement boundaries and the hosted CI policy. Benchmark reports exclude
+wallet derivation seeds, private keys and raw workload output.

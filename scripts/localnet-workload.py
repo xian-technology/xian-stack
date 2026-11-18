@@ -145,6 +145,7 @@ class WorkloadContext:
         self._next_nonce: dict[str, int] = {}
         self._submission_affinity: dict[str, int] = {}
         self._nonce_lock = asyncio.Lock()
+        self._automatic_clients: dict[str, XianAsync] = {}
         self._session: aiohttp.ClientSession | None = None
 
     def contract_submission_kwargs(
@@ -415,6 +416,28 @@ class WorkloadContext:
         node = self.nodes[preferred_index % len(self.nodes)]
         return await simulated_chi_supply(self.session, node.rpc_url, payload) + extra_chi
 
+    async def broadcast_automatic(self, *, wallet, rpc_index, contract, function, kwargs, mode):
+        """Keep one SDK nonce manager per sender; ambiguous sends fail the benchmark."""
+        node = self.nodes[self.submission_index(rpc_index)]
+        if wallet.public_key not in self._automatic_clients:
+            self._automatic_clients[wallet.public_key] = XianAsync(
+                config=XianClientConfig(vm_profile="xian_vm_v2"),
+                node_url=node.rpc_url,
+                chain_id=self.chain_id,
+                wallet=wallet,
+                session=self.session,
+            )
+        return node, await self._automatic_clients[wallet.public_key].send_tx(
+            contract=contract,
+            function=function,
+            kwargs=kwargs,
+            chi=None,
+            nonce=None,
+            chain_id=self.chain_id,
+            mode=mode,
+            wait_for_tx=False,
+        )
+
     async def broadcast_tx(
         self,
         *,
@@ -430,7 +453,29 @@ class WorkloadContext:
         nonce: int | None = None,
         chi: int | None = None,
         extra_chi: int = 0,
+        automatic: bool = False,
     ) -> BroadcastRecord:
+        if automatic:
+            node, response = await self.broadcast_automatic(
+                wallet=wallet,
+                rpc_index=rpc_index,
+                contract=contract,
+                function=function,
+                kwargs=kwargs,
+                mode=mode,
+            )
+            return BroadcastRecord(
+                label=label,
+                contract=contract,
+                function=function,
+                rpc_url=node.rpc_url,
+                sender=wallet.public_key,
+                nonce=response.nonce,
+                expected_success=expected_success,
+                expected_message=expected_message,
+                response=response,
+                tx_hash=response.tx_hash,
+            )
         preferred_index = self.submission_index(rpc_index)
         if nonce is None:
             nonce_index = await self.sticky_submission_index(wallet, preferred_index)
@@ -2646,6 +2691,18 @@ async def run_parallel_probe(
     }
 
 
+def configure_throughput_plans(plans, mode, manual_chi):
+    if mode == "manual":
+        if manual_chi <= 0:
+            raise WorkloadError("manual chi must be positive")
+        for plan in plans:
+            plan["chi"] = manual_chi
+    elif mode == "automatic":
+        for plan in plans:
+            plan.pop("nonce", None)
+            plan["automatic"] = True
+
+
 async def run_transfer_fanout(
     context: WorkloadContext,
     *,
@@ -2657,6 +2714,8 @@ async def run_transfer_fanout(
     receipt_workers: int,
     receipt_timeout_seconds: float,
     broadcast_mode: str,
+    preparation_mode: str = "simulated",
+    manual_chi: int = 2000,
 ) -> dict[str, Any]:
     sender_wallets = [
         derive_wallet(seed, f"transfer-fanout-sender-{index}") for index in range(wallet_count)
@@ -2681,10 +2740,14 @@ async def run_transfer_fanout(
         if count == 0:
             continue
         submission_index = context.submission_index(index)
-        nonces = await context.reserve_nonces(
-            sender_wallet,
-            submission_index,
-            count=count,
+        nonces = (
+            range(count)
+            if preparation_mode == "automatic"
+            else await context.reserve_nonces(
+                sender_wallet,
+                submission_index,
+                count=count,
+            )
         )
         recipient = recipient_wallets[index].public_key
         for local_index, nonce in enumerate(nonces):
@@ -2702,6 +2765,7 @@ async def run_transfer_fanout(
                 }
             )
 
+    configure_throughput_plans(plans, preparation_mode, manual_chi)
     random.Random(f"{seed}:transfer-fanout").shuffle(plans)
     start_height = await latest_block_height(context)
     started_at = time.monotonic()
@@ -2710,6 +2774,7 @@ async def run_transfer_fanout(
         plans,
         submit_workers=submit_workers,
     )
+    submission_elapsed = time.monotonic() - started_at
     require_all_admitted("transfer_fanout", records)
     await context.resolve_records(
         records,
@@ -2776,12 +2841,15 @@ async def run_transfer_fanout(
         "wallet_count": wallet_count,
         "submit_workers": submit_workers,
         "broadcast_mode": broadcast_mode,
+        "preparation_mode": preparation_mode,
+        "manual_chi": manual_chi if preparation_mode == "manual" else None,
         "funding_amount": funding_amount,
         "funding_transactions": len(funding_records),
         "transaction_count": len(records),
         "successful_transactions": sum(1 for record in records if record.final_success),
         "failed_transactions": sum(1 for record in records if record.final_success is False),
         "elapsed_workload_seconds": round(elapsed, 3),
+        "elapsed_submission_seconds": round(submission_elapsed, 3),
         "committed_window": await summarize_committed_window_for_range(
             context,
             start_height=start_height,
@@ -2804,6 +2872,8 @@ async def run_contract_heavy(
     receipt_workers: int,
     receipt_timeout_seconds: float,
     broadcast_mode: str,
+    preparation_mode: str = "simulated",
+    manual_chi: int = 2000,
     rounds: int,
 ) -> dict[str, Any]:
     suffix = hashlib.sha256(f"{seed}:contract-heavy".encode("utf-8")).hexdigest()[:8]
@@ -2858,10 +2928,14 @@ async def run_contract_heavy(
         if count == 0:
             continue
         submission_index = context.submission_index(index)
-        nonces = await context.reserve_nonces(
-            worker_wallet,
-            submission_index,
-            count=count,
+        nonces = (
+            range(count)
+            if preparation_mode == "automatic"
+            else await context.reserve_nonces(
+                worker_wallet,
+                submission_index,
+                count=count,
+            )
         )
         for local_index, nonce in enumerate(nonces):
             slot = f"{worker_wallet.public_key}-{local_index}"
@@ -2888,6 +2962,7 @@ async def run_contract_heavy(
                 }
             )
 
+    configure_throughput_plans(plans, preparation_mode, manual_chi)
     random.Random(f"{seed}:contract-heavy").shuffle(plans)
     start_height = await latest_block_height(context)
     started_at = time.monotonic()
@@ -2896,6 +2971,7 @@ async def run_contract_heavy(
         plans,
         submit_workers=submit_workers,
     )
+    submission_elapsed = time.monotonic() - started_at
     require_all_admitted("contract_heavy", records)
     await context.resolve_records(
         records,
@@ -2959,6 +3035,8 @@ async def run_contract_heavy(
         "wallet_count": wallet_count,
         "submit_workers": submit_workers,
         "broadcast_mode": broadcast_mode,
+        "preparation_mode": preparation_mode,
+        "manual_chi": manual_chi if preparation_mode == "manual" else None,
         "rounds": rounds,
         "funding_amount": funding_amount,
         "deploy_transaction_hash": deploy_record.tx_hash,
@@ -2967,6 +3045,7 @@ async def run_contract_heavy(
         "successful_transactions": sum(1 for record in records if record.final_success),
         "failed_transactions": sum(1 for record in records if record.final_success is False),
         "elapsed_workload_seconds": round(elapsed, 3),
+        "elapsed_submission_seconds": round(submission_elapsed, 3),
         "committed_window": await summarize_committed_window_for_range(
             context,
             start_height=start_height,
@@ -3019,6 +3098,8 @@ async def run_scenario(
             receipt_workers=args.receipt_workers,
             receipt_timeout_seconds=args.receipt_timeout_seconds,
             broadcast_mode=args.broadcast_mode,
+            preparation_mode=args.preparation_mode,
+            manual_chi=args.manual_chi,
         )
     if args.scenario == "contract_heavy":
         return await run_contract_heavy(
@@ -3031,6 +3112,8 @@ async def run_scenario(
             receipt_workers=args.receipt_workers,
             receipt_timeout_seconds=args.receipt_timeout_seconds,
             broadcast_mode=args.broadcast_mode,
+            preparation_mode=args.preparation_mode,
+            manual_chi=args.manual_chi,
             rounds=args.heavy_rounds,
         )
     raise WorkloadError(f"unsupported scenario: {args.scenario}")
@@ -3085,6 +3168,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=128,
         help="Maximum concurrent broadcast workers for throughput scenarios",
+    )
+    parser.add_argument(
+        "--preparation-mode", choices=("simulated", "manual", "automatic"), default="simulated"
+    )
+    parser.add_argument(
+        "--manual-chi",
+        type=int,
+        default=2000,
+        help="Explicit chi budget per measured transaction in manual mode",
     )
     parser.add_argument(
         "--broadcast-mode",

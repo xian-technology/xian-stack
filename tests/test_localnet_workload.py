@@ -5,7 +5,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -43,6 +43,73 @@ def _network() -> dict:
         "founder_key": founder.private_key,
         "nodes": nodes,
     }
+
+
+def test_automatic_throughput_uses_persistent_sdk_nonce_and_simulation(monkeypatch):
+    context = localnet_workload.WorkloadContext(
+        _network(), sample_nodes=3, submit_node_index=0, round_robin_submission=False
+    )
+    context._session = object()
+    context.next_nonce = AsyncMock(side_effect=AssertionError("manual nonce allocation"))
+    sdk = SimpleNamespace(
+        send_tx=AsyncMock(
+            return_value=SimpleNamespace(nonce=7, tx_hash="sdk-hash", chi_supplied=125)
+        )
+    )
+    factory = Mock(return_value=sdk)
+    monkeypatch.setattr(localnet_workload, "XianAsync", factory)
+    wallet = localnet_workload.Wallet()
+
+    async def submit():
+        for _ in range(2):
+            record = await context.broadcast_tx(
+                label="automatic",
+                wallet=wallet,
+                rpc_index=0,
+                contract="currency",
+                function="transfer",
+                kwargs={},
+                expected_success=True,
+                automatic=True,
+            )
+            assert record.nonce == 7
+            assert record.tx_hash == "sdk-hash"
+
+    asyncio.run(submit())
+    assert factory.call_count == 1
+    assert sdk.send_tx.await_count == 2
+    for call in sdk.send_tx.await_args_list:
+        assert call.kwargs["nonce"] is None
+        assert call.kwargs["chi"] is None
+
+
+def test_manual_throughput_does_not_simulate(monkeypatch):
+    context = localnet_workload.WorkloadContext(
+        _network(), sample_nodes=3, submit_node_index=0, round_robin_submission=False
+    )
+    context._session = object()
+    context.sticky_submission_index = AsyncMock(return_value=0)
+    context.next_nonce = AsyncMock(side_effect=AssertionError("nonce must be explicit"))
+    simulate = AsyncMock(side_effect=AssertionError("manual path simulated"))
+    monkeypatch.setattr(localnet_workload, "simulated_chi_supply", simulate)
+    sdk = SimpleNamespace(send_tx=AsyncMock(return_value=SimpleNamespace(tx_hash="manual-hash")))
+    context.client = lambda *_: sdk
+    record = asyncio.run(
+        context.broadcast_tx(
+            label="manual",
+            wallet=localnet_workload.Wallet(),
+            rpc_index=0,
+            contract="currency",
+            function="transfer",
+            kwargs={},
+            expected_success=True,
+            nonce=9,
+            chi=500,
+        )
+    )
+    assert record.nonce == 9
+    assert sdk.send_tx.await_args.kwargs["chi"] == 500
+    simulate.assert_not_awaited()
 
 
 def test_healthy_submission_index_skips_bds_node_when_available() -> None:

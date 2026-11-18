@@ -186,7 +186,7 @@ Higher-level harnesses:
 ```bash
 make localnet-protocol-safety        # 5-validator protocol safety harness
 make localnet-e2e                    # layered 5-validator e2e harness
-make localnet-vm-tps-bench           # tuned VM throughput sweep
+make localnet-vm-tps-bench           # repeated manual/automatic throughput sweep
 make release-safety                  # full release-grade safety gate
 ```
 
@@ -207,6 +207,9 @@ The phase also hides receipts for successful and reverted swaps while retaining
 real committed nonce reads. Independent rules must trade from the same wallet,
 and the original decision must not repeat across worker recreation, RPC reload,
 or eventual receipt restoration. Both cases are required in the probe report.
+
+See [performance measurement and CI baseline policy](../xian-docs-web/node/performance.md#repeatable-five-node-benchmarks)
+for the two submission modes, repeated measurements and regression checks.
 
 ### Optional Sidecars
 

@@ -1,0 +1,101 @@
+name: Localnet Performance
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_run_id:
+        description: 'Accepted successful performance run ID (empty collects measurements only)'
+        required: false
+        type: string
+  schedule:
+    - cron: '43 4 * * *'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: xian-stack-localnet-performance
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      BASELINE_RUN_ID: ${{ inputs.baseline_run_id || vars.XIAN_PERFORMANCE_BASELINE_RUN_ID }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: xian-stack
+      - uses: ./xian-stack/.github/actions/checkout-localnet
+      - name: Check out pinned workspace reporting tools
+        uses: actions/checkout@v7
+        with:
+          repository: xian-technology/xian-meta
+          ref: a438f3381624c5c5f227164f5f50a6cee6b8f7f2
+          path: xian-meta
+      - name: Report resolved sibling revisions
+        run: python3 xian-meta/scripts/report_workspace_shas.py --workspace-root .
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install uv
+        run: python -m pip install uv
+      - name: Validate reference run ID
+        if: env.BASELINE_RUN_ID != ''
+        run: |
+          python - <<'PY'
+          import os, re
+          assert re.fullmatch(r'[1-9][0-9]*', os.environ['BASELINE_RUN_ID']), 'invalid baseline run ID'
+          PY
+      - name: Download accepted reference
+        if: env.BASELINE_RUN_ID != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: localnet-performance
+          path: baseline
+          run-id: ${{ env.BASELINE_RUN_ID }}
+          github-token: ${{ github.token }}
+      - name: Measure five-node manual and automatic submission
+        working-directory: xian-stack
+        env:
+          LOCALNET_TPS_BENCH_OPS: '1000'
+          LOCALNET_TPS_BENCH_WALLET_COUNT: '16'
+          LOCALNET_TPS_BENCH_SUBMIT_WORKERS: '32'
+          LOCALNET_TPS_BENCH_RECEIPT_WORKERS: '32'
+          XIAN_PERF_ENABLED: '1'
+        shell: bash
+        run: |
+          args='--runner-class github-ubuntu-24.04-x64 --output-path .artifacts/performance/result.json'
+          if [ -n "$BASELINE_RUN_ID" ]; then
+            args="$args --baseline ../baseline/result.json"
+          fi
+          make localnet-vm-tps-bench LOCALNET_TPS_BENCH_ARGS="$args"
+      - name: Summarize measurements
+        if: always()
+        working-directory: xian-stack
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path('.artifacts/performance/result.json')
+          if path.exists():
+              result = json.loads(path.read_text())
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+                  print('Five validators on one runner; successful end-to-end TPS.\n', file=output)
+                  print('| Workload / mode / operations | Median TPS | Min | Max |', file=output)
+                  print('| --- | ---: | ---: | ---: |', file=output)
+                  for key, value in result['measurements'].items():
+                      print(f"| {key} | {value['median_tps']:.2f} | {value['min_tps']:.2f} | {value['max_tps']:.2f} |", file=output)
+                  comparison = result.get('baseline_comparison')
+                  print('\nReference comparison: ' + (json.dumps(comparison) if comparison else 'measurement only; no accepted reference configured'), file=output)
+          PY
+      - name: Upload public measurements
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: localnet-performance
+          path: xian-stack/.artifacts/performance/result.json
+          retention-days: 90
+          if-no-files-found: warn

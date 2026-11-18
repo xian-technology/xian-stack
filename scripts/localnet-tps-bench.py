@@ -6,12 +6,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
+import secrets
 import statistics
 import subprocess
-import time
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from localnet_benchmark_checks import compare_baseline, summarize_samples
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 STACK_DIR = SCRIPT_DIR.parent
@@ -191,6 +195,15 @@ def parse_json_payload(stdout: str) -> dict[str, Any]:
     return json.loads(stdout[start:])
 
 
+def save_private_workload_output(completed) -> str:
+    directory = ARTIFACTS_DIR / "private"
+    directory.mkdir(parents=True, exist_ok=True)
+    fd, path = tempfile.mkstemp(prefix="workload-", suffix=".log", dir=directory)
+    with os.fdopen(fd, "w") as output:
+        output.write(completed.stdout + "\n" + completed.stderr)
+    return path
+
+
 def run_workload(
     *,
     scenario: str,
@@ -202,6 +215,8 @@ def run_workload(
     receipt_timeout_seconds: float,
     broadcast_mode: str,
     heavy_rounds: int,
+    preparation_mode: str = "simulated",
+    manual_chi: int = 2000,
 ) -> dict[str, Any]:
     cmd = [
         "uv",
@@ -230,6 +245,12 @@ def run_workload(
         broadcast_mode,
         "--heavy-rounds",
         str(heavy_rounds),
+        "--preparation-mode",
+        preparation_mode,
+        "--manual-chi",
+        str(manual_chi),
+        "--state-sample-nodes",
+        "5",
         "--json",
     ]
     completed = subprocess.run(
@@ -244,7 +265,9 @@ def run_workload(
             "ok": False,
             "scenario": scenario,
             "operations": operations,
-            "error": completed.stderr.strip() or completed.stdout.strip(),
+            "preparation_mode": preparation_mode,
+            "error": "workload failed; inspect the private local workload output",
+            "diagnostics_path": save_private_workload_output(completed),
         }
     payload = parse_json_payload(completed.stdout)
     scenario_summary = payload["scenario_summary"]
@@ -257,8 +280,10 @@ def run_workload(
         setup_transactions += 1
     committed_window = scenario_summary.get("committed_window", {})
     return {
-        "ok": True,
+        "ok": int(scenario_summary["successful_transactions"]) == operations
+        and workload_transactions == operations,
         "scenario": scenario,
+        "preparation_mode": preparation_mode,
         "operations": operations,
         "elapsed_seconds": elapsed_seconds,
         "workload_transactions": workload_transactions,
@@ -266,13 +291,13 @@ def run_workload(
         "successful_transactions": int(scenario_summary["successful_transactions"]),
         "workload_tps": round(workload_transactions / elapsed_seconds, 3),
         "full_scenario_tps": round(
-            (workload_transactions + setup_transactions) / elapsed_seconds, 3
+            (workload_transactions + setup_transactions) / float(payload["elapsed_seconds"]), 3
         ),
         "committed_workload_tps": committed_window.get("committed_workload_tps"),
         "committed_chain_tps": committed_window.get("committed_chain_tps"),
         "peak_block_tps": committed_window.get("peak_block_tps"),
         "median_block_tps": committed_window.get("median_block_tps"),
-        "payload": payload,
+        "elapsed_submission_seconds": scenario_summary.get("elapsed_submission_seconds"),
     }
 
 
@@ -303,6 +328,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--heavy-rounds", type=int, default=64)
     parser.add_argument(
+        "--preparation-mode", choices=("manual", "automatic", "both"), default="both"
+    )
+    parser.add_argument("--manual-chi", type=int, default=2000)
+    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--warmups", type=int, default=1)
+    parser.add_argument("--runner-class", default=f"local-{platform.system()}-{platform.machine()}")
+    parser.add_argument("--baseline", type=Path)
+    parser.add_argument("--max-regression-percent", type=float, default=25)
+    parser.add_argument(
         "--output-path",
         type=Path,
         default=default_output_path(),
@@ -316,6 +350,157 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def repository_revisions() -> dict:
+    revisions = {}
+    for name in ("xian-stack", "xian-abci", "xian-contracting", "xian-py", "xian-configs"):
+        repo = STACK_DIR.parent / name
+        result = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        dirty = subprocess.run(
+            ["git", "-C", str(repo), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        revisions[name] = {"commit": result.stdout.strip(), "dirty": bool(dirty.stdout)}
+    return revisions
+
+
+def benchmark_configuration(args, network):
+    genesis_path = (
+        STACK_DIR / ".localnet" / network["nodes"][0]["moniker"] / ".cometbft/config/genesis.json"
+    )
+    genesis = json.loads(genesis_path.read_text())
+    fee_policy = next(
+        item["value"]
+        for item in genesis["abci_genesis"]["genesis"]
+        if item["key"] == "__fee_policy"
+    )
+    return {
+        "fee_policy": fee_policy,
+        "container_resources": container_resources(network),
+        "consensus_params": genesis["consensus_params"],
+        "measurement": "successful-transactions-per-client-wall-second-v1",
+        "runner_class": args.runner_class,
+        "architecture": platform.machine(),
+        "cpu_count": os.cpu_count(),
+        "node_count": len(network["nodes"]),
+        "topology": network.get("topology"),
+        "execution": network.get("execution"),
+        "localnet_profile": network.get("localnet_profile"),
+        "consensus": network.get("consensus"),
+        "mempool": network.get("mempool"),
+        "bds": network.get("bds"),
+        "profiling": network.get("profiling"),
+        "runtime_features": network.get("runtime_features"),
+        "genesis_network": network.get("genesis_network"),
+        **{
+            key: getattr(args, key)
+            for key in (
+                "scenario",
+                "ops",
+                "wallet_count",
+                "submit_workers",
+                "receipt_workers",
+                "receipt_timeout_seconds",
+                "broadcast_mode",
+                "heavy_rounds",
+                "preparation_mode",
+                "manual_chi",
+                "repeats",
+                "warmups",
+            )
+        },
+    }
+
+
+def container_resources(network):
+    containers = sorted(
+        {node[key] for node in network["nodes"] for key in ("abci_container", "cometbft_container")}
+    )
+    completed = subprocess.run(
+        ["docker", "inspect", "--format", "{{json .HostConfig}}", *containers],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    fields = (
+        "Memory",
+        "MemorySwap",
+        "NanoCpus",
+        "CpuQuota",
+        "CpuPeriod",
+        "CpusetCpus",
+        "PidsLimit",
+    )
+    return [
+        {key: config.get(key) for key in fields}
+        for config in map(json.loads, completed.stdout.splitlines())
+    ]
+
+
+def run_sweep(args, scenarios, modes):
+    runs, warmups = [], []
+    for scenario in scenarios:
+        for operations in args.ops:
+            for mode in modes:
+                for repeat in range(args.warmups + args.repeats):
+                    result = run_workload(
+                        scenario=scenario,
+                        seed=secrets.token_hex(32),
+                        operations=operations,
+                        wallet_count=args.wallet_count,
+                        submit_workers=args.submit_workers,
+                        receipt_workers=args.receipt_workers,
+                        receipt_timeout_seconds=args.receipt_timeout_seconds,
+                        broadcast_mode=args.broadcast_mode,
+                        heavy_rounds=args.heavy_rounds,
+                        preparation_mode=mode,
+                        manual_chi=args.manual_chi,
+                    )
+                    target = warmups if repeat < args.warmups else runs
+                    target.append(result)
+                    if not result["ok"]:
+                        break
+
+    return runs, warmups
+
+
+def validate_args(args):
+    if args.repeats < 1 or args.warmups < 0 or args.manual_chi <= 0:
+        raise BenchmarkError("positive repeats and manual chi, and nonnegative warmups required")
+    if any(ops <= 0 for ops in args.ops):
+        raise BenchmarkError("operation counts must be positive")
+
+
+def apply_baseline(summary, args):
+    summary["baseline_comparison"] = None
+    if args.baseline:
+        try:
+            summary["baseline_comparison"] = compare_baseline(
+                summary, json.loads(args.baseline.read_text()), args.max_regression_percent
+            )
+            summary["ok"] = summary["ok"] and summary["baseline_comparison"]["ok"]
+        except ValueError as exc:
+            summary["ok"] = False
+            summary["baseline_comparison"] = {"ok": False, "error": str(exc)}
+
+
+def print_report(summary, args):
+    if args.json:
+        print(
+            json.dumps(dict(summary, artifact_path=str(args.output_path)), indent=2, sort_keys=True)
+        )
+    else:
+        for key, measurement in summary["measurements"].items():
+            print(f"{key}: median end-to-end TPS={measurement['median_tps']:.3f}")
+        print(f"artifact_path={args.output_path}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     network = load_network()
@@ -323,36 +508,16 @@ def main(argv: list[str] | None = None) -> int:
         ["transfer_fanout", "contract_heavy"] if args.scenario == "both" else [args.scenario]
     )
 
-    runs = []
-    for scenario in scenarios:
-        for operations in args.ops:
-            seed = f"xian-tps-bench:{scenario}:{operations}:{int(time.time())}"
-            result = run_workload(
-                scenario=scenario,
-                seed=seed,
-                operations=operations,
-                wallet_count=args.wallet_count,
-                submit_workers=args.submit_workers,
-                receipt_workers=args.receipt_workers,
-                receipt_timeout_seconds=args.receipt_timeout_seconds,
-                broadcast_mode=args.broadcast_mode,
-                heavy_rounds=args.heavy_rounds,
-            )
-            runs.append(result)
-            if not result["ok"]:
-                break
-
-    best_by_scenario = {}
-    for scenario in scenarios:
-        successful = [run for run in runs if run["ok"] and run["scenario"] == scenario]
-        if successful:
-            best_by_scenario[scenario] = max(
-                successful,
-                key=lambda run: float(run["committed_workload_tps"] or run["workload_tps"]),
-            )
+    validate_args(args)
+    modes = ["manual", "automatic"] if args.preparation_mode == "both" else [args.preparation_mode]
+    runs, warmups = run_sweep(args, scenarios, modes)
 
     summary = {
-        "ok": all(run["ok"] for run in runs),
+        "schema_version": 1,
+        "ok": all(run["ok"] for run in runs + warmups),
+        "configuration": benchmark_configuration(args, network),
+        "provenance": repository_revisions(),
+        "warmups": warmups,
         "network": {
             "chain_id": network["chain_id"],
             "execution": network.get("execution", {}),
@@ -360,26 +525,16 @@ def main(argv: list[str] | None = None) -> int:
             "consensus": network.get("consensus", {}),
         },
         "runs": runs,
-        "best_by_scenario": best_by_scenario,
         "perf_summary": summarize_perf_payloads(load_perf_payloads(network)),
     }
+    summary["measurements"] = summarize_samples(runs) if summary["ok"] else {}
+    apply_baseline(summary, args)
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
     args.output_path.write_text(
         json.dumps(summary, indent=2, sort_keys=True),
         encoding="utf-8",
     )
-    if args.json:
-        payload = dict(summary)
-        payload["artifact_path"] = str(args.output_path)
-        print(json.dumps(payload, indent=2, sort_keys=True))
-    else:
-        for scenario, result in best_by_scenario.items():
-            print(
-                f"{scenario}: best stable committed workload TPS="
-                f"{float(result['committed_workload_tps'] or result['workload_tps']):.3f} "
-                f"at {result['operations']} tx"
-            )
-        print(f"artifact_path={args.output_path}")
+    print_report(summary, args)
     return 0 if summary["ok"] else 1
 
 
