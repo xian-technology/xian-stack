@@ -31,7 +31,7 @@ def test_bds_volume_is_unique_per_generation_and_preserves_node_mounts(tmp_path,
     alias = "localnet-postgres-data"
     assert first["volumes"][alias]["name"] != second["volumes"][alias]["name"]
     db = first["services"]["localnet-postgres"]
-    assert db["volumes"] == [f"{alias}:/var/lib/postgresql/data"]
+    assert db["volumes"] == [f"{alias}:/var/lib/postgresql"]
     assert "SELECT 1" in db["healthcheck"]["test"][-1]
     app = first["services"]["node-0" if topology == "integrated" else "node-0-abci"]
     assert "./.localnet/node-0/.cometbft:/root/.cometbft" in app["volumes"]

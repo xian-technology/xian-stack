@@ -31,7 +31,7 @@ services:
     restart: always
     init: true
     stop_grace_period: 30s
-    image: ${XIAN_POSTGRES_IMAGE:-postgres:17.10}
+    image: ${XIAN_POSTGRES_IMAGE:-postgres:18.7}
     mem_limit: ${XIAN_DOCKER_POSTGRES_MEMORY_LIMIT}
     mem_reservation: ${XIAN_DOCKER_POSTGRES_MEMORY_RESERVATION}
     memswap_limit: ${XIAN_DOCKER_POSTGRES_MEMORY_SWAP}
@@ -53,7 +53,7 @@ services:
       timeout: 5s
       retries: 12
     volumes:
-      - ${XIAN_BDS_DATA_DIR}:/var/lib/postgresql/data
+      - ${XIAN_BDS_DATA_DIR}:/var/lib/postgresql
     networks:
       - xian-db
     # Explicitly disable external port mapping
@@ -64,7 +64,7 @@ services:
     logging: *x-logging
     restart: "no"
     init: true
-    image: ${XIAN_POSTGRES_IMAGE:-postgres:17.10}
+    image: ${XIAN_POSTGRES_IMAGE:-postgres:18.7}
     depends_on:
       postgres:
         condition: service_healthy

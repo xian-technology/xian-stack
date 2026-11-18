@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).absolute().parents[1] / "scripts"))
 backend = importlib.import_module("backend")
 
 
-PINNED_POSTGRES_IMAGE = "postgres:17.10@sha256:" + "a" * 64
+PINNED_POSTGRES_IMAGE = "postgres:18.7@sha256:" + "a" * 64
 PINNED_PROMETHEUS_IMAGE = "prom/prometheus:v3.12.0@sha256:" + "b" * 64
 PINNED_GRAFANA_IMAGE = "grafana/grafana:12.4.5@sha256:" + "c" * 64
 PINNED_NODE_EXPORTER_IMAGE = "prom/node-exporter:v1.12.1@sha256:" + "d" * 64
@@ -82,7 +82,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
             self.assertEqual("0", env["XIAN_PUBLIC_QUERY_ENABLED"])
             self.assertEqual("0", env["XIAN_PUBLIC_METRICS_ENABLED"])
             self.assertEqual("0", env["XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES"])
-            self.assertEqual("postgres:17.10", env["XIAN_POSTGRES_IMAGE"])
+            self.assertEqual("postgres:18.7", env["XIAN_POSTGRES_IMAGE"])
             self.assertEqual("prom/prometheus:v3.12.0", env["XIAN_PROMETHEUS_IMAGE"])
             self.assertEqual("grafana/grafana:12.4.5", env["XIAN_GRAFANA_IMAGE"])
             self.assertEqual("prom/node-exporter:v1.12.1", env["XIAN_NODE_EXPORTER_IMAGE"])
@@ -492,8 +492,8 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
         compose = Path(__file__).absolute().parents[1] / "docker-compose-abci-bds.yml"
         source = compose.read_text(encoding="utf-8")
 
-        self.assertIn("image: ${XIAN_POSTGRES_IMAGE:-postgres:17.10}", source)
-        self.assertNotIn("image: postgres:17.10", source)
+        self.assertIn("image: ${XIAN_POSTGRES_IMAGE:-postgres:18.7}", source)
+        self.assertNotIn("image: postgres:18.7", source)
 
     def test_compose_uses_long_form_host_ip_for_configurable_port_binds(self) -> None:
         root = Path(__file__).absolute().parents[1]
@@ -529,7 +529,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
                 with patch.dict(os.environ, {}, clear=True):
                     env = backend.runtime_env(**runtime_env_kwargs(bds_enabled=True))
 
-        self.assertEqual("postgres:17.10", env["XIAN_POSTGRES_IMAGE"])
+        self.assertEqual("postgres:18.7", env["XIAN_POSTGRES_IMAGE"])
         self.assertEqual("prom/prometheus:v3.12.0", env["XIAN_PROMETHEUS_IMAGE"])
         self.assertEqual("grafana/grafana:12.4.5", env["XIAN_GRAFANA_IMAGE"])
         self.assertEqual("prom/node-exporter:v1.12.1", env["XIAN_NODE_EXPORTER_IMAGE"])

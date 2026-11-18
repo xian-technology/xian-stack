@@ -779,7 +779,7 @@ def write_compose_file(
     }
     if bds_enabled:
         services[LOCALNET_POSTGRES_SERVICE] = {
-            "image": "postgres:17.10",
+            "image": "postgres:18.7",
             "restart": "always",
             "init": True,
             "stop_grace_period": "30s",
@@ -812,7 +812,7 @@ def write_compose_file(
                 "start_period": "30s",
             },
             "volumes": [
-                "localnet-postgres-data:/var/lib/postgresql/data",
+                "localnet-postgres-data:/var/lib/postgresql",
             ],
             "expose": ["5432"],
             "networks": ["localnet"],

@@ -121,7 +121,7 @@ DEFAULT_E2E_THROUGHPUT_SUBMIT_WORKERS = 32
 DEFAULT_E2E_CONTRACT_HEAVY_ROUNDS = 32
 LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
 LOCALNET_POSTGRES_CONTAINER = "xian-localnet-postgres"
-SECONDARY_BDS_POSTGRES_IMAGE = "postgres:17.10"
+SECONDARY_BDS_POSTGRES_IMAGE = "postgres:18.7"
 SECONDARY_BDS_POSTGRES_USER = "xian"
 SECONDARY_BDS_POSTGRES_DATABASE = "xian"
 SECONDARY_BDS_PASSWORD_SECRET_PATH = "/run/secrets/xian_bds_password"
@@ -2941,7 +2941,7 @@ class E2ERunner:
                 "--publish",
                 "127.0.0.1::5432",
                 "--volume",
-                "/var/lib/postgresql/data",
+                "/var/lib/postgresql",
                 "--volume",
                 f"{password_file}:{SECONDARY_BDS_PASSWORD_SECRET_PATH}:ro",
                 "--env",

@@ -160,7 +160,7 @@ validate_stack_security_env() {
   fi
 
   if _stack_truthy "${require_digest_pinned_third_party_images}"; then
-    if ! _stack_is_digest_pinned_image "${XIAN_POSTGRES_IMAGE:-postgres:17.10}"; then
+    if ! _stack_is_digest_pinned_image "${XIAN_POSTGRES_IMAGE:-postgres:18.7}"; then
       errors+=("XIAN_POSTGRES_IMAGE must be digest-pinned when XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1")
     fi
     if ! _stack_is_digest_pinned_image "${XIAN_PROMETHEUS_IMAGE:-prom/prometheus:v3.12.0}"; then
@@ -268,7 +268,7 @@ export_stack_env() {
   export XIAN_APP_METRICS_BDS_REFRESH_SECONDS="${XIAN_APP_METRICS_BDS_REFRESH_SECONDS:-5.0}"
   export XIAN_PERF_ENABLED="${XIAN_PERF_ENABLED:-1}"
   export XIAN_PERF_RECENT_BLOCKS="${XIAN_PERF_RECENT_BLOCKS:-64}"
-  export XIAN_POSTGRES_IMAGE="${XIAN_POSTGRES_IMAGE:-postgres:17.10}"
+  export XIAN_POSTGRES_IMAGE="${XIAN_POSTGRES_IMAGE:-postgres:18.7}"
   export XIAN_PROMETHEUS_IMAGE="${XIAN_PROMETHEUS_IMAGE:-prom/prometheus:v3.12.0}"
   export XIAN_PROMETHEUS_CONFIG="${XIAN_PROMETHEUS_CONFIG:-./monitoring/prometheus/integrated.yml}"
   export XIAN_PROMETHEUS_HOST="${XIAN_PROMETHEUS_HOST:-127.0.0.1}"
