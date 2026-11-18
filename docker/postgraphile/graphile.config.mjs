@@ -1,10 +1,14 @@
 import { PgAggregatesPreset } from "@graphile/pg-aggregates";
-import { makeV4Preset } from "postgraphile/presets/v4";
+import { PostGraphileAmberPreset } from "postgraphile/presets/amber";
 import {
   PostGraphileConnectionFilterPreset,
 } from "postgraphile-plugin-connection-filter";
 
-const SIMPLE_COLLECTIONS = new Set(["omit", "only", "both"]);
+const COLLECTION_BEHAVIORS = {
+  omit: "connection -list",
+  only: "-connection list",
+  both: "connection list",
+};
 
 function envFlag(name, defaultValue) {
   const rawValue = process.env[name];
@@ -28,25 +32,32 @@ function envPositiveInteger(name, defaultValue) {
   return parsed;
 }
 
-function envSimpleCollections(name, defaultValue) {
+function envCollectionBehavior(name, defaultValue) {
   const rawValue = process.env[name] || defaultValue;
-  if (!SIMPLE_COLLECTIONS.has(rawValue)) {
-    throw new Error(`${name} must be one of: ${Array.from(SIMPLE_COLLECTIONS).join(", ")}`);
+  if (!Object.hasOwn(COLLECTION_BEHAVIORS, rawValue)) {
+    throw new Error(`${name} must be one of: ${Object.keys(COLLECTION_BEHAVIORS).join(", ")}`);
   }
-  return rawValue;
+  return COLLECTION_BEHAVIORS[rawValue];
 }
 
 const preset = {
   extends: [
-    makeV4Preset({
-      bodySizeLimit: envPositiveInteger("POSTGRAPHILE_BODY_SIZE_LIMIT_BYTES", 1048576),
-      disableDefaultMutations: envFlag("POSTGRAPHILE_DISABLE_DEFAULT_MUTATIONS", true),
-      graphiql: true,
-      simpleCollections: envSimpleCollections("POSTGRAPHILE_SIMPLE_COLLECTIONS", "omit"),
-    }),
+    PostGraphileAmberPreset,
     PgAggregatesPreset,
     PostGraphileConnectionFilterPreset,
   ],
+  schema: {
+    defaultBehavior: [
+      envFlag("POSTGRAPHILE_DISABLE_DEFAULT_MUTATIONS", true) ? "-insert -update -delete" : "",
+      envCollectionBehavior("POSTGRAPHILE_SIMPLE_COLLECTIONS", "omit"),
+    ].join(" "),
+  },
+  grafserv: {
+    graphiql: true,
+    graphiqlPath: "/graphiql",
+    graphqlPath: "/graphql",
+    maxRequestLength: envPositiveInteger("POSTGRAPHILE_BODY_SIZE_LIMIT_BYTES", 1048576),
+  },
 };
 
 export default preset;

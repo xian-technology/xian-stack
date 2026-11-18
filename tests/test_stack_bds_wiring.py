@@ -121,10 +121,10 @@ class StackBdsWiringTests(unittest.TestCase):
         self.assertIn("ALTER ROLE %I SET statement_timeout", role_init)
         self.assertIn('-C "${POSTGRAPHILE_CONFIG', launcher)
         self.assertIn("wait-for-bds-schema.mjs", launcher)
-        self.assertIn("disableDefaultMutations", graphile_config)
+        self.assertIn("-insert -update -delete", graphile_config)
         self.assertIn("graphiql: true", graphile_config)
-        self.assertIn("simpleCollections", graphile_config)
-        self.assertIn("bodySizeLimit", graphile_config)
+        self.assertIn("POSTGRAPHILE_SIMPLE_COLLECTIONS", graphile_config)
+        self.assertIn("maxRequestLength", graphile_config)
 
     def test_node_start_bds_uses_explicit_runtime_services(self) -> None:
         makefile = (STACK_ROOT / "Makefile").read_text(encoding="utf-8")

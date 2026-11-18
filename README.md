@@ -118,6 +118,11 @@ The stack defaults to fail-closed host bindings:
   `XIAN_BDS_HOST`) is set.
 - BDS uses a dedicated read-only PostgreSQL role for PostGraphile rather than
   the BDS owner account.
+- PostGraphile uses the standard v5 Amber preset, connection filtering and
+  aggregates. Native v5 behaviors control mutations and collection fields;
+  Grafserv settings control request limits and the GraphiQL route. GraphQL
+  `id` is a global ID, numeric database IDs use `rowId`, and JSONB values are
+  returned as native JSON.
 - Local stack defaults may use third-party image tags for Postgres,
   Prometheus, Grafana, and node-exporter. Set
   `XIAN_REQUIRE_DIGEST_PINNED_THIRD_PARTY_IMAGES=1` for production/release-style
@@ -556,6 +561,20 @@ make validate
 make smoke
 make smoke-cli
 ```
+
+Exercise the production GraphQL configuration against a disposable PostgreSQL
+18.7 database with populated BDS tables:
+
+```bash
+docker build -f docker/postgraphile.Dockerfile -t xian-postgraphile:check .
+XIAN_POSTGRAPHILE_TEST_IMAGE=xian-postgraphile:check uv run --locked pytest -q tests/test_postgraphile_native.py
+```
+
+CI runs this contract test. It checks SDK event reads, large numeric IDs,
+cursor pagination, native JSON, filters, aggregates, relations, GraphiQL,
+request limits and read-only permissions. It also validates query documents
+from the SDK, MCP server and Telegram bot checkouts against the generated
+schema. The test removes only its own containers and network.
 
 Both smoke commands create fresh temporary node/data directories and credentials,
 unique image tags and Compose projects, and free loopback ports. They override

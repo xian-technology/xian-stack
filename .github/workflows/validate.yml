@@ -49,6 +49,31 @@ jobs:
           repository: xian-technology/xian-cli
           path: xian-cli
 
+      # Query documents are validated against the real generated v5 schema.
+      - name: Check out xian-mcp-server
+        uses: actions/checkout@v7
+        with:
+          repository: xian-technology/xian-mcp-server
+          path: xian-mcp-server
+
+      - name: Check out xian-tg-bot
+        uses: actions/checkout@v7
+        with:
+          repository: xian-technology/xian-tg-bot
+          path: xian-tg-bot
+
+      - name: Check out xian-docs-web
+        uses: actions/checkout@v7
+        with:
+          repository: xian-technology/xian-docs-web
+          path: xian-docs-web
+
+      - name: Check out xian-technology-web
+        uses: actions/checkout@v7
+        with:
+          repository: xian-technology/xian-technology-web
+          path: xian-technology-web
+
       # The DEX automation backend tests run against the sibling repo.
       - name: Check out xian-dex-automation
         uses: actions/checkout@v7
@@ -61,7 +86,9 @@ jobs:
         run: |
           set -euo pipefail
           BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          for repo in xian-abci xian-contracting xian-py xian-configs xian-cli xian-dex-automation; do
+          repos=(xian-abci xian-contracting xian-py xian-configs xian-cli
+            xian-mcp-server xian-tg-bot xian-docs-web xian-technology-web xian-dex-automation)
+          for repo in "${repos[@]}"; do
             REMOTE="https://github.com/xian-technology/${repo}"
             if git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
               git -C "$repo" fetch --depth=1 origin "$BRANCH"
@@ -97,6 +124,14 @@ jobs:
       - name: Run tests
         working-directory: xian-stack
         run: uv run --locked pytest -q
+
+      - name: Exercise native PostGraphile against PostgreSQL
+        working-directory: xian-stack
+        env:
+          XIAN_POSTGRAPHILE_TEST_IMAGE: xian-postgraphile:ci
+        run: |
+          docker build -f docker/postgraphile.Dockerfile -t "$XIAN_POSTGRAPHILE_TEST_IMAGE" .
+          uv run --locked pytest -q tests/test_postgraphile_native.py
 
       - name: Validate stack
         working-directory: xian-stack
