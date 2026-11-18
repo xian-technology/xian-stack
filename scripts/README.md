@@ -18,7 +18,9 @@ tooling behind `xian-stack`.
 - `stack-env.sh`: shared environment/bootstrap shell helper for Compose flows
 - `release-safety.sh`: cross-repo release gate that runs repo validation plus
   the native-VM and governance localnet safety paths
-- `smoke-stack.sh` and `smoke-cli.sh`: repo-level smoke entrypoints
+- `smoke-stack.sh` and `smoke-cli.sh`: isolated repo-level smoke entrypoints
+- `smoke_isolation.py`: creates private runtime paths, images, projects and
+  ports before launching the internal `smoke-*-run.sh` payloads; owns cleanup
 - `localnet-init.py`: multi-node localnet creation, including local-only
   validator keys, bundle-backed genesis selection, fixed VM execution, and
   optional BDS wiring

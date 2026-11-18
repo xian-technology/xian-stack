@@ -538,30 +538,19 @@ shell access. Use `xian-cli` for human-facing operator workflows.
 
 ```bash
 make validate
+make smoke
 make smoke-cli
 ```
 
-`make smoke` configures a node home and starts/stops its Compose project. Make
-exports the normal home path, so `XIAN_SMOKE_ROOT` alone does not isolate it.
-Use an explicit disposable home, data directory and project; select unused ports:
+Both smoke commands create fresh temporary node/data directories and credentials,
+unique image tags and Compose projects, and free loopback ports. They override
+inherited runtime settings, including Make command-line overrides, and clean up
+only their own resources on success, failure or interruption. Each run builds
+its own image; shared image tags and existing node homes are never reused.
+Cleanup failures return an error and retain the run directory for diagnosis.
 
-```bash
-smoke_dir=$(mktemp -d)
-COMPOSE_PROJECT_NAME=xian-stack-smoke \
-XIAN_NODE_INTEGRATED_IMAGE=xian-node-smoke:local \
-XIAN_COMETBFT_HOME="$smoke_dir/cometbft" \
-XIAN_BDS_DATA_DIR="$smoke_dir/bds" \
-XIAN_STACK_SECRETS_ENV="$smoke_dir/secrets.env" \
-XIAN_SMOKE_COMETBFT_RPC_PORT=42657 \
-XIAN_SMOKE_COMETBFT_P2P_PORT=42656 \
-XIAN_SMOKE_COMETBFT_METRICS_PORT=42660 \
-XIAN_SMOKE_APP_METRICS_PORT=43108 \
-XIAN_SMOKE_DASHBOARD_PORT=42080 make smoke
-```
-
-The smoke check builds the node image, checks startup/RPC availability, and
-shuts its project down. `make smoke-cli` checks the CLI operator flow;
-`make release-safety` runs the full release gate before tagging.
+`make smoke-cli` checks the CLI operator flow; `make release-safety` runs the
+full release gate before tagging.
 
 ## Related Docs
 
