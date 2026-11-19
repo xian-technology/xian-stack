@@ -16,3 +16,10 @@ Current themes:
 - backend/operator ergonomics
 - keeping stack docs aligned with the current 5-validator validation flows in
   `xian-docs-web/node/localnet-e2e.md`
+
+## Transaction Throughput
+
+- [Transaction throughput optimization plan](../../xian-meta/docs/TRANSACTION_THROUGHPUT_OPTIMIZATION_PLAN.md): proposed staged work
+  on measurement, bounded immutable admission reuse, proposal scans, live
+  admission and receipt costs. Preserve current execution semantics and
+  remeasure before pursuing parallel contract execution.
