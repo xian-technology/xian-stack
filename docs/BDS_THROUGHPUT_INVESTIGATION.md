@@ -2,12 +2,14 @@
 
 ## Resume point
 
-Latest checkpoint, 2026-11-18: stack v0.3.5 also failed before image publication
-in [run 44202339923](https://github.com/xian-technology/xian-stack/actions/runs/44202339923).
-The fresh-node snapshot test hit nested Make directory banners in backend
-status JSON. Stack v0.3.6 is being prepared with that output-contract fix;
+Latest checkpoint, 2026-11-19: stack v0.3.6
+[run 44406031694](https://github.com/xian-technology/xian-stack/actions/runs/44406031694)
+passed full E2E, including snapshot export/restore, but failed the later
+protocol test's fee-blind unbond balance assertion. No images were published.
+The user selected preserving the original runtime/package versions. A v0.3.7
+maintenance release is being prepared from v0.3.6 with only the harness fix;
 component pins below remain unchanged. Wait for the replacement handoff and
-the user's publication confirmation before selecting an immutable image digest.
+publication confirmation before selecting an immutable image digest.
 
 Recorded 2026-11-17. The user requested package releases and an image build
 before continuing this investigation. Do not run a saturation workload against
