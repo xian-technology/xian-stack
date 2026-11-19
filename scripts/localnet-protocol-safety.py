@@ -2102,6 +2102,39 @@ def get_status():
             "validator_after_readd": validator_after_readd,
         }
 
+    async def claim_pending_unbond(self, delegator, reader, unbond_id, unbond):
+        owner = unbond["owner"]
+        before = coerce_decimal(await reader.get_state("currency", "balances", owner))
+        chi_rate = coerce_decimal(await reader.get_state("chi_cost", "S", "value"))
+        receipt = await self.submit_tx(
+            delegator,
+            "validators",
+            "claim_unbond",
+            {"unbond_id": unbond_id},
+            label="claim-pending-unbond",
+            chi=GOVERNANCE_TX_CHI,
+        )
+        claimed = await reader.call("validators", "get_pending_unbond", {"unbond_id": unbond_id})
+        after = coerce_decimal(await reader.get_state("currency", "balances", owner))
+        assert_equal(claimed["claimed"], True, label="pending unbond claimed flag")
+        fee = coerce_decimal(receipt["chi_used"]) / chi_rate
+        amount = coerce_decimal(unbond["amount"])
+        # The receipt reports charged chi, including the unused-budget charge.
+        # A correct payout can therefore leave this fee-paying owner poorer.
+        assert_equal(after - before + fee, amount, label="claimed unbond payout including fee")
+        return {
+            "claim_unbond": receipt,
+            "pending_unbond_after_claim": claimed,
+            "claim_payout": {
+                "owner": owner,
+                "amount": amount,
+                "fee": fee,
+                "chi_rate": chi_rate,
+                "balance_before": before,
+                "balance_after": after,
+            },
+        }
+
     async def auto_delegation_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         (
             node0_wallet,
@@ -2446,47 +2479,14 @@ def get_status():
                 "get_pending_unbond",
                 {"unbond_id": pending_unbond_id},
             )
-            delegator_balance_after_undelegate = coerce_decimal(
-                await node0.get_state(
-                    "currency",
-                    "balances",
-                    self.delegator_wallet.public_key,
-                )
-            )
             assert_equal(
                 coerce_int(pending_unbond["amount"]),
                 100,
                 label="pending unbond amount",
             )
 
-            claim_unbond_receipt = await self.submit_tx(
-                delegator,
-                "validators",
-                "claim_unbond",
-                {"unbond_id": pending_unbond_id},
-                label="claim-pending-unbond",
-                chi=GOVERNANCE_TX_CHI,
-            )
-            pending_unbond_after_claim = await node0.call(
-                "validators",
-                "get_pending_unbond",
-                {"unbond_id": pending_unbond_id},
-            )
-            delegator_balance_after_claim = coerce_decimal(
-                await node0.get_state(
-                    "currency",
-                    "balances",
-                    self.delegator_wallet.public_key,
-                )
-            )
-            assert_equal(
-                pending_unbond_after_claim["claimed"],
-                True,
-                label="pending unbond claimed flag",
-            )
-            assert_true(
-                delegator_balance_after_claim > delegator_balance_after_undelegate,
-                label="delegator balance increased after claim",
+            claim_proof = await self.claim_pending_unbond(
+                delegator, node0, pending_unbond_id, pending_unbond
             )
 
             reward_distribution_after_claim = await node0.call(
@@ -2528,8 +2528,7 @@ def get_status():
             "undelegate": undelegate_receipt,
             "pending_unbond_ids": pending_unbond_ids,
             "pending_unbond": pending_unbond,
-            "claim_unbond": claim_unbond_receipt,
-            "pending_unbond_after_claim": pending_unbond_after_claim,
+            **claim_proof,
             "reward_distribution_after_claim": reward_distribution_after_claim,
         }
 

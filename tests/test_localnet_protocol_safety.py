@@ -5,13 +5,14 @@ import importlib.util
 import sys
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "localnet-protocol-safety.py"
+MODULE_PATH = Path(__file__).absolute().parents[1] / "scripts" / "localnet-protocol-safety.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
 
 if "localnet_protocol_safety" in sys.modules:
@@ -26,6 +27,42 @@ else:
     localnet_protocol_safety = importlib.util.module_from_spec(SPEC)
     sys.modules[SPEC.name] = localnet_protocol_safety
     SPEC.loader.exec_module(localnet_protocol_safety)
+
+
+@pytest.mark.parametrize(
+    ("paid", "chi_rate", "claimed", "error"),
+    [
+        (100, 20, True, None),
+        (100, 1000, True, None),
+        (99, 20, True, "unbond payout"),
+        (99, 1000, True, "unbond payout"),
+        (0, 1000, True, "unbond payout"),
+        (100, 1000, False, "claimed flag"),
+    ],
+)
+def test_unbond_claim_checks_full_payout_after_fees(paid, chi_rate, claimed, error):
+    runner = object.__new__(localnet_protocol_safety.ProtocolSafetyRunner)
+    charged_chi = 26_000
+    receipt = {"chi_used": charged_chi, "tx_hash": "claim"}
+    runner.submit_tx = AsyncMock(return_value=receipt)
+    before, rate = Decimal("10000"), Decimal(chi_rate)
+    after = before + paid - Decimal(charged_chi) / rate
+    reader = SimpleNamespace(
+        get_state=AsyncMock(side_effect=[before, rate, after]),
+        call=AsyncMock(return_value={"claimed": claimed}),
+    )
+    unbond = {"owner": "delegator", "amount": 100}
+    claim = runner.claim_pending_unbond(object(), reader, 3, unbond)
+    if error:
+        with pytest.raises(localnet_protocol_safety.RunnerError, match=error):
+            asyncio.run(claim)
+    else:
+        result = asyncio.run(claim)
+        assert result["claim_unbond"] == receipt
+        assert result["claim_payout"]["amount"] == 100
+        assert result["claim_payout"]["fee"] == Decimal(charged_chi) / rate
+        assert result["claim_payout"]["balance_after"] == after
+        assert reader.get_state.await_args.args == ("currency", "balances", "delegator")
 
 
 class LocalnetProtocolSafetyTests(unittest.TestCase):

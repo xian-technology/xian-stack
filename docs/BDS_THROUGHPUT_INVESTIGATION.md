@@ -2,14 +2,14 @@
 
 ## Resume point
 
-Latest handoff, 2026-11-18: stack `v0.3.6`, source
-`066033a5cfc7a5ab87f7fa842c00e282af2e740c`.
-[Replacement image workflow](https://github.com/xian-technology/xian-stack/actions/runs/44406031694)
-was triggered and is deliberately not monitored. Component pins below remain
-unchanged. Wait for the user's publication confirmation before selecting an
-immutable image digest. Both previous attempts failed before publishing;
-v0.3.6 fixes nested Make banners corrupting snapshot-export status JSON after
-v0.3.5 exposed that failure in the fresh-node sync test.
+Latest checkpoint, 2026-11-19: stack v0.3.6
+[run 44406031694](https://github.com/xian-technology/xian-stack/actions/runs/44406031694)
+passed full E2E, including snapshot export/restore, but failed the later
+protocol test's fee-blind unbond balance assertion. No images were published.
+The user selected preserving the original runtime/package versions. A v0.3.7
+maintenance release is being prepared from v0.3.6 with only the harness fix;
+component pins below remain unchanged. Wait for the replacement handoff and
+publication confirmation before selecting an immutable image digest.
 
 Recorded 2026-11-17. The user requested package releases and an image build
 before continuing this investigation. Do not run a saturation workload against
