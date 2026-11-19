@@ -19,55 +19,11 @@ jobs:
         with:
           path: xian-stack
 
-      - name: Check out xian-abci
-        uses: actions/checkout@v7
+      # Maintenance CI must exercise the same immutable inputs as publication.
+      - name: Check out pinned release dependencies
+        uses: ./xian-stack/.github/actions/checkout-localnet
         with:
-          repository: xian-technology/xian-abci
-          path: xian-abci
-
-      - name: Check out xian-contracting
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-contracting
-          path: xian-contracting
-
-      - name: Check out xian-py
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-py
-          path: xian-py
-
-      - name: Check out xian-configs
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-configs
-          path: xian-configs
-
-      - name: Check out xian-cli
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-cli
-          path: xian-cli
-
-      # The DEX automation backend tests run against the sibling repo.
-      - name: Check out xian-dex-automation
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-dex-automation
-          path: xian-dex-automation
-
-      - name: Use matching dependency branches when available
-        shell: bash
-        run: |
-          set -euo pipefail
-          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          for repo in xian-abci xian-contracting xian-py xian-configs xian-cli xian-dex-automation; do
-            REMOTE="https://github.com/xian-technology/${repo}"
-            if git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
-              git -C "$repo" fetch --depth=1 origin "$BRANCH"
-              git -C "$repo" checkout -B "$BRANCH" FETCH_HEAD
-            fi
-          done
+          products: 'true'
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v6
@@ -113,48 +69,11 @@ jobs:
         with:
           path: xian-stack
 
-      - name: Check out xian-abci
-        uses: actions/checkout@v7
+      # Maintenance CI must exercise the same immutable inputs as publication.
+      - name: Check out pinned release dependencies
+        uses: ./xian-stack/.github/actions/checkout-localnet
         with:
-          repository: xian-technology/xian-abci
-          path: xian-abci
-
-      - name: Check out xian-contracting
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-contracting
-          path: xian-contracting
-
-      - name: Check out xian-py
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-py
-          path: xian-py
-
-      - name: Check out xian-configs
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-configs
-          path: xian-configs
-
-      - name: Check out xian-cli
-        uses: actions/checkout@v7
-        with:
-          repository: xian-technology/xian-cli
-          path: xian-cli
-
-      - name: Use matching dependency branches when available
-        shell: bash
-        run: |
-          set -euo pipefail
-          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          for repo in xian-abci xian-contracting xian-py xian-configs xian-cli; do
-            REMOTE="https://github.com/xian-technology/${repo}"
-            if git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
-              git -C "$repo" fetch --depth=1 origin "$BRANCH"
-              git -C "$repo" checkout -B "$BRANCH" FETCH_HEAD
-            fi
-          done
+          products: 'true'
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v6
