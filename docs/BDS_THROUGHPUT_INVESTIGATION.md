@@ -2,15 +2,16 @@
 
 ## Resume point
 
-Latest handoff, 2026-11-19: stack `v0.3.7`, maintenance source
-`380411b6df0535b2b7d6a4a135eda62de5869d42` on `release-0.3`.
-[Replacement image workflow](https://github.com/xian-technology/xian-stack/actions/runs/44440254467)
-was triggered and is deliberately not monitored. The user selected preserving
-the original runtime/package versions. This release backports the fee-aware
-unbond payout check onto v0.3.6; its Docker/runtime and component pins below
-are unchanged. Wait for publication confirmation before selecting a digest.
-The earlier v0.3.6 attempt passed full E2E but failed the separate protocol
-suite's net-balance assertion and published no images.
+Latest checkpoint, 2026-11-19: stack v0.3.7
+[run 44440254467](https://github.com/xian-technology/xian-stack/actions/runs/44440254467)
+passed full E2E and protocol stages 00–07, then failed the final leave-notice
+assertion. The chain correctly retained the eligible announcing validator;
+the runner incorrectly expected immediate eviction despite the seven-day
+notice and required `leave()` call. No images were published. A v0.3.8
+maintenance backport is being prepared with the corrected retention/deadline
+check. The user's original runtime/package/Docker inputs and component pins
+below remain unchanged. Wait for the replacement handoff and publication
+confirmation before selecting a digest.
 
 Recorded 2026-11-17. The user requested package releases and an image build
 before continuing this investigation. Do not run a saturation workload against

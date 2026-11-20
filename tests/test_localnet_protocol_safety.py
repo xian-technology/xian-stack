@@ -65,6 +65,93 @@ def test_unbond_claim_checks_full_payout_after_fees(paid, chi_rate, claimed, err
         assert reader.get_state.await_args.args == ("currency", "balances", "delegator")
 
 
+@pytest.mark.parametrize(
+    ("change", "error"),
+    [
+        (None, None),
+        ("evict", "active validator set"),
+        ("inactive", "active flag"),
+        ("deadline", "deadline"),
+    ],
+)
+def test_leave_phase_retains_active_members_during_notice(change, error):
+    runner = object.__new__(localnet_protocol_safety.ProtocolSafetyRunner)
+    runner.nodes = [SimpleNamespace(account_public_key=f"node-{i}") for i in range(5)]
+    runner.validator_wallets = [object() for _ in range(5)]
+    runner.restart_primary_at_current_height = AsyncMock(return_value={"height": 41})
+    runner.wait_for_validator_count = AsyncMock(return_value={"count": 3})
+    before = ["node-3", "node-2", "node-4"]
+    deadline = "2026-11-26 02:55:05"
+    progress = set()
+    node0, node3 = AsyncMock(), AsyncMock()
+    node0.__aenter__.return_value = node0
+    node3.__aenter__.return_value = node3
+    runner.client = lambda _wallet, index, _session: {0: node0, 3: node3}[index]
+
+    async def read(_contract, function, _kwargs):
+        rebalanced = "rebalance" in progress
+        if function == "get_active_validators":
+            accounts = (
+                ["node-2", "node-4", "node-0"] if rebalanced and change == "evict" else before
+            )
+            return [{"account": account} for account in accounts]
+        assert function == "get_validator"
+        announced = "announce_leave" in progress
+        return {
+            "status": "leaving" if announced else "active",
+            "active": not (rebalanced and change in {"evict", "inactive"}),
+            "pending_leave_at": (
+                "2026-11-27 02:55:05"
+                if rebalanced and change == "deadline"
+                else deadline
+                if announced
+                else False
+            ),
+        }
+
+    async def submit(_client, _contract, function, _kwargs, **_options):
+        progress.add(function)
+        return {"tx_hash": function, "height": 42}
+
+    node0.call.side_effect = read
+    runner.submit_tx = AsyncMock(side_effect=submit)
+    node3.send_tx.return_value = SimpleNamespace(
+        submitted=True,
+        accepted=True,
+        finalized=True,
+        message=None,
+        tx_hash="early-leave",
+        nonce=0,
+        chi_supplied=50_000,
+        receipt=SimpleNamespace(
+            execution={},
+            success=False,
+            message="Leave announcement period not over.",
+            raw={"result": {"height": "43"}},
+        ),
+    )
+    real_wait = runner.wait_for_active_validators
+
+    async def bounded_wait(*args, **kwargs):
+        return await real_wait(*args, **{**kwargs, "timeout_seconds": 1.0})
+
+    # Exercise the real membership polling/assertion, with a short test timeout.
+    runner.wait_for_active_validators = bounded_wait
+    phase = runner.leave_announcement_phase(object())
+    if error:
+        with pytest.raises(localnet_protocol_safety.RunnerError, match=error):
+            asyncio.run(phase)
+    else:
+        result = asyncio.run(phase)
+        assert [entry["account"] for entry in result["active_after_rebalance"]] == before
+        assert result["validator_after_rebalance"]["active"] is True
+        assert result["validator_after_rebalance"]["pending_leave_at"] == deadline
+        assert result["leave_before_delay_failure"]["success"] is False
+        node3.send_tx.assert_awaited_once_with(
+            "validators", "leave", {}, chi=50_000, wait_for_tx=True
+        )
+
+
 class LocalnetProtocolSafetyTests(unittest.TestCase):
     def test_policy_approval_waits_for_effects_on_stale_primary(self):
         args = localnet_protocol_safety.build_parser().parse_args([])

@@ -49,23 +49,25 @@ The leave phase confirms that:
 
 - `announce_leave` succeeds
 - immediate `leave` is rejected until the delay expires
-- a pending-leave validator is excluded from the active set on rebalance
-- a standby validator can be promoted into the live set during that rebalance
+- rebalance retains the eligible announcing validator in the active set
+- the announcement deadline is unchanged by rebalance
 - validator status remains `leaving` until the actual exit path completes
 
-## Important Regression
+## Pending-Leave Regression
 
-While extending the runner, we found a real contract bug in
-`xian-configs/contracts/validators.s.py`.
+`pending_leave` stores either `False` or a `Datetime`. An already-active,
+otherwise eligible validator remains selectable after announcing leave.
+Rebalance does not complete its exit or bypass the notice period. The validator
+must keep signing until a successful `leave()` removes it after the delay.
 
-`pending_leave` stores either `False` or a `Datetime`. The rebalance path was
-using a cross-type comparison instead of a truthiness check, which could raise a
-runtime type error once a validator had announced leave.
-
-That bug is now covered by:
+This behavior is covered by:
 
 - the live runner leave-announcement phase
-- `xian-abci/tests/system/test_members.py::test_rebalance_excludes_validator_with_pending_leave`
+- `xian-configs/tests/test_system_contract_authorization.py::test_automatic_selection_keeps_announced_validator_until_leave`
+
+Standby promotion is checked when the evidence phase actually removes a
+validator. The live leave phase checks retention and early-exit denial; it
+does not fast-forward the seven-day notice or claim to test delayed exit.
 
 ## Current Constraint
 

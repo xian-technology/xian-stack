@@ -2913,11 +2913,7 @@ def get_status():
             )
             active_after_rebalance = await self.wait_for_active_validators(
                 node0,
-                expected_accounts=[
-                    self.nodes[2].account_public_key,
-                    self.nodes[4].account_public_key,
-                    self.nodes[0].account_public_key,
-                ],
+                expected_accounts=[entry["account"] for entry in active_before],
                 timeout_seconds=30.0,
                 label="active set after announce_leave rebalance",
             )
@@ -2938,12 +2934,13 @@ def get_status():
         )
         assert_equal(
             validator_after_rebalance["active"],
-            False,
+            True,
             label="validator active flag after announce_leave rebalance",
         )
-        assert_true(
-            validator_after_rebalance["pending_leave_at"] not in (False, None),
-            label="validator pending leave timestamp after rebalance",
+        assert_equal(
+            validator_after_rebalance["pending_leave_at"],
+            validator_after_announce["pending_leave_at"],
+            label="validator leave deadline after rebalance",
         )
 
         return {
@@ -3020,8 +3017,8 @@ def get_status():
                 "Covered: real CometBFT duplicate-vote evidence broadcast and ABCI-driven "
                 "slashing/jailing with active-set replacement.",
                 "Covered: announce_leave, enforced delay on immediate leave, and "
-                "validator-set rebalance while leave is pending, including standby "
-                "validator promotion.",
+                "validator-set rebalance retaining the eligible announcing validator "
+                "and its leave deadline.",
                 "Not covered: delayed leave completion after the full 7-day waiting period "
                 "and real light-client-attack evidence.",
             ]
