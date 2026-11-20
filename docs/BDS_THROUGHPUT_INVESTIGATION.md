@@ -2,14 +2,16 @@
 
 ## Resume point
 
-Latest checkpoint, 2026-11-19: stack v0.3.6
-[run 44406031694](https://github.com/xian-technology/xian-stack/actions/runs/44406031694)
-passed full E2E, including snapshot export/restore, but failed the later
-protocol test's fee-blind unbond balance assertion. No images were published.
-The user selected preserving the original runtime/package versions. A v0.3.7
-maintenance release is being prepared from v0.3.6 with only the harness fix;
-component pins below remain unchanged. Wait for the replacement handoff and
-publication confirmation before selecting an immutable image digest.
+Latest checkpoint, 2026-11-19: stack v0.3.7
+[run 44440254467](https://github.com/xian-technology/xian-stack/actions/runs/44440254467)
+passed full E2E and protocol stages 00–07, then failed the final leave-notice
+assertion. The chain correctly retained the eligible announcing validator;
+the runner incorrectly expected immediate eviction despite the seven-day
+notice and required `leave()` call. No images were published. A v0.3.8
+maintenance backport is being prepared with the corrected retention/deadline
+check. The user's original runtime/package/Docker inputs and component pins
+below remain unchanged. Wait for the replacement handoff and publication
+confirmation before selecting a digest.
 
 Recorded 2026-11-17. The user requested package releases and an image build
 before continuing this investigation. Do not run a saturation workload against
@@ -299,3 +301,20 @@ Local inspection copies: `/tmp/xian-image-v035-artifacts` and
 `/tmp/xian-image-v035-failed.log`; GitHub artifact retention is finite. No image
 was published by this attempt. The recovery changes only stack Make output;
 it does not change the frozen ABCI, contracting, configs or SDK source pins.
+
+### Full E2E evidence from the failed v0.3.6 attempt
+
+Run 44406031694 passed all 37 public E2E stages, including the signed
+fresh-node snapshot export/restore rehearsal. Its later, separate protocol
+suite failed the fee-blind unbond payout assertion. That harness correction
+is the reason for the user-selected frozen v0.3.7 maintenance release.
+
+Artifact 14479334768 contains E2E evidence under
+`public-localnet-e2e/20261118T221256Z/`. Its BDS recovery check started at
+height 466 with zero lag/queue/spool, reached height 477 with 11 blocks queued
+and spooled during the database outage, and recovered at height 485 with
+zero lag, empty queue/spool and healthy database status. This confirms the
+bounded outage rehearsal on the original runtime; it remains separate from
+the planned sustained saturation and query-load campaign. Local copies are
+in `/tmp/xian-image-v036-artifacts`; the protocol failure log is
+`/tmp/xian-image-v036-failed.log`.
