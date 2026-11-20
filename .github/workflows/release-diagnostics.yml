@@ -1,0 +1,119 @@
+name: Diagnose published image layers
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Immutable published stack tag
+        required: true
+        default: v0.3.8
+        type: string
+      source_run_id:
+        description: Original release run containing release-assets
+        required: true
+        default: '44711736245'
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  packages: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out diagnostic tools
+        uses: actions/checkout@v7
+        with:
+          path: tooling
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Authenticate the original source selection
+        id: selected
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          python - <<'PY'
+          import json, os, re, subprocess
+          from pathlib import Path
+          tag, run_id = os.environ['RELEASE_TAG'], os.environ['SOURCE_RUN_ID']
+          assert re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag), 'invalid release tag'
+          assert run_id.isdecimal() and int(run_id) > 0, 'invalid release run'
+          sha = subprocess.check_output(['git', '-C', 'tooling', 'rev-parse',
+                                        '--verify', f'refs/tags/{tag}^{{commit}}'], text=True).strip()
+          run = json.loads(subprocess.check_output(
+              ['gh', 'api', f'repos/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{run_id}']))
+          assert run['head_sha'] == sha and run['head_branch'] == tag, 'source mismatch'
+          assert run['path'] == '.github/workflows/release.yml', 'not a release run'
+          assert run['event'] == 'push' and run['status'] == 'completed', 'release still active'
+          Path('selected-run.json').write_text(json.dumps(run, indent=2))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'sha={sha}\n')
+          PY
+
+      - name: Check out immutable release source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.selected.outputs.sha }}
+          path: xian-stack
+
+      - name: Check out frozen release dependencies
+        uses: ./xian-stack/.github/actions/checkout-localnet
+
+      - name: Download original signed release metadata
+        uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: release-assets
+
+      - name: Check metadata against the immutable source
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_SHA: ${{ steps.selected.outputs.sha }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          read = lambda p: json.loads(Path(p).read_text())
+          assert read('release-assets/release-manifest.json') == read('xian-stack/release-manifest.json')
+          release = read('release-assets/image-release.json')
+          assert release['version'] == os.environ['RELEASE_TAG'][1:], 'version mismatch'
+          for image in release['images'].values():
+              assert f'org.opencontainers.image.revision={os.environ["SOURCE_SHA"]}' in image['labels']
+          PY
+
+      - name: Set up original build engine
+        uses: docker/setup-buildx-action@v4
+        with:
+          version: v0.39.0
+          driver-opts: image=moby/buildkit@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c
+
+      - name: Rebuild and diagnose without publishing
+        run: |
+          python tooling/scripts/release_layer_diagnostics.py \
+            --manifest xian-stack/release-manifest.json \
+            --image-release release-assets/image-release.json \
+            --workspace-root "$GITHUB_WORKSPACE" \
+            --output-dir diagnostics
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-layer-diagnostics
+          path: |
+            diagnostics
+            selected-run.json
+          if-no-files-found: warn

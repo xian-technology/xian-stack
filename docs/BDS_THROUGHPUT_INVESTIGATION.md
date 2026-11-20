@@ -2,16 +2,17 @@
 
 ## Resume point
 
-Latest handoff, 2026-11-20: stack `v0.3.8`, maintenance source
+Latest checkpoint, 2026-11-21: stack `v0.3.8`, maintenance source
 `a766053c843194ba43da2867f87a29befa1834e4` on `release-0.3`.
-[Replacement image workflow](https://github.com/xian-technology/xian-stack/actions/runs/44711736245)
-was triggered and is deliberately not monitored. It preserves the original
-runtime/package/Docker inputs and component pins below (execution 15/gas 7).
-The previous v0.3.7 attempt passed all 37 E2E stages and protocol stages 00–07,
-then failed a stale final leave-notice assertion. This backport verifies
-retained membership and deadline while preserving early-leave rejection and
-the seven-day notice. Wait for publication confirmation before selecting a
-digest; no image or digest is claimed from the failed attempts.
+[Image workflow](https://github.com/xian-technology/xian-stack/actions/runs/44711736245)
+passed full release safety and published the images, but its later rebuild
+verification failed on integrated AMD64 rootfs hashes. The final GitHub
+release was skipped. Published indexes and diagnostic details are recorded in
+[the release ledger](RELEASE_2026_11_17.md). Preserve these tags and original
+runtime/package pins (execution 15/gas 7) while diagnosing the mismatch.
+Do not resume the saturation campaign or describe the release as fully
+verified yet. This is a reproducibility investigation, not another protocol
+test failure; the corrected payout and leave-notice safety checks passed.
 
 Recorded 2026-11-17. The user requested package releases and an image build
 before continuing this investigation. Do not run a saturation workload against

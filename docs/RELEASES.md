@@ -337,3 +337,26 @@ development or custom testing.
 Use normal tags such as `v0.1.0` for stable image releases and prerelease tags
 such as `v0.1.0-alpha.1` while the node image line is still maturing. Tags that
 contain a hyphen are published as GitHub prereleases automatically.
+
+### Diagnose a published image without replacing it
+
+When publication succeeded but reproducibility failed, retain the tag, signed
+release metadata and all published digests. Collect layer/file evidence with
+the read-only diagnostic workflow, selecting the original tag and release run:
+
+```bash
+gh workflow run release-diagnostics.yml --ref main \
+  -f release_tag=v0.3.8 -f source_run_id=44711736245
+```
+
+It checks the release run's source SHA against the immutable tag, checks the
+downloaded image metadata and manifest, then rebuilds integrated AMD64 using
+the recorded labels and frozen source checkouts. Its pinned build engine
+matches the original v0.3.8 run; check that input when diagnosing a different
+build train. It cannot push images or create a release.
+
+Download `release-layer-diagnostics` from that run for config/layer comparisons,
+file and nested wheel differences, and native libraries named by their content
+hashes. Tar/wheel paths are inspected rather than extracted onto the host.
+A successful diagnostic job means the evidence was collected; it does not
+override the reproducibility gate or declare the original release verified.
