@@ -2,16 +2,16 @@
 
 ## Resume point
 
-Latest checkpoint, 2026-11-19: stack v0.3.7
-[run 44440254467](https://github.com/xian-technology/xian-stack/actions/runs/44440254467)
-passed full E2E and protocol stages 00–07, then failed the final leave-notice
-assertion. The chain correctly retained the eligible announcing validator;
-the runner incorrectly expected immediate eviction despite the seven-day
-notice and required `leave()` call. No images were published. A v0.3.8
-maintenance backport is being prepared with the corrected retention/deadline
-check. The user's original runtime/package/Docker inputs and component pins
-below remain unchanged. Wait for the replacement handoff and publication
-confirmation before selecting a digest.
+Latest handoff, 2026-11-20: stack `v0.3.8`, maintenance source
+`a766053c843194ba43da2867f87a29befa1834e4` on `release-0.3`.
+[Replacement image workflow](https://github.com/xian-technology/xian-stack/actions/runs/44711736245)
+was triggered and is deliberately not monitored. It preserves the original
+runtime/package/Docker inputs and component pins below (execution 15/gas 7).
+The previous v0.3.7 attempt passed all 37 E2E stages and protocol stages 00–07,
+then failed a stale final leave-notice assertion. This backport verifies
+retained membership and deadline while preserving early-leave rejection and
+the seven-day notice. Wait for publication confirmation before selecting a
+digest; no image or digest is claimed from the failed attempts.
 
 Recorded 2026-11-17. The user requested package releases and an image build
 before continuing this investigation. Do not run a saturation workload against
@@ -318,3 +318,21 @@ bounded outage rehearsal on the original runtime; it remains separate from
 the planned sustained saturation and query-load campaign. Local copies are
 in `/tmp/xian-image-v036-artifacts`; the protocol failure log is
 `/tmp/xian-image-v036-failed.log`.
+
+### Additional v0.3.7 evidence
+
+Failed image run 44440254467 has public artifact 14494087408. All 37 E2E
+stages passed under `public-localnet-e2e/20261119T020619Z/`; protocol proof is
+under `public-localnet-protocol/20261119T024948Z/`. The corrected unbond check,
+hybrid membership and real duplicate-vote evidence passed. The last protocol
+stage expected eviction on leave announcement even though the chain correctly
+retained the eligible announcing validator until actual exit; v0.3.8 corrects
+that harness expectation without changing the runtime.
+
+BDS again recovered from a bounded database outage: baseline height 467 had
+zero lag/queue/spool; height 478 had 11 queued/spooled blocks during the
+outage; recovered height 486 had zero lag, empty queue/spool and healthy
+database status. This is recovery evidence, not a sustained maximum-TPS
+measurement. Inspection copies are `/tmp/xian-image-v037-artifacts` and
+`/tmp/xian-image-v037-failed.log`. Resume the saturation/query-load campaign
+only after the user confirms publication of the selected frozen image.
