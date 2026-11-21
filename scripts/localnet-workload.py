@@ -1190,20 +1190,25 @@ async def summarize_committed_window_for_range(
         delta_seconds = _block_interval_seconds(previous_time, block_time)
         instant_tps = None
         if delta_seconds:
-            instant_tps = tx_count / delta_seconds
-            per_block_tps.append(instant_tps)
+            block_tps = tx_count / delta_seconds
+            per_block_tps.append(block_tps)
+            instant_tps = round(block_tps, 3)
         previous_time = block_time
         blocks.append(
             {
                 "height": height,
                 "tx_count": tx_count,
                 "time": block["header"]["time"],
-                "instant_tps": (round(instant_tps, 3) if instant_tps is not None else None),
+                "instant_tps": instant_tps,
             }
         )
 
     chain_window_seconds = _block_interval_seconds(start_time, previous_time)
     window_seconds = chain_window_seconds or fallback_elapsed_seconds
+    peak_block_tps = median_block_tps = None
+    if per_block_tps:
+        peak_block_tps = round(max(per_block_tps), 3)
+        median_block_tps = round(statistics.median(per_block_tps), 3)
 
     return {
         "min_height": start_height + 1,
@@ -1215,8 +1220,8 @@ async def summarize_committed_window_for_range(
         "window_basis": "chain_time" if chain_window_seconds else "elapsed_time",
         "committed_workload_tps": round(workload_transactions / window_seconds, 3),
         "committed_chain_tps": round(chain_transactions / window_seconds, 3),
-        "peak_block_tps": (round(max(per_block_tps), 3) if per_block_tps else None),
-        "median_block_tps": (round(statistics.median(per_block_tps), 3) if per_block_tps else None),
+        "peak_block_tps": peak_block_tps,
+        "median_block_tps": median_block_tps,
         "blocks": blocks,
     }
 
