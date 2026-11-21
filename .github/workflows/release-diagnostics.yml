@@ -1,4 +1,4 @@
-name: Diagnose published image layers
+name: Diagnose or recover published images
 
 on:
   workflow_dispatch:
@@ -13,6 +13,15 @@ on:
         required: true
         default: '44711736245'
         type: string
+      finalize_release:
+        description: Verify all four images and finish the GitHub release without republishing images
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: published-release-recovery-${{ inputs.release_tag }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -22,7 +31,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
     steps:
       - name: Check out diagnostic tools
         uses: actions/checkout@v7
@@ -56,6 +65,11 @@ jobs:
           assert run['head_sha'] == sha and run['head_branch'] == tag, 'source mismatch'
           assert run['path'] == '.github/workflows/release.yml', 'not a release run'
           assert run['event'] == 'push' and run['status'] == 'completed', 'release still active'
+          jobs = json.loads(subprocess.check_output(
+              ['gh', 'api', f'repos/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{run_id}/jobs?per_page=100']))
+          results = {job['name']: job['conclusion'] for job in jobs['jobs']}
+          for required in ('release-manifest', 'release-safety', 'publish-images'):
+              assert results.get(required) == 'success', f'{required} did not pass'
           Path('selected-run.json').write_text(json.dumps(run, indent=2))
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write(f'sha={sha}\n')
@@ -100,13 +114,33 @@ jobs:
           version: v0.39.0
           driver-opts: image=moby/buildkit@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c
 
+      - name: Restore recorded Rust wheel dependencies
+        run: |
+          python tooling/scripts/release_rust_inputs.py \
+            --manifest xian-stack/release-manifest.json \
+            --contracting-root xian-contracting > rust-inputs.json
+
+      - name: Set up QEMU
+        if: inputs.finalize_release
+        uses: docker/setup-qemu-action@v4
+
       - name: Rebuild and diagnose without publishing
+        if: '!inputs.finalize_release'
         run: |
           python tooling/scripts/release_layer_diagnostics.py \
             --manifest xian-stack/release-manifest.json \
             --image-release release-assets/image-release.json \
             --workspace-root "$GITHUB_WORKSPACE" \
             --output-dir diagnostics
+
+      - name: Verify all original image variants with the original gate
+        if: inputs.finalize_release
+        run: |
+          python xian-stack/scripts/verify_release_reproducibility.py \
+            --manifest xian-stack/release-manifest.json \
+            --image-release release-assets/image-release.json \
+            --workspace-root "$GITHUB_WORKSPACE" > reproducibility.json
+          cat reproducibility.json
 
       - name: Upload diagnostic evidence
         if: always()
@@ -116,4 +150,51 @@ jobs:
           path: |
             diagnostics
             selected-run.json
+            rust-inputs.json
+            reproducibility.json
           if-no-files-found: warn
+
+  finalize:
+    if: inputs.finalize_release
+    needs: diagnose
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download original signed release assets
+        uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: release-assets
+
+      - name: Download successful recovery evidence
+        uses: actions/download-artifact@v8
+        with:
+          name: release-layer-diagnostics
+          path: recovery
+
+      - name: Finish the verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          proof = json.loads(Path('recovery/reproducibility.json').read_text())
+          assert proof['ok'] is True
+          assert set(proof['observed']) == {
+              f'{target}:linux/{arch}' for target in ('integrated', 'split') for arch in ('amd64', 'arm64')
+          }
+          Path('recovery/recovery-notes.txt').write_text(
+              'Recovered verification of the original published images. No images were republished.\n'
+              f'Workflow: {os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}\n'
+              f'Tooling source: {os.environ["GITHUB_SHA"]}\n')
+          PY
+          gh release create "$RELEASE_TAG" release-assets/* \
+            recovery/reproducibility.json recovery/rust-inputs.json recovery/recovery-notes.txt \
+            --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "xian-stack ${RELEASE_TAG#v}" --generate-notes

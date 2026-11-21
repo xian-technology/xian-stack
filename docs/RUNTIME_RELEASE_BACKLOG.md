@@ -16,6 +16,9 @@ integrated-vs-fidelity runtime refactor itself.
   snapshot instead of live Debian repositories.
 - Done: the uv helper image and the Python packaging build dependency are now
   manifest-pinned release inputs.
+- Added: reviewed Cargo lock sets for the three native Python wheel roots,
+  keyed by the immutable contracting source SHA. Release safety, publication
+  and verification restore the same files. Unknown source pins fail closed.
 
 ## SBOM And Provenance
 
@@ -31,9 +34,11 @@ integrated-vs-fidelity runtime refactor itself.
 
 ## Reproducibility
 
-- Done: stack release inputs are pinned enough for deterministic rebuilds,
-  including base images, uv image, Debian package snapshots, Python tool
-  versions, CometBFT source archives, and s6-overlay archives.
+- Base images, uv, Debian packages, Python tools, CometBFT and s6-overlay are
+  pinned. v0.3.8 exposed a remaining gap: untracked Cargo locks allowed a new
+  transitive crate between publication and verification. Restored Rust locks
+  now cover that input; full original-image verification remains the acceptance
+  check before calling the existing release reproducible.
 - Done: the release workflow now runs a post-publish rebuild audit for
   `linux/amd64` and `linux/arm64` and compares the results to the recorded
   platform digests.

@@ -81,6 +81,12 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Restore frozen Rust wheel dependencies
+        run: |
+          python xian-stack/scripts/release_rust_inputs.py \
+            --manifest xian-stack/release-manifest.json \
+            --contracting-root xian-contracting
+
       - name: Install uv
         run: python -m pip install uv
 
@@ -169,6 +175,12 @@ jobs:
           repository: ${{ needs.release-manifest.outputs.xian_py_repository }}
           ref: ${{ needs.release-manifest.outputs.xian_py_ref }}
           path: xian-py
+
+      - name: Restore frozen Rust wheel dependencies
+        run: |
+          python xian-stack/scripts/release_rust_inputs.py \
+            --manifest xian-stack/release-manifest.json \
+            --contracting-root xian-contracting
 
       - name: Normalize registry owner
         id: registry
@@ -485,6 +497,12 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+
+      - name: Restore frozen Rust wheel dependencies
+        run: |
+          python xian-stack/scripts/release_rust_inputs.py \
+            --manifest xian-stack/release-manifest.json \
+            --contracting-root xian-contracting
 
       - name: Verify release reproducibility
         run: |

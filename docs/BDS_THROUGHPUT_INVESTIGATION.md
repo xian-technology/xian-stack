@@ -337,3 +337,20 @@ database status. This is recovery evidence, not a sustained maximum-TPS
 measurement. Inspection copies are `/tmp/xian-image-v037-artifacts` and
 `/tmp/xian-image-v037-failed.log`. Resume the saturation/query-load campaign
 only after the user confirms publication of the selected frozen image.
+
+### v0.3.8 verification recovery checkpoint: 2026-11-21
+
+The original v0.3.8 safety gate and image publication passed; its final
+reproducibility check failed. Read-only diagnostic run 44840683790 reproduced
+the exact mismatch. Published Rust wheel SBOMs record `cc 1.11.2`; a new
+`1.11.3` release between publication and verification changed the unlocked
+dependency resolution. Reviewed generated Cargo locks restore the original
+dependency versions without changing runtime sources, package versions,
+image digests or execution/gas versions. See `RELEASE_2026_11_17.md` for the
+source/provenance and investigation evidence.
+
+The recovery workflow must still pass the original four-variant image verifier
+before completing the GitHub release. Dependency-list agreement and a successful
+diagnostic run are insufficient. Resume BDS saturation/query-load testing only
+after that recovery is confirmed and the user resumes the investigation. The
+existing live node and data remain untouched.

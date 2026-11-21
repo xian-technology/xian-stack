@@ -327,6 +327,11 @@ platform digests, but the GitHub release is blocked unless the rebuild passes.
 Keep `release-manifest.json` current before tagging: base images, the uv helper
 image, the Debian snapshot timestamp, Python packaging tool versions, CometBFT
 source metadata, and s6-overlay archive checksums are release inputs.
+Rust wheel transitive dependencies are release inputs too. Release jobs restore
+the reviewed Cargo locks from `release/rust-inputs/<contracting-ref>/` before
+safety, publication and verification. A new contracting source pin needs a new
+reviewed lock set; the preparation helper refuses unknown or mismatched inputs.
+See `release/rust-inputs/README.md` for preparation and provenance.
 
 Canonical network manifests in `xian-configs/networks/*/manifest.json` can then
 pin those published images by digest, and `xian-cli network join` will carry
@@ -353,10 +358,33 @@ It checks the release run's source SHA against the immutable tag, checks the
 downloaded image metadata and manifest, then rebuilds integrated AMD64 using
 the recorded labels and frozen source checkouts. Its pinned build engine
 matches the original v0.3.8 run; check that input when diagnosing a different
-build train. It cannot push images or create a release.
+build train. It restores the reviewed original Rust wheel dependency locks.
+The default diagnostic mode has read-only permissions and cannot push images
+or create a release.
 
 Download `release-layer-diagnostics` from that run for config/layer comparisons,
 file and nested wheel differences, and native libraries named by their content
 hashes. Tar/wheel paths are inspected rather than extracted onto the host.
 A successful diagnostic job means the evidence was collected; it does not
 override the reproducibility gate or declare the original release verified.
+
+### Complete verification of already published images
+
+If the original safety and publication jobs passed, a reviewed restoration of
+missing generated build inputs can recover verification without republishing:
+
+```bash
+gh workflow run release-diagnostics.yml --ref main \
+  -f release_tag=v0.3.8 -f source_run_id=44711736245 -f finalize_release=true
+```
+
+This checks the original run's successful manifest, safety and publication jobs,
+then uses its immutable tag, frozen sibling refs, recorded labels, signed
+metadata and original Dockerfile. Only the reviewed generated Rust lockfiles
+are restored. The original verifier must pass for both targets on both Linux
+architectures. A separate job can then create the GitHub release with the
+original signed assets and new verification/input evidence. It cannot push
+images, move tags or overwrite a preexisting release. The final job is skipped
+if any verification fails. Record the recovery workflow SHA separately from
+the artifact's original source SHA. A dispatched run remains pending until its
+verification and finalization are confirmed.
