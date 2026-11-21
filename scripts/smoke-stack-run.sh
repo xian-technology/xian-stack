@@ -23,7 +23,7 @@ require_stack_paths
 require_docker
 
 smoke_moniker="${XIAN_SMOKE_MONIKER:-smoke-validator}"
-smoke_network="${XIAN_SMOKE_NETWORK:-devnet}"
+smoke_network="${XIAN_SMOKE_NETWORK:-local}"
 smoke_genesis_source="${XIAN_SMOKE_GENESIS_SOURCE:-}"
 smoke_genesis_bundle="${XIAN_SMOKE_GENESIS_BUNDLE:-}"
 smoke_chain_id="${XIAN_SMOKE_CHAIN_ID:-}"

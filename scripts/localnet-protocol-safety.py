@@ -33,7 +33,7 @@ OUTPUT_ROOT = STACK_DIR / ".artifacts" / "localnet-protocol-safety"
 XIAN_ABCI_SRC = ROOT_DIR / "xian-abci" / "src"
 
 DEFAULT_LOCALNET_NODES = 5
-DEFAULT_GENESIS_NETWORK = "testnet"
+DEFAULT_GENESIS_NETWORK = "local"
 ABCI_HEALTH_QUERY_PATH = "/get/currency.balances:__xian_localnet_governance_health_probe__"
 STATE_PATCH_DELAY_BLOCKS = 8
 STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS = 8

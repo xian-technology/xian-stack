@@ -2573,7 +2573,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     localnet_protocol_safety.add_argument(
         "--genesis-network",
-        default="testnet",
+        default="local",
         help="genesis bundle name used to seed localnet genesis",
     )
     localnet_protocol_safety.add_argument(
@@ -2633,7 +2633,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     localnet_e2e.add_argument(
         "--genesis-network",
-        default="testnet",
+        default="local",
     )
     localnet_e2e.add_argument(
         "--bds-node-index",

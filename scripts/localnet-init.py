@@ -2,7 +2,7 @@
 """Generate keys, genesis, and CometBFT config for an N-node local network.
 
 Usage:
-    python localnet-init.py --nodes 5 --genesis-network testnet --chain-id xian-localnet-1
+    python localnet-init.py --nodes 5 --genesis-network local --chain-id xian-localnet-1
 
 Outputs everything under .localnet/node-{i}/.cometbft/ ready to be
 mounted into Docker containers.
@@ -370,7 +370,7 @@ def parse_args() -> argparse.Namespace:
         default=env_str("XIAN_LOCALNET_GENESIS_NETWORK", "local"),
         help=(
             "Genesis bundle name used to seed the localnet genesis "
-            "(for example: local, devnet, testnet)"
+            "(local, or mainnet for a mainnet-shaped rehearsal)"
         ),
     )
     parser.add_argument(

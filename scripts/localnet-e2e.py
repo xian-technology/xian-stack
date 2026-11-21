@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a layered 5-validator testnet-shaped localnet e2e program."""
+"""Run a layered 5-validator localnet e2e program."""
 
 from __future__ import annotations
 
@@ -97,7 +97,7 @@ DEFAULT_EXECUTION_MODE = "xian_vm_v2"
 INVALID_FSTRING_SOURCE = "@export\ndef render(value: int):\n    return f'{value!q}'\n"
 INVALID_FSTRING_DIAGNOSTIC = "f-string: invalid conversion character"
 DEFAULT_LOCALNET_NODES = 5
-DEFAULT_GENESIS_NETWORK = "testnet"
+DEFAULT_GENESIS_NETWORK = "local"
 MAX_CANONICAL_JSON_DEPTH = 128
 E2E_GOVERNED_REWARD_SPLIT = (
     Decimal("0.60"),
@@ -10623,7 +10623,7 @@ class E2ERunner:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run a layered 5-validator testnet-shaped localnet end-to-end program",
+        description="Run a layered 5-validator localnet end-to-end program",
     )
     parser.add_argument("--suite", choices=("full", "intentkit-x402"), default="full")
     parser.add_argument(

@@ -13,8 +13,6 @@ STACK_DIR = Path(__file__).resolve().parent.parent
 
 SUPPORTED_INTENTKIT_NETWORK_IDS = (
     "xian-mainnet",
-    "xian-testnet",
-    "xian-devnet",
     "xian-localnet",
 )
 INTENTKIT_CORE_SERVICES = (

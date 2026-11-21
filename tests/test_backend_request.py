@@ -201,7 +201,7 @@ class BackendRequestTests(unittest.TestCase):
                     nodes=3,
                     clean=True,
                     topology="integrated",
-                    genesis_network="devnet",
+                    genesis_network="local",
                     chain_id="custom-chain",
                 )
 

@@ -34,7 +34,7 @@ uv sync --project "${xian_cli_dir}" --group dev
 
 uv run --project "${xian_cli_dir}" xian network join "${node_name}" \
   --base-dir "${cli_workspace}" \
-  --network devnet \
+  --network local \
   --node-image-mode local_build \
   --generate-validator-key \
   --stack-dir "${stack_root}" \

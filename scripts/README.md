@@ -32,7 +32,7 @@ tooling behind `xian-stack`.
 - `localnet-tps-bench.py`: repeatable throughput sweeps for a running localnet;
   it writes benchmark artifacts under `.artifacts/tps-bench/` and reports both
   committed chain throughput and end-to-end client workload throughput
-- `localnet-e2e.py`: the layered 5-validator testnet-shaped end-to-end program
+- `localnet-e2e.py`: the layered 5-validator localnet end-to-end program
   that exercises the live stack phase by phase, including direct and
   permit-authorized `currency.approvals` flows, live contract rollback probes,
   native transfer fan-out, VM-heavy contract workloads,
@@ -53,7 +53,7 @@ tooling behind `xian-stack`.
   re-execution against the source network. `e2e_replay_hooks/` captures actual
   replay results so persisted CometBFT responses cannot satisfy the comparison.
 - `localnet-protocol-safety.py`: focused protocol safety exercise against a
-  real 5-validator testnet-shaped localnet, including validator/delegation
+  real 5-validator localnet, including validator/delegation
   flows, real duplicate-vote evidence injection, governance state-patch
   activation, and announce-leave coverage, with JSON artifacts under
   `.artifacts/localnet-protocol-safety/<run-id>/`

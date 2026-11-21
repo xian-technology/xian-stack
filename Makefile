@@ -375,7 +375,7 @@ LOCALNET_TPS_BENCH_ARGS ?=
 LOCALNET_E2E_BOOTSTRAP ?= 1
 LOCALNET_E2E_BUILD ?= 1
 LOCALNET_E2E_NODES ?= 5
-LOCALNET_E2E_GENESIS_NETWORK ?= testnet
+LOCALNET_E2E_GENESIS_NETWORK ?= local
 LOCALNET_E2E_BDS_NODE_INDEX ?= 0
 XIAN_BDS_SNAPSHOT_CONTAINER_PATH = $(patsubst $(abspath $(XIAN_COMETBFT_HOME))%,/root/.cometbft%,$(abspath $(XIAN_BDS_SNAPSHOT_PATH)))
 LOCALNET_E2E_PORT_OFFSET ?= 1000
@@ -410,7 +410,7 @@ LOCALNET_PROTOCOL_SAFETY_PORT_OFFSET ?= 1000
 LOCALNET_PROTOCOL_SAFETY_SEED ?= xian-localnet-testnet-protocol-safety-v1
 LOCALNET_PROTOCOL_SAFETY_LOG_LEVEL ?= INFO
 LOCALNET_PROTOCOL_SAFETY_RPC_TIMEOUT_SECONDS ?= 180
-LOCALNET_PROTOCOL_SAFETY_GENESIS_NETWORK ?= testnet
+LOCALNET_PROTOCOL_SAFETY_GENESIS_NETWORK ?= local
 
 .DEFAULT_GOAL := help
 
@@ -481,7 +481,7 @@ help:
 	@printf "  %-24s %s\n" "localnet-workload" "Run a deterministic workload scenario (counter_basic or dex_mixed)"
 	@printf "  %-24s %s\n" "localnet-memwatch" "Sample container memory during localnet tx load"
 	@printf "  %-24s %s\n" "localnet-leak-hunt" "Split localnet memory growth by process"
-	@printf "  %-24s %s\n" "localnet-e2e" "Run the full layered 5-validator testnet-shaped localnet end-to-end program"
+	@printf "  %-24s %s\n" "localnet-e2e" "Run the full layered 5-validator localnet end-to-end program"
 	@printf "  %-24s %s\n" "localnet-node-report" "Collect the current node capability report from localnet nodes"
 	@printf "  %-24s %s\n" "localnet-vm-tps-bench" "Run the VM-native throughput sweep on a tuned 5-node localnet"
 	@printf "  %-24s %s\n" "localnet-protocol-safety" "Run the 5-validator protocol safety exercise"
