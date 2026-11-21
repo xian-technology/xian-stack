@@ -1,8 +1,8 @@
 """Replay and public signed full-node-store snapshot export/restore rehearsal.
 
-Stage21 is part of every full five-validator E2E run. It exercises `snapshot
-export` and `snapshot restore` through the current public CLI; no peer snapshot
-bootstrap or node identity/signing-state import is used.
+Stage 21 is part of every full five-validator E2E run. It exercises `snapshot
+export` and `snapshot restore` through the public CLI. The restored observer
+uses its own node identity and signing state.
 """
 
 from __future__ import annotations

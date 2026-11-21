@@ -288,7 +288,7 @@ PY
 def make_localnet_env(args: argparse.Namespace) -> dict[str, str]:
     env = os.environ.copy()
     env.update(load_stack_env())
-    # Lifecycle, quorum and state-sync checks wait for later idle heights.
+    # Lifecycle, quorum and full-store restore checks wait for later idle heights.
     mode = env.get("XIAN_LOCALNET_BLOCK_POLICY_MODE") or "periodic"
     if mode != "periodic":
         raise E2EError("The full E2E suite requires periodic block production.")

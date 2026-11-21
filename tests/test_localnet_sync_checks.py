@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -16,10 +17,10 @@ import localnet_sync_checks as sync
 
 def test_observer_configuration_explicitly_disables_peer_state_sync():
     text = 'proxy_app = "tcp://app"\n[p2p]\npersistent_peers = ""\n[statesync]\nenable = true\n'
-    configured = sync.observer_config(text, "peer@node-0:26656")
-    assert "enable = false" in configured
-    assert 'proxy_app = "unix:///tmp/abci.sock"' in configured
-    assert 'persistent_peers = "peer@node-0:26656"' in configured
+    configured = tomllib.loads(sync.observer_config(text, "peer@node-0:26656"))
+    assert configured["statesync"]["enable"] is False
+    assert configured["proxy_app"] == "unix:///tmp/abci.sock"
+    assert configured["p2p"]["persistent_peers"] == "peer@node-0:26656"
 
 
 def test_identity_fingerprint_contains_hashes_and_detects_signing_state_changes(tmp_path):
@@ -90,14 +91,6 @@ def test_cli_environment_selects_current_source_and_preserves_existing_path(monk
         "/workspace/xian-abci/src",
         "existing-source",
     ]
-
-
-def test_module_no_longer_advertises_or_exercises_peer_snapshot_sync():
-    source = Path(sync.__file__).read_text()
-    assert "StateSnapshotManager" not in source
-    assert "snapshot_chunk" not in source
-    assert "state_sync_interrupted" not in source
-    assert "snapshot export" in source and "snapshot restore" in source
 
 
 def test_full_store_stage_orders_stop_export_verification_restore_and_evidence(

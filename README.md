@@ -270,7 +270,7 @@ Use the smallest recipe that proves the behavior you care about:
 | Single local node with optional services | `python3 ./scripts/backend.py start ...` | Compose wiring, node health, dashboard / monitoring / BDS sidecars |
 | Clean multi-node topology | `LOCALNET_NODES=5 make localnet-init && make localnet-up` | Validator topology, genesis distribution, peer connectivity |
 | Workload smoke on a running localnet | `make localnet-workload` | Basic contract submission and transaction flow |
-| Full 5-validator e2e harness | `make localnet-e2e` | Layered cross-repo behavior, DEX, governance, crash recovery, quorum partitions, fresh-node sync, accounting, resource limits, and block replay |
+| Full 5-validator e2e harness | `make localnet-e2e` | Layered cross-repo behavior, DEX, governance, crash recovery, quorum partitions, fresh observer bootstrap, accounting, resource limits, and block replay |
 | IntentKit x402 buyer phase | `LOCALNET_E2E_INTENTKIT_X402=1 make localnet-e2e` | Adds a live IntentKit Xian-native x402 payment through a local seller/facilitator |
 | Focused IntentKit integration | `make localnet-e2e LOCALNET_E2E_SUITE=intentkit-x402 LOCALNET_E2E_INTENTKIT_X402=1` | Five-node bootstrap, health, compiler and local VM parity, core x402 and required IntentKit payment checks |
 | Protocol safety harness | `make localnet-protocol-safety` | Validator set, delegation, evidence, governance, and state-patch behavior |
@@ -363,8 +363,7 @@ signing state. Tampered, wrong-chain and incomplete archives must fail before
 publication. The restored observer must agree with all five validators, accept
 still-valid evidence from before the backup, and remain consistent across two
 restarts. The phase also checks governed evidence-retention growth and reduction
-without shortening the retained target. CometBFT peer state sync is disabled;
-ordinary replay and verified full-store restore are the bootstrap paths.
+without shortening the retained target.
 
 Each successful run also exports `replay-corpus/`: public configuration,
 CometBFT block databases, expected transaction-result digests, and source

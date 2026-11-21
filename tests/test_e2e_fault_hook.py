@@ -1,8 +1,6 @@
 """The one-shot fault hook the E2E harness copies into disposable containers.
 
-One arm file selects one crash point: a block-commit boundary (with the key
-and value that identify the block) or the first accepted state-sync chunk.
-An arm for one kind must not disturb the other.
+One arm file identifies a block by key and value and selects a commit boundary.
 """
 
 from __future__ import annotations
@@ -14,7 +12,6 @@ from pathlib import Path
 
 import pytest
 from contracting.storage.driver import Driver
-from xian.services.state_sync import StateSnapshotManager
 
 HOOK = Path(__file__).resolve().parents[1] / "scripts/e2e_hooks/sitecustomize.py"
 
@@ -30,11 +27,6 @@ def hook(tmp_path, monkeypatch):
     monkeypatch.setattr(Driver, "commit", Driver.commit)
     mirror = commit_module.try_write_latest_block
     monkeypatch.setattr(commit_module, "try_write_latest_block", mirror)
-    monkeypatch.setattr(
-        StateSnapshotManager,
-        "apply_snapshot_chunk_response",
-        StateSnapshotManager.apply_snapshot_chunk_response,
-    )
     spec = importlib.util.spec_from_file_location("e2e_fault_hook", HOOK)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -55,24 +47,34 @@ def driver(tmp_path):
     driver.close()
 
 
-def test_a_snapshot_chunk_arm_leaves_block_commits_alone(hook, driver):
-    # A state-syncing node commits at startup (the submission contract)
-    # before any snapshot chunk arrives.
-    hook.arm_path.write_text(json.dumps({"stage": "snapshot_chunk"}))
-    driver.set("con_probe.value", 1)
+@pytest.mark.parametrize(
+    ("stage", "persisted", "mirrored"),
+    [
+        ("before_persist", False, False),
+        ("after_persist", True, False),
+        ("before_response", True, True),
+    ],
+)
+def test_a_commit_arm_crashes_at_the_selected_boundary(hook, driver, stage, persisted, mirrored):
+    key = "con_probe.value"
+    plan = {"key": key, "value": 1, "stage": stage}
+    hook.arm_path.write_text(json.dumps(plan))
+    unrelated_block = {"hash": "cd" * 32, "height": 1, "nanos": 122}
+    driver.set("con_probe.other", 2)
     driver.commit()
-    assert driver.get("con_probe.value") == 1
+    assert hook.commit_module.try_write_latest_block(unrelated_block, driver.storage_home)
+    assert driver.get_all_contract_state() == {"con_probe.other": 2}
     assert hook.arm_path.exists()
     assert not hook.hit_path.exists()
 
-
-def test_a_commit_arm_crashes_before_its_block_persists(hook, driver):
-    plan = {"key": "con_probe.value", "value": 1, "stage": "before_persist"}
-    hook.arm_path.write_text(json.dumps(plan))
-    driver.set("con_probe.other", 2)
-    driver.commit()
-    driver.set("con_probe.value", 1)
+    block = {"hash": "ab" * 32, "height": 2, "nanos": 123}
+    driver.set(key, 1)
     with pytest.raises(Killed):
         driver.commit()
+        hook.commit_module.try_write_latest_block(block, driver.storage_home)
+
+    assert (key in driver.get_all_contract_state()) is persisted
+    mirror = driver.storage_home / "__latest_block.json"
+    assert json.loads(mirror.read_text()) == (block if mirrored else unrelated_block)
     assert json.loads(hook.hit_path.read_text()) == {**plan, "pid": hook.os.getpid()}
     assert not hook.arm_path.exists()
