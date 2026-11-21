@@ -551,6 +551,22 @@ def dump_round_step(dump):
     return "/".join(str(int(state[key])) for key in ("height", "round", "step"))
 
 
+def low_round0_prevote_recorded(dump, low):
+    """LOW is in the round0 prevote step and its own prevote is in the vote set.
+
+    CometBFT enters the prevote step before it processes its queued own vote,
+    so the step alone can be observed while LOW's entry is still ``nil-Vote``.
+    """
+    if dump_round_step(dump) != INITIAL_PREVOTE_STEP:
+        return False
+    state = dump["round_state"]
+    addresses = [entry["address"] for entry in state["validators"]["validators"]]
+    if low["address"] not in addresses:
+        return False
+    rounds = state["votes"]
+    return bool(rounds) and rounds[0]["prevotes"][addresses.index(low["address"])] != "nil-Vote"
+
+
 async def initial_precondition(fixture, low):
     actual_policy = await query(fixture.session, low, "/get/__fee_policy")
     require(actual_policy == fixture.fee_policy, "Actual InitChain fee caps differ from genesis")
@@ -569,7 +585,7 @@ async def initial_precondition(fixture, low):
     # Stock's full RoundState gives the current set, proposer and votes atomically.
     dump = await poll(
         lambda: rpc(fixture.session, low, "dump_consensus_state"),
-        lambda result: dump_round_step(result) == INITIAL_PREVOTE_STEP,
+        lambda result: low_round0_prevote_recorded(result, fixture.low),
         "Actual LOW round0 prevote",
     )
     state = dump["round_state"]

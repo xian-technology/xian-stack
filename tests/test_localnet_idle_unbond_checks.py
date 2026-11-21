@@ -756,7 +756,8 @@ def test_initial_rpc_asserts_actual_fee_caps_and_actual_native_application_power
     elif wrong == "proposer":
         dump["round_state"]["validators"]["proposer"] = native["validators"][2]
     elif wrong == "vote":
-        dump["round_state"]["votes"][0]["prevotes"][1] = "nil-Vote"
+        prevotes = dump["round_state"]["votes"][0]["prevotes"]
+        prevotes[1] = prevotes[1].replace("000000000000 ABCDEF", "111111111111 ABCDEF")
     elif wrong == "app-power":
         powers[nodes[0]["account"]] = 20
 
@@ -1518,3 +1519,33 @@ def test_coupled_window_includes_evidence_exactly_at_its_protected_block_boundar
     state["evidence"]["max_age_num_blocks"] = str(state["height"] - 1)
     proof = checks.validate_coupled_evidence_ages(state, 0)
     assert proof["age_blocks"] == int(proof["effective_evidence"]["max_age_num_blocks"])
+
+
+def raw_round_state_dump(low_prevote):
+    consensus, native, _, _, low = initial_fixture()
+    prevotes = consensus["round_state"]["height_vote_set"][0]["prevotes"]
+    prevotes[1] = low_prevote
+    dump = {
+        "round_state": {
+            "height": "1",
+            "round": 0,
+            "step": 4,
+            "validators": native,
+            "votes": [{"round": 0, "prevotes": prevotes}],
+        }
+    }
+    return dump, low
+
+
+def test_round0_prevote_wait_holds_until_lows_own_prevote_is_recorded():
+    # CometBFT enters the prevote step before its queued own vote is added.
+    pending, low = raw_round_state_dump("nil-Vote")
+    assert checks.low_round0_prevote_recorded(pending, low) is False
+
+    recorded, low = raw_round_state_dump(
+        initial_fixture()[0]["round_state"]["height_vote_set"][0]["prevotes"][1]
+    )
+    assert checks.low_round0_prevote_recorded(recorded, low) is True
+
+    recorded["round_state"]["step"] = 3
+    assert checks.low_round0_prevote_recorded(recorded, low) is False
