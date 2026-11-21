@@ -1546,6 +1546,8 @@ def test_round0_prevote_wait_holds_until_lows_own_prevote_is_recorded():
         initial_fixture()[0]["round_state"]["height_vote_set"][0]["prevotes"][1]
     )
     assert checks.low_round0_prevote_recorded(recorded, low) is True
+    # A LOW outside the validator set has no prevote of its own to wait for.
+    assert checks.low_round0_prevote_recorded(recorded, {**low, "address": "F" * 40}) is False
 
     recorded["round_state"]["step"] = 3
     assert checks.low_round0_prevote_recorded(recorded, low) is False
