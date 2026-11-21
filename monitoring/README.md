@@ -5,6 +5,13 @@
 This folder contains the Prometheus and Grafana assets for the optional Xian
 monitoring stack.
 
+The Stack release workflow publishes these shared assets as the signed
+`xian-monitoring.tar` release asset with a SHA-256 checksum. `xian-deploy`
+installs that bundle and renders host-specific configuration from its
+inventory and node profile. To package the same assets for a local rehearsal,
+run `python3 scripts/package_monitoring.py /absolute/output-directory` from
+the Stack checkout.
+
 ## Contents
 
 - `alertmanager/`: example alert routing variants for the shipped Prometheus
@@ -36,8 +43,12 @@ monitoring stack.
 ## Alerts
 
 `prometheus/rules/shared-network.yml` holds the shared-network alerts.
+`prometheus/rules/block-cadence.yml` holds the CometBFT committed-height stall
+alert for policies that produce empty blocks.
 `integrated.yml` (used by `make monitoring-up` and `backend.py start
---monitoring`) loads and evaluates them.
+--monitoring`) loads both files. Remote deployments load the shared-network
+rules for the `shared_network` profile and add the cadence rule only for
+`idle_interval` and `periodic`.
 
 | Alert | Fires when | Severity |
 | --- | --- | --- |
@@ -91,7 +102,7 @@ service; you supply the receivers.
    authentication in front of it, like Prometheus and Grafana.
 3. Add an `alerting` section to the Prometheus config you run (your copy of
    `integrated.yml`, which already loads
-   `/etc/prometheus/rules/shared-network.yml`):
+   the rules under `/etc/prometheus/rules/`):
 
    ```yaml
    alerting:

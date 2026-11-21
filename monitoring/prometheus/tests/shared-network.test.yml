@@ -1,9 +1,10 @@
-# promtool unit tests for rules/shared-network.yml.
+# promtool unit tests for the shared-network and block-cadence rules.
 # Run: ./scripts/test-monitoring-rules.sh (also part of make validate).
 # Series names and labels are the ones CometBFT v0.40 and node-exporter
 # export; job/instance match monitoring/prometheus/integrated.yml.
 rule_files:
   - ../rules/shared-network.yml
+  - ../rules/block-cadence.yml
 
 evaluation_interval: 1m
 

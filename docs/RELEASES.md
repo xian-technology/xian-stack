@@ -38,9 +38,10 @@ manifest pins exact component refs and should be updated after upstream release
 commits exist on `main`.
 
 The full release E2E suite requires periodic block production so lifecycle and
-state-sync checks can advance during idle periods. Its optional localnet mode
-and interval accept both absent and empty Make-exported values, using periodic
-blocks every 1s. An explicit on-demand mode remains incompatible with this suite.
+full-store restore checks can advance during idle periods. Its optional localnet
+mode and interval accept both absent and empty Make-exported values, using
+periodic blocks every 1s. An explicit on-demand mode remains incompatible with
+this suite.
 These harness defaults do not change ordinary node block-policy defaults.
 
 ## Release Orchestrator
@@ -243,10 +244,12 @@ The image workflow:
    - `release-manifest.json`
    - `image-release.txt`
    - `image-release.json`
+   - `xian-monitoring.tar` and `xian-monitoring.tar.sha256`
    - per-asset `.sigstore.json` bundle files
 7. runs a post-publish reproducibility audit that rebuilds the release images
    per platform and compares the observed `linux/amd64` and `linux/arm64`
-   digests with the digests recorded in `image-release.json`
+   digests with the digests recorded in `image-release.json`. It also rebuilds
+   the monitoring archive and checks that its bytes and checksum match.
 
 Update the manifest before tagging `xian-stack` so the published image is reproducible from explicit component refs.
 
@@ -260,6 +263,27 @@ Update the manifest before tagging `xian-stack` so the published image is reprod
 
 That file is intentionally easier for automation to consume than the plain-text
 `image-release.txt` summary.
+
+### Verifying the Monitoring Bundle
+
+Download `xian-monitoring.tar`, `xian-monitoring.tar.sha256`, and both
+corresponding `.sigstore.json` files from the chosen Stack release. Set
+`release_tag` to that exact tag and run the following in the download directory.
+
+```bash
+for asset in xian-monitoring.tar xian-monitoring.tar.sha256; do
+  cosign verify-blob \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-identity "https://github.com/xian-technology/xian-stack/.github/workflows/release.yml@refs/tags/${release_tag}" \
+    --bundle "${asset}.sigstore.json" "$asset" || exit 1
+done
+shasum -a 256 -c xian-monitoring.tar.sha256
+```
+
+Pin the verified archive digest in `xian_monitoring_bundle_sha256` in the
+deployment inventory. To generate the same archive format for rehearsals,
+run `python3 scripts/package_monitoring.py /absolute/output-directory` from
+the Stack checkout and pin the generated checksum.
 
 ### Verifying A Published Image
 

@@ -277,6 +277,7 @@ jobs:
         run: |
           mkdir -p /tmp/release-assets
           cp xian-stack/release-manifest.json /tmp/release-assets/
+          python3 xian-stack/scripts/package_monitoring.py /tmp/release-assets
           cat > /tmp/release-assets/image-release.txt <<EOF
           integrated_image=ghcr.io/${{ steps.registry.outputs.owner }}/${{ needs.release-manifest.outputs.integrated_image_name }}:${GITHUB_REF_NAME#v}
           integrated_digest=${{ steps.build-integrated.outputs.digest }}
@@ -426,6 +427,9 @@ jobs:
 
       - name: Verify release reproducibility
         run: |
+          python3 xian-stack/scripts/package_monitoring.py /tmp/rebuilt-monitoring
+          cmp release-assets/xian-monitoring.tar /tmp/rebuilt-monitoring/xian-monitoring.tar
+          cmp release-assets/xian-monitoring.tar.sha256 /tmp/rebuilt-monitoring/xian-monitoring.tar.sha256
           python xian-stack/scripts/verify_release_reproducibility.py \
             --manifest xian-stack/release-manifest.json \
             --image-release release-assets/image-release.json \

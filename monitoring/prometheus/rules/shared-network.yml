@@ -43,15 +43,6 @@ groups:
         annotations:
           summary: Block progress appears stalled
           description: Block height has not advanced over the last fifteen minutes on a shared-network posture.
-      - alert: XianBlockProductionStalled
-        expr: delta(cometbft_consensus_latest_block_height[5m]) < 1
-        for: 2m
-        labels:
-          severity: critical
-          profile: shared_network
-        annotations:
-          summary: No block was committed for five minutes
-          description: The node's committed height has not advanced for five minutes. Shared networks produce an empty block every idle interval, so either the chain has stopped or this node no longer follows it.
       - alert: XianNoPeers
         expr: cometbft_p2p_peers == 0
         for: 2m
