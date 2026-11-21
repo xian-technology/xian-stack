@@ -356,8 +356,10 @@ def test_cleanup_only_removes_present_owned_images(
         "COMPOSE_PROJECT_NAME": "owned-project",
         "XIAN_NODE_INTEGRATED_IMAGE": "owned:node",
         "XIAN_NODE_SPLIT_IMAGE": "owned:split",
+        "XIAN_SMOKE_ROOT": "/tmp/xian-smoke-stack-owned",
     }
-    exits = [0, 0, remove_exit] if image_exists else [0, 1, 1]
+    # down, inspect node, inspect split, then (node image present) ownership return and removal
+    exits = [0, 0, 1, 0, remove_exit] if image_exists else [0, 1, 1]
     run = Mock(side_effect=[subprocess.CompletedProcess([], code) for code in exits])
     monkeypatch.setattr(isolation_module.subprocess, "run", run)
     assert isolation_module.cleanup(env) is (not image_exists)
@@ -365,6 +367,57 @@ def test_cleanup_only_removes_present_owned_images(
     assert commands[0][commands[0].index("--project-name") + 1] == "owned-project"
     removals = [cmd for cmd in commands if cmd[:3] == ["docker", "image", "rm"]]
     assert removals == ([["docker", "image", "rm", "owned:node"]] if image_exists else [])
+
+
+def test_cleanup_returns_container_written_files_before_removing_the_image(
+    isolation_module, monkeypatch
+):
+    """The node container runs as root and writes into the bind-mounted smoke root;
+    on Linux the runner could not delete those files afterwards."""
+    from unittest.mock import Mock
+
+    env = {
+        "COMPOSE_PROJECT_NAME": "owned-project",
+        "XIAN_NODE_INTEGRATED_IMAGE": "owned:node",
+        "XIAN_NODE_SPLIT_IMAGE": "owned:split",
+        "XIAN_SMOKE_ROOT": "/tmp/xian-smoke-stack-owned",
+    }
+    run = Mock(side_effect=[subprocess.CompletedProcess([], code) for code in (0, 0, 1, 0, 0)])
+    monkeypatch.setattr(isolation_module.subprocess, "run", run)
+    monkeypatch.setattr(isolation_module.os, "getuid", lambda: 1001)
+    monkeypatch.setattr(isolation_module.os, "getgid", lambda: 121)
+    assert isolation_module.cleanup(env) is True
+    commands = [call.args[0] for call in run.call_args_list]
+    chown = [
+        "docker",
+        "run",
+        "--rm",
+        "--entrypoint",
+        "chown",
+        "-v",
+        "/tmp/xian-smoke-stack-owned:/smoke",
+        "owned:node",
+        "-R",
+        "1001:121",
+        "/smoke",
+    ]
+    assert commands.index(chown) < commands.index(["docker", "image", "rm", "owned:node"])
+
+
+def test_cleanup_keeps_the_image_when_ownership_cannot_be_returned(isolation_module, monkeypatch):
+    from unittest.mock import Mock
+
+    env = {
+        "COMPOSE_PROJECT_NAME": "owned-project",
+        "XIAN_NODE_INTEGRATED_IMAGE": "owned:node",
+        "XIAN_NODE_SPLIT_IMAGE": "owned:split",
+        "XIAN_SMOKE_ROOT": "/tmp/xian-smoke-stack-owned",
+    }
+    run = Mock(side_effect=[subprocess.CompletedProcess([], code) for code in (0, 0, 1, 1)])
+    monkeypatch.setattr(isolation_module.subprocess, "run", run)
+    assert isolation_module.cleanup(env) is False
+    commands = [call.args[0] for call in run.call_args_list]
+    assert not [cmd for cmd in commands if cmd[:3] == ["docker", "image", "rm"]]
 
 
 def test_shutdown_ignores_repeat_signals_until_owned_resources_are_cleaned(isolation_module):

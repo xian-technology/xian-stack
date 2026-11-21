@@ -161,13 +161,39 @@ def cleanup(env: dict[str, str]) -> bool:
     ]
     if subprocess.run(command, cwd=STACK, env=env).returncode:
         return False
-    for key in ("XIAN_NODE_INTEGRATED_IMAGE", "XIAN_NODE_SPLIT_IMAGE"):
-        image = env[key]
-        found = subprocess.run(["docker", "image", "inspect", image], env=env, capture_output=True)
-        if found.returncode == 0:
-            if subprocess.run(["docker", "image", "rm", image], env=env).returncode:
-                return False
-    return True
+    images = [
+        env[key]
+        for key in ("XIAN_NODE_INTEGRATED_IMAGE", "XIAN_NODE_SPLIT_IMAGE")
+        if subprocess.run(
+            ["docker", "image", "inspect", env[key]], env=env, capture_output=True
+        ).returncode
+        == 0
+    ]
+    if images and not return_ownership(env, images[0]):
+        return False
+    return all(
+        subprocess.run(["docker", "image", "rm", image], env=env).returncode == 0
+        for image in images
+    )
+
+
+def return_ownership(env: dict[str, str], image: str) -> bool:
+    # The node container runs as root and writes into the bind-mounted smoke
+    # root; on Linux the caller could not delete those files afterwards.
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "--entrypoint",
+        "chown",
+        "-v",
+        f"{env['XIAN_SMOKE_ROOT']}:/smoke",
+        image,
+        "-R",
+        f"{os.getuid()}:{os.getgid()}",
+        "/smoke",
+    ]
+    return subprocess.run(command, env=env).returncode == 0
 
 
 def interrupted(signum, _frame):
