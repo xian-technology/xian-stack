@@ -354,3 +354,8 @@ before completing the GitHub release. Dependency-list agreement and a successful
 diagnostic run are insufficient. Resume BDS saturation/query-load testing only
 after that recovery is confirmed and the user resumes the investigation. The
 existing live node and data remain untouched.
+
+Pending recovery: [run 44843976797](https://github.com/xian-technology/xian-stack/actions/runs/44843976797),
+tooling `7b008d3e366eddd16ee583abd499b8f3aa31d9e8`, original artifact/tag source
+`a766053c843194ba43da2867f87a29befa1834e4`. Dispatched for all four image
+checks and gated GitHub release finalization; monitoring is handed to the user.
