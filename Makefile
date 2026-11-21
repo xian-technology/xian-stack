@@ -450,6 +450,7 @@ help:
 	@printf "  %-24s %s\n" "dev-abci-build/dev-abci-up" "Developer-only ABCI dev stack targets"
 	@printf "  %-24s %s\n" "dev-contracting-build" "Developer-only contracting image build"
 	@printf "\n  Localnet (multi-node):\n"
+	@printf "  %-24s %s\n" "localnet-init" "Generate localnet assets"
 	@printf "  %-24s %s\n" "localnet-build" "Build the localnet Docker image"
 	@printf "  %-24s %s\n" "localnet-up" "Start all localnet nodes"
 	@printf "  %-24s %s\n" "localnet-down" "Stop all localnet nodes"
@@ -758,6 +759,7 @@ storage-report:
 # ── Localnet (multi-node) ────────────────────────────────────────────
 
 localnet-init:
+	uv run --project "$(XIAN_ABCI_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-init.py --nodes $(LOCALNET_NODES) --genesis-network "$(XIAN_LOCALNET_GENESIS_NETWORK)" --clean
 
 localnet-build:
 	$(LOCALNET_COMPOSE) build $(LOCALNET_BUILD_SERVICE)
