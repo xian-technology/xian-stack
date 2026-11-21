@@ -29,7 +29,9 @@ def wait_until(read):
     for _ in range(100):
         try:
             return read()
-        except (subprocess.CalledProcessError, URLError, HTTPException):
+        # A reset connection means the server is still starting: Docker's port
+        # proxy accepts before the process inside listens.
+        except (subprocess.CalledProcessError, URLError, HTTPException, ConnectionError):
             time.sleep(0.2)
     raise AssertionError("isolated database/query service did not become ready")
 
