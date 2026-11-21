@@ -349,13 +349,12 @@ dependency versions without changing runtime sources, package versions,
 image digests or execution/gas versions. See `RELEASE_2026_11_17.md` for the
 source/provenance and investigation evidence.
 
-The recovery workflow must still pass the original four-variant image verifier
-before completing the GitHub release. Dependency-list agreement and a successful
-diagnostic run are insufficient. Resume BDS saturation/query-load testing only
-after that recovery is confirmed and the user resumes the investigation. The
-existing live node and data remain untouched.
-
-Pending recovery: [run 44843976797](https://github.com/xian-technology/xian-stack/actions/runs/44843976797),
+Confirmed recovery: [run 44843976797](https://github.com/xian-technology/xian-stack/actions/runs/44843976797),
 tooling `7b008d3e366eddd16ee583abd499b8f3aa31d9e8`, original artifact/tag source
-`a766053c843194ba43da2867f87a29befa1834e4`. Dispatched for all four image
-checks and gated GitHub release finalization; monitoring is handed to the user.
+`a766053c843194ba43da2867f87a29befa1834e4`. Both jobs passed. The published
+verification proof reports exact manifest digest matches for all four variants
+(integrated/split, AMD64/ARM64), and stable v0.3.8 was published at
+2026-11-21 01:51:40 UTC. Original signed metadata, image indexes and runtime
+versions are unchanged. The release blocker is resolved; resume BDS saturation
+and query-load testing when the user resumes the investigation. The existing
+live node and data remain untouched.
