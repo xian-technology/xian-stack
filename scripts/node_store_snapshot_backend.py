@@ -174,9 +174,7 @@ def export_snapshot(
         return result
 
 
-def selected_image(
-    *, node_image_mode: str, node_integrated_image: str | None
-) -> str:
+def selected_image(*, node_image_mode: str, node_integrated_image: str | None) -> str:
     env = os.environ.copy()
     env["XIAN_NODE_IMAGE_MODE"] = node_image_mode
     if node_integrated_image:

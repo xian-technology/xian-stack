@@ -5,8 +5,6 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 SCRIPT = Path(__file__).parents[1] / "scripts/localnet-init.py"
 SPEC = importlib.util.spec_from_file_location("localnet_storage_init", SCRIPT)
 localnet_init = importlib.util.module_from_spec(SPEC)
