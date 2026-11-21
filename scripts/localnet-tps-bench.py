@@ -295,6 +295,7 @@ def run_workload(
         ),
         "committed_workload_tps": committed_window.get("committed_workload_tps"),
         "committed_chain_tps": committed_window.get("committed_chain_tps"),
+        "committed_window_basis": committed_window.get("window_basis"),
         "peak_block_tps": committed_window.get("peak_block_tps"),
         "median_block_tps": committed_window.get("median_block_tps"),
         "elapsed_submission_seconds": scenario_summary.get("elapsed_submission_seconds"),

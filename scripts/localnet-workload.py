@@ -956,18 +956,6 @@ def broadcast_response_tx_hash(response: Any) -> str | None:
     return tx_hash.upper()
 
 
-def parse_rfc3339_utc(value: str) -> datetime:
-    normalized = value.strip()
-    tz_suffix = "+00:00" if normalized.endswith("Z") else ""
-    if normalized.endswith("Z"):
-        normalized = normalized[:-1]
-    if "." in normalized:
-        head, fractional = normalized.split(".", 1)
-        digits = "".join(char for char in fractional if char.isdigit())
-        normalized = f"{head}.{digits[:6].ljust(6, '0')}"
-    return datetime.fromisoformat(f"{normalized}{tz_suffix}")
-
-
 async def wait_for_tx_receipt(
     *,
     clients: list[XianAsync],
@@ -1161,6 +1149,12 @@ async def latest_block_height(context: WorkloadContext) -> int:
     return int(payload["result"]["sync_info"]["latest_block_height"])
 
 
+def _block_interval_seconds(start: datetime | None, end: datetime | None) -> float:
+    if start is None or end is None:
+        return 0.0
+    return max(0.0, (end - start).total_seconds())
+
+
 async def summarize_committed_window_for_range(
     context: WorkloadContext,
     *,
@@ -1169,36 +1163,35 @@ async def summarize_committed_window_for_range(
     workload_transactions: int,
     fallback_elapsed_seconds: float,
 ) -> dict[str, Any]:
+    """Measure commits in (start_height, end_height] using matching time bounds."""
     if end_height <= start_height:
         return {}
 
     blocks = []
+    start_time: datetime | None = None
     previous_time: datetime | None = None
-    first_time: datetime | None = None
-    last_time: datetime | None = None
     per_block_tps: list[float] = []
     chain_transactions = 0
 
     read_node = await context.healthy_read_node()
-    for height in range(start_height + 1, end_height + 1):
+    for height in range(max(1, start_height), end_height + 1):
         payload = await tr.get_block_async(
             read_node.rpc_url,
             height,
             session=context.session,
         )
         block = payload["result"]["block"]
+        block_time = datetime.fromisoformat(block["header"]["time"].strip())
+        if height == start_height:
+            start_time = previous_time = block_time
+            continue
         tx_count = len(block["data"].get("txs") or [])
         chain_transactions += tx_count
-        block_time = parse_rfc3339_utc(block["header"]["time"])
-        if first_time is None:
-            first_time = block_time
-        last_time = block_time
+        delta_seconds = _block_interval_seconds(previous_time, block_time)
         instant_tps = None
-        if previous_time is not None:
-            delta_seconds = (block_time - previous_time).total_seconds()
-            if delta_seconds > 0:
-                instant_tps = tx_count / delta_seconds
-                per_block_tps.append(instant_tps)
+        if delta_seconds:
+            instant_tps = tx_count / delta_seconds
+            per_block_tps.append(instant_tps)
         previous_time = block_time
         blocks.append(
             {
@@ -1209,13 +1202,8 @@ async def summarize_committed_window_for_range(
             }
         )
 
-    window_seconds = (
-        (last_time - first_time).total_seconds()
-        if first_time is not None and last_time is not None and last_time > first_time
-        else fallback_elapsed_seconds
-    )
-    if window_seconds <= 0:
-        window_seconds = fallback_elapsed_seconds
+    chain_window_seconds = _block_interval_seconds(start_time, previous_time)
+    window_seconds = chain_window_seconds or fallback_elapsed_seconds
 
     return {
         "min_height": start_height + 1,
@@ -1224,6 +1212,7 @@ async def summarize_committed_window_for_range(
         "chain_transactions": chain_transactions,
         "workload_transactions": workload_transactions,
         "window_seconds": round(window_seconds, 3),
+        "window_basis": "chain_time" if chain_window_seconds else "elapsed_time",
         "committed_workload_tps": round(workload_transactions / window_seconds, 3),
         "committed_chain_tps": round(chain_transactions / window_seconds, 3),
         "peak_block_tps": (round(max(per_block_tps), 3) if per_block_tps else None),
@@ -1507,68 +1496,6 @@ async def broadcast_plans(
 
     await asyncio.gather(*(broadcast_lane(lane_entries) for lane_entries in plan_lanes.values()))
     return [record for record in records if record is not None]
-
-
-async def summarize_committed_window(
-    context: WorkloadContext,
-    records: list[BroadcastRecord],
-    *,
-    fallback_elapsed_seconds: float,
-) -> dict[str, Any]:
-    heights = sorted({int(record.height) for record in records if record.height is not None})
-    if not heights:
-        return {}
-
-    blocks = []
-    previous_time: datetime | None = None
-    per_block_tps: list[float] = []
-    read_node = await context.healthy_read_node()
-    for height in range(heights[0], heights[-1] + 1):
-        payload = await tr.get_block_async(
-            read_node.rpc_url,
-            height,
-            session=context.session,
-        )
-        block = payload["result"]["block"]
-        tx_count = len(block["data"].get("txs") or [])
-        block_time = parse_rfc3339_utc(block["header"]["time"])
-        instant_tps = None
-        if previous_time is not None:
-            delta_seconds = (block_time - previous_time).total_seconds()
-            if delta_seconds > 0:
-                instant_tps = tx_count / delta_seconds
-                per_block_tps.append(instant_tps)
-        blocks.append(
-            {
-                "height": height,
-                "tx_count": tx_count,
-                "time": block["header"]["time"],
-                "instant_tps": (round(instant_tps, 3) if instant_tps is not None else None),
-            }
-        )
-        previous_time = block_time
-
-    first_time = parse_rfc3339_utc(blocks[0]["time"])
-    last_time = parse_rfc3339_utc(blocks[-1]["time"])
-    window_seconds = (last_time - first_time).total_seconds()
-    if window_seconds <= 0:
-        window_seconds = fallback_elapsed_seconds
-
-    chain_transactions = sum(block["tx_count"] for block in blocks)
-    workload_transactions = len(records)
-    return {
-        "min_height": heights[0],
-        "max_height": heights[-1],
-        "block_count": len(blocks),
-        "chain_transactions": chain_transactions,
-        "workload_transactions": workload_transactions,
-        "window_seconds": round(window_seconds, 3),
-        "committed_workload_tps": round(workload_transactions / window_seconds, 3),
-        "committed_chain_tps": round(chain_transactions / window_seconds, 3),
-        "peak_block_tps": round(max(per_block_tps), 3) if per_block_tps else None,
-        "median_block_tps": round(statistics.median(per_block_tps), 3) if per_block_tps else None,
-        "blocks": blocks,
-    }
 
 
 async def broadcast_funding_record(

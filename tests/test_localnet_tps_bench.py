@@ -34,7 +34,10 @@ def test_run_workload_uses_xian_stack_python_env(monkeypatch) -> None:
                     "successful_transactions": 10,
                     "funding_transactions": 2,
                     "elapsed_workload_seconds": 1.0,
-                    "committed_window": {"committed_workload_tps": 10.0},
+                    "committed_window": {
+                        "committed_workload_tps": 10.0,
+                        "window_basis": "chain_time",
+                    },
                 },
             }
         )
@@ -56,6 +59,7 @@ def test_run_workload_uses_xian_stack_python_env(monkeypatch) -> None:
 
     cmd = captured["cmd"]
     assert result["ok"] is True
+    assert result["committed_window_basis"] == "chain_time"
     assert cmd[cmd.index("--python") + 1] == "3.14.5"
 
 

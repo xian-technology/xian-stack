@@ -45,6 +45,61 @@ def _network() -> dict:
     }
 
 
+@pytest.mark.parametrize(
+    ("start_height", "end_height", "expected_seconds", "expected_basis", "first_block_tps"),
+    [
+        (1, 3, 4.0, "chain_time", 3.0),
+        (1, 2, 2.0, "chain_time", 3.0),
+        (0, 1, 9.0, "elapsed_time", None),
+    ],
+)
+def test_committed_window_includes_the_first_blocks_interval(
+    monkeypatch, start_height, end_height, expected_seconds, expected_basis, first_block_tps
+):
+    session = object()
+    node = SimpleNamespace(rpc_url="http://127.0.0.1:26657")
+    context = SimpleNamespace(session=session, healthy_read_node=AsyncMock(return_value=node))
+
+    async def get_block(rpc_url, height, *, session):
+        assert rpc_url == node.rpc_url and session is context.session
+        seconds = 2 * height
+        timestamp = (
+            f"2026-11-22T02:00:{seconds:02d}.123456789+02:00"
+            if height == start_height
+            else f"2026-11-22T00:00:{seconds:02d}.123456789Z"
+        )
+        return {
+            "result": {
+                "block": {
+                    "header": {"time": timestamp},
+                    "data": {"txs": ["tx"] * 6},
+                }
+            }
+        }
+
+    monkeypatch.setattr(localnet_workload.tr, "get_block_async", get_block)
+    block_count = end_height - start_height
+    result = asyncio.run(
+        localnet_workload.summarize_committed_window_for_range(
+            context,
+            start_height=start_height,
+            end_height=end_height,
+            workload_transactions=4 * block_count,
+            fallback_elapsed_seconds=9.0,
+        )
+    )
+
+    assert result["window_seconds"] == expected_seconds
+    assert result["window_basis"] == expected_basis
+    assert result["chain_transactions"] == 6 * block_count
+    assert result["committed_chain_tps"] == round(6 * block_count / expected_seconds, 3)
+    assert result["committed_workload_tps"] == round(4 * block_count / expected_seconds, 3)
+    assert [block["height"] for block in result["blocks"]] == list(
+        range(start_height + 1, end_height + 1)
+    )
+    assert result["blocks"][0]["instant_tps"] == first_block_tps
+
+
 def test_automatic_throughput_uses_persistent_sdk_nonce_and_simulation(monkeypatch):
     context = localnet_workload.WorkloadContext(
         _network(), sample_nodes=3, submit_node_index=0, round_robin_submission=False
