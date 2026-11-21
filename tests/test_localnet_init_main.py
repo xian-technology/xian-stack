@@ -42,7 +42,6 @@ def test_default_profile_summary(run_init, tmp_path):
 
     assert summary["chain_id"] == "xian-pin-1"
     assert summary["genesis_network"] == "local"
-    assert summary["topology"] == "integrated"
     assert summary["runtime_features"] == {"zk": True}
     assert summary["localnet_profile"] == "default"
     assert summary["consensus"] == {
@@ -86,7 +85,7 @@ def test_default_profile_summary(run_init, tmp_path):
 
 
 def test_localnet_genesis_exercises_official_040_authority_in_every_init_chain(run_init, tmp_path):
-    run_init("--nodes", "5", "--topology", "fidelity", "--chain-id", "xian-authority-test")
+    run_init("--nodes", "5", "--chain-id", "xian-authority-test")
     genesis = [
         json.loads((tmp_path / f".localnet/node-{i}/.cometbft/config/genesis.json").read_text())
         for i in range(5)
@@ -96,21 +95,15 @@ def test_localnet_genesis_exercises_official_040_authority_in_every_init_chain(r
     assert len(genesis[0]["app_hash"]) == 64
 
 
-@pytest.mark.parametrize(
-    ("topology", "image_variable"),
-    [("integrated", "XIAN_NODE_INTEGRATED_IMAGE"), ("fidelity", "XIAN_NODE_SPLIT_IMAGE")],
-)
-def test_image_override_reaches_every_generated_node_service(
-    tmp_path, monkeypatch, topology, image_variable
-):
+def test_image_override_reaches_every_generated_node_service(tmp_path, monkeypatch):
     image = "xian-review-current-source:isolated"
-    monkeypatch.setenv(image_variable, image)
+    monkeypatch.setenv("XIAN_NODE_INTEGRATED_IMAGE", image)
     spec = importlib.util.spec_from_file_location("image_override_localnet", SPEC.origin)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     monkeypatch.setattr(module, "STACK_DIR", tmp_path)
     monkeypatch.setattr(module, "LOCALNET_DIR", tmp_path / ".localnet")
-    monkeypatch.setattr(sys, "argv", ["localnet-init.py", "--topology", topology])
+    monkeypatch.setattr(sys, "argv", ["localnet-init.py"])
 
     module.main()
 
@@ -123,8 +116,6 @@ def test_throughput_profile_fills_unset_consensus_and_mempool(run_init):
     summary = run_init(
         "--nodes",
         "5",
-        "--topology",
-        "fidelity",
         XIAN_LOCALNET_PROFILE="throughput",
         XIAN_LOCALNET_CONSENSUS_TIMEOUT_COMMIT="900ms",
         XIAN_LOCALNET_MEMPOOL_SIZE="7",
@@ -157,7 +148,7 @@ def test_throughput_profile_fills_unset_consensus_and_mempool(run_init):
     }
     assert [n["bds_enabled"] for n in summary["nodes"]] == [False, False, False, False, True]
     assert summary["nodes"][0]["host_rpc_port"] == 27657
-    assert summary["nodes"][0]["abci_container"] == "xian-node-0-abci"
+    assert summary["nodes"][0]["abci_container"] == "xian-node-0"
     assert summary["profiling"]["enabled"] is True
     assert summary["logging"]["app_log_json"] is True
 
@@ -201,16 +192,11 @@ def test_existing_localnet_needs_clean_and_bad_fee_policy_keeps_it(run_init, tmp
     assert summary["chain_id"] == "xian-localnet-1"
 
 
-@pytest.mark.parametrize(
-    ("topology", "bds_service"), [("integrated", "node-1"), ("fidelity", "node-1-abci")]
-)
-def test_bds_node_and_postgres_share_one_generated_password_secret(
-    run_init, tmp_path, topology, bds_service
-):
+def test_bds_node_and_postgres_share_one_generated_password_secret(run_init, tmp_path):
     import stat
     import tomllib
 
-    run_init("--topology", topology, XIAN_LOCALNET_ENABLE_BDS="1", XIAN_LOCALNET_BDS_NODE_INDEX="1")
+    run_init(XIAN_LOCALNET_ENABLE_BDS="1", XIAN_LOCALNET_BDS_NODE_INDEX="1")
 
     password_file = tmp_path / ".localnet" / "bds-password"
     assert stat.S_IMODE(password_file.stat().st_mode) == 0o600
@@ -222,7 +208,7 @@ def test_bds_node_and_postgres_share_one_generated_password_secret(
     assert postgres["secrets"] == ["xian_bds_password"]
     assert postgres["environment"]["POSTGRES_PASSWORD_FILE"] == "/run/secrets/xian_bds_password"
     assert "POSTGRES_PASSWORD" not in postgres["environment"]
-    assert compose["services"][bds_service]["secrets"] == ["xian_bds_password"]
+    assert compose["services"]["node-1"]["secrets"] == ["xian_bds_password"]
     assert password not in json.dumps(compose)
     bds = tomllib.loads(
         (tmp_path / ".localnet" / "node-1" / ".cometbft" / "config" / "xian.toml").read_text()

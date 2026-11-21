@@ -607,7 +607,6 @@ def runtime_env(
     *,
     node_image_mode: str,
     node_integrated_image: str | None,
-    node_split_image: str | None,
     bds_enabled: bool,
     dashboard_enabled: bool,
     dashboard_host: str,
@@ -630,8 +629,6 @@ def runtime_env(
     env["XIAN_NODE_IMAGE_MODE"] = node_image_mode
     if node_integrated_image is not None:
         env["XIAN_NODE_INTEGRATED_IMAGE"] = node_integrated_image
-    if node_split_image is not None:
-        env["XIAN_NODE_SPLIT_IMAGE"] = node_split_image
     env["XIAN_BDS_ENABLED"] = "1" if bds_enabled else "0"
     env["XIAN_DASHBOARD_ENABLED"] = "1" if dashboard_enabled else "0"
     env["XIAN_DASHBOARD_HOST"] = dashboard_host
@@ -723,7 +720,6 @@ def add_node_image_args(parser: argparse.ArgumentParser) -> None:
         default="local_build",
     )
     parser.add_argument("--node-integrated-image")
-    parser.add_argument("--node-split-image")
 
 
 def run_python_script(
@@ -824,7 +820,6 @@ def backend_start(
     *,
     node_image_mode: str,
     node_integrated_image: str | None,
-    node_split_image: str | None,
     bds_enabled: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
@@ -856,7 +851,6 @@ def backend_start(
     env = runtime_env(
         node_image_mode=node_image_mode,
         node_integrated_image=node_integrated_image,
-        node_split_image=node_split_image,
         bds_enabled=bds_enabled,
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
@@ -893,7 +887,6 @@ def backend_start(
         "bds_enabled": bds_enabled,
         "node_image_mode": node_image_mode,
         "node_integrated_image": node_integrated_image,
-        "node_split_image": node_split_image,
         "container_target": container_target,
         "node_target": node_target,
         "dashboard_enabled": dashboard_enabled,
@@ -976,7 +969,6 @@ def backend_stop(
     *,
     node_image_mode: str,
     node_integrated_image: str | None,
-    node_split_image: str | None,
     bds_enabled: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
@@ -1004,7 +996,6 @@ def backend_stop(
     env = runtime_env(
         node_image_mode=node_image_mode,
         node_integrated_image=node_integrated_image,
-        node_split_image=node_split_image,
         bds_enabled=bds_enabled,
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
@@ -1050,7 +1041,6 @@ def backend_stop(
         "bds_enabled": bds_enabled,
         "node_image_mode": node_image_mode,
         "node_integrated_image": node_integrated_image,
-        "node_split_image": node_split_image,
         "container_target": container_target,
         "dashboard_enabled": dashboard_enabled,
         "monitoring_enabled": monitoring_enabled,
@@ -1072,7 +1062,6 @@ def backend_status(
     *,
     node_image_mode: str,
     node_integrated_image: str | None,
-    node_split_image: str | None,
     bds_enabled: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
@@ -1097,7 +1086,6 @@ def backend_status(
     env = runtime_env(
         node_image_mode=node_image_mode,
         node_integrated_image=node_integrated_image,
-        node_split_image=node_split_image,
         bds_enabled=bds_enabled,
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
@@ -1128,11 +1116,9 @@ def backend_status(
     payload["public_metrics_enabled"] = env_truthy(env.get("XIAN_PUBLIC_METRICS_ENABLED"))
     payload["node_image_mode"] = node_image_mode
     payload["node_integrated_image"] = node_integrated_image
-    payload["node_split_image"] = node_split_image
     endpoints = backend_endpoints(
         node_image_mode=node_image_mode,
         node_integrated_image=node_integrated_image,
-        node_split_image=node_split_image,
         bds_enabled=bds_enabled,
         dashboard_enabled=dashboard_enabled,
         monitoring_enabled=monitoring_enabled,
@@ -1330,7 +1316,6 @@ def backend_endpoints(
     *,
     node_image_mode: str,
     node_integrated_image: str | None,
-    node_split_image: str | None,
     bds_enabled: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
@@ -1355,7 +1340,6 @@ def backend_endpoints(
     env = runtime_env(
         node_image_mode=node_image_mode,
         node_integrated_image=node_integrated_image,
-        node_split_image=node_split_image,
         bds_enabled=bds_enabled,
         dashboard_enabled=dashboard_enabled,
         dashboard_host=dashboard_host,
@@ -1473,7 +1457,6 @@ def backend_endpoints(
         "bds_enabled": bds_enabled,
         "node_image_mode": node_image_mode,
         "node_integrated_image": node_integrated_image,
-        "node_split_image": node_split_image,
         "dashboard_enabled": dashboard_enabled,
         "monitoring_enabled": monitoring_enabled,
         "public_rpc_enabled": env_truthy(env.get("XIAN_PUBLIC_RPC_ENABLED")),
@@ -1491,7 +1474,6 @@ def backend_health(
     *,
     node_image_mode: str,
     node_integrated_image: str | None,
-    node_split_image: str | None,
     bds_enabled: bool,
     dashboard_enabled: bool,
     monitoring_enabled: bool,
@@ -1518,7 +1500,6 @@ def backend_health(
     status = backend_status(
         node_image_mode=node_image_mode,
         node_integrated_image=node_integrated_image,
-        node_split_image=node_split_image,
         bds_enabled=bds_enabled,
         dashboard_enabled=dashboard_enabled,
         monitoring_enabled=monitoring_enabled,
@@ -1756,7 +1737,6 @@ def backend_health(
         "bds_enabled": bds_enabled,
         "node_image_mode": node_image_mode,
         "node_integrated_image": node_integrated_image,
-        "node_split_image": node_split_image,
         "dashboard_enabled": dashboard_enabled,
         "monitoring_enabled": monitoring_enabled,
         "intentkit_enabled": intentkit_enabled,
@@ -1859,15 +1839,12 @@ def backend_localnet_init(
     *,
     nodes: int,
     clean: bool,
-    topology: str,
     genesis_network: str,
     chain_id: str | None,
 ) -> dict:
     args = [
         "--nodes",
         str(nodes),
-        "--topology",
-        topology,
         "--genesis-network",
         genesis_network,
     ]
@@ -1891,7 +1868,6 @@ def backend_localnet_init(
         "stack_dir": str(STACK_DIR),
         "node_count": nodes,
         "clean": clean,
-        "topology": topology,
         "genesis_network": genesis_network,
         "chain_id": chain_id or metadata.get("chain_id"),
         "network": metadata,
@@ -2074,7 +2050,6 @@ def backend_localnet_e2e(
     bootstrap: bool,
     build: bool,
     nodes: int,
-    topology: str,
     genesis_network: str,
     bds_node_index: int,
     port_offset: int,
@@ -2101,8 +2076,6 @@ def backend_localnet_e2e(
     args = [
         "--nodes",
         str(nodes),
-        "--topology",
-        topology,
         "--genesis-network",
         genesis_network,
         "--bds-node-index",
@@ -2413,11 +2386,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="number of validator nodes for the localnet (minimum 4)",
     )
     localnet_init.add_argument(
-        "--topology",
-        choices=("integrated", "fidelity"),
-        default="integrated",
-    )
-    localnet_init.add_argument(
         "--clean",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -2567,11 +2535,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=1000,
     )
     localnet_protocol_safety.add_argument(
-        "--topology",
-        choices=("integrated", "fidelity"),
-        default="integrated",
-    )
-    localnet_protocol_safety.add_argument(
         "--genesis-network",
         default="local",
         help="genesis bundle name used to seed localnet genesis",
@@ -2625,11 +2588,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--nodes",
         type=int,
         default=5,
-    )
-    localnet_e2e.add_argument(
-        "--topology",
-        choices=("integrated", "fidelity"),
-        default="integrated",
     )
     localnet_e2e.add_argument(
         "--genesis-network",
@@ -2755,7 +2713,6 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_start(
             node_image_mode=args.node_image_mode,
             node_integrated_image=args.node_integrated_image,
-            node_split_image=args.node_split_image,
             bds_enabled=args.bds_enabled,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
@@ -2784,7 +2741,6 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_stop(
             node_image_mode=args.node_image_mode,
             node_integrated_image=args.node_integrated_image,
-            node_split_image=args.node_split_image,
             bds_enabled=args.bds_enabled,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
@@ -2810,7 +2766,6 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_status(
             node_image_mode=args.node_image_mode,
             node_integrated_image=args.node_integrated_image,
-            node_split_image=args.node_split_image,
             bds_enabled=args.bds_enabled,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
@@ -2836,7 +2791,6 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_endpoints(
             node_image_mode=args.node_image_mode,
             node_integrated_image=args.node_integrated_image,
-            node_split_image=args.node_split_image,
             bds_enabled=args.bds_enabled,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
@@ -2862,7 +2816,6 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_health(
             node_image_mode=args.node_image_mode,
             node_integrated_image=args.node_integrated_image,
-            node_split_image=args.node_split_image,
             bds_enabled=args.bds_enabled,
             dashboard_enabled=args.dashboard,
             monitoring_enabled=args.monitoring,
@@ -2916,7 +2869,6 @@ def main(argv: list[str] | None = None) -> int:
         payload = backend_localnet_init(
             nodes=args.nodes,
             clean=args.clean,
-            topology=args.topology,
             genesis_network=args.genesis_network,
             chain_id=args.chain_id,
         )
@@ -2982,8 +2934,6 @@ def main(argv: list[str] | None = None) -> int:
                 str(args.nodes),
                 "--port-offset",
                 str(args.port_offset),
-                "--topology",
-                args.topology,
                 "--genesis-network",
                 args.genesis_network,
                 "--log-level",
@@ -3011,7 +2961,6 @@ def main(argv: list[str] | None = None) -> int:
             bootstrap=args.bootstrap,
             build=args.build,
             nodes=args.nodes,
-            topology=args.topology,
             genesis_network=args.genesis_network,
             bds_node_index=args.bds_node_index,
             port_offset=args.port_offset,

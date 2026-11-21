@@ -39,7 +39,6 @@
     "cometbft_source_commit": "0880b4d378f347ab16e54ec677ff50d803f37d62"
   },
   "images": {
-    "integrated": "xian-node",
-    "split": "xian-node-split"
+    "integrated": "xian-node"
   }
 }

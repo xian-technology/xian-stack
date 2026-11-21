@@ -236,9 +236,8 @@ The image workflow:
    - `make localnet-node-report`
    - `make localnet-protocol-safety`
 3. checks out the exact pinned component refs
-4. builds and publishes:
-   - `ghcr.io/<owner>/xian-node`
-   - `ghcr.io/<owner>/xian-node-split`
+4. builds and publishes `ghcr.io/<owner>/xian-node` (releases up to v0.3.8
+   also published `xian-node-split` for the removed split topology)
 5. signs the published images by digest through Sigstore keyless signing
 6. attaches signed release assets to the GitHub Release:
    - `release-manifest.json`
@@ -255,7 +254,7 @@ Update the manifest before tagging `xian-stack` so the published image is reprod
 
 `image-release.json` is the machine-facing release summary. It records:
 
-- the published integrated and split image repositories
+- the published image repository
 - the top-level multi-arch digest for each image
 - the per-platform image manifest digests used by the reproducibility verifier
 
@@ -289,11 +288,6 @@ cosign verify \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp 'https://github.com/xian-technology/xian-stack/.github/workflows/release.yml@refs/tags/.*' \
   ghcr.io/xian-technology/xian-node@sha256:<digest>
-
-cosign verify \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp 'https://github.com/xian-technology/xian-stack/.github/workflows/release.yml@refs/tags/.*' \
-  ghcr.io/xian-technology/xian-node-split@sha256:<digest>
 ```
 
 Use the signed release assets to verify the recorded manifest and digest set:

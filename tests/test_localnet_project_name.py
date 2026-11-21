@@ -22,7 +22,6 @@ def write_localnet(directory: Path) -> Path:
     with patch.object(localnet, "STACK_DIR", directory):
         localnet.write_compose_file(
             [{"index": 0, "moniker": "node-0"}],
-            "integrated",
             bds_enabled=False,
             bds_node_index=0,
             profiling_enabled=False,

@@ -24,7 +24,6 @@ def runtime_env_kwargs(**overrides: object) -> dict[str, object]:
     kwargs: dict[str, object] = {
         "node_image_mode": "local_build",
         "node_integrated_image": None,
-        "node_split_image": None,
         "bds_enabled": False,
         "dashboard_enabled": False,
         "dashboard_host": "127.0.0.1",

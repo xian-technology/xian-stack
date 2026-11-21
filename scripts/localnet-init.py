@@ -50,7 +50,6 @@ BASE_METRICS_PORT = 26660
 BASE_XIAN_METRICS_PORT = 9108
 PORT_STRIDE = 100  # node-0: 266xx, node-1: 267xx, node-2: 268xx, ...
 NODE_IMAGE_INTEGRATED = os.environ.get("XIAN_NODE_INTEGRATED_IMAGE", "xian-node-integrated:local")
-NODE_IMAGE_SPLIT = os.environ.get("XIAN_NODE_SPLIT_IMAGE", "xian-node-split:local")
 LOCALNET_POSTGRES_SERVICE = "localnet-postgres"
 # One fresh owner-only file per generated localnet holds the BDS password; the
 # compose secret mounts it into Postgres and the BDS node.
@@ -187,10 +186,8 @@ def build_persistent_peers(nodes: list[dict]) -> str:
     return ",".join(peers)
 
 
-def bds_runtime_rpc_url(node: dict, topology: str) -> str:
+def bds_runtime_rpc_url() -> str:
     """Return the RPC URL reachable from the BDS process."""
-    if topology == "fidelity":
-        return f"http://{node['moniker']}:26657"
     return "http://127.0.0.1:26657"
 
 
@@ -220,7 +217,6 @@ def write_node_config(
     mempool_size: int | None,
     mempool_cache_size: int | None,
     bds_enabled: bool,
-    topology: str,
     transaction_trace_logging: bool,
     app_log_level: str,
     app_log_json: bool,
@@ -262,7 +258,7 @@ def write_node_config(
             # default password_file, never a value in xian.toml.
             bds=BdsOptions(
                 host=LOCALNET_POSTGRES_SERVICE if bds_enabled else "",
-                rpc_url=bds_runtime_rpc_url(node, topology) if bds_enabled else "",
+                rpc_url=bds_runtime_rpc_url() if bds_enabled else "",
             ),
         )
     )
@@ -378,12 +374,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Remove existing .localnet directory before init",
     )
-    parser.add_argument(
-        "--topology",
-        choices=("integrated", "fidelity"),
-        default="integrated",
-        help="Runtime topology for the generated localnet compose file",
-    )
     return parser.parse_args()
 
 
@@ -462,7 +452,7 @@ def strip_prefix(settings: dict, prefix: str) -> dict:
     return {key.removeprefix(prefix): value for key, value in settings.items()}
 
 
-def node_summary(node: dict, *, topology: str, bds_enabled: bool) -> dict:
+def node_summary(node: dict, *, bds_enabled: bool) -> dict:
     index = node["index"]
     return {
         "moniker": node["moniker"],
@@ -471,11 +461,7 @@ def node_summary(node: dict, *, topology: str, bds_enabled: bool) -> dict:
         "host_p2p_port": BASE_P2P_PORT + index * PORT_STRIDE,
         "host_metrics_port": BASE_METRICS_PORT + index * PORT_STRIDE,
         "host_xian_metrics_port": (BASE_XIAN_METRICS_PORT + index * PORT_STRIDE),
-        "abci_container": (
-            f"xian-{node['moniker']}"
-            if topology == "integrated"
-            else f"xian-{node['moniker']}-abci"
-        ),
+        "abci_container": f"xian-{node['moniker']}",
         "cometbft_container": f"xian-{node['moniker']}",
         "account_public_key": node["account_public_key"],
         "account_private_key": node["validator_material"]["validator_private_key_hex"],
@@ -548,7 +534,6 @@ def main():
             genesis,
             **consensus,
             bds_enabled=bds_enabled and node["index"] == bds_node_index,
-            topology=args.topology,
             **log_settings,
         )
         (LOCALNET_DIR / node["moniker"] / "tmp").mkdir(parents=True, exist_ok=True)
@@ -563,7 +548,6 @@ def main():
         write_bds_password_file(LOCALNET_DIR / BDS_PASSWORD_FILE_NAME)
     write_compose_file(
         nodes,
-        args.topology,
         bds_enabled=bds_enabled,
         bds_node_index=bds_node_index,
         profiling_enabled=profiling_enabled,
@@ -578,7 +562,6 @@ def main():
     summary = {
         "chain_id": args.chain_id,
         "genesis_network": args.genesis_network,
-        "topology": args.topology,
         "execution": {
             "mode": VM_EXECUTION_MODE,
         },
@@ -588,7 +571,6 @@ def main():
         "nodes": [
             node_summary(
                 n,
-                topology=args.topology,
                 bds_enabled=bds_enabled and n["index"] == bds_node_index,
             )
             for n in nodes
@@ -657,92 +639,8 @@ def integrated_node_services(
     return {moniker: service}
 
 
-def split_node_services(
-    node: dict,
-    *,
-    split_build: dict,
-    profiling_enabled: bool,
-    profiling_recent_blocks: int,
-    depends_on_postgres: bool,
-) -> dict:
-    """Separate ABCI and CometBFT containers for this node (fidelity topology)."""
-    idx = node["index"]
-    moniker = node["moniker"]
-    host_p2p, host_rpc, host_metrics, host_xian_metrics = node_host_ports(idx)
-    shared_tmp = f"./.localnet/{moniker}/tmp:/tmp"
-    home_mount = f"./.localnet/{moniker}/.cometbft:/root/.cometbft"
-    abci_service = {
-        "image": NODE_IMAGE_SPLIT,
-        "restart": "always",
-        "init": True,
-        "stop_grace_period": "45s",
-        "hostname": f"{moniker}-abci",
-        "container_name": f"xian-{moniker}-abci",
-        "build": split_build,
-        "mem_limit": compose_var("XIAN_LOCALNET_ABCI_MEMORY_LIMIT"),
-        "mem_reservation": compose_var("XIAN_LOCALNET_ABCI_MEMORY_RESERVATION"),
-        "memswap_limit": compose_var("XIAN_LOCALNET_ABCI_MEMORY_SWAP"),
-        "pids_limit": compose_var("XIAN_LOCALNET_ABCI_PIDS_LIMIT"),
-        "ulimits": {
-            "nofile": {
-                "soft": compose_var("XIAN_LOCALNET_ABCI_NOFILE_SOFT"),
-                "hard": compose_var("XIAN_LOCALNET_ABCI_NOFILE_HARD"),
-            }
-        },
-        "volumes": [home_mount, shared_tmp],
-        "environment": {
-            "XIAN_CONFIGS_DIR": "/opt/xian-configs",
-            "XIAN_PERF_ENABLED": "1" if profiling_enabled else "0",
-            "XIAN_PERF_OUTPUT_PATH": "/root/.cometbft/xian-perf.json",
-            "XIAN_PERF_RECENT_BLOCKS": str(profiling_recent_blocks),
-        },
-        "command": ["xian-abci"],
-        "ports": [
-            f"{host_xian_metrics}:9108",
-        ],
-        "networks": ["localnet"],
-    }
-    if depends_on_postgres:
-        abci_service["depends_on"] = postgres_dependency()
-        abci_service["secrets"] = [BDS_PASSWORD_SECRET]
-    cometbft_service = {
-        "image": NODE_IMAGE_SPLIT,
-        "restart": "always",
-        "init": True,
-        "stop_grace_period": "45s",
-        "hostname": moniker,
-        "container_name": f"xian-{moniker}",
-        "build": split_build,
-        "mem_limit": compose_var("XIAN_LOCALNET_COMETBFT_MEMORY_LIMIT"),
-        "mem_reservation": compose_var("XIAN_LOCALNET_COMETBFT_MEMORY_RESERVATION"),
-        "memswap_limit": compose_var("XIAN_LOCALNET_COMETBFT_MEMORY_SWAP"),
-        "pids_limit": compose_var("XIAN_LOCALNET_COMETBFT_PIDS_LIMIT"),
-        "ulimits": {
-            "nofile": {
-                "soft": compose_var("XIAN_LOCALNET_COMETBFT_NOFILE_SOFT"),
-                "hard": compose_var("XIAN_LOCALNET_COMETBFT_NOFILE_HARD"),
-            }
-        },
-        "volumes": [home_mount, shared_tmp],
-        "command": [
-            "cometbft",
-            "node",
-            "--rpc.laddr",
-            "tcp://0.0.0.0:26657",
-        ],
-        "ports": [
-            f"{host_p2p}:26656",
-            f"{host_rpc}:26657",
-            f"{host_metrics}:26660",
-        ],
-        "networks": ["localnet"],
-    }
-    return {f"{moniker}-abci": abci_service, moniker: cometbft_service}
-
-
 def write_compose_file(
     nodes: list[dict],
-    topology: str,
     *,
     bds_enabled: bool,
     bds_node_index: int,
@@ -752,7 +650,6 @@ def write_compose_file(
     """Generate docker-compose-localnet.yml from node list."""
     services = {}
     integrated_build = node_build_config("integrated")
-    split_build = node_build_config("split")
     integrated_service_base = {
         "image": NODE_IMAGE_INTEGRATED,
         "restart": "always",
@@ -819,24 +716,13 @@ def write_compose_file(
         }
     for node in nodes:
         depends_on_postgres = bds_enabled and node["index"] == bds_node_index
-        if topology == "integrated":
-            services.update(
-                integrated_node_services(
-                    node,
-                    integrated_service_base=integrated_service_base,
-                    depends_on_postgres=depends_on_postgres,
-                )
+        services.update(
+            integrated_node_services(
+                node,
+                integrated_service_base=integrated_service_base,
+                depends_on_postgres=depends_on_postgres,
             )
-        else:
-            services.update(
-                split_node_services(
-                    node,
-                    split_build=split_build,
-                    profiling_enabled=profiling_enabled,
-                    profiling_recent_blocks=profiling_recent_blocks,
-                    depends_on_postgres=depends_on_postgres,
-                )
-            )
+        )
 
     compose = {
         # A separate project keeps single-node `down --remove-orphans` from

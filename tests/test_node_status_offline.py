@@ -11,7 +11,7 @@ import pytest
 ROOT = Path(__file__).absolute().parents[1]
 
 
-def status(tmp_path, *, rows="[]", exit_code=0, topology="fidelity"):
+def status(tmp_path, *, rows="[]", exit_code=0):
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     shutil.copyfile(ROOT / "scripts/node-status.sh", scripts / "node-status.sh")
@@ -30,7 +30,6 @@ raise SystemExit(1)
         "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
         "FAKE_COMPOSE_ROWS": rows,
         "FAKE_COMPOSE_EXIT": str(exit_code),
-        "XIAN_STACK_TOPOLOGY": topology,
     }
     result = subprocess.run(
         ["bash", str(scripts / "node-status.sh")], env=env, capture_output=True, text=True
@@ -52,10 +51,10 @@ def test_successful_empty_runtime_query_is_known(tmp_path):
 
 
 @pytest.mark.parametrize("state", ["running", "paused", "restarting", "exited"])
-def test_partial_fidelity_runtime_preserves_every_observed_state(tmp_path, state):
-    rows = json.dumps([{"Service": "abci-app", "State": state}])
+def test_runtime_status_preserves_every_observed_state(tmp_path, state):
+    rows = json.dumps([{"Service": "abci", "State": state}])
     result = status(tmp_path, rows=rows)
     assert result["runtime_status_known"] is True
-    assert result["runtime_containers"] == ["abci-app", "cometbft"]
+    assert result["runtime_containers"] == ["abci"]
     assert result["compose_services"][0]["state"] == state
-    assert result["runtime_services_running"] is False
+    assert result["runtime_services_running"] is (state == "running")

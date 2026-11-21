@@ -13,12 +13,10 @@ localnet = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(localnet)
 
 
-@pytest.mark.parametrize("topology", ["integrated", "fidelity"])
-def test_generated_localnet_bounds_every_container(tmp_path, topology):
+def test_generated_localnet_bounds_every_container(tmp_path):
     with patch.object(localnet, "STACK_DIR", tmp_path):
         localnet.write_compose_file(
             [{"index": 0, "moniker": "node-0"}],
-            topology,
             bds_enabled=True,
             bds_node_index=0,
             profiling_enabled=False,

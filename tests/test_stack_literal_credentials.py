@@ -349,7 +349,6 @@ def test_nested_credential_directory_is_created_privately(tmp_path):
         "STACK_COMPOSE",
         "ABCI_COMPOSE",
         "ABCI_BDS_COMPOSE",
-        "ABCI_FIDELITY_COMPOSE",
         "ABCI_DEV_COMPOSE",
         "CONTRACTING_COMPOSE",
         "LOCALNET_COMPOSE",

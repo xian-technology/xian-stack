@@ -1,7 +1,7 @@
 # promtool unit tests for rules/shared-network.yml.
 # Run: ./scripts/test-monitoring-rules.sh (also part of make validate).
 # Series names and labels are the ones CometBFT v0.40 and node-exporter
-# export; job/instance match monitoring/prometheus/fidelity.yml.
+# export; job/instance match monitoring/prometheus/integrated.yml.
 rule_files:
   - ../rules/shared-network.yml
 

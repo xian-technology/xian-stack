@@ -305,7 +305,6 @@ def make_localnet_env(args: argparse.Namespace) -> dict[str, str]:
     env["XIAN_LOCALNET_TRANSACTION_TRACE_LOGGING"] = "0"
     env["XIAN_LOCALNET_RUNTIME_FEATURE_ZK"] = "1"
     env["LOCALNET_NODES"] = str(args.nodes)
-    env["XIAN_LOCALNET_TOPOLOGY"] = args.topology
     return env
 
 
@@ -3059,7 +3058,6 @@ class E2ERunner:
                 "XIAN_LOCALNET_PORT_OFFSET": env["XIAN_LOCALNET_PORT_OFFSET"],
                 "XIAN_LOCALNET_APP_LOG_LEVEL": env["XIAN_LOCALNET_APP_LOG_LEVEL"],
                 "XIAN_LOCALNET_RUNTIME_FEATURE_ZK": env["XIAN_LOCALNET_RUNTIME_FEATURE_ZK"],
-                "XIAN_LOCALNET_TOPOLOGY": env["XIAN_LOCALNET_TOPOLOGY"],
                 "LOCALNET_NODES": env["LOCALNET_NODES"],
             }
         }
@@ -3076,12 +3074,9 @@ class E2ERunner:
             if self.args.build:
                 outputs["localnet_build"] = run_make("localnet-build", env=env).stdout
             if self.args.suite == "full":
-                image_key = (
-                    "XIAN_NODE_SPLIT_IMAGE"
-                    if self.args.topology == "fidelity"
-                    else "XIAN_NODE_INTEGRATED_IMAGE"
+                outputs["idle_unbond_preflight"] = await self.idle_unbond_preflight(
+                    env["XIAN_NODE_INTEGRATED_IMAGE"]
                 )
-                outputs["idle_unbond_preflight"] = await self.idle_unbond_preflight(env[image_key])
             outputs["localnet_up"] = run_make("localnet-up", env=env).stdout
 
         self.network = load_network()
@@ -10635,7 +10630,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bootstrap", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--build", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--nodes", type=int, default=DEFAULT_LOCALNET_NODES)
-    parser.add_argument("--topology", choices=("integrated", "fidelity"), default="integrated")
     parser.add_argument("--genesis-network", default=DEFAULT_GENESIS_NETWORK)
     parser.add_argument("--bds-node-index", type=int, default=0)
     parser.add_argument("--port-offset", type=int, default=1000)

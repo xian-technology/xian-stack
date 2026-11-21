@@ -94,7 +94,6 @@ def cli_environment(stack=STACK):
     env["COMPOSE_PROJECT_NAME"] = (
         "xian-snapshot-check-" + hashlib.sha256(str(stack).encode()).hexdigest()[:12]
     )
-    env["XIAN_STACK_TOPOLOGY"] = "integrated"
     return env
 
 
@@ -140,7 +139,6 @@ def write_snapshot_profiles(base, source_home, target_home, image, publisher, ch
             "stack_dir": str(STACK),
             "node_image_mode": "registry",
             "node_integrated_image": image,
-            "node_split_image": image,
             "snapshot_signing_keys": [publisher],
             "services": {
                 "bds": {"enabled": False},

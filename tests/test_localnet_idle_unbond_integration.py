@@ -19,19 +19,17 @@ if "localnet_e2e" not in sys.modules:
 e2e = sys.modules["localnet_e2e"]
 
 
-@pytest.mark.parametrize("topology", ["integrated", "fidelity"])
 @pytest.mark.parametrize("fresh", [False, True])
 @pytest.mark.parametrize("suite", ["full", "intentkit-x402"])
 def test_preflight_is_serial_before_five_node_up_and_absent_on_resume(
-    monkeypatch, tmp_path, topology, fresh, suite
+    monkeypatch, tmp_path, fresh, suite
 ):
     args = e2e.build_parser().parse_args([])
-    args.bootstrap, args.build, args.topology, args.suite = fresh, True, topology, suite
+    args.bootstrap, args.build, args.suite = fresh, True, suite
     events = []
     preflight = AsyncMock(side_effect=lambda image: events.append(("preflight", image)))
     runner = SimpleNamespace(args=args, idle_unbond_preflight=preflight)
     env = {
-        "XIAN_NODE_SPLIT_IMAGE": "split-reviewed",
         "XIAN_NODE_INTEGRATED_IMAGE": "integrated-reviewed",
         **{
             key: "fixture"
@@ -42,7 +40,6 @@ def test_preflight_is_serial_before_five_node_up_and_absent_on_resume(
                 "XIAN_LOCALNET_PORT_OFFSET",
                 "XIAN_LOCALNET_APP_LOG_LEVEL",
                 "XIAN_LOCALNET_RUNTIME_FEATURE_ZK",
-                "XIAN_LOCALNET_TOPOLOGY",
                 "LOCALNET_NODES",
             )
         },
@@ -64,7 +61,7 @@ def test_preflight_is_serial_before_five_node_up_and_absent_on_resume(
     with pytest.raises(RuntimeError, match="startup boundary" if fresh else "resume boundary"):
         asyncio.run(e2e.E2ERunner.bootstrap(runner, None))
     if fresh:
-        selected = "split-reviewed" if topology == "fidelity" else "integrated-reviewed"
+        selected = "integrated-reviewed"
         expected = [("localnet-init", None), ("localnet-build", None)]
         if suite == "full":
             expected.append(("preflight", selected))

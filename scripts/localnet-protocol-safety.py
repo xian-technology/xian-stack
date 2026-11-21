@@ -37,10 +37,7 @@ DEFAULT_GENESIS_NETWORK = "local"
 ABCI_HEALTH_QUERY_PATH = "/get/currency.balances:__xian_localnet_governance_health_probe__"
 STATE_PATCH_DELAY_BLOCKS = 8
 STATE_PATCH_ACTIVATION_HEADROOM_BLOCKS = 8
-LOCALNET_IMAGE_BY_TOPOLOGY = {
-    "integrated": "xian-node-integrated:local",
-    "fidelity": "xian-node-split:local",
-}
+LOCALNET_IMAGE = "xian-node-integrated:local"
 
 sys.path.append(str(XIAN_ABCI_SRC))
 import nacl.signing  # noqa: E402
@@ -251,7 +248,6 @@ def make_localnet_env(args: argparse.Namespace) -> dict[str, str]:
     env["XIAN_LOCALNET_APP_LOG_JSON"] = "0"
     env["XIAN_LOCALNET_TRANSACTION_TRACE_LOGGING"] = "0"
     env["LOCALNET_NODES"] = str(args.nodes)
-    env["XIAN_LOCALNET_TOPOLOGY"] = args.topology
     return env
 
 
@@ -712,7 +708,6 @@ class ProtocolSafetyRunner:
             "env": {
                 "XIAN_LOCALNET_GENESIS_NETWORK": env["XIAN_LOCALNET_GENESIS_NETWORK"],
                 "XIAN_LOCALNET_PORT_OFFSET": env["XIAN_LOCALNET_PORT_OFFSET"],
-                "XIAN_LOCALNET_TOPOLOGY": env["XIAN_LOCALNET_TOPOLOGY"],
                 "LOCALNET_NODES": env["LOCALNET_NODES"],
             }
         }
@@ -720,8 +715,7 @@ class ProtocolSafetyRunner:
         if self.args.bootstrap:
             outputs["localnet_down"] = run_make("localnet-down", env=env).stdout
             outputs["localnet_init"] = run_make("localnet-init", env=env).stdout
-            image_tag = LOCALNET_IMAGE_BY_TOPOLOGY[self.args.topology]
-            if self.args.build or not image_available(image_tag):
+            if self.args.build or not image_available(LOCALNET_IMAGE):
                 outputs["localnet_build"] = run_make("localnet-build", env=env).stdout
             outputs["localnet_up"] = run_make("localnet-up", env=env).stdout
 
@@ -3035,11 +3029,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", default="xian-localnet-testnet-protocol-safety-v1")
     parser.add_argument("--nodes", type=int, default=DEFAULT_LOCALNET_NODES)
     parser.add_argument("--port-offset", type=int, default=1000)
-    parser.add_argument(
-        "--topology",
-        choices=sorted(LOCALNET_IMAGE_BY_TOPOLOGY),
-        default="integrated",
-    )
     parser.add_argument(
         "--genesis-network",
         default=DEFAULT_GENESIS_NETWORK,

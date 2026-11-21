@@ -21,7 +21,7 @@ def service_block(compose: str, name: str) -> str:
     return "\n".join(block)
 
 
-@pytest.mark.parametrize("config", ["integrated.yml", "fidelity.yml"])
+@pytest.mark.parametrize("config", ["integrated.yml"])
 def test_prometheus_scrapes_node_exporter(config):
     source = (ROOT / "monitoring/prometheus" / config).read_text(encoding="utf-8")
 
@@ -48,5 +48,12 @@ def test_monitoring_targets_start_and_stop_node_exporter():
         if line.startswith("\t") and " prometheus grafana" in line
     ]
 
-    assert len(recipes) == 6
+    assert len(recipes) == 4
     assert all("prometheus grafana node-exporter" in line for line in recipes)
+
+
+def test_the_node_monitoring_config_evaluates_the_alert_rules():
+    """Every node runs the integrated topology, so its Prometheus config loads the
+    shared-network alert rules (the removed split-topology config used to)."""
+    config = (ROOT / "monitoring/prometheus/integrated.yml").read_text()
+    assert "rule_files:\n  - /etc/prometheus/rules/shared-network.yml\n" in config

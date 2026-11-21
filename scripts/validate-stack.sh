@@ -13,16 +13,13 @@ cd "${stack_root}"
 
 python3 ./scripts/release_manifest.py validate
 docker compose --profile integrated -f docker-compose-abci.yml config -q
-docker compose --profile fidelity -f docker-compose-abci.yml config -q
 docker compose --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml config -q
-docker compose --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml config -q
 docker compose --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml config -q
 XIAN_COMETBFT_RPC_HOST=0.0.0.0 docker compose --profile integrated -f docker-compose-abci.yml config -q
 XIAN_COMETBFT_METRICS_HOST=0.0.0.0 XIAN_APP_METRICS_HOST=0.0.0.0 docker compose --profile integrated -f docker-compose-abci.yml config -q
 XIAN_POSTGRAPHILE_HOST=0.0.0.0 docker compose --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml config -q
 docker compose --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml config -q
 docker compose --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml config -q
-docker compose --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml config -q
 docker compose -f docker-compose-abci-dev.yml -f docker-compose-abci-bds.yml config -q
 docker compose -f docker-compose-contracting.yml config -q
 if [[ -f "${XIAN_INTENTKIT_DIR}/deployment/docker-compose.yml" ]]; then

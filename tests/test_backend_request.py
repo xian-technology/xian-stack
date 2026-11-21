@@ -117,7 +117,6 @@ class BackendRequestTests(unittest.TestCase):
         base_kwargs = {
             "node_image_mode": "local_build",
             "node_integrated_image": None,
-            "node_split_image": None,
             "bds_enabled": False,
             "dashboard_enabled": False,
             "dashboard_host": "127.0.0.1",
@@ -200,7 +199,6 @@ class BackendRequestTests(unittest.TestCase):
                 result = backend.backend_localnet_init(
                     nodes=3,
                     clean=True,
-                    topology="integrated",
                     genesis_network="local",
                     chain_id="custom-chain",
                 )
@@ -214,18 +212,10 @@ class BackendRequestTests(unittest.TestCase):
         self.assertEqual(result["chain_id"], "custom-chain")
         self.assertEqual(result["stdout"], "generated\n")
 
-    def test_localnet_bds_rpc_url_matches_runtime_topology(self) -> None:
+    def test_localnet_bds_rpc_url_is_the_node_local_rpc(self) -> None:
         localnet_init = _load_localnet_init_module()
-        node = {"moniker": "node-1"}
 
-        self.assertEqual(
-            localnet_init.bds_runtime_rpc_url(node, "integrated"),
-            "http://127.0.0.1:26657",
-        )
-        self.assertEqual(
-            localnet_init.bds_runtime_rpc_url(node, "fidelity"),
-            "http://node-1:26657",
-        )
+        self.assertEqual(localnet_init.bds_runtime_rpc_url(), "http://127.0.0.1:26657")
 
 
 if __name__ == "__main__":

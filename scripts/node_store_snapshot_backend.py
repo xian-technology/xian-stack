@@ -175,22 +175,18 @@ def export_snapshot(
 
 
 def selected_image(
-    *, node_image_mode: str, node_integrated_image: str | None, node_split_image: str | None
+    *, node_image_mode: str, node_integrated_image: str | None
 ) -> str:
     env = os.environ.copy()
     env["XIAN_NODE_IMAGE_MODE"] = node_image_mode
     if node_integrated_image:
         env["XIAN_NODE_INTEGRATED_IMAGE"] = node_integrated_image
-    if node_split_image:
-        env["XIAN_NODE_SPLIT_IMAGE"] = node_split_image
     result = subprocess.run(
         [
             "bash",
             "-c",
             'set -euo pipefail; source "$1"; export_stack_env; '
-            'if [[ "$XIAN_STACK_TOPOLOGY" == fidelity ]]; then '
-            'printf "%s" "$XIAN_NODE_SPLIT_IMAGE"; else '
-            'printf "%s" "$XIAN_NODE_INTEGRATED_IMAGE"; fi',
+            'printf "%s" "$XIAN_NODE_INTEGRATED_IMAGE"',
             "bash",
             str(STACK / "scripts/stack-env.sh"),
         ],
@@ -232,7 +228,6 @@ def backend_snapshot(args) -> dict:
     image = selected_image(
         node_image_mode=args.node_image_mode,
         node_integrated_image=args.node_integrated_image,
-        node_split_image=args.node_split_image,
     )
     if args.command == "node-store-snapshot-inspect":
         return inspect_store(args.db_dir, args.db_backend, args.genesis_file, image)

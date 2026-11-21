@@ -33,7 +33,7 @@ REQUIRED_BUILD_FIELDS = (
     "s6_overlay_x86_64_sha256",
     "s6_overlay_aarch64_sha256",
 )
-REQUIRED_IMAGE_FIELDS = ("integrated", "split")
+REQUIRED_IMAGE_FIELDS = ("integrated",)
 
 
 def load_manifest(path: Path) -> dict:
@@ -110,7 +110,6 @@ def flatten_outputs(data: dict) -> dict[str, str]:
     for name, value in data["build"].items():
         outputs[name] = value
     outputs["integrated_image_name"] = data["images"]["integrated"]
-    outputs["split_image_name"] = data["images"]["split"]
     return outputs
 
 

@@ -177,12 +177,10 @@ def test_selected_image_passes_profile_overrides_to_one_stack_default_owner(monk
     result = snapshot.selected_image(
         node_image_mode="registry",
         node_integrated_image="integrated-current",
-        node_split_image="split-current",
     )
     assert result == "chosen-current"
     assert calls[0][1]["env"]["XIAN_NODE_IMAGE_MODE"] == "registry"
     assert calls[0][1]["env"]["XIAN_NODE_INTEGRATED_IMAGE"] == "integrated-current"
-    assert calls[0][1]["env"]["XIAN_NODE_SPLIT_IMAGE"] == "split-current"
     assert str(snapshot.STACK / "scripts/stack-env.sh") in calls[0][0]
 
 
@@ -194,7 +192,6 @@ def test_backend_dispatch_preserves_recipient_genesis_and_selected_image(tmp_pat
         command="node-store-snapshot-inspect",
         node_image_mode="registry",
         node_integrated_image="image",
-        node_split_image=None,
         db_dir=tmp_path / "data",
         db_backend="goleveldb",
         genesis_file=tmp_path / "genesis.json",
@@ -261,7 +258,6 @@ def test_backend_export_dispatch_forwards_explicit_offline_and_all_destinations(
         offline=True,
         node_image_mode="registry",
         node_integrated_image="current",
-        node_split_image=None,
         home=tmp_path / "home",
         archive_output=tmp_path / "archive",
         manifest_output=tmp_path / "manifest",
@@ -290,7 +286,6 @@ def test_backend_export_rejects_every_missing_required_field(tmp_path, monkeypat
         offline=True,
         node_image_mode="registry",
         node_integrated_image="current",
-        node_split_image=None,
         home=tmp_path / "home",
         archive_output=tmp_path / "archive",
         manifest_output=tmp_path / "manifest",

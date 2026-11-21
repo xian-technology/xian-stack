@@ -1,8 +1,7 @@
 # Runtime And Release Backlog
 
 These items were intentionally deferred after the runtime topology cleanup.
-They are the next release-engineering hardening phase, not part of the
-integrated-vs-fidelity runtime refactor itself.
+They are the next release-engineering hardening phase.
 
 ## Dependency And Artifact Pinning
 

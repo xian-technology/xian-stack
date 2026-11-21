@@ -87,7 +87,6 @@ def run_environment(root: Path, mode: str, original: dict[str, str]) -> dict[str
             "DOCKER_COMPOSE": "docker compose",
             "XIAN_NODE_IMAGE_MODE": "local_build",
             "XIAN_NODE_INTEGRATED_IMAGE": f"{project}:integrated",
-            "XIAN_NODE_SPLIT_IMAGE": f"{project}:split",
             "XIAN_SMOKE_CLI_NODE_NAME": "smoke-validator",
         }
     )
@@ -161,20 +160,13 @@ def cleanup(env: dict[str, str]) -> bool:
     ]
     if subprocess.run(command, cwd=STACK, env=env).returncode:
         return False
-    images = [
-        env[key]
-        for key in ("XIAN_NODE_INTEGRATED_IMAGE", "XIAN_NODE_SPLIT_IMAGE")
-        if subprocess.run(
-            ["docker", "image", "inspect", env[key]], env=env, capture_output=True
-        ).returncode
-        == 0
-    ]
-    if images and not return_ownership(env, images[0]):
+    image = env["XIAN_NODE_INTEGRATED_IMAGE"]
+    found = subprocess.run(["docker", "image", "inspect", image], env=env, capture_output=True)
+    if found.returncode:
+        return True
+    if not return_ownership(env, image):
         return False
-    return all(
-        subprocess.run(["docker", "image", "rm", image], env=env).returncode == 0
-        for image in images
-    )
+    return subprocess.run(["docker", "image", "rm", image], env=env).returncode == 0
 
 
 def return_ownership(env: dict[str, str], image: str) -> bool:

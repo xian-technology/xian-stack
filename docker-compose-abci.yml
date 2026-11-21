@@ -94,14 +94,14 @@ services:
   dashboard:
     logging: *x-logging
     profiles: ["dashboard-integrated"]
-    image: ${XIAN_NODE_SPLIT_IMAGE:-xian-node-split:local}
+    image: ${XIAN_NODE_INTEGRATED_IMAGE:-xian-node-integrated:local}
     restart: always
     init: true
     stop_grace_period: 30s
     hostname: xian-stack-dashboard
     build:
       <<: *x-node-build
-      target: split
+      target: integrated
     mem_limit: ${XIAN_DOCKER_DASHBOARD_MEMORY_LIMIT}
     mem_reservation: ${XIAN_DOCKER_DASHBOARD_MEMORY_RESERVATION}
     memswap_limit: ${XIAN_DOCKER_DASHBOARD_MEMORY_SWAP}
@@ -113,7 +113,9 @@ services:
     depends_on:
       abci:
         condition: service_healthy
-    command:
+    # The node image starts the s6 supervisor by default; the dashboard is a
+    # single process, so it runs directly.
+    entrypoint:
       [
         "xian-dashboard",
         "--host",
@@ -122,127 +124,6 @@ services:
         "8080",
         "--rpc-url",
         "http://abci:26657",
-      ]
-    networks:
-      - xian-net
-    ports:
-      - target: 8080
-        published: "${XIAN_DASHBOARD_PORT}"
-        host_ip: "${XIAN_DASHBOARD_HOST}"
-        protocol: tcp
-
-  abci-app:
-    logging: *x-logging
-    profiles: ["fidelity"]
-    image: ${XIAN_NODE_SPLIT_IMAGE:-xian-node-split:local}
-    restart: always
-    init: true
-    stop_grace_period: 45s
-    hostname: xian-stack-abci
-    build:
-      <<: *x-node-build
-      target: split
-    mem_limit: ${XIAN_DOCKER_FIDELITY_ABCI_MEMORY_LIMIT}
-    mem_reservation: ${XIAN_DOCKER_FIDELITY_ABCI_MEMORY_RESERVATION}
-    memswap_limit: ${XIAN_DOCKER_FIDELITY_ABCI_MEMORY_SWAP}
-    pids_limit: ${XIAN_DOCKER_FIDELITY_ABCI_PIDS_LIMIT}
-    ulimits:
-      nofile:
-        soft: ${XIAN_DOCKER_FIDELITY_ABCI_NOFILE_SOFT}
-        hard: ${XIAN_DOCKER_FIDELITY_ABCI_NOFILE_HARD}
-    volumes:
-      - ${XIAN_COMETBFT_HOME}:/root/.cometbft
-      - xian-abci-runtime-tmp:/tmp
-    environment:
-      XIAN_CONFIGS_DIR: /opt/xian-configs
-      XIAN_PERF_ENABLED: ${XIAN_PERF_ENABLED}
-      XIAN_PERF_RECENT_BLOCKS: ${XIAN_PERF_RECENT_BLOCKS}
-      XIAN_PERF_OUTPUT_PATH: /root/.cometbft/xian-perf.json
-    stdin_open: true
-    tty: true
-    command: ["xian-abci"]
-    networks:
-      - xian-net
-      - xian-db
-    ports:
-      - target: 9108
-        published: "${XIAN_APP_METRICS_PORT}"
-        host_ip: "${XIAN_APP_METRICS_HOST}"
-        protocol: tcp
-
-  cometbft:
-    logging: *x-logging
-    profiles: ["fidelity"]
-    image: ${XIAN_NODE_SPLIT_IMAGE:-xian-node-split:local}
-    restart: always
-    init: true
-    stop_grace_period: 45s
-    hostname: xian-stack-cometbft
-    build:
-      <<: *x-node-build
-      target: split
-    mem_limit: ${XIAN_DOCKER_FIDELITY_COMETBFT_MEMORY_LIMIT}
-    mem_reservation: ${XIAN_DOCKER_FIDELITY_COMETBFT_MEMORY_RESERVATION}
-    memswap_limit: ${XIAN_DOCKER_FIDELITY_COMETBFT_MEMORY_SWAP}
-    pids_limit: ${XIAN_DOCKER_FIDELITY_COMETBFT_PIDS_LIMIT}
-    ulimits:
-      nofile:
-        soft: ${XIAN_DOCKER_FIDELITY_COMETBFT_NOFILE_SOFT}
-        hard: ${XIAN_DOCKER_FIDELITY_COMETBFT_NOFILE_HARD}
-    volumes:
-      - ${XIAN_COMETBFT_HOME}:/root/.cometbft
-      - xian-abci-runtime-tmp:/tmp
-    stdin_open: true
-    tty: true
-    command: ["cometbft", "node", "--rpc.laddr", "tcp://0.0.0.0:26657"]
-    networks:
-      - xian-net
-    ports:
-      - target: 26657
-        published: "${XIAN_COMETBFT_RPC_PORT}"
-        host_ip: "${XIAN_COMETBFT_RPC_HOST}"
-        protocol: tcp
-      - target: 26656
-        published: "${XIAN_COMETBFT_P2P_PORT}"
-        host_ip: "${XIAN_COMETBFT_P2P_HOST}"
-        protocol: tcp
-      - target: 26660
-        published: "${XIAN_COMETBFT_METRICS_PORT}"
-        host_ip: "${XIAN_COMETBFT_METRICS_HOST}"
-        protocol: tcp
-    healthcheck: *x-rpc-healthcheck
-
-  dashboard-fidelity:
-    logging: *x-logging
-    profiles: ["dashboard-fidelity"]
-    image: ${XIAN_NODE_SPLIT_IMAGE:-xian-node-split:local}
-    restart: always
-    init: true
-    stop_grace_period: 30s
-    hostname: xian-stack-dashboard
-    build:
-      <<: *x-node-build
-      target: split
-    mem_limit: ${XIAN_DOCKER_DASHBOARD_MEMORY_LIMIT}
-    mem_reservation: ${XIAN_DOCKER_DASHBOARD_MEMORY_RESERVATION}
-    memswap_limit: ${XIAN_DOCKER_DASHBOARD_MEMORY_SWAP}
-    pids_limit: ${XIAN_DOCKER_DASHBOARD_PIDS_LIMIT}
-    ulimits:
-      nofile:
-        soft: ${XIAN_DOCKER_DASHBOARD_NOFILE_SOFT}
-        hard: ${XIAN_DOCKER_DASHBOARD_NOFILE_HARD}
-    depends_on:
-      cometbft:
-        condition: service_healthy
-    command:
-      [
-        "xian-dashboard",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "8080",
-        "--rpc-url",
-        "http://cometbft:26657",
       ]
     networks:
       - xian-net

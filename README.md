@@ -141,7 +141,7 @@ that directory. `XIAN_POSTGRES_IMAGE` overrides the single-node image.
 Initialize, start, and exercise a multi-node localnet:
 
 ```bash
-python3 ./scripts/backend.py localnet-init  --nodes 4 --topology integrated --clean
+python3 ./scripts/backend.py localnet-init --nodes 4 --clean
 python3 ./scripts/backend.py localnet-up    --wait-for-health --rpc-timeout-seconds 120
 python3 ./scripts/backend.py localnet-workload --scenario counter_basic
 ```
@@ -152,8 +152,7 @@ localnet validators as orphans. A compose file generated before this change
 keeps the directory project; regenerate it with `localnet-init --clean`.
 
 To select an isolated image tag before generating a localnet, set
-`XIAN_NODE_INTEGRATED_IMAGE` for integrated nodes or `XIAN_NODE_SPLIT_IMAGE`
-for the fidelity topology. Every generated node service uses the selected tag.
+`XIAN_NODE_INTEGRATED_IMAGE`. Every generated node service uses the selected tag.
 
 Bootstrap DEX contracts on a running local node for stack validation. General
 DEX installs should use the repo-owned bootstrap script in `xian-dex`; this
@@ -472,7 +471,7 @@ For automation, prefer the backend command equivalents where available:
 
 ```bash
 python3 ./scripts/backend.py validate
-python3 ./scripts/backend.py localnet-init --nodes 5 --topology integrated --clean
+python3 ./scripts/backend.py localnet-init --nodes 5 --clean
 python3 ./scripts/backend.py localnet-up --wait-for-health
 python3 ./scripts/backend.py localnet-e2e
 ```
@@ -531,7 +530,8 @@ shell access. Use `xian-cli` for human-facing operator workflows.
 
 ## Capabilities
 
-- build and run the local Xian runtime in `integrated` or `fidelity` topology
+- build and run the local Xian runtime: one container runs CometBFT and the
+  node (the optional dashboard runs from the same image)
 - run canonical-network nodes from pinned published `xian-node` release
   images, with source builds available as a local override
 - expose a stable machine-facing backend command surface

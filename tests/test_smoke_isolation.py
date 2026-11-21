@@ -355,11 +355,10 @@ def test_cleanup_only_removes_present_owned_images(
     env = {
         "COMPOSE_PROJECT_NAME": "owned-project",
         "XIAN_NODE_INTEGRATED_IMAGE": "owned:node",
-        "XIAN_NODE_SPLIT_IMAGE": "owned:split",
         "XIAN_SMOKE_ROOT": "/tmp/xian-smoke-stack-owned",
     }
-    # down, inspect node, inspect split, then (node image present) ownership return and removal
-    exits = [0, 0, 1, 0, remove_exit] if image_exists else [0, 1, 1]
+    # down, inspect, then (image present) ownership return and removal
+    exits = [0, 0, 0, remove_exit] if image_exists else [0, 1]
     run = Mock(side_effect=[subprocess.CompletedProcess([], code) for code in exits])
     monkeypatch.setattr(isolation_module.subprocess, "run", run)
     assert isolation_module.cleanup(env) is (not image_exists)
@@ -379,10 +378,9 @@ def test_cleanup_returns_container_written_files_before_removing_the_image(
     env = {
         "COMPOSE_PROJECT_NAME": "owned-project",
         "XIAN_NODE_INTEGRATED_IMAGE": "owned:node",
-        "XIAN_NODE_SPLIT_IMAGE": "owned:split",
         "XIAN_SMOKE_ROOT": "/tmp/xian-smoke-stack-owned",
     }
-    run = Mock(side_effect=[subprocess.CompletedProcess([], code) for code in (0, 0, 1, 0, 0)])
+    run = Mock(side_effect=[subprocess.CompletedProcess([], code) for code in (0, 0, 0, 0)])
     monkeypatch.setattr(isolation_module.subprocess, "run", run)
     monkeypatch.setattr(isolation_module.os, "getuid", lambda: 1001)
     monkeypatch.setattr(isolation_module.os, "getgid", lambda: 121)
@@ -410,10 +408,9 @@ def test_cleanup_keeps_the_image_when_ownership_cannot_be_returned(isolation_mod
     env = {
         "COMPOSE_PROJECT_NAME": "owned-project",
         "XIAN_NODE_INTEGRATED_IMAGE": "owned:node",
-        "XIAN_NODE_SPLIT_IMAGE": "owned:split",
         "XIAN_SMOKE_ROOT": "/tmp/xian-smoke-stack-owned",
     }
-    run = Mock(side_effect=[subprocess.CompletedProcess([], code) for code in (0, 0, 1, 1)])
+    run = Mock(side_effect=[subprocess.CompletedProcess([], code) for code in (0, 0, 1)])
     monkeypatch.setattr(isolation_module.subprocess, "run", run)
     assert isolation_module.cleanup(env) is False
     commands = [call.args[0] for call in run.call_args_list]

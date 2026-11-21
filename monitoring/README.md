@@ -35,9 +35,9 @@ monitoring stack.
 
 ## Alerts
 
-`prometheus/rules/shared-network.yml` holds the shared-network alerts. Only
-`fidelity.yml` loads it; `integrated.yml` (used by `make monitoring-up` and
-`backend.py start --monitoring`) evaluates no rules.
+`prometheus/rules/shared-network.yml` holds the shared-network alerts.
+`integrated.yml` (used by `make monitoring-up` and `backend.py start
+--monitoring`) loads and evaluates them.
 
 | Alert | Fires when | Severity |
 | --- | --- | --- |
@@ -89,8 +89,8 @@ service; you supply the receivers.
 
    Keep its port unpublished, or bind it to `127.0.0.1` and put
    authentication in front of it, like Prometheus and Grafana.
-3. Add an `alerting` section to the Prometheus config you run (`fidelity.yml`,
-   or your copy of `integrated.yml` with a `rule_files` entry for
+3. Add an `alerting` section to the Prometheus config you run (your copy of
+   `integrated.yml`, which already loads
    `/etc/prometheus/rules/shared-network.yml`):
 
    ```yaml

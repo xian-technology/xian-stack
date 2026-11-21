@@ -20,7 +20,7 @@ promtool() {
     "${XIAN_PROMETHEUS_IMAGE}" "$@"
 }
 
-promtool check config --syntax-only fidelity.yml integrated.yml
+promtool check config --syntax-only integrated.yml
 promtool check rules rules/*.yml
 promtool test rules tests/*.test.yml
 

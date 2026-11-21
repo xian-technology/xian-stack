@@ -111,7 +111,7 @@ def test_manifest_requires_component_record(upstream_manifest):
         release_manifest.validate_manifest(data)
 
 
-@pytest.mark.parametrize("section,field", [("build", "go_image"), ("images", "split")])
+@pytest.mark.parametrize("section,field", [("build", "go_image"), ("images", "integrated")])
 @pytest.mark.parametrize("bad", [None, "", 3])
 def test_required_release_values_must_be_strings(upstream_manifest, section, field, bad):
     _, data = upstream_manifest

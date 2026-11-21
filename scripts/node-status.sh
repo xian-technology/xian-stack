@@ -6,20 +6,12 @@ source "${script_dir}/stack-env.sh"
 
 export_stack_env
 
-stack_topology="${XIAN_STACK_TOPOLOGY:-integrated}"
 bds_enabled="${XIAN_BDS_ENABLED:-0}"
 required_processes=("xian" "cometbft")
 
-if [[ "${stack_topology}" == "integrated" ]]; then
-  compose_cmd=(docker compose --profile integrated -f docker-compose-abci.yml)
-  if [[ "${bds_enabled}" == "1" || "${bds_enabled}" == "true" ]]; then
-    compose_cmd=(docker compose --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml)
-  fi
-elif [[ "${stack_topology}" == "fidelity" ]]; then
-  compose_cmd=(docker compose --profile fidelity -f docker-compose-abci.yml)
-else
-  printf 'unsupported XIAN_STACK_TOPOLOGY: %s\n' "${stack_topology}" >&2
-  exit 1
+compose_cmd=(docker compose --profile integrated -f docker-compose-abci.yml)
+if [[ "${bds_enabled}" == "1" || "${bds_enabled}" == "true" ]]; then
+  compose_cmd=(docker compose --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml)
 fi
 
 compose_status_raw="[]"
@@ -84,52 +76,16 @@ PY
 runtime_processes_raw="[]"
 node_id=""
 
-if [[ "${stack_topology}" == "integrated" ]]; then
-  if "${compose_cmd[@]}" exec -T abci /bin/bash -lc "true" >/dev/null 2>&1; then
-    runtime_processes_raw="$(inspect_runtime_processes abci)"
-    if node_id="$("${compose_cmd[@]}" exec -T abci cometbft show-node-id 2>/dev/null | tail -n 1)"; then
-      node_id="${node_id//$'\r'/}"
-    else
-      node_id=""
-    fi
+if "${compose_cmd[@]}" exec -T abci /bin/bash -lc "true" >/dev/null 2>&1; then
+  runtime_processes_raw="$(inspect_runtime_processes abci)"
+  if node_id="$("${compose_cmd[@]}" exec -T abci cometbft show-node-id 2>/dev/null | tail -n 1)"; then
+    node_id="${node_id//$'\r'/}"
+  else
+    node_id=""
   fi
-else
-  abci_processes="[]"
-  cometbft_processes="[]"
-  if "${compose_cmd[@]}" exec -T abci-app /bin/bash -lc "true" >/dev/null 2>&1; then
-    abci_processes="$(inspect_runtime_processes abci-app)"
-  fi
-  if "${compose_cmd[@]}" exec -T cometbft /bin/bash -lc "true" >/dev/null 2>&1; then
-    cometbft_processes="$(inspect_runtime_processes cometbft)"
-    if node_id="$("${compose_cmd[@]}" exec -T cometbft cometbft show-node-id 2>/dev/null | tail -n 1)"; then
-      node_id="${node_id//$'\r'/}"
-    else
-      node_id=""
-    fi
-  fi
-  runtime_processes_raw="$(python3 - "${abci_processes}" "${cometbft_processes}" <<'PY'
-import json
-import sys
-
-merged = {}
-for raw in sys.argv[1:]:
-    for item in json.loads(raw):
-        current = merged.get(item["name"])
-        if current is None or item.get("running"):
-            merged[item["name"]] = item
-
-for name in ("xian", "cometbft"):
-    merged.setdefault(
-        name,
-        {"name": name, "pid": None, "args": None, "running": False},
-    )
-
-print(json.dumps(list(merged.values())))
-PY
-)"
 fi
 
-python3 - "${compose_status_raw}" "${runtime_processes_raw}" "${stack_topology}" "${bds_enabled}" "${node_id}" "${runtime_status_known}" "${required_processes[@]}" <<'PY'
+python3 - "${compose_status_raw}" "${runtime_processes_raw}" "${bds_enabled}" "${node_id}" "${runtime_status_known}" "${required_processes[@]}" <<'PY'
 import json
 import sys
 
@@ -168,16 +124,12 @@ compose_services = [
     normalize_compose_service(item) for item in parse_json_stream(sys.argv[1])
 ]
 runtime_processes = parse_json_stream(sys.argv[2])
-stack_topology = sys.argv[3]
-bds_enabled = sys.argv[4] in {"1", "true"}
-node_id = sys.argv[5] or None
-runtime_status_known = sys.argv[6] == "1"
-required_processes = sys.argv[7:]
+bds_enabled = sys.argv[3] in {"1", "true"}
+node_id = sys.argv[4] or None
+runtime_status_known = sys.argv[5] == "1"
+required_processes = sys.argv[6:]
 
-runtime_containers = {
-    "integrated": ["abci"],
-    "fidelity": ["abci-app", "cometbft"],
-}.get(stack_topology, [])
+runtime_containers = ["abci"]
 
 runtime_services_running = all(
     any(
@@ -195,7 +147,6 @@ required_processes_online = all(
 )
 
 result = {
-    "topology": stack_topology,
     "bds_enabled": bds_enabled,
     "compose_services": compose_services,
     "runtime_containers": runtime_containers,

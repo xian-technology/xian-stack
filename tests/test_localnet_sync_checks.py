@@ -282,7 +282,6 @@ def test_public_cli_invocation_has_current_source_and_isolated_compose_project(
     assert args[:4] == [sys.executable, "-m", "xian_cli", "snapshot"]
     assert args[-2:] == ["--base-dir", str(tmp_path)]
     assert kwargs["env"]["COMPOSE_PROJECT_NAME"].startswith("xian-snapshot-check-")
-    assert kwargs["env"]["XIAN_STACK_TOPOLOGY"] == "integrated"
 
 
 def test_public_cli_command_failure_preserves_its_actual_error(tmp_path, monkeypatch):

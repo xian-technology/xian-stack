@@ -52,7 +52,6 @@ XIAN_S6_OVERLAY_VERSION ?= 3.2.3.0
 XIAN_S6_VERBOSITY ?= 1
 XIAN_NODE_IMAGE_MODE ?= local_build
 XIAN_NODE_INTEGRATED_IMAGE ?= xian-node-integrated:local
-XIAN_NODE_SPLIT_IMAGE ?= xian-node-split:local
 XIAN_PUBLIC_RPC_ENABLED ?= 0
 XIAN_PUBLIC_QUERY_ENABLED ?= 0
 XIAN_PUBLIC_METRICS_ENABLED ?= 0
@@ -80,7 +79,6 @@ XIAN_GRAFANA_IMAGE ?= grafana/grafana:12.4.5
 XIAN_NODE_EXPORTER_IMAGE ?= prom/node-exporter:v1.12.1
 XIAN_GRAFANA_HOST ?= 127.0.0.1
 XIAN_GRAFANA_PORT ?= 3000
-XIAN_STACK_TOPOLOGY ?= integrated
 XIAN_DOCKER_ABCI_MEMORY_LIMIT ?= 2048m
 XIAN_DOCKER_ABCI_MEMORY_RESERVATION ?= 1024m
 XIAN_DOCKER_ABCI_MEMORY_SWAP ?= 2048m
@@ -129,7 +127,6 @@ XIAN_POSTGRAPHILE_DISABLE_DEFAULT_MUTATIONS ?= 1
 XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS ?= omit
 XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS ?= 60
 XIAN_POSTGRAPHILE_REQUIRED_TABLES ?= addresses,bds_meta,blocks,contracts,events,rewards,shielded_output_tags,shielded_outputs,state,state_changes,state_patches,transactions
-XIAN_LOCALNET_TOPOLOGY ?= integrated
 XIAN_LOCALNET_GENESIS_NETWORK ?= local
 XIAN_LOCALNET_PROFILE ?= default
 XIAN_LOCALNET_BLOCK_POLICY_MODE ?=
@@ -190,7 +187,6 @@ export XIAN_S6_OVERLAY_VERSION := $(XIAN_S6_OVERLAY_VERSION)
 export XIAN_S6_VERBOSITY := $(XIAN_S6_VERBOSITY)
 export XIAN_NODE_IMAGE_MODE := $(XIAN_NODE_IMAGE_MODE)
 export XIAN_NODE_INTEGRATED_IMAGE := $(XIAN_NODE_INTEGRATED_IMAGE)
-export XIAN_NODE_SPLIT_IMAGE := $(XIAN_NODE_SPLIT_IMAGE)
 export XIAN_PUBLIC_RPC_ENABLED := $(XIAN_PUBLIC_RPC_ENABLED)
 export XIAN_PUBLIC_QUERY_ENABLED := $(XIAN_PUBLIC_QUERY_ENABLED)
 export XIAN_PUBLIC_METRICS_ENABLED := $(XIAN_PUBLIC_METRICS_ENABLED)
@@ -218,7 +214,6 @@ export XIAN_GRAFANA_IMAGE := $(XIAN_GRAFANA_IMAGE)
 export XIAN_NODE_EXPORTER_IMAGE := $(XIAN_NODE_EXPORTER_IMAGE)
 export XIAN_GRAFANA_HOST := $(XIAN_GRAFANA_HOST)
 export XIAN_GRAFANA_PORT := $(XIAN_GRAFANA_PORT)
-export XIAN_STACK_TOPOLOGY := $(XIAN_STACK_TOPOLOGY)
 export XIAN_DOCKER_ABCI_MEMORY_LIMIT := $(XIAN_DOCKER_ABCI_MEMORY_LIMIT)
 export XIAN_DOCKER_ABCI_MEMORY_RESERVATION := $(XIAN_DOCKER_ABCI_MEMORY_RESERVATION)
 export XIAN_DOCKER_ABCI_MEMORY_SWAP := $(XIAN_DOCKER_ABCI_MEMORY_SWAP)
@@ -268,7 +263,6 @@ export XIAN_POSTGRAPHILE_DISABLE_DEFAULT_MUTATIONS := $(XIAN_POSTGRAPHILE_DISABL
 export XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS := $(XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS)
 export XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS := $(XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS)
 export XIAN_POSTGRAPHILE_REQUIRED_TABLES := $(XIAN_POSTGRAPHILE_REQUIRED_TABLES)
-export XIAN_LOCALNET_TOPOLOGY := $(XIAN_LOCALNET_TOPOLOGY)
 export XIAN_LOCALNET_PROFILE := $(XIAN_LOCALNET_PROFILE)
 export XIAN_LOCALNET_BLOCK_POLICY_MODE := $(XIAN_LOCALNET_BLOCK_POLICY_MODE)
 export XIAN_LOCALNET_BLOCK_POLICY_INTERVAL := $(XIAN_LOCALNET_BLOCK_POLICY_INTERVAL)
@@ -304,7 +298,6 @@ export XIAN_BLOCK_POLICY_MODE XIAN_BLOCK_POLICY_INTERVAL
 STACK_COMPOSE = python3 ./scripts/stack_credentials.py -- $(DOCKER_COMPOSE)
 ABCI_COMPOSE = $(STACK_COMPOSE) --profile integrated -f docker-compose-abci.yml
 ABCI_BDS_COMPOSE = $(STACK_COMPOSE) --profile integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml
-ABCI_FIDELITY_COMPOSE = $(STACK_COMPOSE) --profile fidelity -f docker-compose-abci.yml
 ABCI_DEV_COMPOSE = $(STACK_COMPOSE) -f docker-compose-abci-dev.yml -f docker-compose-abci-bds.yml
 CONTRACTING_COMPOSE = $(STACK_COMPOSE) -f docker-compose-contracting.yml
 LOCALNET_COMPOSE = $(STACK_COMPOSE) -f docker-compose-localnet.yml
@@ -317,12 +310,6 @@ define maybe_pull_integrated
 	fi
 endef
 
-define maybe_pull_fidelity
-	@if [ "$(XIAN_NODE_IMAGE_MODE)" = "registry" ]; then \
-		$(1) pull $(2); \
-	fi
-endef
-
 define maybe_build_postgraphile
 	@if [ "$(XIAN_NODE_IMAGE_MODE)" = "registry" ]; then \
 		$(1) build postgraphile; \
@@ -330,7 +317,7 @@ define maybe_build_postgraphile
 endef
 
 LOCALNET_NODES ?= 4
-LOCALNET_BUILD_SERVICE ?= $(if $(filter integrated,$(XIAN_LOCALNET_TOPOLOGY)),node-0,node-0-abci)
+LOCALNET_BUILD_SERVICE ?= node-0
 LOCALNET_MEMWATCH_MINUTES ?= 10
 LOCALNET_LEAK_HUNT_MINUTES ?= 10
 LOCALNET_COUNTER_OPS ?= 180
@@ -417,13 +404,13 @@ LOCALNET_PROTOCOL_SAFETY_GENESIS_NETWORK ?= local
 .PHONY: help print-env validate release-safety smoke smoke-cli guard-stack-security prepare-dirs \
 	dev-contracting-shell dev-contracting-up dev-contracting-build dev-contracting-down \
 	dev-abci-build dev-abci-up dev-abci-down dev-abci-shell \
-	abci-build abci-up abci-down abci-fidelity-build abci-fidelity-up abci-fidelity-down dev-base-abci-shell \
-	dashboard-build dashboard-up dashboard-down dashboard-bds-up dashboard-bds-down dashboard-fidelity-build dashboard-fidelity-up dashboard-fidelity-down \
-	monitoring-up monitoring-down monitoring-bds-up monitoring-bds-down monitoring-fidelity-up monitoring-fidelity-down \
+	abci-build abci-up abci-down dev-base-abci-shell \
+	dashboard-build dashboard-up dashboard-down dashboard-bds-up dashboard-bds-down \
+	monitoring-up monitoring-down monitoring-bds-up monitoring-bds-down \
 	abci-bds-build abci-bds-up abci-bds-down dev-bds-abci-shell \
 	wipe-bds node-wipe node-wipe-all node-reset \
 	node-stop node-start node-start-bds node-init node-configure node-id \
-	node-status node-status-fidelity bds-postgres-up bds-snapshot-export bds-snapshot-import \
+	node-status bds-postgres-up bds-snapshot-export bds-snapshot-import \
 	storage-report \
 	localnet-init localnet-build localnet-up localnet-down localnet-status \
 	localnet-workload localnet-memwatch localnet-leak-hunt localnet-e2e localnet-node-report localnet-vm-tps-bench localnet-protocol-safety \
@@ -440,23 +427,15 @@ help:
 	@printf "  %-24s %s\n" "abci-build" "Build the default integrated node image"
 	@printf "  %-24s %s\n" "abci-up" "Start the integrated node runtime container"
 	@printf "  %-24s %s\n" "abci-down" "Stop the integrated node runtime container"
-	@printf "  %-24s %s\n" "abci-fidelity-build" "Build the split ABCI/CometBFT fidelity images"
-	@printf "  %-24s %s\n" "abci-fidelity-up" "Start the split fidelity runtime"
-	@printf "  %-24s %s\n" "abci-fidelity-down" "Stop the split fidelity runtime"
 	@printf "  %-24s %s\n" "dashboard-build" "Build the optional integrated dashboard image"
 	@printf "  %-24s %s\n" "dashboard-up" "Start the optional integrated dashboard service"
 	@printf "  %-24s %s\n" "dashboard-down" "Stop the optional integrated dashboard service"
 	@printf "  %-24s %s\n" "dashboard-bds-up" "Start the optional dashboard with integrated BDS mode"
 	@printf "  %-24s %s\n" "dashboard-bds-down" "Stop the optional dashboard in integrated BDS mode"
-	@printf "  %-24s %s\n" "dashboard-fidelity-build" "Build the optional fidelity dashboard image"
-	@printf "  %-24s %s\n" "dashboard-fidelity-up" "Start the optional fidelity dashboard service"
-	@printf "  %-24s %s\n" "dashboard-fidelity-down" "Stop the optional fidelity dashboard service"
 	@printf "  %-24s %s\n" "monitoring-up" "Start optional Prometheus, Grafana and node-exporter for the integrated node"
 	@printf "  %-24s %s\n" "monitoring-down" "Stop optional Prometheus, Grafana and node-exporter for the integrated node"
 	@printf "  %-24s %s\n" "monitoring-bds-up" "Start optional Prometheus, Grafana and node-exporter for the integrated BDS stack"
 	@printf "  %-24s %s\n" "monitoring-bds-down" "Stop optional Prometheus, Grafana and node-exporter for the integrated BDS stack"
-	@printf "  %-24s %s\n" "monitoring-fidelity-up" "Start optional Prometheus, Grafana and node-exporter for the fidelity stack"
-	@printf "  %-24s %s\n" "monitoring-fidelity-down" "Stop optional Prometheus, Grafana and node-exporter for the fidelity stack"
 	@printf "  %-24s %s\n" "abci-bds-build" "Build the integrated ABCI + BDS stack"
 	@printf "  %-24s %s\n" "abci-bds-up" "Start the integrated ABCI + BDS stack"
 	@printf "  %-24s %s\n" "abci-bds-down" "Stop the integrated ABCI + BDS stack"
@@ -465,14 +444,12 @@ help:
 	@printf "  %-24s %s\n" "node-start/node-stop" "Start or stop the integrated node runtime"
 	@printf "  %-24s %s\n" "node-start-bds" "Start the node runtime with BDS enabled"
 	@printf "  %-24s %s\n" "node-status" "Report integrated runtime state as JSON"
-	@printf "  %-24s %s\n" "node-status-fidelity" "Report split fidelity runtime state as JSON"
 	@printf "  %-24s %s\n" "bds-snapshot-export" "Export a BDS snapshot to XIAN_BDS_SNAPSHOT_PATH"
 	@printf "  %-24s %s\n" "bds-snapshot-import" "Import a BDS snapshot from XIAN_BDS_SNAPSHOT_PATH"
 	@printf "  %-24s %s\n" "storage-report" "Report host-side chain, BDS, and free-disk usage"
 	@printf "  %-24s %s\n" "dev-abci-build/dev-abci-up" "Developer-only ABCI dev stack targets"
 	@printf "  %-24s %s\n" "dev-contracting-build" "Developer-only contracting image build"
 	@printf "\n  Localnet (multi-node):\n"
-	@printf "  %-24s %s\n" "localnet-init" "Generate localnet assets (set XIAN_LOCALNET_TOPOLOGY=integrated|fidelity)"
 	@printf "  %-24s %s\n" "localnet-build" "Build the localnet Docker image"
 	@printf "  %-24s %s\n" "localnet-up" "Start all localnet nodes"
 	@printf "  %-24s %s\n" "localnet-down" "Stop all localnet nodes"
@@ -514,7 +491,6 @@ print-env:
 	@printf "XIAN_S6_VERBOSITY=%s\n" "$(XIAN_S6_VERBOSITY)"
 	@printf "XIAN_NODE_IMAGE_MODE=%s\n" "$(XIAN_NODE_IMAGE_MODE)"
 	@printf "XIAN_NODE_INTEGRATED_IMAGE=%s\n" "$(XIAN_NODE_INTEGRATED_IMAGE)"
-	@printf "XIAN_NODE_SPLIT_IMAGE=%s\n" "$(XIAN_NODE_SPLIT_IMAGE)"
 	@printf "XIAN_PUBLIC_RPC_ENABLED=%s\n" "$(XIAN_PUBLIC_RPC_ENABLED)"
 	@printf "XIAN_PUBLIC_QUERY_ENABLED=%s\n" "$(XIAN_PUBLIC_QUERY_ENABLED)"
 	@printf "XIAN_PUBLIC_METRICS_ENABLED=%s\n" "$(XIAN_PUBLIC_METRICS_ENABLED)"
@@ -540,7 +516,6 @@ print-env:
 	@printf "XIAN_NODE_EXPORTER_IMAGE=%s\n" "$(XIAN_NODE_EXPORTER_IMAGE)"
 	@printf "XIAN_GRAFANA_HOST=%s\n" "$(XIAN_GRAFANA_HOST)"
 	@printf "XIAN_GRAFANA_PORT=%s\n" "$(XIAN_GRAFANA_PORT)"
-	@printf "XIAN_STACK_TOPOLOGY=%s\n" "$(XIAN_STACK_TOPOLOGY)"
 	@printf "XIAN_DOCKER_ABCI_MEMORY_LIMIT=%s\n" "$(XIAN_DOCKER_ABCI_MEMORY_LIMIT)"
 	@printf "XIAN_DASHBOARD_HOST=%s\n" "$(XIAN_DASHBOARD_HOST)"
 	@printf "XIAN_DASHBOARD_PORT=%s\n" "$(XIAN_DASHBOARD_PORT)"
@@ -588,7 +563,6 @@ print-env:
 	@printf "XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS=%s\n" "$(XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS)"
 	@printf "XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS=%s\n" "$(XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS)"
 	@printf "XIAN_POSTGRAPHILE_REQUIRED_TABLES=%s\n" "$(XIAN_POSTGRAPHILE_REQUIRED_TABLES)"
-	@printf "XIAN_LOCALNET_TOPOLOGY=%s\n" "$(XIAN_LOCALNET_TOPOLOGY)"
 	@printf "XIAN_LOCALNET_NODE_MEMORY_LIMIT=%s\n" "$(XIAN_LOCALNET_NODE_MEMORY_LIMIT)"
 	@printf "XIAN_LOCALNET_NODE_MEMORY_RESERVATION=%s\n" "$(XIAN_LOCALNET_NODE_MEMORY_RESERVATION)"
 	@printf "XIAN_LOCALNET_NODE_MEMORY_SWAP=%s\n" "$(XIAN_LOCALNET_NODE_MEMORY_SWAP)"
@@ -666,17 +640,7 @@ abci-up: prepare-dirs
 abci-down:
 	$(ABCI_COMPOSE) down --remove-orphans
 
-abci-fidelity-build: prepare-dirs
-	$(ABCI_FIDELITY_COMPOSE) build --no-cache abci-app cometbft
-
-abci-fidelity-up: prepare-dirs
-	$(call maybe_pull_fidelity,$(ABCI_FIDELITY_COMPOSE),abci-app cometbft)
-	$(ABCI_FIDELITY_COMPOSE) up -d $(NODE_UP_BUILD_FLAG) abci-app cometbft
-
-abci-fidelity-down:
-	$(ABCI_FIDELITY_COMPOSE) down --remove-orphans
-
-dashboard-build dashboard-up dashboard-bds-up dashboard-fidelity-build dashboard-fidelity-up: XIAN_DASHBOARD_ENABLED := 1
+dashboard-build dashboard-up dashboard-bds-up: XIAN_DASHBOARD_ENABLED := 1
 
 dashboard-build: prepare-dirs
 	$(STACK_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml build --no-cache dashboard
@@ -695,16 +659,6 @@ dashboard-bds-up: prepare-dirs
 dashboard-bds-down:
 	$(STACK_COMPOSE) --profile integrated --profile dashboard-integrated -f docker-compose-abci.yml -f docker-compose-abci-bds.yml rm -sf dashboard
 
-dashboard-fidelity-build: prepare-dirs
-	$(STACK_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml build --no-cache dashboard-fidelity
-
-dashboard-fidelity-up: prepare-dirs
-	$(call maybe_pull_fidelity,$(STACK_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml,abci-app cometbft dashboard-fidelity)
-	$(STACK_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml up -d $(DASHBOARD_UP_BUILD_FLAG) abci-app cometbft dashboard-fidelity
-
-dashboard-fidelity-down:
-	$(STACK_COMPOSE) --profile fidelity --profile dashboard-fidelity -f docker-compose-abci.yml rm -sf dashboard-fidelity
-
 monitoring-up: prepare-dirs
 	$(call maybe_pull_integrated,XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml,abci)
 	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/integrated.yml $(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci prometheus grafana node-exporter
@@ -718,13 +672,6 @@ monitoring-bds-up: prepare-dirs
 
 monitoring-bds-down:
 	$(STACK_COMPOSE) --profile integrated --profile monitoring -f docker-compose-abci.yml -f docker-compose-abci-bds.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana node-exporter
-
-monitoring-fidelity-up: prepare-dirs
-	$(call maybe_pull_fidelity,XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/fidelity.yml $(STACK_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml,abci-app cometbft)
-	XIAN_PROMETHEUS_CONFIG=./monitoring/prometheus/fidelity.yml $(STACK_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml up -d $(NODE_UP_BUILD_FLAG) abci-app cometbft prometheus grafana node-exporter
-
-monitoring-fidelity-down:
-	$(STACK_COMPOSE) --profile fidelity --profile monitoring -f docker-compose-abci.yml -f docker-compose-monitoring.yml rm -sf prometheus grafana node-exporter
 
 dev-base-abci-shell:
 	$(ABCI_COMPOSE) run --rm --no-deps --entrypoint /bin/bash abci
@@ -783,9 +730,6 @@ node-id:
 node-status:
 	@./scripts/node-status.sh
 
-node-status-fidelity:
-	@XIAN_STACK_TOPOLOGY=fidelity ./scripts/node-status.sh
-
 bds-postgres-up: prepare-dirs
 	$(ABCI_BDS_COMPOSE) up -d postgres
 	@until $(ABCI_BDS_COMPOSE) exec -T postgres pg_isready -U xian -d xian >/dev/null 2>&1; do \
@@ -814,7 +758,6 @@ storage-report:
 # ── Localnet (multi-node) ────────────────────────────────────────────
 
 localnet-init:
-	uv run --project "$(XIAN_ABCI_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-init.py --nodes $(LOCALNET_NODES) --topology $(XIAN_LOCALNET_TOPOLOGY) --genesis-network "$(XIAN_LOCALNET_GENESIS_NETWORK)" --clean
 
 localnet-build:
 	$(LOCALNET_COMPOSE) build $(LOCALNET_BUILD_SERVICE)
@@ -885,7 +828,6 @@ localnet-e2e:
 		$(if $(filter 0,$(LOCALNET_E2E_BOOTSTRAP)),--no-bootstrap,--bootstrap) \
 		$(if $(filter 1,$(LOCALNET_E2E_BUILD)),--build,--no-build) \
 		--nodes $(LOCALNET_E2E_NODES) \
-		--topology "$(XIAN_LOCALNET_TOPOLOGY)" \
 		--genesis-network "$(LOCALNET_E2E_GENESIS_NETWORK)" \
 		--bds-node-index $(LOCALNET_E2E_BDS_NODE_INDEX) \
 		--port-offset $(LOCALNET_E2E_PORT_OFFSET) \
@@ -939,7 +881,6 @@ localnet-protocol-safety:
 		$(if $(filter 0,$(LOCALNET_PROTOCOL_SAFETY_BOOTSTRAP)),--no-bootstrap,--bootstrap) \
 		$(if $(filter 1,$(LOCALNET_PROTOCOL_SAFETY_BUILD)),--build,--no-build) \
 		--nodes $(LOCALNET_PROTOCOL_SAFETY_NODES) \
-		--topology "$(XIAN_LOCALNET_TOPOLOGY)" \
 		--genesis-network "$(LOCALNET_PROTOCOL_SAFETY_GENESIS_NETWORK)" \
 		--port-offset $(LOCALNET_PROTOCOL_SAFETY_PORT_OFFSET) \
 		--seed "$(LOCALNET_PROTOCOL_SAFETY_SEED)" \
@@ -950,8 +891,7 @@ localnet-logs:
 	$(LOCALNET_COMPOSE) logs -f --tail=50
 
 localnet-shell:
-	@service="$$(python3 -c 'import json, pathlib; data=json.loads(pathlib.Path(".localnet/network.json").read_text()); print("node-0-abci" if data.get("topology") == "fidelity" else "node-0")')"; \
-	$(LOCALNET_COMPOSE) exec "$$service" /bin/bash
+	$(LOCALNET_COMPOSE) exec node-0 /bin/bash
 
 localnet-clean:
 	@if [ "$(FORCE)" != "1" ]; then \

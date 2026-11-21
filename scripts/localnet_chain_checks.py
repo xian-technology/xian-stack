@@ -23,7 +23,7 @@ CURRENCY_TRANSFER_CHI = 500
 # Check contracts deploy for at most ~2,400 chi on the rev-11 VM; the chain
 # caps a transaction at 200,000 chi by default.
 
-# Both integrated and split images carry these executables. Temporary observers
+# The node image carries these executables. Temporary observers
 # run both locally, so they do not depend on an image-specific supervisor.
 OBSERVER_COMMAND = """set -e
 python -S - <<'PYCONFIG'

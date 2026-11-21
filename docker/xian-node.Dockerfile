@@ -210,11 +210,6 @@ if not compileall.compile_dir(
     raise SystemExit("Python runtime bytecode compilation failed")
 PY
 
-FROM node-base AS split
-
-WORKDIR /opt/xian
-CMD ["/bin/bash"]
-
 FROM node-base AS integrated
 
 ARG S6_OVERLAY_VERSION=3.2.3.0
@@ -246,7 +241,7 @@ COPY docker/s6-overlay/ /
 WORKDIR /opt/xian
 ENTRYPOINT ["/init"]
 
-FROM split AS dev
+FROM node-base AS dev
 
 RUN uv pip install --system pytest parameterized
 
