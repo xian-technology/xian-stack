@@ -110,39 +110,34 @@ def env_int(name: str, default: int) -> int:
     return int(raw)
 
 
-def env_str(name: str, default: str) -> str:
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return default
-    return raw.strip()
-
-
 def env_optional_str(name: str) -> str | None:
+    """The stripped value of an environment variable; unset or blank is None."""
     raw = os.environ.get(name)
     if raw is None or not raw.strip():
         return None
     return raw.strip()
+
+
+def env_str(name: str, default: str) -> str:
+    value = env_optional_str(name)
+    return default if value is None else value
 
 
 def env_optional_bool(name: str) -> bool | None:
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return None
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    value = env_optional_str(name)
+    return None if value is None else value.lower() in {"1", "true", "yes", "on"}
 
 
 def env_optional_int(name: str) -> int | None:
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return None
-    return int(raw)
+    value = env_optional_str(name)
+    return None if value is None else int(value)
 
 
-def node_build_config(target: str) -> dict:
+def node_build_config() -> dict:
     return {
         "context": ".",
         "dockerfile": "./docker/xian-node.Dockerfile",
-        "target": target,
+        "target": "integrated",
         "additional_contexts": {
             "xian-abci": compose_var("XIAN_ABCI_DIR"),
             "xian-configs": compose_var("XIAN_CONFIGS_DIR"),
@@ -481,6 +476,55 @@ def bds_summary(*, bds_enabled: bool, bds_node_index: int) -> dict:
     }
 
 
+def write_network_summary(
+    args,
+    nodes: list[dict],
+    *,
+    consensus: dict,
+    runtime_feature_zk: bool,
+    profiling: dict,
+    localnet_profile: str,
+    port_offset: int,
+    bds_enabled: bool,
+    bds_node_index: int,
+    log_settings: dict,
+) -> None:
+    """Write .localnet/network.json, the node summary the localnet scripts read."""
+    consensus_summary = {
+        key: value for key, value in consensus.items() if not key.startswith("mempool_")
+    }
+    mempool_summary = {key: value for key, value in consensus.items() if key.startswith("mempool_")}
+    summary = {
+        "chain_id": args.chain_id,
+        "genesis_network": args.genesis_network,
+        "execution": {
+            "mode": VM_EXECUTION_MODE,
+        },
+        "runtime_features": {
+            "zk": runtime_feature_zk,
+        },
+        "nodes": [
+            node_summary(
+                n,
+                bds_enabled=bds_enabled and n["index"] == bds_node_index,
+            )
+            for n in nodes
+        ],
+        "founder_key": nodes[0]["validator_material"]["validator_private_key_hex"],
+        "profiling": profiling,
+        "localnet_profile": localnet_profile,
+        "consensus": strip_prefix(consensus_summary, "consensus_"),
+        "mempool": strip_prefix(mempool_summary, "mempool_"),
+        "port_offset": port_offset,
+        "bds": bds_summary(bds_enabled=bds_enabled, bds_node_index=bds_node_index),
+        "logging": log_settings,
+    }
+    (LOCALNET_DIR / "network.json").write_text(
+        json.dumps(summary, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def main():
     args = parse_args()
     # Chain fee policy is genesis state; empty settings mean paid_metered.
@@ -555,41 +599,17 @@ def main():
     )
 
     # 5. Write node summary for scripts
-    consensus_summary = {
-        key: value for key, value in consensus.items() if not key.startswith("mempool_")
-    }
-    mempool_summary = {key: value for key, value in consensus.items() if key.startswith("mempool_")}
-    summary = {
-        "chain_id": args.chain_id,
-        "genesis_network": args.genesis_network,
-        "execution": {
-            "mode": VM_EXECUTION_MODE,
-        },
-        "runtime_features": {
-            "zk": runtime_feature_zk,
-        },
-        "nodes": [
-            node_summary(
-                n,
-                bds_enabled=bds_enabled and n["index"] == bds_node_index,
-            )
-            for n in nodes
-        ],
-        "founder_key": nodes[0]["validator_material"]["validator_private_key_hex"],
-        "profiling": {
-            "enabled": profiling_enabled,
-            "recent_blocks": profiling_recent_blocks,
-        },
-        "localnet_profile": localnet_profile,
-        "consensus": strip_prefix(consensus_summary, "consensus_"),
-        "mempool": strip_prefix(mempool_summary, "mempool_"),
-        "port_offset": port_offset,
-        "bds": bds_summary(bds_enabled=bds_enabled, bds_node_index=bds_node_index),
-        "logging": log_settings,
-    }
-    (LOCALNET_DIR / "network.json").write_text(
-        json.dumps(summary, indent=2) + "\n",
-        encoding="utf-8",
+    write_network_summary(
+        args,
+        nodes,
+        consensus=consensus,
+        runtime_feature_zk=runtime_feature_zk,
+        profiling={"enabled": profiling_enabled, "recent_blocks": profiling_recent_blocks},
+        localnet_profile=localnet_profile,
+        port_offset=port_offset,
+        bds_enabled=bds_enabled,
+        bds_node_index=bds_node_index,
+        log_settings=log_settings,
     )
 
     print(f"\nLocalnet initialized in {LOCALNET_DIR}")
@@ -623,9 +643,6 @@ def integrated_node_services(
         "volumes": [
             f"./.localnet/{moniker}/.cometbft:/root/.cometbft",
         ],
-        "environment": {
-            **integrated_service_base["environment"],
-        },
         "ports": [
             f"{host_p2p}:26656",
             f"{host_rpc}:26657",
@@ -649,7 +666,7 @@ def write_compose_file(
 ):
     """Generate docker-compose-localnet.yml from node list."""
     services = {}
-    integrated_build = node_build_config("integrated")
+    integrated_build = node_build_config()
     integrated_service_base = {
         "image": NODE_IMAGE_INTEGRATED,
         "restart": "always",
