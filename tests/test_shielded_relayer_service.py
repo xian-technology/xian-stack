@@ -283,20 +283,21 @@ class ShieldedRelayerServiceTests(unittest.IsolatedAsyncioTestCase):
             now_fn=lambda: datetime(2026, 4, 10, 12, 0, 0),
         )
         async with TestClient(TestServer(_build_app(service))) as client:
-            statuses = []
-            for header in (
-                None,
-                "Bearer secret-token",
-                "Bearer secret-tokem",
-                "Bearer secret-token ",
-                "bearer secret-token",
-                "Bearer ",
+            for header, status in (
+                (None, 401),
+                ("Bearer secret-token", 200),
+                ("Bearer secret-tokem", 401),
+                # HTTP field parsing removes trailing optional whitespace.
+                ("Bearer secret-token ", 200),
+                ("Bearer secret-token extra", 401),
+                ("bearer secret-token", 401),
+                ("Bearer ", 401),
             ):
-                headers = {} if header is None else {"Authorization": header}
-                response = await client.get("/v1/info", headers=headers)
-                statuses.append(response.status)
+                with self.subTest(header=header):
+                    headers = {} if header is None else {"Authorization": header}
+                    response = await client.get("/v1/info", headers=headers)
+                    self.assertEqual(status, response.status)
 
-        self.assertEqual([401, 200, 401, 401, 401, 401], statuses)
         self.assertEqual(5, service._auth_failures_total)
 
     async def test_job_history_ttl_expires_old_jobs(self) -> None:

@@ -53,7 +53,6 @@ class GovernanceVoteHelpersTests(unittest.IsolatedAsyncioTestCase):
             [primary, peer],
             {"selection_mode": "auto_top_n", "max_validators": 5},
             label="policy",
-            timeout_seconds=0.05,
             poll_interval_seconds=0,
         )
         self.assertGreaterEqual(primary.reads, 4)
