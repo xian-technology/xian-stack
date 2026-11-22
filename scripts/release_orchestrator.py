@@ -1206,37 +1206,42 @@ def ensure_apply_ready(repo_states: dict[str, RepoState], plans: list[ReleasePla
             raise ReleaseError(f"{repo_name}: " + ", ".join(problems))
 
 
+def _parse_github_check_run(check_run: dict) -> GithubCheckRun:
+    database_id = check_run.get("id")
+    conclusion = check_run.get("conclusion")
+    return GithubCheckRun(
+        name=str(check_run.get("name") or "<unnamed>"),
+        status=str(check_run.get("status") or ""),
+        conclusion=str(conclusion) if conclusion is not None else None,
+        url=str(check_run.get("html_url") or check_run.get("details_url") or ""),
+        started_at=str(check_run.get("started_at") or ""),
+        completed_at=str(check_run.get("completed_at") or ""),
+        database_id=database_id if isinstance(database_id, int) else 0,
+    )
+
+
 def github_check_runs(repo_name: str, sha: str) -> list[GithubCheckRun]:
     endpoint = f"repos/{GITHUB_OWNER}/{repo_name}/commits/{sha}/check-runs?per_page=100"
-    output = run_gh("api", endpoint)
+    output = run_gh("api", "--paginate", "--slurp", endpoint)
     try:
-        payload = json.loads(output)
+        pages = json.loads(output)
     except json.JSONDecodeError as exc:
         raise ReleaseError(f"{repo_name}: failed to parse GitHub check runs") from exc
 
-    check_runs = payload.get("check_runs")
-    if not isinstance(check_runs, list):
-        raise ReleaseError(f"{repo_name}: GitHub check run response is missing check_runs")
+    if not isinstance(pages, list):
+        raise ReleaseError(f"{repo_name}: GitHub check run response must contain pages")
+    check_runs = []
+    for page in pages:
+        page_runs = page.get("check_runs") if isinstance(page, dict) else None
+        if not isinstance(page_runs, list):
+            raise ReleaseError(f"{repo_name}: GitHub check run response is missing check_runs")
+        check_runs.extend(page_runs)
 
-    parsed: list[GithubCheckRun] = []
-    for check_run in check_runs:
-        if not isinstance(check_run, dict):
-            continue
-        database_id_raw = check_run.get("id")
-        database_id = database_id_raw if isinstance(database_id_raw, int) else 0
-        conclusion = check_run.get("conclusion")
-        parsed.append(
-            GithubCheckRun(
-                name=str(check_run.get("name") or "<unnamed>"),
-                status=str(check_run.get("status") or ""),
-                conclusion=str(conclusion) if conclusion is not None else None,
-                url=str(check_run.get("html_url") or check_run.get("details_url") or ""),
-                started_at=str(check_run.get("started_at") or ""),
-                completed_at=str(check_run.get("completed_at") or ""),
-                database_id=database_id,
-            )
-        )
-    return parsed
+    return [
+        _parse_github_check_run(check_run)
+        for check_run in check_runs
+        if isinstance(check_run, dict)
+    ]
 
 
 def latest_check_runs_by_name(check_runs: list[GithubCheckRun]) -> list[GithubCheckRun]:

@@ -207,3 +207,33 @@ def test_direct_term_after_pipe_eof_remains_bounded(tmp_path):
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
+
+
+def test_direct_term_while_child_is_starting_stops_the_group(tmp_path):
+    child_pid = tmp_path / "pid"
+    runner = tmp_path / "runner.py"
+    runner.write_text(
+        "import os, signal, subprocess, sys\n"
+        "from pathlib import Path\n"
+        f"sys.path.insert(0, {str(SCRIPT.parent)!r})\n"
+        "from log_capture import CaptureSink, capture\n"
+        "popen = subprocess.Popen\n"
+        "def interrupt_during_spawn(*args, **kwargs):\n"
+        "    child = popen(*args, **kwargs)\n"
+        f"    Path({str(child_pid)!r}).write_text(str(child.pid))\n"
+        "    os.kill(os.getpid(), signal.SIGTERM)\n"
+        "    return child\n"
+        "subprocess.Popen = interrupt_during_spawn\n"
+        f"with CaptureSink({str(tmp_path / 'out.log')!r}) as sink:\n"
+        "    capture([sys.executable, '-c', 'import time; time.sleep(60)'], sink)\n"
+    )
+    process = subprocess.Popen([sys.executable, str(runner)], start_new_session=True)
+    try:
+        assert process.wait(timeout=WAIT_SECONDS) == -signal.SIGKILL
+        assert wait_until(lambda: process_gone(int(child_pid.read_text())))
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()

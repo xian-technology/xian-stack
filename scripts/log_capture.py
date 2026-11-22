@@ -162,6 +162,23 @@ def _exit_record(sink, code):
 def capture(command, sink, *, cleanup_interval=300):
     if os.getpgrp() != os.getpid():
         raise ValueError("capture requires its own process group")
+    child = None
+    stopping = []
+    pending_stop = None
+
+    def terminate(signum, _frame):
+        nonlocal pending_stop
+        if stopping:
+            return
+        stopping.append(time.monotonic())
+        if child is None:
+            pending_stop = signum
+        else:
+            os.killpg(os.getpgrp(), signum)
+
+    # A signal can arrive after spawning the child but before Popen returns.
+    signal.signal(signal.SIGTERM, terminate)
+    signal.signal(signal.SIGINT, terminate)
     try:
         child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     except OSError as exc:
@@ -171,18 +188,9 @@ def capture(command, sink, *, cleanup_interval=300):
             f"error_type={type(exc).__name__}\n".encode()
         )
         return 127
-    stopping = []
-
-    def terminate(signum, _frame):
-        if not stopping:
-            stopping.append(time.monotonic())
-            signal.signal(signal.SIGTERM, signal.SIG_IGN)
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
-            os.killpg(os.getpgrp(), signum)
-
-    signal.signal(signal.SIGTERM, terminate)
-    signal.signal(signal.SIGINT, terminate)
     try:
+        if pending_stop is not None:
+            os.killpg(os.getpgrp(), pending_stop)
         _drain(child, sink, stopping, cleanup_interval)
         code = child.wait()
         if stopping:

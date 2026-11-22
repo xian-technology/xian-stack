@@ -125,6 +125,24 @@ class ReleaseOrchestratorGithubCheckTests(unittest.TestCase):
             with self.assertRaisesRegex(orchestrator.ReleaseError, "no GitHub check runs"):
                 orchestrator.ensure_github_checks_green(states, [release_plan()])
 
+    def test_ensure_github_checks_green_inspects_checks_on_later_pages(self) -> None:
+        states = {
+            "xian-configs": repo_state("a" * 40),
+            "xian-js": repo_state("b" * 40),
+        }
+        green = {"name": "validate", "status": "completed", "conclusion": "success"}
+        failed = {"name": "late-check", "status": "completed", "conclusion": "failure"}
+
+        def gh(_command, *args):
+            pages = [{"check_runs": [green]}]
+            if any("repos/xian-technology/xian-js/" in argument for argument in args):
+                pages.append({"check_runs": [failed]})
+            return json.dumps(pages if "--paginate" in args and "--slurp" in args else pages[0])
+
+        with patch.object(orchestrator, "run_gh", side_effect=gh):
+            with self.assertRaisesRegex(orchestrator.ReleaseError, "xian-js.*late-check"):
+                orchestrator.ensure_github_checks_green(states, [release_plan()])
+
     def test_latest_check_runs_by_name_uses_latest_attempt(self) -> None:
         stale = check_run(conclusion="failure", database_id=1)
         latest = check_run(conclusion="success", database_id=2)
