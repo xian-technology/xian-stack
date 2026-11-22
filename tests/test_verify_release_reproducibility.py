@@ -37,7 +37,7 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
             }
         }
 
-    def test_expected_platform_digests_requires_both_targets(self) -> None:
+    def test_expected_platform_digests_includes_both_historical_targets(self) -> None:
         payload = {
             "images": {
                 "integrated": {
@@ -57,6 +57,44 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
         resolved = expected_platform_digests(payload)
         self.assertEqual(resolved[("integrated", "linux/amd64")], "sha256:" + "1" * 64)
         self.assertEqual(resolved[("split", "linux/arm64")], "sha256:" + "4" * 64)
+
+    def test_reproducibility_rebuilds_both_platforms_of_the_integrated_image(self) -> None:
+        payload = self._single_platform_release()
+        digests = payload["images"]["integrated"]["platform_digests"]
+        digests["linux/arm64"] = "sha256:" + "2" * 64
+        configs = {
+            platform: {"architecture": platform.split("/")[1], "config": {}, "rootfs": {}}
+            for platform in digests
+        }
+        with (
+            mock.patch.object(repro, "remote_image_config", side_effect=configs.values()),
+            mock.patch.object(repro, "build_platform_archive") as build,
+            mock.patch.object(
+                repro, "oci_image_config", side_effect=zip(digests.values(), configs.values())
+            ),
+        ):
+            observed = repro.verify_reproducibility(
+                manifest={"images": {"integrated": "xian-node"}},
+                image_release=payload,
+                workspace_root=Path("/workspace"),
+            )
+
+        self.assertEqual(
+            [(call.kwargs["target"], call.kwargs["platform"]) for call in build.call_args_list],
+            [("integrated", "linux/amd64"), ("integrated", "linux/arm64")],
+        )
+        self.assertEqual(set(observed), {"integrated:linux/amd64", "integrated:linux/arm64"})
+        self.assertTrue(all(item["manifest_digest_match"] for item in observed.values()))
+
+    def test_reproducibility_rejects_metadata_omitting_a_manifest_target(self) -> None:
+        payload = self._single_platform_release()
+        payload["images"]["integrated"]["platform_digests"]["linux/arm64"] = "sha256:" + "2" * 64
+        with self.assertRaisesRegex(ValueError, "targets.*release manifest"):
+            repro.verify_reproducibility(
+                manifest={"images": {"integrated": "xian-node", "split": "xian-node-split"}},
+                image_release=payload,
+                workspace_root=Path("/workspace"),
+            )
 
     def test_expected_platform_refs_combines_repository_and_platform_digest(
         self,
@@ -209,7 +247,6 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
             "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "c" * 64]},
         }
         with (
-            mock.patch.object(repro, "SUPPORTED_TARGETS", ("integrated",)),
             mock.patch.object(repro, "SUPPORTED_PLATFORMS", ("linux/amd64",)),
             mock.patch.object(repro, "remote_image_config", return_value=image_config),
             mock.patch.object(repro, "build_platform_archive"),
@@ -220,7 +257,7 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
             ),
         ):
             observed = repro.verify_reproducibility(
-                manifest={"build": {}},
+                manifest={"images": {"integrated": "xian-node"}},
                 image_release=self._single_platform_release(),
                 workspace_root=Path("/workspace"),
             )
@@ -240,7 +277,6 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
             "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "d" * 64]},
         }
         with (
-            mock.patch.object(repro, "SUPPORTED_TARGETS", ("integrated",)),
             mock.patch.object(repro, "SUPPORTED_PLATFORMS", ("linux/amd64",)),
             mock.patch.object(repro, "remote_image_config", return_value=remote_config),
             mock.patch.object(repro, "build_platform_archive"),
@@ -252,7 +288,7 @@ class VerifyReleaseReproducibilityTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(repro.ReproducibilityMismatch, "content/config"):
                 repro.verify_reproducibility(
-                    manifest={"build": {}},
+                    manifest={"images": {"integrated": "xian-node"}},
                     image_release=self._single_platform_release(),
                     workspace_root=Path("/workspace"),
                 )

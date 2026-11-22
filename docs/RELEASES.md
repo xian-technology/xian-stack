@@ -388,8 +388,8 @@ override the reproducibility gate or declare the original release verified.
 
 ### Complete verification of already published images
 
-If the original safety and publication jobs passed, a reviewed restoration of
-missing generated build inputs can recover verification without republishing:
+If the original safety and publication jobs passed, the recovery workflow can
+rebuild the published images and complete the release:
 
 ```bash
 gh workflow run release-diagnostics.yml --ref main \
@@ -398,11 +398,11 @@ gh workflow run release-diagnostics.yml --ref main \
 
 This checks the original run's successful manifest, safety and publication jobs,
 then uses its immutable tag, frozen sibling refs, recorded labels, signed
-metadata and original Dockerfile. Only the reviewed generated Rust lockfiles
-are restored. The original verifier must pass for both targets on both Linux
-architectures. A separate job can then create the GitHub release with the
-original signed assets and new verification/input evidence. It cannot push
-images, move tags or overwrite a preexisting release. The final job is skipped
-if any verification fails. Record the recovery workflow SHA separately from
-the artifact's original source SHA. A dispatched run remains pending until its
-verification and finalization are confirmed.
+metadata and original Dockerfile. The recovery tooling restores reviewed Rust
+lockfiles, rebuilds each image listed in the release manifest on both Linux
+architectures, and verifies the monitoring bundle when the tag includes it.
+A separate job creates the GitHub release with the original signed assets and
+new verification evidence after all checks pass. The workflow has read-only
+registry permissions and finalizes the release for the existing tag. The
+recovery evidence records the tooling commit separately from the original
+source commit.

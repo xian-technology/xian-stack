@@ -27,16 +27,23 @@ def platform_archive_name(target: str, platform: str) -> str:
     return f"{target}-{platform.replace('/', '-')}.tar"
 
 
-def expected_platform_digests(image_release: dict) -> dict[tuple[str, str], str]:
+def released_images(image_release: dict) -> dict[str, dict]:
     images = image_release.get("images")
     if not isinstance(images, dict):
         raise ValueError("image release payload must contain an images object")
-
-    expected: dict[tuple[str, str], str] = {}
-    for target in SUPPORTED_TARGETS:
-        image = images.get(target)
+    if "integrated" not in images:
+        raise ValueError("image release payload is missing images.integrated")
+    for target, image in images.items():
+        if target not in SUPPORTED_TARGETS:
+            raise ValueError(f"image release payload has unsupported target {target}")
         if not isinstance(image, dict):
-            raise ValueError(f"image release payload is missing images.{target}")
+            raise ValueError(f"image release payload has invalid images.{target}")
+    return images
+
+
+def expected_platform_digests(image_release: dict) -> dict[tuple[str, str], str]:
+    expected: dict[tuple[str, str], str] = {}
+    for target, image in released_images(image_release).items():
         platform_digests = image.get("platform_digests")
         if not isinstance(platform_digests, dict):
             raise ValueError(f"image release payload is missing images.{target}.platform_digests")
@@ -51,41 +58,21 @@ def expected_platform_digests(image_release: dict) -> dict[tuple[str, str], str]
 
 
 def expected_platform_refs(image_release: dict) -> dict[tuple[str, str], str]:
-    images = image_release.get("images")
-    if not isinstance(images, dict):
-        raise ValueError("image release payload must contain an images object")
-
-    expected: dict[tuple[str, str], str] = {}
-    for target in SUPPORTED_TARGETS:
-        image = images.get(target)
-        if not isinstance(image, dict):
-            raise ValueError(f"image release payload is missing images.{target}")
+    repositories: dict[str, str] = {}
+    for target, image in released_images(image_release).items():
         repository = image.get("repository")
         if not isinstance(repository, str) or not repository:
             raise ValueError(f"image release payload is missing images.{target}.repository")
-        platform_digests = image.get("platform_digests")
-        if not isinstance(platform_digests, dict):
-            raise ValueError(f"image release payload is missing images.{target}.platform_digests")
-        for platform in SUPPORTED_PLATFORMS:
-            digest = platform_digests.get(platform)
-            if not isinstance(digest, str) or not digest.startswith("sha256:"):
-                raise ValueError(
-                    f"image release payload is missing a digest for {target} {platform}"
-                )
-            expected[(target, platform)] = f"{repository}@{digest}"
-    return expected
+        repositories[target] = repository
+    return {
+        (target, platform): f"{repositories[target]}@{digest}"
+        for (target, platform), digest in expected_platform_digests(image_release).items()
+    }
 
 
 def expected_image_labels(image_release: dict) -> dict[str, list[str]]:
-    images = image_release.get("images")
-    if not isinstance(images, dict):
-        raise ValueError("image release payload must contain an images object")
-
     expected: dict[str, list[str]] = {}
-    for target in SUPPORTED_TARGETS:
-        image = images.get(target)
-        if not isinstance(image, dict):
-            raise ValueError(f"image release payload is missing images.{target}")
+    for target, image in released_images(image_release).items():
         labels = image.get("labels")
         if not isinstance(labels, list) or not labels:
             raise ValueError(f"image release payload is missing images.{target}.labels")
@@ -93,6 +80,13 @@ def expected_image_labels(image_release: dict) -> dict[str, list[str]]:
             raise ValueError(f"image release payload has invalid labels for images.{target}")
         expected[target] = labels
     return expected
+
+
+def expected_release_digests(manifest: dict, image_release: dict) -> dict[tuple[str, str], str]:
+    images = manifest.get("images")
+    if not isinstance(images, dict) or images.keys() != released_images(image_release).keys():
+        raise ValueError("published image targets do not match the release manifest")
+    return expected_platform_digests(image_release)
 
 
 def _read_oci_blob(archive: tarfile.TarFile, digest: str) -> dict:
@@ -287,7 +281,7 @@ def verify_reproducibility(
     image_release: dict,
     workspace_root: Path,
 ) -> dict[str, dict[str, str | bool]]:
-    expected = expected_platform_digests(image_release)
+    expected = expected_release_digests(manifest, image_release)
     remote_refs = expected_platform_refs(image_release)
     remote_configs = {
         key: normalized_image_config(remote_image_config(ref)) for key, ref in remote_refs.items()
@@ -295,41 +289,39 @@ def verify_reproducibility(
     observed: dict[str, dict[str, str | bool]] = {}
     with tempfile.TemporaryDirectory(prefix="xian-release-verify-") as tmp_dir:
         temp_root = Path(tmp_dir)
-        for target in SUPPORTED_TARGETS:
-            for platform in SUPPORTED_PLATFORMS:
-                archive_path = temp_root / platform_archive_name(target, platform)
-                build_platform_archive(
-                    workspace_root=workspace_root,
-                    manifest=manifest,
-                    image_release=image_release,
-                    target=target,
-                    platform=platform,
-                    archive_path=archive_path,
+        for (target, platform), expected_digest in expected.items():
+            archive_path = temp_root / platform_archive_name(target, platform)
+            build_platform_archive(
+                workspace_root=workspace_root,
+                manifest=manifest,
+                image_release=image_release,
+                target=target,
+                platform=platform,
+                archive_path=archive_path,
+            )
+            digest, local_config = oci_image_config(archive_path)
+            key = f"{target}:{platform}"
+            observed[key] = {
+                "expected_manifest_digest": expected_digest,
+                "rebuilt_manifest_digest": digest,
+                "manifest_digest_match": digest == expected_digest,
+            }
+            normalized_local_config = normalized_image_config(local_config)
+            normalized_remote_config = remote_configs[(target, platform)]
+            if normalized_local_config != normalized_remote_config:
+                reason_fields = mismatch_reasons(
+                    normalized_local_config,
+                    normalized_remote_config,
                 )
-                digest, local_config = oci_image_config(archive_path)
-                expected_digest = expected[(target, platform)]
-                key = f"{target}:{platform}"
-                observed[key] = {
-                    "expected_manifest_digest": expected_digest,
-                    "rebuilt_manifest_digest": digest,
-                    "manifest_digest_match": digest == expected_digest,
-                }
-                normalized_local_config = normalized_image_config(local_config)
-                normalized_remote_config = remote_configs[(target, platform)]
-                if normalized_local_config != normalized_remote_config:
-                    reason_fields = mismatch_reasons(
-                        normalized_local_config,
-                        normalized_remote_config,
-                    )
-                    reasons = ", ".join(reason_fields)
-                    raise ReproducibilityMismatch(
-                        "reproducibility verification failed for "
-                        f"{key}; expected manifest digest {expected_digest}, "
-                        f"rebuilt manifest digest {digest}; rebuilt image "
-                        "content/config does not match the published image "
-                        f"(mismatched fields: {reasons})",
-                        reasons=reason_fields,
-                    )
+                reasons = ", ".join(reason_fields)
+                raise ReproducibilityMismatch(
+                    "reproducibility verification failed for "
+                    f"{key}; expected manifest digest {expected_digest}, "
+                    f"rebuilt manifest digest {digest}; rebuilt image "
+                    "content/config does not match the published image "
+                    f"(mismatched fields: {reasons})",
+                    reasons=reason_fields,
+                )
     return observed
 
 

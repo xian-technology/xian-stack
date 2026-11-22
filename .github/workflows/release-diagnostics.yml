@@ -14,7 +14,7 @@ on:
         default: '44711736245'
         type: string
       finalize_release:
-        description: Verify all four images and finish the GitHub release without republishing images
+        description: Verify all published image variants and finish the GitHub release
         required: true
         default: false
         type: boolean
@@ -133,10 +133,16 @@ jobs:
             --workspace-root "$GITHUB_WORKSPACE" \
             --output-dir diagnostics
 
-      - name: Verify all original image variants with the original gate
+      - name: Verify the published image variants and monitoring bundle
         if: inputs.finalize_release
         run: |
-          python xian-stack/scripts/verify_release_reproducibility.py \
+          if [[ -f xian-stack/scripts/package_monitoring.py ]]; then
+            python xian-stack/scripts/package_monitoring.py "${RUNNER_TEMP}/rebuilt-monitoring"
+            for asset in xian-monitoring.tar xian-monitoring.tar.sha256; do
+              cmp "release-assets/${asset}" "${RUNNER_TEMP}/rebuilt-monitoring/${asset}"
+            done
+          fi
+          python tooling/scripts/verify_release_reproducibility.py \
             --manifest xian-stack/release-manifest.json \
             --image-release release-assets/image-release.json \
             --workspace-root "$GITHUB_WORKSPACE" > reproducibility.json
@@ -162,6 +168,13 @@ jobs:
       actions: read
       contents: write
     steps:
+      - name: Check out recovery tools
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          persist-credentials: false
+
       - name: Download original signed release assets
         uses: actions/download-artifact@v8
         with:
@@ -180,15 +193,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
+          PYTHONPATH: tooling/scripts
         run: |
           python - <<'PY'
-          import json, os
+          import os
           from pathlib import Path
-          proof = json.loads(Path('recovery/reproducibility.json').read_text())
-          assert proof['ok'] is True
-          assert set(proof['observed']) == {
-              f'{target}:linux/{arch}' for target in ('integrated', 'split') for arch in ('amd64', 'arm64')
+          from verify_release_reproducibility import expected_release_digests, load_json
+
+          proof = load_json(Path('recovery/reproducibility.json'))
+          manifest = load_json(Path('release-assets/release-manifest.json'))
+          release = load_json(Path('release-assets/image-release.json'))
+          expected = {
+              f'{target}:{platform}': digest
+              for (target, platform), digest in expected_release_digests(manifest, release).items()
           }
+          verified = {
+              variant: result['expected_manifest_digest']
+              for variant, result in proof['observed'].items()
+          }
+          if proof['ok'] is not True or verified != expected:
+              raise SystemExit('recovery proof does not cover all published image variants')
           Path('recovery/recovery-notes.txt').write_text(
               'Recovered verification of the original published images. No images were republished.\n'
               f'Workflow: {os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}\n'
