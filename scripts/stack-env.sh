@@ -312,7 +312,7 @@ export_stack_env() {
   export XIAN_POSTGRAPHILE_DISABLE_DEFAULT_MUTATIONS="${XIAN_POSTGRAPHILE_DISABLE_DEFAULT_MUTATIONS:-1}"
   export XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS="${XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS:-omit}"
   export XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS="${XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS:-60}"
-  export XIAN_POSTGRAPHILE_REQUIRED_TABLES="${XIAN_POSTGRAPHILE_REQUIRED_TABLES:-addresses,bds_meta,blocks,contracts,events,rewards,shielded_output_tags,shielded_outputs,state,state_changes,state_patches,transactions}"
+  export XIAN_POSTGRAPHILE_REQUIRED_TABLES="${XIAN_POSTGRAPHILE_REQUIRED_TABLES:-addresses,bds_meta,blocks,contracts,dex_markets,dex_trades,events,rewards,shielded_output_tags,shielded_outputs,state,state_changes,state_patches,transactions}"
   export XIAN_LOCALNET_NODE_MEMORY_LIMIT="${XIAN_LOCALNET_NODE_MEMORY_LIMIT:-1536m}"
   export XIAN_LOCALNET_NODE_MEMORY_RESERVATION="${XIAN_LOCALNET_NODE_MEMORY_RESERVATION:-1024m}"
   export XIAN_LOCALNET_NODE_MEMORY_SWAP="${XIAN_LOCALNET_NODE_MEMORY_SWAP:-1536m}"

@@ -113,7 +113,7 @@ STACK_SECURITY_DEFAULTS = {
     "XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS": "omit",
     "XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS": "60",
     "XIAN_POSTGRAPHILE_REQUIRED_TABLES": (
-        "addresses,bds_meta,blocks,contracts,events,rewards,shielded_output_tags,"
+        "addresses,bds_meta,blocks,contracts,dex_markets,dex_trades,events,rewards,shielded_output_tags,"
         "shielded_outputs,state,state_changes,state_patches,transactions"
     ),
     "XIAN_DASHBOARD_HOST": "127.0.0.1",

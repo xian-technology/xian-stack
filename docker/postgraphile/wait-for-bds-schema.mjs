@@ -1,6 +1,6 @@
 import pg from "pg";
 
-const DEFAULT_REQUIRED_TABLES = "blocks,transactions,events,addresses,shielded_outputs";
+const DEFAULT_REQUIRED_TABLES = "blocks,transactions,events,addresses,shielded_outputs,dex_markets,dex_trades";
 const DEFAULT_TIMEOUT_SECONDS = 60;
 const POLL_INTERVAL_MS = 1000;
 
@@ -38,7 +38,7 @@ async function tableNames(connectionString, schema, tables) {
         SELECT table_name
         FROM information_schema.tables
         WHERE table_schema = $1
-          AND table_type = 'BASE TABLE'
+          AND table_type IN ('BASE TABLE', 'VIEW')
           AND table_name = ANY($2::text[])
       `,
       [schema, tables],
@@ -89,7 +89,7 @@ async function main() {
       if (lastError) {
         console.error(`waiting for BDS schema: ${lastError.message}`);
       } else {
-        console.error(`waiting for BDS schema tables: ${lastMissing.join(", ")}`);
+        console.error(`waiting for BDS schema relations: ${lastMissing.join(", ")}`);
       }
       lastLogAt = now;
     }
@@ -102,7 +102,7 @@ async function main() {
     );
   } else {
     console.error(
-      `timed out waiting for BDS schema tables after ${timeoutSeconds}s: ${lastMissing.join(", ")}`,
+      `timed out waiting for BDS schema relations after ${timeoutSeconds}s: ${lastMissing.join(", ")}`,
     );
   }
   process.exit(1);

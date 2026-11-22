@@ -46,8 +46,13 @@ def graphql(url, query, variables=None):
         data=json.dumps({"query": query, "variables": variables or {}}).encode(),
         headers={"Content-Type": "application/json"},
     )
-    with urlopen(request, timeout=10) as response:
-        result = json.load(response)
+    try:
+        with urlopen(request, timeout=10) as response:
+            result = json.load(response)
+    except HTTPError as error:
+        if error.code == 400:
+            error.add_note(error.read().decode())
+        raise
     assert "errors" not in result, result
     return result["data"]
 
@@ -129,7 +134,8 @@ def native_graphql(tmp_path_factory):
             input=(ROOT / "docker/postgres/init-postgraphile-role.sh").read_text(),
         )
         env_file.write_text(
-            f"PGUSER=xian_graphql\nPGPASSWORD={password}\nPGDATABASE=xian\nGRAPHILE_ENV=production\n"
+            f"PGUSER=xian_graphql\nPGPASSWORD={password}\nPGDATABASE=xian\n"
+            "GRAPHILE_ENV=production\nPOSTGRAPHILE_ENFORCE_QUERY_LIMITS=1\n"
         )
         command(
             "docker",
@@ -183,7 +189,7 @@ def test_native_ids_json_and_cursor_pagination(native_graphql):
     filtered = graphql(
         url,
         """query ToAddress($to: String!) {
-      allEvents(filter: {dataIndexed: {contains: {to: $to}}}) { nodes { rowId } }
+      allEvents(first: 10, filter: {dataIndexed: {contains: {to: $to}}}) { nodes { rowId } }
     }""",
         {"to": "bob"},
     )
@@ -199,29 +205,29 @@ def test_sdk_event_queries_execute_with_precise_after_id(native_graphql):
                 "currency", "Transfer", limit=1, offset=0, after_id=None
             )
             following = await client._graphql_list_events(
-                "currency", "Transfer", limit=2, offset=0, after_id=first[0].id
+                "currency", "Transfer", limit=2, offset=0, after_id=9007199254740993
             )
             by_tx = await client._graphql_get_events_for_tx("tx-1")
             return first, following, by_tx
 
     first, following, by_tx = asyncio.run(events())
-    assert first[0].id == 9007199254740993
+    assert first[0].id == 9007199254740994
     assert [item.id for item in following] == [9007199254740994]
-    assert len(by_tx) == 3
+    assert len(by_tx) == 6
     assert first[0].block_height == 1
-    assert first[0].data == {"amount": {"__fixed__": "1.5"}}
+    assert first[0].data == {"amount": {"__fixed__": "2.5"}}
 
 
 def test_catalog_filter_state_relations_and_aggregates(native_graphql):
     result = graphql(
         native_graphql["url"],
         """{
-      allContracts(condition: {xsc001: true}) { nodes { name } }
-      allStates(filter: {key: {endsWith: ".balances:bob"}}) { nodes { value } }
+      allContracts(first: 10, condition: {xsc001: true}) { nodes { name } }
+      allStates(first: 10, filter: {key: {endsWith: ".balances:bob"}}) { nodes { value } }
       transactionByHash(hash: "tx-1") {
-        stateChangesByTxHash { nodes { newValue transactionByTxHash { blockHeight } } }
+        stateChangesByTxHash(first: 10) { nodes { newValue transactionByTxHash { blockHeight } } }
       }
-      allRewards(condition: {type: "developer", recipientKey: "alice"}) {
+      allRewards(first: 10, condition: {type: "developer", recipientKey: "alice"}) {
         aggregates { sum { value } }
       }
     }""",
@@ -258,6 +264,101 @@ def test_readonly_schema_and_request_limit(native_graphql):
         "has_table_privilege('xian_graphql', 'events', 'INSERT')",
     )
     assert permissions == "t|f"
+
+
+def test_dex_market_and_bounded_candle_page(native_graphql):
+    result = graphql(
+        native_graphql["url"],
+        """{
+          dexMarket(tokenA: "currency", tokenB: "con_a") {
+            pairId token0 token1 indexedHeight
+            latestReserves { reserve0 reserve1 blockHeight }
+            stats24H { tradeCount volumeToken0 volumeToken1 }
+            trades(first: 1) { nodes { eventId txHash amount0In amount1Out } }
+            candles(intervalSeconds: 300, pageSize: 1, before: "2026-01-01T00:15:00Z") {
+              indexedHeight nextBefore
+              items { open close tradeCount }
+            }
+          }
+        }""",
+    )["dexMarket"]
+    assert (result["pairId"], result["token0"], result["token1"]) == ("1", "con_a", "currency")
+    assert result["trades"]["nodes"] == [
+        {"eventId": "9007199254740997", "txHash": "tx-1", "amount0In": "2", "amount1Out": "6"}
+    ]
+    candles = result["candles"]
+    assert result["indexedHeight"] == candles["indexedHeight"] == "2"
+    assert result["latestReserves"] == {"reserve0": "20", "reserve1": "30", "blockHeight": "1"}
+    assert result["stats24H"] == {"tradeCount": "2", "volumeToken0": "4", "volumeToken1": "10"}
+    assert candles["nextBefore"].startswith("2026-01-01T00:05:00")
+    assert candles["items"][0]["tradeCount"] == "1"
+    assert float(candles["items"][0]["open"]) == float(candles["items"][0]["close"]) == 3
+
+
+def test_market_history_sdk_paginates_fills_and_candles_independently(native_graphql):
+    from xian_py import XianAsync, XianClientConfig
+
+    async def pages():
+        config = XianClientConfig(graphql_url=native_graphql["url"])
+        async with XianAsync("http://127.0.0.1:26657", chain_id="fixture", config=config) as client:
+            first = await client.get_dex_market_history(
+                "currency", "con_a", first=1, interval_seconds=300, candle_limit=1
+            )
+            assert first is not None
+            older = await client.get_dex_market_history(
+                "con_a",
+                "currency",
+                first=1,
+                after=first.next_after,
+                interval_seconds=300,
+                candle_limit=1,
+                candle_before=first.candles.next_before,
+            )
+            assert older is not None
+            return first, older
+
+    first, older = asyncio.run(pages())
+    assert [first.trades[0].event_id, older.trades[0].event_id] == [
+        9007199254740997,
+        9007199254740996,
+    ]
+    assert float(first.candles.items[0].close) == 3
+    assert float(older.candles.items[0].close) == 2
+    assert older.candles.next_before is None
+    assert older.next_after is None
+
+
+@pytest.mark.parametrize(
+    ("query", "variables"),
+    [
+        ("{ allEvents { nodes { rowId } } }", {}),
+        ("query Events($n: Int!) { allEvents(first: $n) { nodes { rowId } } }", {"n": 1001}),
+        (
+            "{ allBlocks(first: 1000) { nodes { "
+            "transactionsByBlockHeight(first: 1000) { nodes { hash } } } } }",
+            {},
+        ),
+        (
+            "{ allEvents(first: 1000) { ...Expensive } } "
+            "fragment Expensive on EventConnection { "
+            "nodes { transactionByTxHash { eventsByTxHash(first: 1000) { totalCount } } } }",
+            {},
+        ),
+    ],
+)
+def test_public_queries_enforce_operation_limits(native_graphql, query, variables):
+    request = Request(
+        native_graphql["url"],
+        data=json.dumps({"query": query, "variables": variables}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        response = urlopen(request, timeout=10)
+    except HTTPError as error:
+        response = error
+    with response:
+        result = json.load(response)
+    assert result["errors"][0]["extensions"]["code"] == "QUERY_LIMIT", result
 
 
 def is_query_literal(node):

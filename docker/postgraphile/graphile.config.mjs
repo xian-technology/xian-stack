@@ -3,6 +3,7 @@ import { PostGraphileAmberPreset } from "postgraphile/presets/amber";
 import {
   PostGraphileConnectionFilterPreset,
 } from "postgraphile-plugin-connection-filter";
+import { QueryLimitsPlugin } from "./query-limits.mjs";
 
 const COLLECTION_BEHAVIORS = {
   omit: "connection -list",
@@ -46,6 +47,7 @@ const preset = {
     PgAggregatesPreset,
     PostGraphileConnectionFilterPreset,
   ],
+  plugins: envFlag("POSTGRAPHILE_ENFORCE_QUERY_LIMITS", false) ? [QueryLimitsPlugin] : [],
   schema: {
     defaultBehavior: [
       envFlag("POSTGRAPHILE_DISABLE_DEFAULT_MUTATIONS", true) ? "-insert -update -delete" : "",

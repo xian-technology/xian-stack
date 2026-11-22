@@ -73,7 +73,7 @@ class BackendSecurityDefaultsTests(unittest.TestCase):
             self.assertEqual("omit", env["XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS"])
             self.assertEqual("60", env["XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS"])
             self.assertEqual(
-                "addresses,bds_meta,blocks,contracts,events,rewards,shielded_output_tags,"
+                "addresses,bds_meta,blocks,contracts,dex_markets,dex_trades,events,rewards,shielded_output_tags,"
                 "shielded_outputs,state,state_changes,state_patches,transactions",
                 env["XIAN_POSTGRAPHILE_REQUIRED_TABLES"],
             )

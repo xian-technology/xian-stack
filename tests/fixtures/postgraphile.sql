@@ -25,3 +25,16 @@ VALUES (1, 'tx-1', 0, 0, 'developer', 'alice', 2.5, '2026-01-01Z');
 
 INSERT INTO state(key, value, last_change_id, last_tx_hash, last_block_height, updated_at)
 VALUES ('currency.metadata:token_symbol', '"XIAN"', 1, 'tx-1', 1, '2026-01-01Z');
+
+INSERT INTO events(id, block_height, tx_hash, tx_index, event_index, contract, event,
+    signer, caller, data_indexed, data, created_at) OVERRIDING SYSTEM VALUE
+VALUES (9007199254740996, 1, 'tx-1', 0, 3, 'con_pairs', 'Swap', 'alice', 'con_dex',
+    '{"pair": "1"}', '{"amount0In":0,"amount1In":4,"amount0Out":2,"amount1Out":0}',
+    '2026-01-01T00:01:00Z'),
+    (9007199254740997, 1, 'tx-1', 0, 4, 'con_pairs', 'Swap', 'alice', 'con_dex',
+    '{"pair": 1}', '{"amount0In":{"__fixed__":"2"},"amount1In":0,"amount0Out":0,"amount1Out":6}',
+    '2026-01-01T00:05:00Z'),
+    (9007199254740998, 1, 'tx-1', 0, 5, 'con_pairs', 'Sync', 'alice', 'con_dex',
+    '{"pair":1}', '{"reserve0":20,"reserve1":{"__fixed__":"30"}}', '2026-01-01T00:05:00Z');
+INSERT INTO blocks(height, block_hash, block_time, block_time_iso, tx_count, app_hash, created_at)
+VALUES (2, 'block-2', 1767225960000000000, '2026-01-01T00:06:00Z', 0, 'app-2', '2026-01-01T00:06:00Z');

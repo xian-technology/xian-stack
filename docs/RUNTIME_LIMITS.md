@@ -36,13 +36,19 @@ environment variables:
 - `XIAN_POSTGRAPHILE_DISABLE_DEFAULT_MUTATIONS=1`
 - `XIAN_POSTGRAPHILE_SIMPLE_COLLECTIONS=omit`
 - `XIAN_POSTGRAPHILE_SCHEMA_WAIT_TIMEOUT_SECONDS=60`
-- `XIAN_POSTGRAPHILE_REQUIRED_TABLES=blocks,transactions,events,addresses,shielded_outputs`
+- `XIAN_POSTGRAPHILE_REQUIRED_TABLES` lists the BDS tables and market views required at startup.
 - `XIAN_LOCALNET_NODE_MEMORY_LIMIT=1536m`
 - `XIAN_LOCALNET_ABCI_MEMORY_LIMIT=1024m`
 - `XIAN_LOCALNET_COMETBFT_MEMORY_LIMIT=512m`
 
 The same pattern applies to reservations, swap, PID caps, and `nofile` limits
 for BDS, split-runtime, and localnet services.
+
+Public GraphQL mode enables `POSTGRAPHILE_ENFORCE_QUERY_LIMITS`. Connections
+require one of `first` or `last` up to 1,000 and an offset no greater than
+10,000. The request budget weighs nested collections and aggregates. Grouped
+aggregates are available on private query endpoints. Set the same flag on
+standalone public sidecars.
 
 For BDS GraphQL, the stack treats PostGraphile as a read-only public query
 surface. The generated mutation plugins are disabled by default, simple list
