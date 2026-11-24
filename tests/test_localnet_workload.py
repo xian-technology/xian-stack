@@ -849,6 +849,58 @@ def test_run_scenario_passes_receipt_timeout_to_dex_mixed() -> None:
     )
 
 
+def test_dex_mixed_waits_for_final_state_to_reach_the_sampled_validators(monkeypatch):
+    pairs_contract = ""
+    events_by_call = {
+        "addLiquidity": ("PairCreated", "Mint"),
+        "swapExactTokenForToken": ("Swap",),
+        "removeLiquidity": ("Burn",),
+    }
+
+    async def broadcast(*, label, function, kwargs, expected_success, **_):
+        nonlocal pairs_contract
+        if function == "submit_contract" and kwargs["name"].startswith("con_pairs_"):
+            pairs_contract = kwargs["name"]
+        return SimpleNamespace(
+            label=label,
+            expected_success=expected_success,
+            final_success=expected_success,
+            final_message=None,
+            events=[
+                {"contract": pairs_contract, "event": name}
+                for name in events_by_call.get(function, ())
+                if expected_success
+            ],
+        )
+
+    settled = {"ok": True, "queries": [{"values": {"node-0": 1, "node-1": 1}}] * 5}
+    context = SimpleNamespace(
+        founder_wallet=SimpleNamespace(public_key="founder"),
+        nodes=[object()] * 5,
+        broadcast_tx=broadcast,
+        resolve_records=AsyncMock(),
+        contract_submission_kwargs=dict,
+        get_state_from_healthy_node=AsyncMock(return_value=1),
+        _compare_state_once=AsyncMock(side_effect=[{"ok": False}, settled]),
+    )
+    context.compare_state = localnet_workload.WorkloadContext.compare_state.__get__(context)
+    monkeypatch.setattr(localnet_workload.asyncio, "sleep", AsyncMock())
+
+    result = asyncio.run(
+        localnet_workload.run_dex_mixed(
+            context,
+            seed="delayed-follower",
+            rounds=1,
+            receipt_resolution="serial",
+            receipt_workers=1,
+            receipt_timeout_seconds=5.0,
+        )
+    )
+
+    assert result["state"] == settled
+    assert context._compare_state_once.await_count == 2
+
+
 def test_wait_for_tx_receipt_scans_wide_recent_blocks_after_timeout() -> None:
     session = object()
     scan_args = {}
