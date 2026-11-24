@@ -19,6 +19,7 @@ from tendermint.abci.types_pb2 import RequestPrepareProposal, RequestProcessProp
 from xian.fee_policy import TxFeePolicy, resolve_chain_fee_policy
 from xian.methods.prepare_proposal import prepare_proposal
 from xian.methods.process_proposal import process_proposal
+from xian.utils import tx as tx_utils
 from xian.utils.encoding import encode_transaction_bytes
 from xian.utils.tx import canonical_json
 
@@ -38,11 +39,13 @@ async def probe(chain_id: str, expected_version: str) -> dict:
     require(__version__ == expected_version, "unexpected installed application version")
     home = Path.home() / ".cometbft"
     config = tomllib.loads((home / "config/xian.toml").read_text())
+    cache_factory = getattr(tx_utils, "create_transaction_admission_cache", None)
     app = SimpleNamespace(
         chain_id=chain_id,
         max_tx_bytes=config.get("max_tx_bytes", 4 * 1024 * 1024),
         tx_fee_policy=chain_fee_policy(home),
         nonce_storage=SimpleNamespace(get_nonce=lambda _sender: None),
+        transaction_admission_cache=cache_factory(chain_id) if cache_factory else None,
     )
     key = SigningKey.generate()
     sender = key.verify_key.encode().hex()
