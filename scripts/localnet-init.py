@@ -29,6 +29,7 @@ from xian.execution_policy import VM_EXECUTION_MODE  # noqa: E402
 from xian.genesis_builder import (  # noqa: E402
     build_local_network_genesis,
 )
+from xian.node_defaults import COMETBFT_DEFAULTS  # noqa: E402
 from xian.node_setup import (  # noqa: E402
     AppLoggingOptions,
     BdsOptions,
@@ -328,7 +329,6 @@ PROFILE_CONSENSUS_DEFAULTS = {
     "throughput": {
         "block_policy_mode": "on_demand",
         "block_policy_interval": "0s",
-        "consensus_timeout_propose": "500ms",
         "consensus_timeout_propose_delta": "100ms",
         "consensus_timeout_prevote": "200ms",
         "consensus_timeout_prevote_delta": "50ms",
@@ -418,7 +418,10 @@ def consensus_settings(localnet_profile: str) -> dict:
     settings = {
         "block_policy_mode": env_optional_str("XIAN_LOCALNET_BLOCK_POLICY_MODE"),
         "block_policy_interval": env_optional_str("XIAN_LOCALNET_BLOCK_POLICY_INTERVAL"),
-        "consensus_timeout_propose": env_optional_str("XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE"),
+        "consensus_timeout_propose": (
+            env_optional_str("XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE")
+            or COMETBFT_DEFAULTS["consensus"]["timeout_propose"]
+        ),
         "consensus_timeout_propose_delta": env_optional_str(
             "XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE_DELTA"
         ),
