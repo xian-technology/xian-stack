@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -47,7 +48,7 @@ def test_default_profile_summary(run_init, tmp_path):
     assert summary["consensus"] == {
         "block_policy_mode": "periodic",
         "block_policy_interval": "5s",
-        "timeout_propose": None,
+        "timeout_propose": "2s",
         "timeout_propose_delta": None,
         "timeout_prevote": None,
         "timeout_prevote_delta": None,
@@ -80,7 +81,10 @@ def test_default_profile_summary(run_init, tmp_path):
     assert summary["founder_key"] == nodes[0]["account_private_key"]
     assert not any(n["bds_enabled"] for n in nodes)
     for node in nodes:
-        assert (tmp_path / ".localnet" / node["moniker"] / "tmp").is_dir()
+        node_dir = tmp_path / ".localnet" / node["moniker"]
+        assert (node_dir / "tmp").is_dir()
+        config = tomllib.loads((node_dir / ".cometbft" / "config" / "config.toml").read_text())
+        assert config["consensus"]["timeout_propose"] == "2s"
     assert (tmp_path / "docker-compose-localnet.yml").is_file()
 
 
@@ -112,7 +116,7 @@ def test_image_override_reaches_every_generated_node_service(tmp_path, monkeypat
     assert {service["image"] for service in services.values()} == {image}
 
 
-def test_throughput_profile_fills_unset_consensus_and_mempool(run_init):
+def test_throughput_profile_fills_unset_consensus_and_mempool(run_init, tmp_path):
     summary = run_init(
         "--nodes",
         "5",
@@ -130,7 +134,7 @@ def test_throughput_profile_fills_unset_consensus_and_mempool(run_init):
     assert summary["consensus"] == {
         "block_policy_mode": "on_demand",
         "block_policy_interval": "0s",
-        "timeout_propose": "500ms",
+        "timeout_propose": "2s",
         "timeout_propose_delta": "100ms",
         "timeout_prevote": "200ms",
         "timeout_prevote_delta": "50ms",
@@ -139,6 +143,9 @@ def test_throughput_profile_fills_unset_consensus_and_mempool(run_init):
         "timeout_commit": "900ms",
         "skip_timeout_commit": False,
     }
+    for node in summary["nodes"]:
+        config_path = tmp_path / ".localnet" / node["moniker"] / ".cometbft" / "config/config.toml"
+        assert tomllib.loads(config_path.read_text())["consensus"]["timeout_propose"] == "2s"
     assert summary["mempool"] == {"size": 7, "cache_size": 100_000}
     assert summary["port_offset"] == 1000
     assert summary["bds"] == {
@@ -226,8 +233,6 @@ def test_localnet_without_bds_has_no_password_secret(run_init, tmp_path):
 
 
 def test_consensus_and_mempool_overrides_reach_every_node_config(run_init, tmp_path):
-    import tomllib
-
     run_init(
         XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE="500ms",
         XIAN_LOCALNET_CONSENSUS_TIMEOUT_PROPOSE_DELTA="100ms",
