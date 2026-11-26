@@ -37,13 +37,15 @@ class Case:
 
 
 def sources(names):
-    return {
-        role: (SOURCE_DIR / f"{role}.py")
-        .read_text()
-        .replace("__LEDGER__", names["ledger"])
-        .replace("__INSPECTOR__", names["inspector"])
-        for role in ROLES
-    }
+    sources = {}
+    for role in names:
+        source = (SOURCE_DIR / f"{role}.py").read_text()
+        for dependency in ("ledger", "inspector"):
+            placeholder = f"__{dependency.upper()}__"
+            if placeholder in source:
+                source = source.replace(placeholder, names[dependency])
+        sources[role] = source
+    return sources
 
 
 def constructors(accounts):
@@ -796,13 +798,20 @@ def completed_surface_cases(names):
     return scenarios
 
 
-def followup_cases(names):
-    contract = names["followups"]
+def typed_set_state(contract, label):
     members = [
         ["fixed", "123" + "0" * 28],
-        ["tuple", [["str", "tuple"], ["int", "7"]]],
+        ["tuple", [["str", label], ["int", "7"]]],
         ["frozenset", [["int", "2"], ["int", "3"]]],
     ]
+    return {
+        f"{contract}.persisted": {"__set__": {"codec": "xian-set-1", "items": members}},
+        f"{contract}.frozen": {"__frozenset__": {"codec": "xian-set-1", "items": members}},
+    }
+
+
+def followup_cases(names):
+    contract = names["followups"]
     outcomes = {
         "scopes": [41, 9, [1, 2], [[1, 2], [3]], 9],
         "hash_inputs": [
@@ -831,14 +840,7 @@ def followup_cases(names):
     for function, value in outcomes.items():
         state = {f"{contract}.result": value}
         if function == "store_sets":
-            state.update(
-                {
-                    f"{contract}.persisted": {"__set__": {"codec": "xian-set-1", "items": members}},
-                    f"{contract}.frozen": {
-                        "__frozenset__": {"codec": "xian-set-1", "items": members}
-                    },
-                }
-            )
+            state.update(typed_set_state(contract, "tuple"))
         scenarios.append(
             Case(f"followup-{function}", contract, function, result=value, state=state)
         )
@@ -890,16 +892,18 @@ def followup_cases(names):
 
 def initial_state(names, accounts, scenarios):
     state = {key: None for case in scenarios for key in case.state}
+    constructors = {
+        "counter": {"value": 2, "admin": accounts["alice"]},
+        "ledger": {"admin": accounts["alice"], f"balances:{accounts['alice']}": "100", "moves": 0},
+        "escrow": {"completed": 0},
+        "router": {"runs": 0},
+        "commitments": {"count": 0},
+    }
     state.update(
         {
-            f"{names['counter']}.value": 2,
-            f"{names['counter']}.admin": accounts["alice"],
-            f"{names['ledger']}.admin": accounts["alice"],
-            f"{names['ledger']}.balances:{accounts['alice']}": "100",
-            f"{names['ledger']}.moves": 0,
-            f"{names['escrow']}.completed": 0,
-            f"{names['router']}.runs": 0,
-            f"{names['commitments']}.count": 0,
+            f"{contract}.{field}": value
+            for role, contract in names.items()
+            for field, value in constructors.get(role, {}).items()
         }
     )
     return state

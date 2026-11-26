@@ -99,3 +99,10 @@ jobs:
           path: xian-stack/.artifacts/performance/result.json
           retention-days: 90
           if-no-files-found: warn
+      - name: Check mixed load and soak behavior
+        working-directory: xian-stack
+        run: make localnet-e2e LOCALNET_E2E_SUITE=load LOCALNET_E2E_BUILD=0
+      - name: Stop load test network
+        if: always()
+        working-directory: xian-stack
+        run: make localnet-down LOCALNET_REMOVE_VOLUMES=1

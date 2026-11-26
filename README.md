@@ -175,7 +175,8 @@ Higher-level harnesses:
 
 ```bash
 make localnet-protocol-safety        # 5-validator protocol safety harness
-make localnet-e2e                    # layered 5-validator e2e harness
+make localnet-e2e                    # core five-validator chain suite
+make localnet-e2e LOCALNET_E2E_SUITE=full  # full release campaign
 make localnet-vm-tps-bench           # repeated manual/automatic throughput sweep
 make release-safety                  # full release-grade safety gate
 ```
@@ -185,8 +186,8 @@ The hosted Localnet Safety and release gates use the node revisions in
 `release-manifest.json` and the CLI, contract catalog, DEX and recovery worker
 revisions in `.github/actions/checkout-localnet/action.yml`.
 
-The mandatory `07-dex-automation-recovery` E2E phase requires the `xian-dex` and
-`xian-dex-automation` siblings. It deploys the hash-pinned canonical DEX bundle
+The `dex` and `full` suites require the `xian-dex` and `xian-dex-automation`
+siblings for `07-dex-automation-recovery`. It deploys the hash-pinned canonical DEX bundle
 and a dedicated pool, then checks concurrent evaluation, a killed automation
 writer, recovery through another validator during configuration reload, a
 reverted swap followed by a successful swap, and an unrelated wallet transfer
@@ -270,8 +271,11 @@ Use the smallest recipe that proves the behavior you care about:
 | Single local node with optional services | `python3 ./scripts/backend.py start ...` | Compose wiring, node health, dashboard / monitoring / BDS sidecars |
 | Clean multi-node topology | `LOCALNET_NODES=5 make localnet-init && make localnet-up` | Validator topology, genesis distribution, peer connectivity |
 | Workload smoke on a running localnet | `make localnet-workload` | Basic contract submission and transaction flow |
-| Full 5-validator e2e harness | `make localnet-e2e` | Layered cross-repo behavior, DEX, governance, crash recovery, quorum partitions, fresh observer bootstrap, accounting, resource limits, and block replay |
-| IntentKit x402 buyer phase | `LOCALNET_E2E_INTENTKIT_X402=1 make localnet-e2e` | Adds a live IntentKit Xian-native x402 payment through a local seller/facilitator |
+| Core five-validator E2E | `make localnet-e2e` | Signed payments, contract settlement and rollback, indexing recovery, fees, quorum, and fresh observer catch-up |
+| Full E2E | `make localnet-e2e LOCALNET_E2E_SUITE=full` | Broad contract and product coverage, governance, snapshots, limits, and replay |
+| DEX and automation | `make localnet-e2e LOCALNET_E2E_SUITE=dex` | Mixed trading and the automation recovery drill |
+| x402 payments | `make localnet-e2e LOCALNET_E2E_SUITE=x402` | Live buyer and seller settlement, replay rejection, and indexed payment events |
+| Load and soak | `make localnet-e2e LOCALNET_E2E_SUITE=load` | Burst and sustained mixed traffic |
 | Focused IntentKit integration | `make localnet-e2e LOCALNET_E2E_SUITE=intentkit-x402 LOCALNET_E2E_INTENTKIT_X402=1` | Five-node bootstrap, health, compiler and local VM parity, core x402 and required IntentKit payment checks |
 | Protocol safety harness | `make localnet-protocol-safety` | Validator set, delegation, evidence, governance, and state-patch behavior |
 | Release gate | `make release-safety` | Repo validation plus the release-grade localnet gates |
@@ -281,12 +285,14 @@ clean five-node network tells you that the validators can start and peer. The
 e2e harness tells you that the product stack still behaves under realistic
 contract, indexer, governance, recovery, and restart pressure.
 
-E2E uses the locked `xian-stack` Python environment, including the native
+The E2E runner installs from the frozen `xian-stack` Python lockfile. The full suite
+also uses the native
 `xian_zk._native` binding used to generate shielded proofs. `make release-safety`
 requires this binding before starting the network and fails if the shielded
 phase is skipped. To enforce the same requirement in a standalone run, use
-`make localnet-e2e LOCALNET_E2E_REQUIRE_SHIELDED=1`. Direct developer runs default
-to optional shielded coverage; check the phase summary for skips. Building the
+`make localnet-e2e LOCALNET_E2E_SUITE=full LOCALNET_E2E_REQUIRE_SHIELDED=1`.
+A standalone full run reports unavailable shielded coverage as skipped. `make
+smoke` exercises installed proposal callbacks and application logging in one node. Building the
 native dependencies on a fresh host requires Rust 1.98 or newer and a C compiler;
 the node image builds with Rust 1.100.0.
 

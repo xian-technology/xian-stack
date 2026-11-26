@@ -12,7 +12,7 @@ from test_localnet_block_ordering_phase import localnet_e2e as e2e
 
 def runner(tmp_path, monkeypatch, *options):
     monkeypatch.setattr(e2e, "OUTPUT_ROOT", tmp_path)
-    return e2e.E2ERunner(e2e.build_parser().parse_args(list(options)))
+    return e2e.E2ERunner(e2e.build_parser().parse_args(["--suite", "full", *options]))
 
 
 def test_release_requirement_fails_before_network_changes(tmp_path, monkeypatch):
@@ -189,7 +189,7 @@ def test_release_wrapper_requires_shielded_and_preserves_failure(tmp_path, e2e_e
     )
     assert result.returncode == e2e_exit, result.stderr
     assert calls == [
-        ["localnet-e2e", "LOCALNET_E2E_REQUIRE_SHIELDED=1"],
+        ["localnet-e2e", "LOCALNET_E2E_SUITE=full", "LOCALNET_E2E_REQUIRE_SHIELDED=1"],
         ["localnet-down"],
     ]
 

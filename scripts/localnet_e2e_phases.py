@@ -57,19 +57,59 @@ PHASE_SPECS: tuple[PhaseSpec, ...] = (
 )
 
 
+DEFAULT_SUITE = "core"
+FULL_PHASES = {phase.name: phase for phase in PHASE_SPECS}
+
+
+def full_phases(*names: str) -> tuple[PhaseSpec, ...]:
+    return tuple(FULL_PHASES[name] for name in names)
+
+
+STARTUP_PHASES = full_phases("00-bootstrap", "01-health", "02-abci-consistency")
+
+SUITES = {
+    "core": (
+        *STARTUP_PHASES,
+        PhaseSpec("03-contract-payment", "contract_payment_phase"),
+        PhaseSpec("09-bds-chain-continuity", "bds_chain_continuity_phase"),
+        PhaseSpec("12-governed-fees", "governed_fees_phase"),
+        *full_phases("16-block-ordering", "19-crash-recovery", "20-quorum-recovery"),
+        PhaseSpec("21-observer-catchup", "observer_catchup_phase"),
+        *full_phases("23-nonce-recovery"),
+    ),
+    "full": PHASE_SPECS,
+    "dex": (
+        *STARTUP_PHASES,
+        *full_phases("07-dex-mixed", "07-dex-automation-recovery"),
+    ),
+    "x402": (*STARTUP_PHASES, *full_phases("03-x402-exact")),
+    "intentkit-x402": (
+        *STARTUP_PHASES,
+        *full_phases("03-x402-exact", "03-intentkit-x402"),
+    ),
+    "load": (
+        *STARTUP_PHASES,
+        *full_phases(
+            "02-xian-py-smoke",
+            "04-periodic-load",
+            "05-burst-load",
+            "06-conflict-invalid",
+            "08-throughput-mix",
+            "18-soak-abuse",
+        ),
+    ),
+}
+
+
 def suite_phases(suite: str = "full") -> tuple[PhaseSpec, ...]:
-    if suite == "full":
-        return PHASE_SPECS
-    if suite == "intentkit-x402":
-        required = {
-            "00-bootstrap",
-            "01-health",
-            "02-abci-consistency",
-            "03-x402-exact",
-            "03-intentkit-x402",
-        }
-        return tuple(phase for phase in PHASE_SPECS if phase.name in required)
-    raise ValueError(f"unknown E2E suite: {suite}")
+    try:
+        return SUITES[suite]
+    except KeyError:
+        raise ValueError(f"unknown E2E suite: {suite}") from None
+
+
+def all_phase_names() -> list[str]:
+    return sorted({phase.name for phases in SUITES.values() for phase in phases})
 
 
 def phase_names(suite: str = "full") -> list[str]:
@@ -79,6 +119,8 @@ def phase_names(suite: str = "full") -> list[str]:
 def validate_suite(suite: str, *, intentkit_enabled: bool, require_shielded: bool = False) -> None:
     if suite == "intentkit-x402" and not intentkit_enabled:
         raise E2EError("intentkit-x402 suite requires --intentkit-x402")
+    if intentkit_enabled and suite not in {"full", "intentkit-x402"}:
+        raise E2EError("--intentkit-x402 requires the intentkit-x402 or full suite")
     if require_shielded and suite != "full":
         raise E2EError("--require-shielded requires the full suite")
 
@@ -87,7 +129,7 @@ def validate_shielded_runtime(*, required: bool, available: bool) -> None:
     if required and not available:
         raise E2EError(
             "native ZK support is required but unavailable; run make localnet-e2e "
-            "using the locked xian-stack Python environment"
+            "using the xian-stack Python environment"
         )
 
 

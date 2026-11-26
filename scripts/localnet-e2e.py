@@ -44,6 +44,9 @@ from localnet_common import (
 )
 from localnet_diagnostics import collect_failure_diagnostics
 from localnet_e2e_phases import (
+    DEFAULT_SUITE,
+    SUITES,
+    all_phase_names,
     bind_phase_sequence,
     phase_names,
     required_phase,
@@ -56,6 +59,7 @@ from localnet_e2e_support import (
     decode_state_response,
     normalize_value,
     parse_json_stdout,
+    phase_outcome,
     short_hash,
     write_private_json,
 )
@@ -63,8 +67,9 @@ from localnet_json_logging import execution_hash, trace_record
 from localnet_network import pin_localnet_addresses
 from localnet_node_report import collect_localnet_node_report
 from localnet_set_storage_checks import (
-    authored_set_fixture,
+    BDS_SET_LABEL,
     check_typed_set_storage,
+    deploy_bds_set_fixture,
     typed_set_storage_query,
 )
 from shielded_relayer_backend import (
@@ -508,6 +513,58 @@ def reward_bucket_total(
             raise E2EError(f"reward bucket {bucket_name!r} is not a mapping")
         total += sum((state_decimal(value) for value in bucket.values()), Decimal("0"))
     return total
+
+
+def verify_reward_totals(
+    reward_outputs: dict[str, Any], chi_used: Decimal, chi_cost: Decimal, chi_supplied: int
+) -> tuple[Decimal, dict[str, Decimal], dict[str, Decimal]]:
+    if chi_used <= 0 or chi_cost <= 0:
+        raise E2EError(f"invalid reward probe fee inputs: chi_used={chi_used} chi_cost={chi_cost}")
+    total_fee = chi_used / chi_cost
+    reward_totals = {
+        "validators": reward_bucket_total(
+            reward_outputs,
+            "validator_reward",
+            "delegator_pool_reward",
+        ),
+        "foundation": reward_bucket_total(
+            reward_outputs,
+            "foundation_reward",
+        ),
+        "developers": reward_bucket_total(
+            reward_outputs,
+            "developer_reward",
+        ),
+    }
+    # The split applies to the chi used; half of the supplied chi left
+    # unused is burned on top (revision 14).
+    used_chi, paid_out = paid_fee_chi(reward_outputs, chi_cost, E2E_GOVERNED_REWARD_SPLIT[1])
+    reward_totals["burn"] = total_fee - paid_out
+    unused_charge = unused_chi_charge(chi_supplied, used_chi)
+    if chi_used != used_chi + unused_charge:
+        raise E2EError(
+            "governed reward probe charge is not the chi used plus half of the "
+            f"unused chi: chi_used={chi_used} used={used_chi} "
+            f"supplied={chi_supplied}"
+        )
+    used_fee = Decimal(used_chi) / chi_cost
+    expected_reward_totals = {
+        bucket: used_fee * ratio
+        for bucket, ratio in zip(
+            ("validators", "burn", "foundation", "developers"),
+            E2E_GOVERNED_REWARD_SPLIT,
+            strict=True,
+        )
+    }
+    expected_reward_totals["burn"] += Decimal(unused_charge) / chi_cost
+    for bucket, expected_total in expected_reward_totals.items():
+        actual_total = reward_totals[bucket]
+        if abs(actual_total - expected_total) > REWARD_DISTRIBUTION_TOLERANCE:
+            raise E2EError(
+                "governed reward split was not applied to the probe transaction: "
+                f"bucket={bucket} expected={expected_total} actual={actual_total}"
+            )
+    return total_fee, reward_totals, expected_reward_totals
 
 
 def build_nodes(network: dict[str, Any]) -> list[LocalnetNode]:
@@ -1874,7 +1931,7 @@ class E2ERunner:
                 f"{self.network.get('genesis_network')!r} does not match "
                 f"{DEFAULT_GENESIS_NETWORK!r}"
             )
-        selected_phases = phase_names(getattr(self.args, "suite", "full"))
+        selected_phases = phase_names(getattr(self.args, "suite", DEFAULT_SUITE))
         prior_phase_names = selected_phases[: selected_phases.index(self.args.start_phase)]
         self._load_resume_phase_results(prior_phase_names)
         completed_phase_names = set(prior_phase_names)
@@ -1944,6 +2001,7 @@ class E2ERunner:
         payload = {
             "name": phase.name,
             "ok": phase.ok,
+            **phase_outcome(phase.ok, phase.details),
             "started_at": phase.started_at,
             "ended_at": phase.ended_at,
             "details": normalize_value(phase.details),
@@ -1960,7 +2018,7 @@ class E2ERunner:
             details = await fn()
             if required_phase(
                 name,
-                suite=getattr(self.args, "suite", "full"),
+                suite=getattr(self.args, "suite", DEFAULT_SUITE),
                 require_shielded=getattr(self.args, "require_shielded", False),
             ) and details.get("skipped"):
                 raise E2EError(f"required integration phase {name} was skipped")
@@ -1993,7 +2051,8 @@ class E2ERunner:
             details=details,
         )
         self.write_phase(phase)
-        print(f"[localnet-e2e] completed {name}", flush=True)
+        outcome = phase_outcome(True, details)["status"]
+        print(f"[localnet-e2e] {outcome} {name}", flush=True)
         return details
 
     async def submit_tx(
@@ -3127,30 +3186,10 @@ class E2ERunner:
         return outputs
 
     async def health_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
-        statuses = []
-        for node in self.nodes:
-            status = await fetch_json(session, f"{node.rpc_url}/status", timeout=5.0)
-            net_info = await fetch_json(session, f"{node.rpc_url}/net_info", timeout=5.0)
-            validators = await fetch_json(
-                session,
-                f"{node.rpc_url}/validators",
-                timeout=5.0,
-            )
-            statuses.append(
-                {
-                    "moniker": node.moniker,
-                    "height": int(status["result"]["sync_info"]["latest_block_height"]),
-                    "app_hash": status["result"]["sync_info"]["latest_app_hash"],
-                    "peer_count": int(net_info["result"]["n_peers"]),
-                    "validator_count": len(validators["result"]["validators"]),
-                }
-            )
+        from localnet_health_checks import healthy_network
 
-        consensus = await compare_app_hash_window(
-            session,
-            self.nodes,
-            window=self.args.app_hash_window,
-        )
+        genesis_path = NETWORK_PATH.parent / self.nodes[0].moniker / ".cometbft/config/genesis.json"
+        health = await healthy_network(self, session, json.loads(genesis_path.read_text()))
         service_bds = None
         if self.bds_node is not None:
             async with self.client(self.founder_wallet, self.bds_node.index, session) as client:
@@ -3159,36 +3198,28 @@ class E2ERunner:
                 except Exception as exc:  # noqa: BLE001
                     service_bds = {"error": str(exc)}
 
-        return {
-            "nodes": statuses,
-            "consensus": consensus,
-            "service_bds": service_bds,
-        }
+        return {**health, "service_bds": service_bds}
 
     async def abci_consistency_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
-        source = read_text(SCRIPT_DIR / "localnet_abci_probe.py")
-        probes = []
-        for node in self.nodes:
-            result = await asyncio.to_thread(
-                subprocess.run,
-                [
-                    "docker",
-                    "exec",
-                    "-i",
-                    node.abci_container,
-                    "python",
-                    "-",
-                    self.network["chain_id"],
-                    ABCI_VERSION,
-                ],
-                input=source,
-                text=True,
-                capture_output=True,
-                timeout=90,
-            )
-            if result.returncode != 0:
-                raise E2EError(f"ABCI consistency probe failed on {node.moniker}: {result.stderr}")
-            probes.append({"node": node.moniker, "runtime_callbacks": json.loads(result.stdout)})
+        from localnet_chain_checks import prepared, wallet
+
+        signer = wallet(self, "abci-invalid-name")
+        invalid_names = ("con_Uppercase", "con_" + "a" * 61)
+        invalid_txs = [
+            {
+                "name": invalid,
+                "tx_hex": prepared(
+                    self,
+                    signer,
+                    0,
+                    "submission",
+                    "submit_contract",
+                    {"name": invalid, "code": "@export\ndef value():\n    return 1"},
+                    chi=100,
+                ).submitted_bytes.hex(),
+            }
+            for invalid in invalid_names
+        ]
 
         name = "con_" + hashlib.sha256(f"{self.run_id}:name-boundary".encode()).hexdigest()[:60]
         code = (
@@ -3215,14 +3246,16 @@ class E2ERunner:
             label="64-character contract deployment",
             expected=7,
         )
-        for node, probe in zip(self.nodes, probes, strict=True):
-            probe["live_rpc"] = await check_live_abci(
+        probes = []
+        for node in self.nodes:
+            live = await check_live_abci(
                 session,
                 node,
                 expected_version=ABCI_VERSION,
                 state_path=f"/get/{name}.number",
-                invalid_txs=probe["runtime_callbacks"].pop("invalid_txs"),
+                invalid_txs=invalid_txs,
             )
+            probes.append({"node": node.moniker, "live_rpc": live})
         app_hash = await compare_app_hash_window(
             session, self.nodes, window=self.args.app_hash_window
         )
@@ -3339,6 +3372,11 @@ class E2ERunner:
         from localnet_contract_suite import contract_suite_checks
 
         return await contract_suite_checks(self, session)
+
+    async def contract_payment_phase(self, session):
+        from localnet_contract_suite import contract_suite_checks
+
+        return await contract_suite_checks(self, session, payments_only=True)
 
     async def fund_wallets(
         self,
@@ -5577,11 +5615,70 @@ class E2ERunner:
             "recovery": recovery,
         }
 
+    async def bds_chain_continuity_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
+        from localnet_chain_checks import agreement
+        from localnet_contract_suite import matching_receipts
+
+        service = self.bds_node
+        if service is None:
+            raise E2EError("BDS node not available for the chain continuity check")
+        contract, expected = await deploy_bds_set_fixture(self, session)
+        env = make_localnet_env(self.args)
+        timeout = self.args.rpc_timeout_seconds
+        async with self.client(self.founder_wallet, service.index, session) as bds:
+            await wait_for_bds_recovered(
+                bds,
+                target_height=await latest_height(session, service.rpc_url),
+                timeout_seconds=timeout,
+            )
+            run_localnet_compose("stop", LOCALNET_POSTGRES_SERVICE, env=env)
+            try:
+                await wait_for_container_state(
+                    LOCALNET_POSTGRES_CONTAINER, expected_states={"exited"}, timeout_seconds=30.0
+                )
+                entry = (service.index + 1) % len(self.nodes)
+                async with self.client(self.founder_wallet, entry, session) as client:
+                    submission = await client.send_tx(
+                        contract, "store_sets", {"label": BDS_SET_LABEL}, wait_for_tx=True
+                    )
+                receipt = ensure_positive_submission(submission, label="commit during BDS outage")
+                height = await matching_receipts(self, session, submission, success=True)
+                backlog = await wait_for_bds_backlog(
+                    bds, target_height=height, timeout_seconds=30.0
+                )
+                consensus = await agreement(session, self.nodes, window=self.args.app_hash_window)
+            finally:
+                run_localnet_compose("start", LOCALNET_POSTGRES_SERVICE, env=env)
+
+            await wait_for_container_state(
+                LOCALNET_POSTGRES_CONTAINER, expected_states={"healthy"}, timeout_seconds=45.0
+            )
+            recovered = await wait_for_bds_recovered(
+                bds, target_height=height, timeout_seconds=timeout
+            )
+            tx_hash = receipt["tx_hash"]
+            indexed = await wait_for_bds_indexed_tx(bds, tx_hash, timeout_seconds=timeout)
+            sql = typed_set_storage_query(expected, tx_hash)
+            typed_sets = check_typed_set_storage(
+                query_localnet_bds_db_json(sql, label="recovered typed sets"),
+                expected,
+                tx_hash,
+                label="BDS outage catch-up",
+            )
+        return {
+            "receipt": receipt,
+            "consensus": consensus,
+            "backlog": backlog,
+            "recovered": recovered,
+            "indexed_transaction": indexed,
+            "typed_sets": typed_sets,
+        }
+
     async def bds_catchup_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         service = self.bds_node
         if service is None:
             raise E2EError("BDS node not available for BDS catch-up phase")
-        typed_set_contract, typed_set_expected = authored_set_fixture(self.phase_results)
+        typed_set_contract, typed_set_expected = await deploy_bds_set_fixture(self, session)
 
         async def post_graphql(
             *,
@@ -5717,7 +5814,7 @@ class E2ERunner:
                 catchup_wallets[0],
                 typed_set_contract,
                 "store_sets",
-                {"label": "bds-catchup"},
+                {"label": BDS_SET_LABEL},
                 preferred_index=(service.index + 1) % len(self.nodes),
                 excluded_indices=submission_excluded_indices,
                 label="bds-typed-set-refresh",
@@ -6338,6 +6435,120 @@ class E2ERunner:
             )
             return {"tx_hash": trigger_receipt["tx_hash"], "slot": slot}
 
+    async def governed_fees_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
+        from localnet_chain_checks import deploy
+
+        contract = await deploy(
+            self, session, "governed-fees", read_text(WORKLOADS_DIR / "e2e/conflict_guard.py")
+        )
+        # Each voting wallet must be able to reserve the full governance budget.
+        await self.fund_wallets(session, self.validator_wallets[1:4], amount=5_000)
+        async with contextlib.AsyncExitStack() as stack:
+            members = [
+                await stack.enter_async_context(self.client(wallet, index, session))
+                for index, wallet in enumerate(self.validator_wallets[:4])
+            ]
+            return await self.verify_governed_fees(members, session, contract)
+
+    async def verify_governed_fees(self, members, session, reward_probe_contract):
+        from localnet_contract_suite import matching_receipts
+
+        node0, *voters = members
+        requested_reward_split = [
+            tx_amount_from_decimal(ratio) for ratio in E2E_GOVERNED_REWARD_SPLIT
+        ]
+        reward_split_vote = await self.approve_members_vote(
+            node0,
+            [(f"node{index}", voter) for index, voter in enumerate(voters, 1)],
+            type_of_vote="reward_change",
+            arg=requested_reward_split,
+            label_prefix="reward-split",
+        )
+        # Rewards is owned by validators: read committed state without executing
+        # an owner-restricted export as an individual validator account.
+        # Approval may be observed on a voter before node0 has committed
+        # the same block. Wait for the requested value on every validator.
+        reward_split_convergence = await self.wait_for_uniform_node_state(
+            session,
+            self.nodes,
+            contract="rewards",
+            variable="S",
+            keys=["value"],
+            expected=requested_reward_split,
+            label="governed reward split",
+            timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
+        )
+
+        applied_reward_state = await fetch_abci_query(
+            session,
+            self.nodes[0].rpc_url,
+            "/get/rewards.S:value",
+        )
+        applied_reward_ratios = tuple(state_decimal(value) for value in applied_reward_state)
+        if applied_reward_ratios != E2E_GOVERNED_REWARD_SPLIT:
+            raise E2EError(
+                "governed reward split did not apply: "
+                f"expected={E2E_GOVERNED_REWARD_SPLIT!r} "
+                f"actual={applied_reward_ratios!r}"
+            )
+
+        reward_probe_developer = await node0.get_state(
+            reward_probe_contract,
+            "__developer__",
+        )
+        if reward_probe_developer != self.founder_wallet.public_key:
+            raise E2EError(
+                "reward probe contract developer drifted: "
+                f"expected={self.founder_wallet.public_key!r} "
+                f"actual={reward_probe_developer!r}"
+            )
+        reward_probe_submission = await node0.send_tx(
+            reward_probe_contract,
+            "claim",
+            {
+                "slot": f"reward-split-{short_hash(self.run_id)}",
+                "amount": 1,
+            },
+            wait_for_tx=True,
+        )
+        reward_probe_receipt = ensure_positive_submission(
+            reward_probe_submission,
+            label="governed-reward-split-probe",
+        )
+        await matching_receipts(self, session, reward_probe_submission, success=True)
+        reward_probe_execution = reward_probe_submission.receipt.execution or {}
+        reward_outputs = reward_probe_execution.get("rewards")
+        if not isinstance(reward_outputs, dict):
+            raise E2EError("governed reward probe did not expose reward outputs")
+
+        chi_used = state_decimal(reward_probe_execution.get("chi_used"))
+        chi_cost = state_decimal(await node0.get_state("chi_cost", "S", "value"))
+        total_fee, reward_totals, expected_reward_totals = verify_reward_totals(
+            reward_outputs, chi_used, chi_cost, int(reward_probe_submission.chi_supplied)
+        )
+        foundation_owner = await node0.get_state("foundation", "owner")
+        foundation_rewards = reward_outputs.get("foundation_reward") or {}
+        developer_rewards = reward_outputs.get("developer_reward") or {}
+        if foundation_owner not in foundation_rewards:
+            raise E2EError("governed reward probe did not pay the foundation owner")
+        if reward_probe_developer not in developer_rewards:
+            raise E2EError("governed reward probe did not pay the contract developer")
+
+        return {
+            "vote": normalize_value(reward_split_vote),
+            "requested": normalize_value(requested_reward_split),
+            "applied": normalize_value(applied_reward_state),
+            "applied_state": normalize_value(applied_reward_state),
+            "convergence": normalize_value(reward_split_convergence),
+            "probe_contract": reward_probe_contract,
+            "probe_developer": reward_probe_developer,
+            "probe_receipt": reward_probe_receipt,
+            "probe_outputs": normalize_value(reward_outputs),
+            "probe_total_fee": normalize_value(total_fee),
+            "probe_totals": normalize_value(reward_totals),
+            "expected_probe_totals": normalize_value(expected_reward_totals),
+        }
+
     async def validator_governance_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         (
             node0_wallet,
@@ -6364,137 +6575,9 @@ class E2ERunner:
             self.client(node2_wallet, 2, session) as node2,
             self.client(node3_wallet, 3, session) as node3,
         ):
-            requested_reward_split = [
-                tx_amount_from_decimal(ratio) for ratio in E2E_GOVERNED_REWARD_SPLIT
-            ]
-            reward_split_vote = await self.approve_members_vote(
-                node0,
-                [
-                    ("node1", node1),
-                    ("node2", node2),
-                    ("node3", node3),
-                ],
-                type_of_vote="reward_change",
-                arg=requested_reward_split,
-                label_prefix="reward-split",
+            reward_split = await self.verify_governed_fees(
+                [node0, node1, node2, node3], session, self.contracts["conflict"]
             )
-            # Rewards is owned by validators: read committed state without executing
-            # an owner-restricted export as an individual validator account.
-            # Approval may be observed on a voter before node0 has committed
-            # the same block. Wait for the requested value on every validator.
-            reward_split_convergence = await self.wait_for_uniform_node_state(
-                session,
-                self.nodes,
-                contract="rewards",
-                variable="S",
-                keys=["value"],
-                expected=requested_reward_split,
-                label="governed reward split",
-                timeout_seconds=min(self.args.rpc_timeout_seconds, 30.0),
-            )
-
-            applied_reward_state = await fetch_abci_query(
-                session,
-                self.nodes[0].rpc_url,
-                "/get/rewards.S:value",
-            )
-            applied_reward_ratios = tuple(state_decimal(value) for value in applied_reward_state)
-            if applied_reward_ratios != E2E_GOVERNED_REWARD_SPLIT:
-                raise E2EError(
-                    "governed reward split did not apply: "
-                    f"expected={E2E_GOVERNED_REWARD_SPLIT!r} "
-                    f"actual={applied_reward_ratios!r}"
-                )
-
-            reward_probe_contract = self.contracts["conflict"]
-            reward_probe_developer = await node0.get_state(
-                reward_probe_contract,
-                "__developer__",
-            )
-            if reward_probe_developer != self.founder_wallet.public_key:
-                raise E2EError(
-                    "reward probe contract developer drifted: "
-                    f"expected={self.founder_wallet.public_key!r} "
-                    f"actual={reward_probe_developer!r}"
-                )
-            reward_probe_submission = await node0.send_tx(
-                reward_probe_contract,
-                "claim",
-                {
-                    "slot": f"reward-split-{short_hash(self.run_id)}",
-                    "amount": 1,
-                },
-                wait_for_tx=True,
-            )
-            reward_probe_receipt = ensure_positive_submission(
-                reward_probe_submission,
-                label="governed-reward-split-probe",
-            )
-            reward_probe_execution = reward_probe_submission.receipt.execution or {}
-            reward_outputs = reward_probe_execution.get("rewards")
-            if not isinstance(reward_outputs, dict):
-                raise E2EError("governed reward probe did not expose reward outputs")
-
-            chi_used = state_decimal(reward_probe_execution.get("chi_used"))
-            chi_cost = state_decimal(await node0.get_state("chi_cost", "S", "value"))
-            if chi_used <= 0 or chi_cost <= 0:
-                raise E2EError(
-                    f"invalid reward probe fee inputs: chi_used={chi_used} chi_cost={chi_cost}"
-                )
-            total_fee = chi_used / chi_cost
-            reward_totals = {
-                "validators": reward_bucket_total(
-                    reward_outputs,
-                    "validator_reward",
-                    "delegator_pool_reward",
-                ),
-                "foundation": reward_bucket_total(
-                    reward_outputs,
-                    "foundation_reward",
-                ),
-                "developers": reward_bucket_total(
-                    reward_outputs,
-                    "developer_reward",
-                ),
-            }
-            # The split applies to the chi used; half of the supplied chi left
-            # unused is burned on top (revision 14).
-            used_chi, paid_out = paid_fee_chi(
-                reward_outputs, chi_cost, E2E_GOVERNED_REWARD_SPLIT[1]
-            )
-            reward_totals["burn"] = total_fee - paid_out
-            unused_charge = unused_chi_charge(int(reward_probe_submission.chi_supplied), used_chi)
-            if chi_used != used_chi + unused_charge:
-                raise E2EError(
-                    "governed reward probe charge is not the chi used plus half of the "
-                    f"unused chi: chi_used={chi_used} used={used_chi} "
-                    f"supplied={reward_probe_submission.chi_supplied}"
-                )
-            used_fee = Decimal(used_chi) / chi_cost
-            expected_reward_totals = {
-                bucket: used_fee * ratio
-                for bucket, ratio in zip(
-                    ("validators", "burn", "foundation", "developers"),
-                    E2E_GOVERNED_REWARD_SPLIT,
-                    strict=True,
-                )
-            }
-            expected_reward_totals["burn"] += Decimal(unused_charge) / chi_cost
-            for bucket, expected_total in expected_reward_totals.items():
-                actual_total = reward_totals[bucket]
-                if abs(actual_total - expected_total) > REWARD_DISTRIBUTION_TOLERANCE:
-                    raise E2EError(
-                        "governed reward split was not applied to the probe transaction: "
-                        f"bucket={bucket} expected={expected_total} actual={actual_total}"
-                    )
-
-            foundation_owner = await node0.get_state("foundation", "owner")
-            foundation_rewards = reward_outputs.get("foundation_reward") or {}
-            developer_rewards = reward_outputs.get("developer_reward") or {}
-            if foundation_owner not in foundation_rewards:
-                raise E2EError("governed reward probe did not pay the foundation owner")
-            if reward_probe_developer not in developer_rewards:
-                raise E2EError("governed reward probe did not pay the contract developer")
 
             print(
                 "[localnet-e2e] 12-validator-governance intentionally stopping node-4 "
@@ -6808,20 +6891,7 @@ class E2ERunner:
                     raise E2EError("manual policy restore did not preserve the 5-node active set")
 
         return {
-            "reward_split": {
-                "vote": normalize_value(reward_split_vote),
-                "requested": normalize_value(requested_reward_split),
-                "applied": normalize_value(applied_reward_state),
-                "applied_state": normalize_value(applied_reward_state),
-                "convergence": normalize_value(reward_split_convergence),
-                "probe_contract": reward_probe_contract,
-                "probe_developer": reward_probe_developer,
-                "probe_receipt": reward_probe_receipt,
-                "probe_outputs": normalize_value(reward_outputs),
-                "probe_total_fee": normalize_value(total_fee),
-                "probe_totals": normalize_value(reward_totals),
-                "expected_probe_totals": normalize_value(expected_reward_totals),
-            },
+            "reward_split": reward_split,
             "node4_outage_during_power_vote": {
                 "stop": normalize_value(node4_stop),
                 "restart": normalize_value(node4_restart),
@@ -10473,6 +10543,11 @@ class E2ERunner:
 
         return await quorum_phase(self, session)
 
+    async def observer_catchup_phase(self, session):
+        from localnet_sync_checks import observer_catchup_phase
+
+        return await observer_catchup_phase(self, session)
+
     async def fresh_node_phase(self, session):
         from localnet_sync_checks import sync_phase
 
@@ -10519,7 +10594,7 @@ class E2ERunner:
 
     async def finalize_summary(self) -> dict[str, Any]:
         summary = {
-            "suite": getattr(self.args, "suite", "full"),
+            "suite": getattr(self.args, "suite", DEFAULT_SUITE),
             "require_shielded": getattr(self.args, "require_shielded", False),
             "ok": all(phase.ok for phase in self.phase_results),
             "run_id": self.run_id,
@@ -10530,6 +10605,7 @@ class E2ERunner:
                 {
                     "name": phase.name,
                     "ok": phase.ok,
+                    **phase_outcome(phase.ok, phase.details),
                     "started_at": phase.started_at,
                     "ended_at": phase.ended_at,
                 }
@@ -10544,7 +10620,7 @@ class E2ERunner:
 
     async def run(self) -> int:
         start_phase = self.args.start_phase
-        suite = getattr(self.args, "suite", "full")
+        suite = getattr(self.args, "suite", DEFAULT_SUITE)
         validate_suite(
             suite,
             intentkit_enabled=self.args.intentkit_x402,
@@ -10620,7 +10696,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run a layered 5-validator localnet end-to-end program",
     )
-    parser.add_argument("--suite", choices=("full", "intentkit-x402"), default="full")
+    parser.add_argument("--suite", choices=tuple(SUITES), default=DEFAULT_SUITE)
     parser.add_argument(
         "--require-shielded",
         action=argparse.BooleanOptionalAction,
@@ -10691,7 +10767,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--start-phase",
         default="00-bootstrap",
-        choices=E2ERunner.phase_names(),
+        choices=all_phase_names(),
     )
     parser.add_argument("--invariant-rounds", type=int, default=48)
     parser.add_argument("--resume-dir")

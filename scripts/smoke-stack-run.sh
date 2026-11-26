@@ -187,6 +187,9 @@ assert payload["backend_running"] is True
 assert payload["node_id"]
 PY
 
+docker compose --profile integrated -f docker-compose-abci.yml exec -T abci python - \
+  <"${script_dir}/localnet_abci_probe.py"
+
 make node-stop
 make abci-down
 

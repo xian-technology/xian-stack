@@ -1,28 +1,26 @@
 """Require typed wrapper sets to survive real BDS recovery and RPC reindexing."""
 
-import copy
 import re
 
+from contract_suite_cases import typed_set_state
+from localnet_chain_checks import deploy
 from localnet_e2e_support import E2EError
 
+BDS_SET_LABEL = "bds-catchup"
+BDS_SET_SOURCE = """persisted = Variable()
+frozen = Variable()
 
-def authored_set_fixture(phases):
-    phase = next((item for item in phases if item.name == "03-contract-functionality"), None)
-    if phase is None or not phase.ok:
-        raise E2EError("BDS typed-set checks require the successful authored-contract phase")
-    contract = phase.details["contracts"]["followups"]
-    expected = {
-        f"{contract}.{field}": copy.deepcopy(phase.details["final_state"][f"{contract}.{field}"])
-        for field in ("persisted", "frozen")
-    }
-    for value in expected.values():
-        payload = next(iter(value.values()))
-        member = ["tuple", [["str", "tuple"], ["int", "7"]]]
-        if payload["codec"] != "xian-set-1" or member not in payload["items"]:
-            raise E2EError("authored typed-set fixture does not contain the expected tuple")
-        index = payload["items"].index(member)
-        payload["items"][index] = ["tuple", [["str", "bds-catchup"], ["int", "7"]]]
-    return contract, expected
+@export
+def store_sets(label: str):
+    value = set([(label, 7), frozenset([2, 3]), 1.23])
+    persisted.set(value)
+    frozen.set(frozenset(value))
+"""
+
+
+async def deploy_bds_set_fixture(runner, session):
+    contract = await deploy(runner, session, "bds-typed-sets", BDS_SET_SOURCE)
+    return contract, typed_set_state(contract, BDS_SET_LABEL)
 
 
 def typed_set_storage_query(expected, tx_hash):

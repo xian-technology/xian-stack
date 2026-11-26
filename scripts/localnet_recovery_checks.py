@@ -8,6 +8,7 @@ import time
 from contextlib import asynccontextmanager
 
 from localnet_chain_checks import (
+    CURRENCY_TRANSFER_CHI,
     PROBE_SOURCE,
     STACK,
     agreement,
@@ -94,6 +95,30 @@ async def container_height(node):
     return int(await command("docker", "exec", node.cometbft_container, "python", "-c", source))
 
 
+async def verify_quorum_payment(runner, session, tx, signer, recipient, nonce, amount):
+    receipts = await asyncio.gather(*(receipt(session, node, tx) for node in runner.nodes))
+    committed = receipts[0]
+    require(
+        all(other == committed for other in receipts),
+        "Validators disagreed on the recovered transfer receipt",
+    )
+    for node in runner.nodes:
+        require(
+            await query(session, node, f"/get/currency.balances:{recipient.public_key}") == amount,
+            f"{node.moniker}: quorum transfer was lost or applied more than once",
+        )
+        require(
+            await query(session, node, f"/get/__n.{signer.public_key}:") == nonce,
+            f"{node.moniker}: unexpected quorum transfer nonce",
+        )
+    return {
+        "tx_hash": tx.tx_hash,
+        "height": int(committed["height"]),
+        "nonce": nonce,
+        "recipient_balance": amount,
+    }
+
+
 async def quorum_phase(runner, session):
     validators = (await rpc(session, runner.nodes[0], "validators"))["validators"]
     powers = {v["address"]: int(v["voting_power"]) for v in validators}
@@ -107,18 +132,31 @@ async def quorum_phase(runner, session):
         sum(node_powers[:3]) * 3 <= total * 2 and sum(node_powers[3:]) * 3 <= total * 2,
         "3/2 groups must both lack quorum",
     )
-    checks = []
+    signer = wallet(runner, "quorum-transfer-sender")
+    recipient = wallet(runner, "quorum-transfer-recipient")
+    await runner.fund_wallets(session, [signer], amount=150)
+
+    def payment(nonce):
+        return prepared(
+            runner,
+            signer,
+            nonce,
+            "currency",
+            "transfer",
+            {"amount": 1, "to": recipient.public_key},
+            chi=CURRENCY_TRANSFER_CHI,
+        )
+
+    first = payment(0)
     async with partition(runner, runner.nodes[4:]):
         start = await height(session, runner.nodes[0])
-        await wait_height(session, runner.nodes[0], start + 3)
-        checks.append(
-            {
-                "split": "4/1",
-                "start_height": start,
-                "end_height": await height(session, runner.nodes[0]),
-            }
-        )
+        await broadcast(session, runner.nodes[0], first)
+        committed = await receipt(session, runner.nodes[0], first)
+        require(int(committed["height"]) > start, "Transfer did not commit during the 4/1 split")
+        end = await wait_height(session, runner.nodes[0], start + 3)
     await agreement(session, runner.nodes)
+    first_payment = await verify_quorum_payment(runner, session, first, signer, recipient, 0, 1)
+    checks = [{"split": "4/1", "start_height": start, "end_height": end, "payment": first_payment}]
     async with partition(runner, runner.nodes[3:]):
         # Allow an in-flight commit to finish before measuring the halt.
         await asyncio.sleep(3)
@@ -126,7 +164,19 @@ async def quorum_phase(runner, session):
         await asyncio.sleep(15)
         after = [await container_height(n) for n in runner.nodes]
         require(before == after, f"Blocks advanced without quorum: {before} -> {after}")
-        checks.append({"split": "3/2", "heights_before": before, "heights_after": after})
+    await agreement(session, runner.nodes)
+    second = payment(1)
+    # Use the previously isolated side as the RPC entry point after healing.
+    await broadcast(session, runner.nodes[4], second)
+    second_payment = await verify_quorum_payment(runner, session, second, signer, recipient, 1, 2)
+    checks.append(
+        {
+            "split": "3/2",
+            "heights_before": before,
+            "heights_after": after,
+            "payment": second_payment,
+        }
+    )
     consensus = await agreement(session, runner.nodes)
     before_restart = max(consensus["heights"].values())
     await runner.restart_localnet_and_wait_ready(session)

@@ -1,9 +1,11 @@
 # Authored contract functionality suite
 
 `03-contract-functionality` deploys eleven source contracts and executes 214 ordered
-interactions (128 successes, 86 expected failures) in the default five-validator
-E2E run. Run `make localnet-e2e` from `xian-stack`; run the fast native equivalent
-with `uv run pytest tests/test_contract_suite.py tests/test_transaction_rng_checks.py`.
+interactions (128 successes, 86 expected failures) in the full five-validator
+E2E run. Run it with `make localnet-e2e LOCALNET_E2E_SUITE=full`. The default
+suite runs the shared ledger, escrow, and payment router cases. The native
+equivalent of the full matrix runs with
+`uv run pytest tests/test_contract_suite.py tests/test_transaction_rng_checks.py`.
 
 | Contract | Level | Exercised behavior |
 | --- | --- | --- |
@@ -140,10 +142,10 @@ exercise the small network-safe admission limits. Full 1MiB message/hash input
 caps, metering-off behavior and exact per-byte cost deltas remain in native
 resource tests instead of inflating network transaction payloads.
 
-The later BDS catch-up phase recovers the authored contract name from its saved
-phase report and writes a different tuple label while PostgreSQL is offline.
+The BDS catch-up phases deploy a small typed-set fixture independently and
+write a tuple label while PostgreSQL is offline.
 After spool recovery, current state and that transaction's state-change rows must
-contain the exact typed envelopes with null numeric projections. The secondary
+contain the exact typed envelopes with null numeric projections. In the full suite, the secondary
 indexer must preserve the same values during initial RPC reindexing and after its
 own restart/resume. These are live PostgreSQL assertions; helper tests also prove
 that missing rows, flattened members, lost decimal quantum and stale transaction

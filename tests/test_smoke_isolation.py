@@ -27,7 +27,7 @@ def smoke(tmp_path):
     scripts = stack / "scripts"
     scripts.mkdir(parents=True)
     shutil.copy2(ROOT / "Makefile", stack)
-    for pattern in ("smoke*", "stack-env.sh", "stack_credentials.py"):
+    for pattern in ("smoke*", "stack-env.sh", "stack_credentials.py", "localnet_abci_probe.py"):
         for source in (ROOT / "scripts").glob(pattern):
             if source.is_file():
                 shutil.copy2(source, scripts)

@@ -9,17 +9,23 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from xian_runtime_types.encoding import decode, decode_wire_numbers, normalize_wire_numbers
-from xian_runtime_types.set_codec import is_wrapper_set
-from xian_runtime_types.time import Datetime, Timedelta
-
 
 class E2EError(RuntimeError):
     pass
 
 
+def phase_outcome(ok: bool, details: dict[str, Any]) -> dict[str, str]:
+    if not ok:
+        return {"status": "failed"}
+    if details.get("skipped"):
+        return {"status": "skipped", "skip_reason": details.get("reason", "unspecified")}
+    return {"status": "passed"}
+
+
 def decode_state_response(response: dict[str, Any]) -> Any:
     """Decode the typed ABCI /get value without guessing its type from text."""
+    from xian_runtime_types.encoding import decode, decode_wire_numbers
+
     kind = response.get("info")
     raw = base64.b64decode(response.get("value") or "").decode()
     if not kind and raw in ("", "\x00"):
@@ -40,6 +46,10 @@ def decode_state_response(response: dict[str, Any]) -> Any:
 
 
 def normalize_value(value: Any) -> Any:
+    from xian_runtime_types.encoding import normalize_wire_numbers
+    from xian_runtime_types.set_codec import is_wrapper_set
+    from xian_runtime_types.time import Datetime, Timedelta
+
     if isinstance(value, Decimal):
         return str(value)
     if value.__class__.__name__ == "ContractingDecimal":

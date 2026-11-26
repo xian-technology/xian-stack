@@ -353,9 +353,11 @@ async def stop_backup_source(container):
 
 
 async def remove_observer(runner, container, mode):
-    logs = await command("docker", "logs", container, combine_output=True)
-    (runner.output_dir / f"observer-{mode}.log").write_text(logs)
-    await command("docker", "rm", "-f", "-v", container)
+    try:
+        logs = await command("docker", "logs", container, combine_output=True)
+        (runner.output_dir / f"observer-{mode}.log").write_text(logs)
+    finally:
+        await command("docker", "rm", "-f", "-v", container)
 
 
 async def rejected_restore(runner, target, manifest_url, label):
@@ -1026,7 +1028,7 @@ async def full_store_rehearsal(runner, session, image, network, source_home, pee
             await remove_observer(runner, container, mode)
 
 
-async def sync_phase(runner, session):
+async def observer_source(runner):
     source = runner.nodes[0]
     info = json.loads(await command("docker", "inspect", source.abci_container))[0]
     image = info["Image"]
@@ -1035,4 +1037,20 @@ async def sync_phase(runner, session):
     peers = ",".join(
         f"{node['node_id'].lower()}@{node['moniker']}:26656" for node in runner.network["nodes"]
     )
-    return await full_store_rehearsal(runner, session, image, network, source_home, peers)
+    return image, network, source_home, peers
+
+
+async def observer_catchup_phase(runner, session):
+    image, network, source_home, peers = await observer_source(runner)
+    home = runner.output_dir / "observers/catchup"
+    container = f"xian-e2e-{runner.run_id.lower()}-catchup"
+    await prepare_home(source_home, home, image, peers)
+    observer = await create_observer(home, container, image, network, "catchup")
+    try:
+        return await observer_agreement(runner, session, observer)
+    finally:
+        await remove_observer(runner, container, "catchup")
+
+
+async def sync_phase(runner, session):
+    return await full_store_rehearsal(runner, session, *await observer_source(runner))

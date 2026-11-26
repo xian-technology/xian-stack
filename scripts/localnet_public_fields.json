@@ -82,6 +82,13 @@
       "touch_preview",
       "touch_receipt"
     ],
+    "03-contract-payment": [
+      "contracts",
+      "scenario_count",
+      "success_count",
+      "expected_failure_count",
+      "consensus"
+    ],
     "03-intentkit-x402": [
       "reason",
       "skipped"
@@ -175,6 +182,11 @@
       "total_transactions",
       "transfer_fanout"
     ],
+    "09-bds-chain-continuity": [
+      "backlog",
+      "recovered",
+      "consensus"
+    ],
     "09-bds-catchup": [
       "baseline_status",
       "catchup_height",
@@ -227,6 +239,12 @@
       "runtime_compatibility",
       "stored_value_rejection",
       "transaction_hashes"
+    ],
+    "12-governed-fees": [
+      "requested",
+      "applied",
+      "probe_totals",
+      "expected_probe_totals"
     ],
     "12-validator-governance": [
       "add_receipt",
@@ -352,6 +370,11 @@
       "partitions",
       "voting_powers",
       "whole_network_restart"
+    ],
+    "21-observer-catchup": [
+      "common_block",
+      "consensus",
+      "voting_power"
     ],
     "21-fresh-node-sync": [
       "observers",

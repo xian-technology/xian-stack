@@ -364,7 +364,7 @@ LOCALNET_E2E_SOAK_DURATION_SECONDS ?= 90
 LOCALNET_E2E_SOAK_BATCH_SIZE ?= 9
 LOCALNET_E2E_SOAK_PROGRESS_INTERVAL_SECONDS ?= 20
 LOCALNET_E2E_INTENTKIT_X402 ?= 0
-LOCALNET_E2E_SUITE ?= full
+LOCALNET_E2E_SUITE ?= core
 LOCALNET_E2E_REQUIRE_SHIELDED ?= 0
 LOCALNET_PROTOCOL_SAFETY_BOOTSTRAP ?= 1
 LOCALNET_PROTOCOL_SAFETY_BUILD ?= 0
@@ -435,7 +435,7 @@ help:
 	@printf "  %-24s %s\n" "localnet-workload" "Run a deterministic workload scenario (counter_basic or dex_mixed)"
 	@printf "  %-24s %s\n" "localnet-memwatch" "Sample container memory during localnet tx load"
 	@printf "  %-24s %s\n" "localnet-leak-hunt" "Split localnet memory growth by process"
-	@printf "  %-24s %s\n" "localnet-e2e" "Run the full layered 5-validator localnet end-to-end program"
+	@printf "  %-24s %s\n" "localnet-e2e" "Run the 5-validator chain end-to-end suite"
 	@printf "  %-24s %s\n" "localnet-node-report" "Collect the current node capability report from localnet nodes"
 	@printf "  %-24s %s\n" "localnet-vm-tps-bench" "Run the VM-native throughput sweep on a tuned 5-node localnet"
 	@printf "  %-24s %s\n" "localnet-protocol-safety" "Run the 5-validator protocol safety exercise"
@@ -788,7 +788,7 @@ localnet-leak-hunt:
 	uv run --project "$(XIAN_PY_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-leak-hunt.py $(LOCALNET_LEAK_HUNT_MINUTES)
 
 localnet-e2e:
-	uv run --locked --project "$(CURDIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-e2e.py \
+	uv run --frozen --project "$(CURDIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-e2e.py \
 		--suite "$(LOCALNET_E2E_SUITE)" \
 		$(if $(filter 1,$(LOCALNET_E2E_REQUIRE_SHIELDED)),--require-shielded,--no-require-shielded) \
 		$(if $(filter 0,$(LOCALNET_E2E_BOOTSTRAP)),--no-bootstrap,--bootstrap) \

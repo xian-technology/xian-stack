@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -72,6 +73,20 @@ class BackendRuntimeTests(unittest.TestCase):
             self.assertEqual(backend.main(["localnet-e2e", "--invariant-rounds", "120"]), 0)
         forwarded = run_mock.call_args.args[1:]
         self.assertEqual(forwarded[forwarded.index("--invariant-rounds") + 1], "120")
+
+    def test_localnet_e2e_forwards_suite_and_reads_progress_before_summary(self) -> None:
+        completed = subprocess.CompletedProcess(
+            [], 0, stdout='[localnet-e2e] passed 01-health\n{"suite": "dex", "ok": true}\n'
+        )
+        with (
+            patch("backend.run_python_script", return_value=completed) as run_mock,
+            patch("backend.sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            self.assertEqual(backend.main(["localnet-e2e", "--suite", "dex"]), 0)
+        self.assertEqual(json.loads(output.getvalue()), {"ok": True, "suite": "dex"})
+        self.assertEqual(run_mock.call_args.args[1:3], ("--suite", "dex"))
+        self.assertEqual(run_mock.call_args.kwargs["uv_project"], backend.STACK_DIR)
+        self.assertTrue(run_mock.call_args.kwargs["uv_frozen"])
 
     def test_dex_bootstrap_backend_forwards_the_key_file_not_a_key(self) -> None:
         completed = subprocess.CompletedProcess(

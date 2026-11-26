@@ -3,11 +3,13 @@
 import asyncio
 import copy
 import json
+from decimal import Decimal
 from uuid import uuid4
 
 from contract_suite_cases import (
     ROLES,
     Case,
+    application_cases,
     cases,
     constructors,
     initial_state,
@@ -145,24 +147,77 @@ async def transaction_random_checks(runner, session, names, signer, expected):
     return transactions
 
 
-async def contract_suite_checks(runner, session):
-    # A phase retry uses fresh application state, even after a partially committed attempt.
-    # Names are persisted in the phase report; replay consumes the actual transactions.
+async def contract_suite_checks(runner, session, *, payments_only=False):
+    roles = ("ledger", "escrow", "router") if payments_only else ROLES
     prefix = "con_suite_" + uuid4().hex[:12]
-    names = {role: f"{prefix}_{role}" for role in ROLES}
+    names = {role: f"{prefix}_{role}" for role in roles}
     wallets = {
         actor: wallet(runner, "contract-suite-" + actor) for actor in ("alice", "bob", "carol")
     }
     accounts = {actor: value.public_key for actor, value in wallets.items()}
     funding = await runner.fund_wallets(session, list(wallets.values()), amount=100_000)
     deployments = await deploy_suite(runner, session, names, accounts)
-    scenarios = cases(names, accounts, wallets["alice"].sign_msg("contract-suite authorization"))
+    scenarios = (
+        application_cases(names, accounts)
+        if payments_only
+        else cases(names, accounts, wallets["alice"].sign_msg("contract-suite authorization"))
+    )
     expected = initial_state(names, accounts, scenarios)
     await check_state(runner, session, expected, "constructors")
+    transactions = await execute_cases(runner, session, names, wallets, scenarios, expected)
+    if not payments_only:
+        transactions.extend(
+            await transaction_random_checks(runner, session, names, wallets["alice"], expected)
+        )
+    success_count = sum(item["success"] for item in transactions)
+    return {
+        "contracts": names,
+        "accounts": accounts,
+        "funding": funding,
+        "deployments": deployments,
+        "scenario_count": len(transactions),
+        "success_count": success_count,
+        "expected_failure_count": len(transactions) - success_count,
+        "transactions": transactions,
+        "final_state": expected,
+        "consensus": await agreement(session, runner.nodes),
+    }
+
+
+async def failed_payment_fee(runner, session, signer, submission, execution, before):
+    payer = signer.public_key
+    chi_cost = await query(session, runner.nodes[0], "/get/chi_cost.S:value")
+    expected_balance = Decimal(str(before)) - Decimal(execution["chi_used"]) / Decimal(
+        str(chi_cost)
+    )
+    await check_state(
+        runner,
+        session,
+        {f"__n.{payer}:": submission.nonce},
+        "failed payment fee and nonce",
+    )
+    for node in runner.nodes:
+        balance = await query(session, node, f"/get/currency.balances:{payer}")
+        require(
+            Decimal(str(balance)) == expected_balance,
+            f"{node.moniker}: failed payment charged the wrong native fee",
+        )
+    return {"remaining_native_balance": str(expected_balance), "committed_nonce": submission.nonce}
+
+
+async def execute_cases(runner, session, names, wallets, scenarios, expected):
     transactions = []
     for index, case in enumerate(scenarios):
         node_index = index % len(runner.nodes)
-        async with runner.client(wallets[case.actor], node_index, session) as client:
+        signer = wallets[case.actor]
+        # Only this rollback case needs the pre-transaction native balance.
+        verify_fee = case.label == "escrow-nested-rollback"
+        before = None
+        if verify_fee:
+            before = await query(
+                session, runner.nodes[node_index], f"/get/currency.balances:{signer.public_key}"
+            )
+        async with runner.client(signer, node_index, session) as client:
             submission = await client.send_tx(
                 case.contract, case.function, case.kwargs, chi=case.chi, wait_for_tx=True
             )
@@ -171,29 +226,18 @@ async def contract_suite_checks(runner, session):
         if case.error is None:
             expected.update(copy.deepcopy(case.state))
         await check_state(runner, session, expected, case.label)
-        transactions.append(
-            {
-                "case": case.label,
-                "actor": case.actor,
-                "node_index": node_index,
-                "tx_hash": submission.tx_hash,
-                "height": height,
-                "success": case.error is None,
-                "chi_used": execution["chi_used"],
-            }
-        )
-    transactions.extend(
-        await transaction_random_checks(runner, session, names, wallets["alice"], expected)
-    )
-    return {
-        "contracts": names,
-        "accounts": accounts,
-        "funding": funding,
-        "deployments": deployments,
-        "scenario_count": len(transactions),
-        "success_count": sum(case.error is None for case in scenarios) + 2,
-        "expected_failure_count": sum(case.error is not None for case in scenarios),
-        "transactions": transactions,
-        "final_state": expected,
-        "consensus": await agreement(session, runner.nodes),
-    }
+        tx = {
+            "case": case.label,
+            "actor": case.actor,
+            "node_index": node_index,
+            "tx_hash": submission.tx_hash,
+            "height": height,
+            "success": case.error is None,
+            "chi_used": execution["chi_used"],
+        }
+        if verify_fee:
+            tx.update(
+                await failed_payment_fee(runner, session, signer, submission, execution, before)
+            )
+        transactions.append(tx)
+    return transactions

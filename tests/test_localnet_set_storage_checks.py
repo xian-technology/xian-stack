@@ -1,52 +1,40 @@
+import asyncio
 import copy
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from contract_suite_cases import followup_cases
+from contract_suite_cases import typed_set_state
 from localnet_e2e_support import E2EError
 from localnet_set_storage_checks import (
-    authored_set_fixture,
+    BDS_SET_LABEL,
     check_typed_set_storage,
+    deploy_bds_set_fixture,
     typed_set_storage_query,
 )
 
 
-def fixture():
-    case = next(
-        item for item in followup_cases({"followups": "con_sets"}) if item.function == "store_sets"
+def test_fixture_deploys_independently_and_expects_the_outage_write(monkeypatch):
+    runner, session = object(), object()
+    deploy = AsyncMock(return_value="con_sets")
+    monkeypatch.setattr("localnet_set_storage_checks.deploy", deploy)
+    contract, expected = asyncio.run(deploy_bds_set_fixture(runner, session))
+    assert contract == "con_sets"
+    assert ["tuple", [["str", BDS_SET_LABEL], ["int", "7"]]] in (
+        expected["con_sets.persisted"]["__set__"]["items"]
     )
-    phase = SimpleNamespace(
-        name="03-contract-functionality",
-        ok=True,
-        details={
-            "contracts": {"followups": "con_sets"},
-            "final_state": case.state,
-        },
-    )
-    return phase
-
-
-def test_resume_fixture_uses_authored_names_without_mutating_phase_evidence():
-    phase = fixture()
-    original = copy.deepcopy(phase.details)
-    contract, expected = authored_set_fixture([phase])
-    assert contract == "con_sets" and phase.details == original
-    assert [
-        "tuple",
-        [["str", "bds-catchup"], ["int", "7"]],
-    ] in expected["con_sets.persisted"]["__set__"]["items"]
-    with pytest.raises(E2EError, match="successful authored"):
-        authored_set_fixture([])
+    args = deploy.await_args.args
+    assert args[:2] == (runner, session)
+    assert "def store_sets" in args[3]
 
 
 @pytest.mark.parametrize("table", ["state", "changes"])
 @pytest.mark.parametrize("corruption", ["missing", "flattened", "quantum", "numeric", "old_tx"])
 def test_bds_set_assertions_reject_lossy_or_stale_rows(table, corruption):
-    _, expected = authored_set_fixture([fixture()])
+    expected = typed_set_state("con_sets", BDS_SET_LABEL)
     tx_hash = "a" * 64
     wanted = {
         key: {"value": value, "numeric": None, "tx_hash": tx_hash}
@@ -70,7 +58,7 @@ def test_bds_set_assertions_reject_lossy_or_stale_rows(table, corruption):
 
 
 def test_queries_check_current_state_and_exact_refresh_transaction():
-    _, expected = authored_set_fixture([fixture()])
+    expected = typed_set_state("con_sets", BDS_SET_LABEL)
     sql = typed_set_storage_query(expected, "a" * 64)
     assert "FROM state WHERE" in sql and "FROM state_changes WHERE" in sql
     assert "value_numeric" in sql and "new_value_numeric" in sql

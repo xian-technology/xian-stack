@@ -10,6 +10,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from localnet_e2e_support import phase_outcome
+
 REDACTED = "[REDACTED]"
 SENSITIVE = re.compile(
     r"private|priv_key|secret|password|mnemonic|seed|founder_key|spend(?:ing)?_key|view(?:ing)?_key|(?:api|access|auth|bearer)[_-]?(?:key|token)|authorization|recovered_notes",
@@ -138,6 +140,8 @@ def phase_payload(value: dict, name: str, fields: list[str], kind: str) -> dict:
         details = value
         result = {"name": name, "ok": value.get("ok") is not False}
     result["details"] = selected_fields(details, fields)
+    if kind == "e2e":
+        result["status"] = phase_outcome(result["ok"], details)["status"]
     return result
 
 
@@ -174,7 +178,7 @@ def export_run(
         output = destination / run.name / (name + ".json")
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(sanitize(value, secrets), indent=2) + "\n")
-        summaries.append({"name": name, "ok": value["ok"]})
+        summaries.append({key: value[key] for key in ("name", "ok", "status") if key in value})
     if summaries:
         (destination / run.name / "summary.json").write_text(
             json.dumps({"run_id": run.name, "kind": kind, "stages": summaries}, indent=2) + "\n"

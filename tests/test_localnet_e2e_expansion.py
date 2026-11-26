@@ -132,21 +132,6 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertIn("original failure", result["details"]["error"])
         self.assertIn("Docker unavailable", result["details"]["diagnostics_error"])
 
-    def test_abci_consistency_phase_fails_when_a_live_probe_fails(self) -> None:
-        args = localnet_e2e.build_parser().parse_args([])
-        with tempfile.TemporaryDirectory() as tmpdir:
-            args.resume_dir = tmpdir
-            runner = localnet_e2e.E2ERunner(args)
-            runner.nodes = [self._node(0, "http://127.0.0.1:26657")]
-            runner.network = {"chain_id": "local-test"}
-            with patch.object(
-                localnet_e2e.subprocess,
-                "run",
-                return_value=SimpleNamespace(returncode=1, stderr="wrong proposal selection"),
-            ):
-                with self.assertRaisesRegex(localnet_e2e.E2EError, "probe failed on node-0"):
-                    asyncio.run(runner.abci_consistency_phase(object()))
-
     def test_abci_consistency_phase_fails_on_app_hash_divergence(self) -> None:
         args = localnet_e2e.build_parser().parse_args([])
         deployment_client = create_autospec(localnet_e2e.XianAsync, instance=True)
@@ -162,14 +147,6 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
             runner.nodes = [self._node(0, "http://127.0.0.1:26657")]
             runner.network = {"chain_id": "local-test"}
             with (
-                patch.object(
-                    localnet_e2e.subprocess,
-                    "run",
-                    return_value=SimpleNamespace(
-                        returncode=0,
-                        stdout='{"application_version":"0.9.0","invalid_txs":[]}',
-                    ),
-                ),
                 patch.object(runner, "client", client),
                 patch.object(runner, "wait_for_uniform_node_state", new_callable=AsyncMock),
                 patch.object(localnet_e2e, "ensure_positive_submission", return_value={}),
@@ -495,25 +472,27 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
         self.assertIn("hybrid mode admitted a registered candidate", phase_source)
         self.assertIn('"selection_mode": "manual"', phase_source)
 
-    def test_validator_governance_phase_applies_reward_split_to_fees(self) -> None:
-        phase_source = inspect.getsource(localnet_e2e.E2ERunner.validator_governance_phase)
-
+    def test_fee_probe_applies_governed_split_and_unused_budget(self) -> None:
         self.assertEqual(
-            (
-                Decimal("0.60"),
-                Decimal("0.10"),
-                Decimal("0.10"),
-                Decimal("0.20"),
-            ),
+            (Decimal("0.60"), Decimal("0.10"), Decimal("0.10"), Decimal("0.20")),
             localnet_e2e.E2E_GOVERNED_REWARD_SPLIT,
         )
-        self.assertIn('type_of_vote="reward_change"', phase_source)
-        self.assertIn('label="governed reward split"', phase_source)
-        self.assertIn('"validator_reward"', phase_source)
-        self.assertIn('"delegator_pool_reward"', phase_source)
-        self.assertIn('"foundation_reward"', phase_source)
-        self.assertIn('"developer_reward"', phase_source)
-        self.assertIn("governed reward split was not applied", phase_source)
+        outputs = {
+            "validator_reward": {"validator": "2"},
+            "delegator_pool_reward": {"delegator": "1"},
+            "foundation_reward": {"foundation": "0.5"},
+            "developer_reward": {"developer": "1"},
+        }
+        total, actual, expected = localnet_e2e.verify_reward_totals(
+            outputs, Decimal(110), Decimal(20), 120
+        )
+        self.assertEqual(total, Decimal("5.5"))
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual["validators"], Decimal("3.0"))
+        self.assertEqual(actual["burn"], Decimal("1.0"))
+        outputs["validator_reward"]["validator"] = "2.1"
+        with self.assertRaisesRegex(localnet_e2e.E2EError, "governed reward"):
+            localnet_e2e.verify_reward_totals(outputs, Decimal(110), Decimal(20), 120)
 
     def test_reward_governance_waits_for_committed_state_without_simulation(self):
         class RewardReadCompleted(Exception):

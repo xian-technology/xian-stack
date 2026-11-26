@@ -86,7 +86,7 @@ def test_focused_runner_executes_required_checks_and_records_suite(tmp_path, mon
 
 def test_full_suite_retains_optional_skip_behavior(tmp_path, monkeypatch):
     monkeypatch.setattr(e2e, "OUTPUT_ROOT", tmp_path)
-    runner = e2e.E2ERunner(e2e.build_parser().parse_args([]))
+    runner = e2e.E2ERunner(e2e.build_parser().parse_args(["--suite", "full"]))
     details = asyncio.run(
         runner.run_phase("03-intentkit-x402", AsyncMock(return_value={"skipped": True}))
     )
@@ -139,7 +139,14 @@ def test_focused_resume_loads_only_its_own_phase_history(tmp_path, monkeypatch):
 
 def test_full_resume_recovers_all_smoke_contracts(tmp_path, monkeypatch):
     args = e2e.build_parser().parse_args(
-        ["--start-phase", "03-contract-orchestration", "--resume-dir", str(tmp_path)]
+        [
+            "--suite",
+            "full",
+            "--start-phase",
+            "03-contract-orchestration",
+            "--resume-dir",
+            str(tmp_path),
+        ]
     )
     runner = e2e.E2ERunner(args)
     wallet = e2e.derive_wallet(42, "full-resume")

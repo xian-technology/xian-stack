@@ -30,6 +30,8 @@ from intentkit_backend import (
     start_intentkit_runtime,
     stop_intentkit_runtime,
 )
+from localnet_e2e_phases import DEFAULT_SUITE, SUITES
+from localnet_e2e_support import parse_json_stdout
 from shielded_relayer_backend import (
     DEFAULT_SHIELDED_RELAYER_HOST,
     DEFAULT_SHIELDED_RELAYER_PORT,
@@ -729,6 +731,7 @@ def run_python_script(
     uv_project: Path | None = None,
     uv_with: list[Path] | None = None,
     uv_python: str | None = None,
+    uv_frozen: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, str(script_path), *args]
     if uv_project is not None:
@@ -738,6 +741,8 @@ def run_python_script(
             "--project",
             str(uv_project),
         ]
+        if uv_frozen:
+            cmd.append("--frozen")
         if uv_with is not None:
             for dependency in uv_with:
                 cmd.extend(["--with", str(dependency)])
@@ -2072,8 +2077,13 @@ def backend_localnet_e2e(
     start_phase: str,
     resume_dir: str | None,
     invariant_rounds: int = 48,
+    suite: str = DEFAULT_SUITE,
+    require_shielded: bool = False,
 ) -> dict:
     args = [
+        "--suite",
+        suite,
+        "--require-shielded" if require_shielded else "--no-require-shielded",
         "--nodes",
         str(nodes),
         "--genesis-network",
@@ -2127,18 +2137,15 @@ def backend_localnet_e2e(
             LOCALNET_E2E_SCRIPT,
             *args,
             capture_output=True,
-            uv_project=resolve_repo_dir("xian-py", "XIAN_PY_DIR"),
+            uv_project=STACK_DIR,
+            uv_frozen=True,
             uv_python=STACK_UV_PYTHON,
         )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()
         raise RuntimeError(f"localnet-e2e failed: {detail}") from exc
 
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("localnet-e2e did not return a JSON summary") from exc
-
+    payload = parse_json_stdout(result.stdout, label="localnet-e2e")
     if not isinstance(payload, dict):
         raise RuntimeError("localnet-e2e returned a non-object summary")
     return payload
@@ -2574,6 +2581,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     localnet_e2e = subparsers.add_parser("localnet-e2e")
+    localnet_e2e.add_argument("--suite", choices=tuple(SUITES), default=DEFAULT_SUITE)
+    localnet_e2e.add_argument(
+        "--require-shielded", action=argparse.BooleanOptionalAction, default=False
+    )
     localnet_e2e.add_argument(
         "--bootstrap",
         action=argparse.BooleanOptionalAction,
@@ -2958,6 +2969,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "localnet-e2e":
         payload = backend_localnet_e2e(
+            suite=args.suite,
+            require_shielded=args.require_shielded,
             bootstrap=args.bootstrap,
             build=args.build,
             nodes=args.nodes,
