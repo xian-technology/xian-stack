@@ -2171,7 +2171,8 @@ async def run_dex_mixed(
                 "variable": "balances",
                 "keys": [approved_traders[0].public_key],
             },
-        ]
+        ],
+        timeout_seconds=receipt_timeout_seconds,
     )
 
     require_matching_state("dex_mixed", state)
