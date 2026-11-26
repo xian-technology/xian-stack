@@ -7,42 +7,21 @@ should support repeatable, deterministic, consensus-focused workload scenarios
 that can be extended over time as more complex contracts are added to the Xian
 ecosystem.
 
-## Current Gap
+## Current Coverage
 
-`scripts/localnet-workload.py` provides a deterministic scenario runner for
-multi-node validation. The remaining gaps are:
+`scripts/localnet-workload.py` supports `counter_basic`, `dex_mixed`,
+`parallel_probe`, `transfer_fanout`, and `contract_heavy`. The DEX workload
+exercises pair creation, liquidity operations, swaps, and expected failures
+for expired deadlines, impossible minimum outputs, insufficient allowance, and
+invalid pairs. It checks event counts and compares reserves, LP supply, and
+token balances across validators.
 
-- reusable scenario packs
-- realistic contract-heavy workloads
-- deterministic failure scenarios
-- contract-state cross-checks beyond `app_hash`
-- a clean extension point for future protocol hardening
+The [live contract suite](../workloads/e2e/contract_suite/README.md) covers
+additional execution and rollback cases through the integrated E2E harness.
 
-## Proposed Direction
+## Proposed Dedicated Workloads
 
-Build a scenario runner around a deterministic workload plan.
-
-Each scenario should:
-
-- deploy a frozen, vendored contract pack from the repo
-- derive wallets, nonces, and tx order from a fixed seed
-- record an explicit tx plan before execution
-- run successful and intentionally failing transactions
-- verify consensus with `app_hash` checks across multiple heights
-- verify selected contract state across multiple nodes at the same height
-- verify expected failure classes and event counts
-
-## Initial Scenario Packs
-
-- `counter_basic`
-  - simple transfer and state mutation sanity check
-- `dex_mixed`
-  - pair creation
-  - liquidity add/remove
-  - exact-input swaps
-  - fee-on-transfer compatible swaps
-  - intentional failures: expired deadline, insufficient allowance,
-    impossible `amountOutMin`, invalid pair
+- Extend reusable scenario packs as more protocol coverage is needed.
 - `governance_mixed`
   - proposal/vote/execute flows when suitable contracts exist
 - `streaming_payments`
@@ -71,9 +50,3 @@ For each scenario:
 - expected failed transactions fail consistently
 - expected events appear consistently
 - summary output is machine-readable for CI use
-
-## Rollout Order
-
-1. Add more deterministic failure cases to the DEX scenario.
-2. Add state cross-checks in addition to `app_hash`.
-3. Add more contract packs over time as the ecosystem grows.
