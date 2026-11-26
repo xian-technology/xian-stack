@@ -7,16 +7,15 @@ for current node state and results.
 Run date: 2026-09-11. A five-validator Docker localnet was built from the current
 sibling working trees and exercised with the integrated E2E suite, protocol
 safety suite, and live SDK/product regressions. The node suites passed. Two
-SDK/frontend defects were fixed and retested. One native-VM defect remains open
-and blocks checker-based NFT discovery, profiles, and activity.
+SDK/frontend defects were fixed and retested. One native-VM defect blocked
+checker-based NFT discovery, profiles, and activity during this run.
 
 These are local working-tree results, not a published release or public-network
 acceptance. The previous consistency audit's five fixes were included in testing.
 
 ## Running environment
 
-The final network is left running with five validators and a PostgreSQL BDS
-indexer on node 0:
+The run used five validators and a PostgreSQL BDS indexer on node 0:
 
 - RPC: `http://127.0.0.1:27657`; chain ID: `xian-localnet-1`.
 - Other RPC ports: 27757, 27857, 27957, 28057, all on loopback.
@@ -138,5 +137,6 @@ Limits: one native architecture, short soak rather than a multi-day endurance
 run, no full seven-day delayed-leave completion, no real light-client-attack
 evidence, no actual cross-chain custody transfer, no mobile-device session, and
 no injected-wallet approval UI transaction flow. IntentKit remained excluded.
-The NFT checker defect means the full marketplace is not yet a passing native-VM
-end-to-end flow. Earlier passing unit tests and replay do not establish otherwise.
+The NFT marketplace did not pass end-to-end in this run. The
+[foreign-storage follow-up](FOREIGN_STORAGE_VALIDATION.md) records the fix and
+successful marketplace checks.
