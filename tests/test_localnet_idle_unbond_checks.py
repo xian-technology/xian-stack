@@ -393,6 +393,10 @@ def test_fixture_uses_only_canonical_three_equal_power_genesis_and_private_homes
         item["config"]["consensus"]["timeout_commit"] == "8s" for item in homes
     )
     assert all(item["config"]["consensus"]["skip_timeout_commit"] is False for item in homes)
+    for item in homes:
+        p2p = item["config"]["p2p"]
+        assert not p2p["seeds"] and not p2p["persistent_peers"] and p2p["pex"] is False
+        assert item["config"]["rpc"]["unsafe"] is True
     assert (fixture.output.stat().st_mode & 0o777) == 0o700
     assert ((fixture.output / "private").stat().st_mode & 0o777) == 0o700
     for name in fixture.nodes:
@@ -596,13 +600,14 @@ def test_cleanup_attempts_every_owned_resource_even_after_log_failure(tmp_path, 
     assert calls[-1] == ("docker", "network", "rm", "owned-network")
 
 
-def test_live_case_orders_nil_then_mempool_then_peers_then_actual_h3_claim(tmp_path, monkeypatch):
+def test_live_case_stages_each_mempool_before_connecting_validators(monkeypatch):
     import asyncio
+    import json
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     founder = checks.Wallet()
-    nodes = [{"container": f"owned-{i}"} for i in range(3)]
+    nodes = [{"container": f"owned-{i}", "node_id": f"{i:040x}"} for i in range(3)]
     fixture = SimpleNamespace(
         nodes=nodes,
         low=nodes[1],
@@ -614,11 +619,13 @@ def test_live_case_orders_nil_then_mempool_then_peers_then_actual_h3_claim(tmp_p
         fee_policy={"max_tx_chi": 200000, "max_block_chi": 500000},
     )
     events = []
-    receipts = []
+    pending = {}
+    witnessed = set()
 
     async def start(fixture, node, created):
         events.append("start-" + node["container"])
         created.append(node)
+        pending[node["container"]] = []
         return SimpleNamespace(moniker=node["container"])
 
     async def initial(*args):
@@ -626,20 +633,34 @@ def test_live_case_orders_nil_then_mempool_then_peers_then_actual_h3_claim(tmp_p
         return {"nil_prevote_verified": True}
 
     async def broadcast(session, node, tx):
-        events.append("broadcast")
-        receipts.append(tx)
+        pending[node.moniker].append(tx)
+        events.append(f"broadcast-{node.moniker}-{len(pending[node.moniker])}")
 
     async def mempool(session, node, txs):
-        events.append("mempool")
-        assert len(receipts) == 3
+        assert pending[node.moniker] == txs and len(txs) == 3
+        witnessed.add(node.moniker)
         return [tx.tx_hash for tx in txs]
+
+    async def rpc(session, node, method, **params):
+        if method == "dial_peers":
+            assert witnessed == {member["container"] for member in nodes}
+            assert set(json.loads(params["peers"])) == {
+                f"{member['node_id']}@{member['container']}:26656"
+                for member in nodes
+                if member["container"] != node.moniker
+            }
+            assert params["persistent"] == "true"
+            events.append("dial-" + node.moniker)
+            return {}
+        assert method == "commit" and params == {"height": 1}
+        return {"signed_header": {"commit": {"round": 1}}}
 
     async def block(session, node, h):
         events.append(f"block-{h}")
         return {"block": {"header": headers_fixture()[h - 1]}}
 
     async def receipt(session, node, tx):
-        index = receipts.index(tx)
+        index = pending[node.moniker].index(tx)
         if index == 2:
             return receipt_record(
                 result={**locked_record(owner=founder.public_key), "unlock_at": None}
@@ -655,9 +676,7 @@ def test_live_case_orders_nil_then_mempool_then_peers_then_actual_h3_claim(tmp_p
     monkeypatch.setattr(checks, "block_at", block)
     monkeypatch.setattr(checks, "transaction_receipt", receipt)
     monkeypatch.setattr(checks, "wait_height", AsyncMock())
-    monkeypatch.setattr(
-        checks, "rpc", AsyncMock(return_value={"signed_header": {"commit": {"round": 1}}})
-    )
+    monkeypatch.setattr(checks, "rpc", rpc)
     monkeypatch.setattr(
         checks, "anchored_record", AsyncMock(return_value=locked_record(owner=founder.public_key))
     )
@@ -674,10 +693,17 @@ def test_live_case_orders_nil_then_mempool_then_peers_then_actual_h3_claim(tmp_p
     capture = AsyncMock(return_value={"height": 14, "archive_sha256": "public-digest"})
     monkeypatch.setattr(checks, "capture_preflight_corpus", capture, raising=False)
     proof = asyncio.run(checks.execute_stale_case(fixture, []))
-    assert events.index("nil") < events.index("mempool") < events.index("start-owned-0")
-    assert events.index("mempool") < events.index("start-owned-2")
-    assert events.index("block-2") < len(events) - 1
-    assert len(receipts) == 4 and proof["h1_commit_round"] == 1
+    for member in nodes:
+        moniker = member["container"]
+        assert (
+            events.index("nil")
+            < events.index(f"broadcast-{moniker}-1")
+            < events.index(f"dial-{moniker}")
+            < events.index("block-2")
+        )
+    assert events.index("block-2") < events.index("broadcast-owned-1-4")
+    assert pending["owned-0"] == pending["owned-1"][:3] == pending["owned-2"]
+    assert proof["h1_commit_round"] == 1
     assert proof["early_claim"]["height"] == 3 and proof["financial"]["locked_principal"] == "1"
     assert proof["consensus"]["height"] == 4
     capture.assert_awaited_once_with(fixture)
@@ -712,24 +738,28 @@ def test_preflight_orchestration_uses_only_owned_runtime_and_always_cleans_up(
     assert cleanup.await_count == 2
 
 
-def test_startup_records_the_owned_container_before_rpc_ready_checks(tmp_path, monkeypatch):
+def test_startup_records_owned_container_and_waits_for_transaction_readiness(tmp_path, monkeypatch):
     import asyncio
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     node = {"home": tmp_path, "container": "owned", "account": "a" * 64, "index": 0}
     created = []
-    live = SimpleNamespace()
+    live = SimpleNamespace(moniker="owned")
     monkeypatch.setattr(checks, "create_observer", AsyncMock(return_value=live))
+    catching_up = iter([True, False])
+    observed = []
 
     async def status(session, node, method, **kwargs):
         assert created and method == "status"
-        return {"ready": True}
+        observed.append(next(catching_up))
+        return {"sync_info": {"catching_up": observed[-1]}}
 
     monkeypatch.setattr(checks, "rpc", status)
     fixture = SimpleNamespace(image="image", network="owned-network", session=object(), running={})
     assert asyncio.run(checks.start_fixture_node(fixture, node, created)) is live
     assert created == [node]
+    assert observed == [True, False]
     assert live.abci_container == "owned"
 
 

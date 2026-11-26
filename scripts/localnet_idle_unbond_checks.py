@@ -454,16 +454,15 @@ def prepare_fixture(output, image):
             moniker=node["container"],
             block_policy_mode="periodic",
             block_policy_interval="1s",
-            p2p_persistent_peers=tuple(
-                other["node_id"] + "@" + other["container"] + ":26656"
-                for other in nodes
-                if other is not node
-            ),
             p2p_external_address=node["container"] + ":26656",
             bds_enabled=False,
         )
         configs = render_node_configs(options=options)
-        configs["cometbft"]["p2p"].update(addr_book_strict=False, allow_duplicate_ip=True)
+        # Start disconnected and use dial_peers on the fixture's loopback-published RPC.
+        configs["cometbft"]["p2p"].update(
+            addr_book_strict=False, allow_duplicate_ip=True, pex=False
+        )
+        configs["cometbft"]["rpc"]["unsafe"] = True
         configs["cometbft"]["consensus"].update(
             timeout_propose="2s",
             timeout_prevote="500ms",
@@ -542,7 +541,11 @@ async def start_fixture_node(fixture, node, created):
     running.account_public_key = node["account"]
     running.abci_container = node["container"]
     fixture.running[node["index"]] = running
-    await poll(lambda: rpc(fixture.session, running, "status"), lambda _: True, "Node RPC")
+    await poll(
+        lambda: rpc(fixture.session, running, "status"),
+        lambda status: status["sync_info"]["catching_up"] is False,
+        f"{running.moniker} ready for transactions",
+    )
     return running
 
 
@@ -607,7 +610,7 @@ async def require_mempool(session, node, transactions):
         for item in result.get("txs") or []
     }
     wanted = {tx.tx_hash for tx in transactions}
-    require(hashes == wanted, "Signed setup transactions are not all in the lone node mempool")
+    require(hashes == wanted, "Signed setup transactions are not all in the validator mempool")
     return sorted(hashes)
 
 
@@ -619,9 +622,11 @@ def execution_result(receipt):
 
 
 def checked_h1_unbond(receipts):
+    outcomes = [(int(item["height"]), int(item["tx_result"]["code"])) for item in receipts]
     require(
-        all(int(item["height"]) == 1 and int(item["tx_result"]["code"]) == 0 for item in receipts),
-        "All approve/bond/unbond transactions must actually execute at H1",
+        outcomes == [(1, 0)] * 3,
+        "All approve/bond/unbond transactions must actually execute at H1. "
+        f"Observed (height, code) {outcomes}",
     )
     record = execution_result(receipts[-1])["result"]
     require(record["unlock_at"] is None, "Positive H1 unbond was not deferred")
@@ -931,26 +936,44 @@ async def execute_stale_case(fixture, created):
     low = await start_fixture_node(fixture, fixture.low, created)
     precondition = await initial_precondition(fixture, low)
     before = await financial_state(fixture.session, low, fixture.founder.public_key)
-    transactions = prepared_setup(fixture)
-    for tx in transactions[:3]:
-        await broadcast(fixture.session, low, tx)
-    queued = await require_mempool(fixture.session, low, transactions[:3])
-    peers = [
-        await start_fixture_node(fixture, node, created)
-        for node in fixture.nodes
-        if node is not fixture.low
-    ]
+    *setup, claim = prepared_setup(fixture)
+    members = [(fixture.low, low)]
+    for node in fixture.nodes:
+        if node is not fixture.low:
+            members.append((node, await start_fixture_node(fixture, node, created)))
+    # Any later-round proposer must already have the dependent calls in nonce order.
+    for _, running in members:
+        for tx in setup:
+            await broadcast(fixture.session, running, tx)
+        queued = await require_mempool(fixture.session, running, setup)
+    # Peers also need to reconnect to the replay donor after its restart.
+    for node, running in members:
+        addresses = [
+            f"{other['node_id']}@{other['container']}:26656"
+            for other, _ in members
+            if other is not node
+        ]
+        await rpc(
+            fixture.session,
+            running,
+            "dial_peers",
+            peers=json.dumps(addresses),
+            persistent="true",
+            unconditional="false",
+            private="false",
+        )
     await block_at(fixture.session, low, 2)
     # H2's observed immutable block precedes this enqueue. The stock commit
     # timeout gives the transaction a real H3 proposal window, checked below.
-    await broadcast(fixture.session, low, transactions[3])
-    receipts = [await transaction_receipt(fixture.session, low, tx) for tx in transactions]
+    await broadcast(fixture.session, low, claim)
+    receipts = [await transaction_receipt(fixture.session, low, tx) for tx in setup]
     commit = await rpc(fixture.session, low, "commit", height=1)
     commit_round = int(commit["signed_header"]["commit"]["round"])
     require(commit_round > 0, "The empty round0 proposal unexpectedly committed")
-    initial_record = checked_h1_unbond(receipts[:3])
-    denial = checked_h3_claim(receipts[3])
-    await asyncio.gather(*(wait_height(fixture.session, node, 3) for node in [low, *peers]))
+    initial_record = checked_h1_unbond(receipts)
+    denial = checked_h3_claim(await transaction_receipt(fixture.session, low, claim))
+    live_nodes = [running for _, running in members]
+    await asyncio.gather(*(wait_height(fixture.session, node, 3) for node in live_nodes))
     blocks = [await block_at(fixture.session, low, height) for height in [1, 2, 3]]
     headers = [block["block"]["header"] for block in blocks]
     clocks = validate_stale_headers(
@@ -960,7 +983,7 @@ async def execute_stale_case(fixture, created):
     anchor = validate_anchor(record, 1, headers[1], 14)
     after = await financial_state(fixture.session, low, fixture.founder.public_key)
     financial = validate_locked_finances(before, after, record, 1)
-    consensus = await three_node_agreement(fixture.session, [low, *peers])
+    consensus = await three_node_agreement(fixture.session, live_nodes)
     security = await security_checkpoint_proof(fixture.session, low, headers[1])
     coupled = await coupled_evidence_rehearsal(fixture, low)
     corpus = await capture_preflight_corpus(fixture)
