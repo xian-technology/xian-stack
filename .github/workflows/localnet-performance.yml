@@ -101,7 +101,10 @@ jobs:
           if-no-files-found: warn
       - name: Check mixed load and soak behavior
         working-directory: xian-stack
-        run: make localnet-e2e LOCALNET_E2E_SUITE=load LOCALNET_E2E_BUILD=0
+        run: |
+          # The benchmark containers leave root-owned data in the bind-mounted node homes.
+          sudo -n chown -hR -- "$(id -u):$(id -g)" .localnet
+          make localnet-e2e LOCALNET_E2E_SUITE=load LOCALNET_E2E_BUILD=0
       - name: Stop load test network
         if: always()
         working-directory: xian-stack
