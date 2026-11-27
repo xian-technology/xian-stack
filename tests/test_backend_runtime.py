@@ -86,7 +86,7 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue()), {"ok": True, "suite": "dex"})
         self.assertEqual(run_mock.call_args.args[1:3], ("--suite", "dex"))
         self.assertEqual(run_mock.call_args.kwargs["uv_project"], backend.STACK_DIR)
-        self.assertTrue(run_mock.call_args.kwargs["uv_frozen"])
+        self.assertEqual(run_mock.call_args.kwargs["uv_lock_mode"], "frozen")
 
     def test_dex_bootstrap_backend_forwards_the_key_file_not_a_key(self) -> None:
         completed = subprocess.CompletedProcess(

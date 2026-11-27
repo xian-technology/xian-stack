@@ -146,6 +146,10 @@ python3 ./scripts/backend.py localnet-up    --wait-for-health --rpc-timeout-seco
 python3 ./scripts/backend.py localnet-workload --scenario counter_basic
 ```
 
+Localnet initialization checks the committed `xian-abci/uv.lock` against the
+sibling `xian-contracting` checkout. Use the matching revisions in the release
+manifest to reproduce a pinned localnet run.
+
 The generated `docker-compose-localnet.yml` names its own Compose project,
 `xian-localnet`, so single-node `make node-stop` / `abci-down` cannot remove
 localnet validators as orphans. A compose file generated before this change

@@ -723,7 +723,7 @@ storage-report:
 # ── Localnet (multi-node) ────────────────────────────────────────────
 
 localnet-init:
-	uv run --project "$(XIAN_ABCI_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-init.py --nodes $(LOCALNET_NODES) --genesis-network "$(XIAN_LOCALNET_GENESIS_NETWORK)" --clean
+	uv run --locked --project "$(XIAN_ABCI_DIR)" --python "$(XIAN_STACK_PYTHON)" python3 ./scripts/localnet-init.py --nodes $(LOCALNET_NODES) --genesis-network "$(XIAN_LOCALNET_GENESIS_NETWORK)" --clean
 
 localnet-build:
 	$(LOCALNET_COMPOSE) build $(LOCALNET_BUILD_SERVICE)

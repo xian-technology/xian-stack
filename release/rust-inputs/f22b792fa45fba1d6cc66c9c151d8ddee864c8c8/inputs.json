@@ -1,0 +1,12 @@
+{
+  "contracting_ref": "f22b792fa45fba1d6cc66c9c151d8ddee864c8c8",
+  "sha256": {
+    "xian-compiler-core": "b518129e8f1472f7a6b028b23a7dc9b52a42346df0262d3e787cc4a20bca86d4",
+    "xian-vm-core": "dadf29528322cf50400ec2e5b34c40badc5b13fc438abc6ce726dda56163a900",
+    "xian-zk": "02be165ff150f25a6db08ee52b9494f4a6811611a948a119566b5fc87a1da8dc"
+  },
+  "provenance": {
+    "reused_from_contracting_ref": "1534394452451267397286f8083b220dcfbb4717",
+    "method": "Reused the reviewed wheel lockfiles byte for byte. The Rust wheel source and Cargo manifests are identical between these Contracting revisions."
+  }
+}

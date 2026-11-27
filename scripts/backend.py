@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Literal
 from urllib.error import URLError
 from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import urlopen
@@ -731,7 +732,7 @@ def run_python_script(
     uv_project: Path | None = None,
     uv_with: list[Path] | None = None,
     uv_python: str | None = None,
-    uv_frozen: bool = False,
+    uv_lock_mode: Literal["locked", "frozen"] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, str(script_path), *args]
     if uv_project is not None:
@@ -741,8 +742,8 @@ def run_python_script(
             "--project",
             str(uv_project),
         ]
-        if uv_frozen:
-            cmd.append("--frozen")
+        if uv_lock_mode is not None:
+            cmd.append(f"--{uv_lock_mode}")
         if uv_with is not None:
             for dependency in uv_with:
                 cmd.extend(["--with", str(dependency)])
@@ -1863,6 +1864,7 @@ def backend_localnet_init(
             *args,
             capture_output=True,
             uv_project=resolve_repo_dir("xian-abci", "XIAN_ABCI_DIR"),
+            uv_lock_mode="locked",
             uv_python=STACK_UV_PYTHON,
         )
     except subprocess.CalledProcessError as exc:
@@ -2138,7 +2140,7 @@ def backend_localnet_e2e(
             *args,
             capture_output=True,
             uv_project=STACK_DIR,
-            uv_frozen=True,
+            uv_lock_mode="frozen",
             uv_python=STACK_UV_PYTHON,
         )
     except subprocess.CalledProcessError as exc:

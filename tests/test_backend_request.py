@@ -209,6 +209,7 @@ class BackendRequestTests(unittest.TestCase):
         chain_id_index = args.index("--chain-id")
         self.assertEqual(args[chain_id_index + 1], "custom-chain")
         self.assertIn("--clean", args)
+        self.assertEqual(run_script.call_args.kwargs["uv_lock_mode"], "locked")
         self.assertEqual(result["chain_id"], "custom-chain")
         self.assertEqual(result["stdout"], "generated\n")
 
