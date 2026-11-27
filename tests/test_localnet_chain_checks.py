@@ -97,7 +97,7 @@ def test_all_lifecycle_phases_are_in_the_regular_e2e_registry():
         "19-crash-recovery",
         "20-quorum-recovery",
         "21-fresh-node-sync",
-        "23-nonce-recovery",
+        "23-committed-nonce",
         "24-accounting-invariants",
         "25-block-limits",
         "26-replay-determinism",

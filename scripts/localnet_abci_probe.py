@@ -94,7 +94,7 @@ async def probe(chain_id: str, expected_version: str) -> dict:
             max_tx_bytes=len(txs[0]),
         ),
     )
-    require(list(skipped.txs) == txs[:1], "size-skipped transaction consumed proposal nonce")
+    require(list(skipped.txs) == txs[1:], "proposal did not include the higher nonce that fits")
     names = []
     invalid_txs = []
     for name, valid in [
@@ -114,7 +114,7 @@ async def probe(chain_id: str, expected_version: str) -> dict:
     return {
         "application_version": __version__,
         "proposal_budgets": proposals,
-        "skipped_nonce_preserved": True,
+        "higher_nonce_selected": True,
         "submission_names": names,
         "invalid_txs": invalid_txs,
     }

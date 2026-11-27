@@ -72,7 +72,7 @@ def test_probe_passes_against_the_installed_runtime(tmp_path, monkeypatch):
     assert report["application_version"] == probe.__version__
     assert [item["tx_count"] for item in report["proposal_budgets"]] == [0, 1, 2]
     assert report["proposal_budgets"][0] == {"budget": 0, "returned_bytes": 0, "tx_count": 0}
-    assert report["skipped_nonce_preserved"] is True
+    assert report["higher_nonce_selected"] is True
     assert [item["accepted"] for item in report["submission_names"]] == [False, False, True, True]
     assert [item["name"] for item in report["invalid_txs"]] == ["con_Uppercase", "con_" + "a" * 61]
 

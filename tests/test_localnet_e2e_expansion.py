@@ -123,11 +123,11 @@ class LocalnetE2EExpansionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "original failure"):
                     asyncio.run(
                         runner.run_phase(
-                            "23-nonce-recovery",
+                            "23-committed-nonce",
                             AsyncMock(side_effect=ValueError("original failure")),
                         )
                     )
-            result = json.loads((runner.output_dir / "23-nonce-recovery.json").read_text())
+            result = json.loads((runner.output_dir / "23-committed-nonce.json").read_text())
         self.assertFalse(result["ok"])
         self.assertIn("original failure", result["details"]["error"])
         self.assertIn("Docker unavailable", result["details"]["diagnostics_error"])

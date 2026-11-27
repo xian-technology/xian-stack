@@ -19,7 +19,7 @@ def test_default_suite_exercises_chain_lifecycle():
         "19-crash-recovery",
         "20-quorum-recovery",
         "21-observer-catchup",
-        "23-nonce-recovery",
+        "23-committed-nonce",
     ]
     assert "26-replay-determinism" in e2e.phase_names("full")
     assert "07-dex-automation-recovery" in e2e.phase_names("dex")

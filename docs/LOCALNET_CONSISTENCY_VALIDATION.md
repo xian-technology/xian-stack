@@ -46,7 +46,7 @@ Keys in `.localnet/network.json` belong only to this local test network.
 | --- | --- |
 | Integrated node E2E | Passed 31 executed phases. One optional IntentKit phase skipped, excluded from the pass count. |
 | Native replay | Replayed and compared 818 blocks from scratch, including app hashes, transaction outcomes, chi, and events. |
-| Loads and failure recovery | Passed periodic/burst load (260 burst transactions), conflict/invalid transactions, DEX workload, throughput mix, simulator, BDS catch-up, atomic rollback, parallel/mixed execution, chaos, crash, quorum recovery, fresh-node sync, nonce recovery, accounting invariants, block limits, and a 90-second soak. |
+| Loads and failure recovery | Passed periodic/burst load (260 burst transactions), conflict/invalid transactions, DEX workload, throughput mix, simulator, BDS catch-up, atomic rollback, parallel/mixed execution, chaos, crash, quorum recovery, fresh-node sync, committed nonces, accounting invariants, block limits, and a 90-second soak. |
 | Protocol safety | Passed governance proposals/voting, state-patch activation, manual membership, self-bond/delegation/undelegation/unbond claim, automatic and hybrid selection, jail/unjail/slash, real duplicate-vote evidence, early-leave rejection and standby promotion. |
 | Shielded and x402 | Integrated suite passed real shielded proof/signature, registry/relayer/authentication/error cases and x402 exact payments. |
 | Python/JS wire regressions | All five shared fixtures finalized on-chain from each SDK; JS native nested BigInt also passed. VM assertions verified nested integer, boolean, decimal, and bytes types after storage. |

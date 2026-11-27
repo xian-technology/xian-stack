@@ -10563,7 +10563,7 @@ class E2ERunner:
 
         return await signature_phase(self, session)
 
-    async def nonce_recovery_phase(self, session):
+    async def committed_nonce_phase(self, session):
         from localnet_execution_checks import nonce_phase
 
         return await nonce_phase(self, session)
