@@ -1001,6 +1001,14 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
         )
         record_change(
             changed_paths,
+            repo_path / "packages/dex/package.json",
+            update_json_dependencies(
+                repo_path / "packages/dex/package.json",
+                {"@xian-tech/types": version},
+            ),
+        )
+        record_change(
+            changed_paths,
             repo_path / "packages/provider/package.json",
             update_json_dependencies(
                 repo_path / "packages/provider/package.json",
@@ -1030,6 +1038,7 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
                         "@xian-tech/provider": version,
                     },
                     "packages/client": {"@xian-tech/types": version},
+                    "packages/dex": {"@xian-tech/types": version},
                     "packages/provider": {"@xian-tech/types": version},
                     "packages/web-kit": {"@xian-tech/provider": version},
                 },
@@ -1075,15 +1084,17 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
                 },
             ),
         )
+        extension_dependencies = {
+            "@xian-tech/client": resolved_xian_js_version,
+            "@xian-tech/dex": resolved_xian_js_version,
+            "@xian-tech/provider": resolved_xian_js_version,
+            "@xian-tech/wallet-core": version,
+        }
         record_change(
             changed_paths,
             repo_path / "apps/wallet-extension/package.json",
             update_json_dependencies(
-                repo_path / "apps/wallet-extension/package.json",
-                {
-                    "@xian-tech/provider": resolved_xian_js_version,
-                    "@xian-tech/wallet-core": version,
-                },
+                repo_path / "apps/wallet-extension/package.json", extension_dependencies
             ),
         )
         record_change(
@@ -1094,15 +1105,13 @@ def sync_unit_files(plan: ReleasePlan, plans_by_key: dict[str, ReleasePlan]) -> 
                 root_version=version,
                 package_versions={
                     "../xian-js/packages/client": resolved_xian_js_version,
+                    "../xian-js/packages/dex": resolved_xian_js_version,
                     "../xian-js/packages/provider": resolved_xian_js_version,
                     "apps/wallet-extension": version,
                     "packages/wallet-core": version,
                 },
                 dependency_updates={
-                    "apps/wallet-extension": {
-                        "@xian-tech/provider": resolved_xian_js_version,
-                        "@xian-tech/wallet-core": version,
-                    },
+                    "apps/wallet-extension": extension_dependencies,
                     "packages/wallet-core": {
                         "@xian-tech/client": resolved_xian_js_version,
                         "@xian-tech/provider": resolved_xian_js_version,

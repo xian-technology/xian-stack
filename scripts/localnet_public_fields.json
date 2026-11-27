@@ -387,7 +387,7 @@
       "retention_checkpoint",
       "restored_retention"
     ],
-    "23-nonce-recovery": [
+    "23-committed-nonce": [
       "checks",
       "consensus",
       "zero_chi_rejection"

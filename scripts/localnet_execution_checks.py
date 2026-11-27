@@ -27,21 +27,15 @@ from localnet_chain_checks import (
 from localnet_recovery_checks import partition
 from localnet_sync_checks import set_config
 
-# Leave enough for a 25-native admission reserve after paying both execution
-# fees, while the second 70-native transfer still exceeds the remaining balance.
-# On execution revision 15 the first two fees total about 44.35 XIAN. Starting
-# with 140 leaves only 0.65 after reserving 25 for the third call, too little for
-# its 1 XIAN transfer. 160 permits recovery while the second 70 XIAN transfer
-# still exceeds the balance available after reserving its fee.
-NONCE_INITIAL_BALANCE = 160
-
 
 async def nonce_phase(runner, session):
     from localnet_runtime_safety_checks import zero_chi_check
 
     zero_chi = await zero_chi_check(runner, session)
     signer, recipient = wallet(runner, "nonce-signer"), wallet(runner, "nonce-recipient")
-    await runner.fund_wallets(session, [signer], amount=NONCE_INITIAL_BALANCE)
+    await runner.fund_wallets(session, [signer], amount=250)
+    ingress = runner.nodes[0]
+    next_nonce_path = f"/get_next_nonce/{signer.public_key}"
 
     def transfer(nonce, amount):
         return prepared(
@@ -54,53 +48,51 @@ async def nonce_phase(runner, session):
             chi=CURRENCY_TRANSFER_CHI,
         )
 
-    first, second = transfer(0, 70), transfer(1, 70)
+    higher = transfer(7, 1)
+    lower = transfer(0, 70)
+    duplicate_nonce = transfer(7, 71)
     checks = {}
     async with partition(runner, runner.nodes[3:]):
+        # The connected validators lack quorum. Both gaps and competing
+        # pending transactions can be admitted without advancing chain state.
         await asyncio.sleep(3)
-        checks["gap_rejected"] = await broadcast(session, runner.nodes[0], second, accepted=False)
-        await broadcast(session, runner.nodes[0], first)
-        checks["conflicting_nonce_rejected"] = await broadcast(
-            session, runner.nodes[0], transfer(0, 71), accepted=False
+        checks["gap_admitted"] = await broadcast(session, ingress, higher)
+        checks["lower_after_higher_admitted"] = await broadcast(session, ingress, lower)
+        checks["same_pending_nonce_admitted"] = await broadcast(session, ingress, duplicate_nonce)
+        require(
+            await query(session, ingress, next_nonce_path) == 0, "Pending tx advanced chain nonce"
         )
-        await broadcast(session, runner.nodes[0], second)
-        # Restart only the submitting node while consensus is unable to commit.
-        await runner.stop_node_runtime(runner.nodes[0])
-        await runner.start_node_runtime(session, runner.nodes[0])
-        checks["first_after_restart"] = await broadcast(
-            session, runner.nodes[0], first, allow_cached=True
-        )
-        checks["second_after_restart"] = await broadcast(
-            session, runner.nodes[0], second, allow_cached=True
-        )
-    checks["first_receipt"] = await receipt(session, runner.nodes[0], first)
-    checks["second_receipt"] = await receipt(session, runner.nodes[0], second, success=False)
-    require(
-        "not enough coins" in json.dumps(execution(checks["second_receipt"])).lower(),
-        "Second transfer failed for an unexpected reason",
+
+    checks["first_receipt"] = await receipt(session, ingress, higher)
+    checks["consumed_nonce_rejected"] = await broadcast(
+        session, ingress, transfer(7, 2), accepted=False
     )
-    third = transfer(2, 1)
-    await broadcast(session, runner.nodes[0], third)
-    await receipt(session, runner.nodes[0], third)
-    await agreement(session, runner.nodes)
+    checks["skipped_nonce_rejected"] = await broadcast(
+        session, ingress, transfer(0, 2), accepted=False
+    )
+
+    failed = prepared(
+        runner, signer, 12, "con_missing_nonce_probe", "run", {}, chi=CURRENCY_TRANSFER_CHI
+    )
+    await broadcast(session, ingress, failed)
+    checks["failed_execution_receipt"] = await receipt(session, ingress, failed, success=False)
+    require(
+        "con_missing_nonce_probe" in json.dumps(execution(checks["failed_execution_receipt"])),
+        "Higher nonce did not reach contract execution",
+    )
+    after = transfer(2**53 - 1, 1)
+    await broadcast(session, ingress, after)
+    await receipt(session, ingress, after)
+    consensus = await agreement(session, runner.nodes)
     for node in runner.nodes:
         require(
-            await query(session, node, f"/get/__n.{signer.public_key}:") == 2,
-            "Nonce did not recover after pending restart and failed execution",
+            await query(session, node, next_nonce_path) == 2**53, "Committed nonce did not converge"
         )
         balance = await query(session, node, f"/get/currency.balances:{recipient.public_key}")
-        require(
-            balance == 71,
-            "Pending restart lost or duplicated a payment",
-        )
-    checks["committed_replay_rejected"] = await broadcast(
-        session, runner.nodes[0], transfer(0, 2), accepted=False
-    )
-    return {
-        "checks": checks,
-        "zero_chi_rejection": zero_chi,
-        "consensus": await agreement(session, runner.nodes),
-    }
+        require(balance == 2, "Superseded transactions changed the recipient balance")
+        mempool = await rpc(session, node, "num_unconfirmed_txs")
+        require(int(mempool["n_txs"]) == 0, "Rechecks left superseded transactions queued")
+    return {"checks": checks, "zero_chi_rejection": zero_chi, "consensus": consensus}
 
 
 async def limits_phase(runner, session):

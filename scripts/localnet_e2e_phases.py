@@ -50,7 +50,7 @@ PHASE_SPECS: tuple[PhaseSpec, ...] = (
     PhaseSpec("19-crash-recovery", "crash_recovery_phase"),
     PhaseSpec("20-quorum-recovery", "quorum_recovery_phase"),
     PhaseSpec("21-fresh-node-sync", "fresh_node_phase"),
-    PhaseSpec("23-nonce-recovery", "nonce_recovery_phase"),
+    PhaseSpec("23-committed-nonce", "committed_nonce_phase"),
     PhaseSpec("24-accounting-invariants", "accounting_invariants_phase"),
     PhaseSpec("25-block-limits", "block_limits_phase"),
     PhaseSpec("26-replay-determinism", "replay_corpus_phase"),
@@ -75,7 +75,7 @@ SUITES = {
         PhaseSpec("12-governed-fees", "governed_fees_phase"),
         *full_phases("16-block-ordering", "19-crash-recovery", "20-quorum-recovery"),
         PhaseSpec("21-observer-catchup", "observer_catchup_phase"),
-        *full_phases("23-nonce-recovery"),
+        *full_phases("23-committed-nonce"),
     ),
     "full": PHASE_SPECS,
     "dex": (
