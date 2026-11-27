@@ -41,7 +41,7 @@ runs:
       uses: actions/checkout@v7
       with:
         repository: xian-technology/xian-cli
-        ref: ba99b71a313ac1b3db21db1660c544ee078018ff
+        ref: e4960667241ca5ea870a0b3a6be53a5063ab1bb7
         path: xian-cli
     - name: Check out xian-contracts
       if: inputs.products == 'true'
@@ -62,5 +62,5 @@ runs:
       uses: actions/checkout@v7
       with:
         repository: xian-technology/xian-dex-automation
-        ref: 43ea70acbc5d57bd27ee14608fe86ab096858626
+        ref: 8ac0fabe171261f0fcceb2fa7ab5b390074e3eef
         path: xian-dex-automation
