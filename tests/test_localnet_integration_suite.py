@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -92,6 +93,64 @@ def test_full_suite_retains_optional_skip_behavior(tmp_path, monkeypatch):
     )
     assert details["skipped"] is True
     assert runner.phase_results[-1].ok is True
+
+
+@pytest.mark.parametrize("finalized", [True, False])
+def test_conflict_phase_isolates_the_deliberate_revert_signer(finalized):
+    funded = set()
+    race_senders = set()
+
+    async def fund_wallets(_session, wallets, *, amount):
+        assert amount == 5_000
+        funded.update(wallet.public_key for wallet in wallets)
+
+    @asynccontextmanager
+    async def client(wallet, node_index, _session):
+        async def submit(_contract, _function, kwargs, *, wait_for_tx):
+            assert wallet.public_key in funded
+            if wait_for_tx:
+                assert wallet.public_key not in race_senders
+                assert node_index == 2
+                assert kwargs == {"slot": "", "amount": -1}
+                return e2e.TransactionSubmission.from_dict(
+                    {
+                        "submitted": True,
+                        "accepted": finalized,
+                        "finalized": finalized,
+                        "message": "slot is required.",
+                        "receipt": {"success": False, "message": "slot is required."}
+                        if finalized
+                        else None,
+                    }
+                )
+            race_senders.add(wallet.public_key)
+            return e2e.TransactionSubmission.from_dict(
+                {"submitted": True, "accepted": True, "tx_hash": f"claim-{node_index}"}
+            )
+
+        yield SimpleNamespace(
+            send_tx=submit,
+            wait_for_tx=AsyncMock(
+                return_value=SimpleNamespace(success=node_index == 0, execution={}, message=None)
+            ),
+            call=AsyncMock(return_value=1),
+        )
+
+    runner = SimpleNamespace(
+        contracts={"conflict": "con_conflict"},
+        seed="conflict-test",
+        run_id="conflict-test",
+        fund_wallets=fund_wallets,
+        client=client,
+    )
+    if not finalized:
+        with pytest.raises(e2e.E2EError, match="expected a finalized failure receipt"):
+            asyncio.run(e2e.E2ERunner.conflict_phase(runner, object()))
+        return
+    result = asyncio.run(e2e.E2ERunner.conflict_phase(runner, object()))
+    assert len(race_senders) == 2
+    assert result["invalid_result"]["finalized"] is True
+    assert result["invalid_result"]["success"] is False
 
 
 def test_focused_resume_loads_only_its_own_phase_history(tmp_path, monkeypatch):

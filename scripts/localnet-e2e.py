@@ -5318,7 +5318,10 @@ class E2ERunner:
     async def conflict_phase(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         conflict_contract = self.contracts["conflict"]
         wallets = [derive_wallet(self.seed, f"conflict-wallet-{index}") for index in range(2)]
-        await self.fund_wallets(session, wallets, amount=5_000)
+        # This signer stays independent of the race, whose receipts may become
+        # visible on the three validators at different times.
+        invalid_wallet = derive_wallet(self.seed, "conflict-invalid-wallet")
+        await self.fund_wallets(session, [*wallets, invalid_wallet], amount=5_000)
 
         async def claim_once(wallet: Wallet, node_index: int, slot: str, label: str):
             async with self.client(wallet, node_index, session) as client:
@@ -5362,16 +5365,21 @@ class E2ERunner:
                 "expected exactly one applied and one non-applied claim in conflict phase"
             )
 
-        async with self.client(wallets[0], 2, session) as client:
+        async with self.client(invalid_wallet, 2, session) as client:
             invalid = await client.send_tx(
                 conflict_contract,
                 "claim",
                 {"slot": "", "amount": -1},
                 wait_for_tx=True,
             )
-            invalid_result = normalize_receipt(invalid, label="invalid-claim")
-            if invalid_result["success"] is not False:
-                raise E2EError("invalid conflict tx unexpectedly succeeded")
+            if not invalid.finalized or invalid.receipt is None:
+                raise E2EError(
+                    "invalid-claim: expected a finalized failure receipt"
+                    + submission_error_context(invalid)
+                )
+            invalid_result = ensure_failed_submission(
+                invalid, label="invalid-claim", expected_message_fragment="slot is required."
+            )
 
             current_counter = await client.call(conflict_contract, "current", {})
 
