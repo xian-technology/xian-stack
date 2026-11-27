@@ -144,3 +144,13 @@ def test_command_emits_the_restored_input_evidence(frozen, monkeypatch, capsys):
     )
     runpy.run_path(inputs.__file__, run_name="__main__")
     assert json.loads(capsys.readouterr().out) == metadata
+
+
+def test_release_manifest_selects_packaged_rust_inputs(tmp_path):
+    manifest = json.loads((inputs.INPUTS_ROOT.parent.parent / "release-manifest.json").read_text())
+    ref = manifest["components"]["xian-contracting"]["ref"]
+    selected = inputs.INPUTS_ROOT / ref
+    metadata = json.loads((selected / "inputs.json").read_text())
+
+    assert metadata["contracting_ref"] == ref
+    assert len(inputs.lock_plan(tmp_path, selected, metadata)) == len(inputs.RUST_WHEELS)

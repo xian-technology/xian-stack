@@ -1,0 +1,12 @@
+{
+  "contracting_ref": "f75be56cca443b31d3f13f50ec4f1dbeebaa6f3a",
+  "sha256": {
+    "xian-compiler-core": "b518129e8f1472f7a6b028b23a7dc9b52a42346df0262d3e787cc4a20bca86d4",
+    "xian-vm-core": "901071fae0416c5693cb6d5a50625803c23ecbfc040bd5e1d4fd2c7a91f2ffdd",
+    "xian-zk": "02be165ff150f25a6db08ee52b9494f4a6811611a948a119566b5fc87a1da8dc"
+  },
+  "provenance": {
+    "reused_from_contracting_ref": "f22b792fa45fba1d6cc66c9c151d8ddee864c8c8",
+    "method": "Reused the compiler and ZK locks byte for byte. Cargo 1.100.0 updated the VM root to 0.1.4 and resolved its new LRU dependency, preserving all existing registry dependency versions."
+  }
+}
